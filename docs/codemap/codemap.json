@@ -17943,7 +17943,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -19141,7 +19141,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 13,
-      "fn": 18,
+      "fn": 19,
       "struct": 26
      }
     },
@@ -28928,7 +28928,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -60858,7 +60858,7 @@
      "purpose": "Named deterministic non-LLM fallback runners",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1,
       "trait": 1
      }
