@@ -107,6 +107,8 @@ pub use crate::projection::View;
 /// executor thread while they read.
 pub fn build_app(server: Arc<SyncServer>) -> Router {
     let position = if server.managed_issuer.is_some() || server.vault().is_host_readable() {
+        // A cloud node's provider requests skip gzip (ARCH-0081 §6, OF-603).
+        models::mark_cloud_node();
         web_client::DeploymentPosition::Cloud
     } else {
         web_client::DeploymentPosition::LocalDaemon
@@ -121,6 +123,8 @@ pub fn build_app_for_position(
     server: Arc<SyncServer>,
     position: web_client::DeploymentPosition,
 ) -> Router {
+    // The owner's Responses `store` switch (OF-602); unreadable leaves it off.
+    models::set_responses_store(server.vault().responses_store().unwrap_or(false));
     let mode = if server.managed_issuer.is_some() {
         oneiron::HostingPrivacyPosture::Hosted
     } else {

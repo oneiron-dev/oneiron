@@ -5,31 +5,34 @@
 //! `weave-report` skill on a lent model. The model sees the period's admitted
 //! items, each under a key, and answers with a [`WeaveLensPlan`]: wording and
 //! grouping that cite those keys and nothing else. The plan is saved on the
-//! period's row. Opening the digest composes it into a [`GeneratedLens`]
-//! under the opener's own read: every row keeps its source refs, and every
-//! link carries the one-tap wrong control (`vault.weave.link.wrong`). The
+//! period's row. Opening the digest composes it into a card under the
+//! opener's own read: every row keeps its source refs, and every link, claim,
+//! project and budget row carries the one-tap wrong control
+//! (`vault.weave.link.wrong`, `vault.weave.item.wrong`). The
 //! model mints no ref, handle or action. When the reader's next period
 //! renders, the previous one settles the skill's two axes as evidence.
 //!
 //! `vault.weave.lens` renders the reader's live report the same way, on
-//! demand: the host asks the model between [`WeaveLiveLens`]'s two reads, and
-//! nothing is saved, so a live render settles no axis.
+//! demand: the host asks the model between [`WeaveLiveLens`]'s two reads. It
+//! answers a card whose manifest declares each wrong control as the tool it
+//! calls, and the host holds its frame for the card's events (OF-181).
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    PointRead, ScopedRead, StoredWeaveDigest, WeaveDigestReader, WeaveItem, WeaveReport,
-    WeaveSectionView,
+    PointRead, ScopedRead, StoredWeaveDigest, WeaveDigestReader, WeaveItem, WeaveReader,
+    WeaveReport, WeaveSectionView,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
 use crate::lens::{
-    ButtonControl, CollectionAtom, GeneratedLens, LedgerCell, LedgerRowAtom, LensAtom, LensAtomId,
-    LensBackingTarget, LensHandleName, LensHandleRef, LensHandleRole, LensNode,
-    LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom, SelfUiAction,
-    SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
+    ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
+    GeneratedUiActionTier, GeneratedUiStateSnapshot, HostedLensRender, LedgerCell, LedgerRowAtom,
+    LensAtom, LensAtomId, LensBackingTarget, LensHandleName, LensHandleRef, LensHandleRole,
+    LensNode, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom,
+    SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
 };
 use crate::provenance::EdgeRef;
 use crate::{EntityId, Vault};
@@ -37,11 +40,17 @@ use crate::{EntityId, Vault};
 /// The shipped skill whose SKILL.md is the render instruction.
 pub const WEAVE_REPORT_SKILL_NAME: &str = "weave-report";
 /// The skill's axes: the reader opened the period's notice; the reader
-/// marked none of the period's links wrong.
+/// marked none of the period's links, items or cards wrong.
 pub const WEAVE_LENS_READ_RATE_AXIS: &str = "read_rate";
 pub const WEAVE_LENS_CORRECTIONS_AXIS: &str = "corrections";
-/// The verb a link's wrong control calls.
+/// The verb a link's wrong control calls: in the owner lens, the owner's
+/// own, which files under the owner reader.
 const WRONG_LINK_VERB: &str = "vault.weave.link.wrong";
+const WRONG_OWNER_LINK_VERB: &str = "vault.weave.owner.link.wrong";
+/// The verb a claim, project or budget row's wrong control calls, and the
+/// owner lens's own.
+const WRONG_ITEM_VERB: &str = "vault.weave.item.wrong";
+const WRONG_OWNER_ITEM_VERB: &str = "vault.weave.owner.item.wrong";
 /// The verb a health card's wrong control calls: it settles the card
 /// dismissed (OF-568).
 const CONCERN_OUTCOME_VERB: &str = "self.inbox.concern.outcome";
@@ -115,7 +124,10 @@ pub struct WeaveLensRefusal {
 
 /// How many repair turns a refused plan gets: the refused answer and why go
 /// back to the model, which answers again.
-pub(crate) const WEAVE_LENS_PLAN_REPAIRS: usize = 1;
+pub const WEAVE_LENS_PLAN_REPAIRS: usize = 1;
+/// How many times a live render is asked again from a fresh read when the
+/// report moved between its two reads.
+pub const WEAVE_LIVE_LENS_REREADS: usize = 1;
 
 fn item_key(section: usize, item: usize) -> String {
     format!("{section}.{item}")
@@ -292,6 +304,19 @@ impl WeaveLiveLens {
             input,
         }))
     }
+
+    /// Why `answer` is not a plan for the report the step was shown; `None`
+    /// for a plan.
+    #[must_use]
+    pub fn plan_refusal(&self, answer: &str) -> Option<String> {
+        weave_lens_answer_plan(answer, &self.report).err()
+    }
+
+    /// A repair turn's text for a plan refused for `reason`.
+    #[must_use]
+    pub fn repair_text(&self, reason: &str) -> String {
+        weave_lens_repair_text(&self.report, reason)
+    }
 }
 
 /// The weave-report skill as a live render loads it. No attempt stamps the
@@ -410,18 +435,57 @@ fn item_sources(item: &WeaveItem) -> Option<EntityId> {
     }
 }
 
-/// Compose a saved render into the lens under `read`, the opener's own read.
-/// Every row binds the source its read admits now; every link row carries
-/// the wrong control over its exact link.
-pub(super) fn compose_weave_lens(
+/// One row's wrong control, calling `verb` with `input` (an SDK verb action
+/// takes the row's whole input as one JSON text, as the action registry
+/// declares it), and its manifest declaration: the deterministic tool the
+/// button names, under the control's own id, so no two buttons share one.
+fn wrong_control(
+    row: &str,
+    label: &str,
+    verb: &str,
+    input: String,
+    actions: &mut Vec<GeneratedUiActionDeclaration>,
+) -> Result<LensNode> {
+    let control = format!("{row}-wrong");
+    let action = SelfUiAction {
+        command: SelfUiActionId::new(verb)?,
+        args: vec![SelfUiValue::Text(LensText::new(input)?)],
+    };
+    actions.push(GeneratedUiActionDeclaration {
+        element_id: LensAtomId::new(control.clone())?,
+        action_id: SelfUiActionId::new(control.clone())?,
+        tier: GeneratedUiActionTier::DeterministicTool,
+        action: action.clone(),
+    });
+    Ok(LensNode::new(
+        LensAtomId::new(control.clone())?,
+        LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
+            id: SelfUiControlId::new(control)?,
+            label: required_text(label, "wrong label")?,
+            action,
+        })),
+    ))
+}
+
+/// Compose a render into the lens under `read`, the opener's own read, as a
+/// card beside the frame that minted its rows' backing refs (OF-181). Every
+/// row binds the source its read admits now; every link, claim, project and
+/// budget row a human opens carries the wrong control over its exact link or
+/// item (an agent files no label, so its rows carry none; the owner lens's
+/// call the owner's own verbs). Each wrong control is declared in the card's
+/// manifest as the deterministic tool it calls, for a host that holds the
+/// frame and takes the card's events.
+pub(super) fn compose_weave_lens_framed(
     read: &ScopedRead<'_>,
+    reader: WeaveReader<'_>,
     report: &WeaveReport,
     render: &WeaveLensRender,
-) -> Result<GeneratedLens> {
+) -> Result<HostedLensRender> {
     let plan = &render.plan;
     plan.validate(report)?;
     let items = keyed_items(report);
     let mut frame = opener_frame(read)?;
+    let agent = read.actor_key().actor_class() == Some(EdgeActorClass::Agent.gate_actor_class());
     let sources: Vec<EntityId> = items
         .values()
         .filter_map(|item| item_sources(item))
@@ -449,6 +513,7 @@ pub(super) fn compose_weave_lens(
             handles.insert(row.id, LensHandleRef { name, role });
         }
     }
+    let mut actions = Vec::new();
     let mut root = LensNode::new(
         LensAtomId::new("weave-lens")?,
         LensAtom::Sheet(CollectionAtom {
@@ -490,27 +555,42 @@ pub(super) fn compose_weave_lens(
                 kind,
                 target,
             } = item
+                && !agent
             {
-                // An SDK verb action takes the row's whole input as one JSON
-                // text, as the action registry declares it.
                 let input = serde_json::to_string(&super::WeaveWrongLinkRequest {
                     source_ref: source.to_hex(),
                     kind: kind.name().to_owned(),
                     target_ref: target.to_hex(),
                 })
                 .map_err(|_| Error::InvalidConfig("weave wrong link input".into()))?;
-                let control = format!("{id}-wrong");
-                row.children.push(LensNode::new(
-                    LensAtomId::new(control.clone())?,
-                    LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
-                        id: SelfUiControlId::new(control)?,
-                        label: required_text(&plan.wrong_label, "wrong label")?,
-                        action: SelfUiAction {
-                            command: SelfUiActionId::new(WRONG_LINK_VERB)?,
-                            args: vec![SelfUiValue::Text(LensText::new(input)?)],
-                        },
-                    })),
-                ));
+                row.children.push(wrong_control(
+                    &id,
+                    &plan.wrong_label,
+                    if matches!(reader, WeaveReader::Owner(_)) {
+                        WRONG_OWNER_LINK_VERB
+                    } else {
+                        WRONG_LINK_VERB
+                    },
+                    input,
+                    &mut actions,
+                )?);
+            }
+            if let Some(target) = super::WeaveItemTarget::of(item)
+                && !agent
+            {
+                let input = serde_json::to_string(&super::WeaveWrongItemRequest::of(target))
+                    .map_err(|_| Error::InvalidConfig("weave wrong item input".into()))?;
+                row.children.push(wrong_control(
+                    &id,
+                    &plan.wrong_label,
+                    if matches!(reader, WeaveReader::Owner(_)) {
+                        WRONG_OWNER_ITEM_VERB
+                    } else {
+                        WRONG_ITEM_VERB
+                    },
+                    input,
+                    &mut actions,
+                )?);
             }
             // A card's wrong settles it dismissed through the concern door,
             // never as a link correction. The door takes one JSON input.
@@ -523,30 +603,31 @@ pub(super) fn compose_weave_lens(
                     },
                 )
                 .map_err(|_| Error::InvalidConfig("weave card outcome input".into()))?;
-                let control = format!("{id}-wrong");
-                row.children.push(LensNode::new(
-                    LensAtomId::new(control.clone())?,
-                    LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
-                        id: SelfUiControlId::new(control)?,
-                        label: required_text(&plan.wrong_label, "wrong label")?,
-                        action: SelfUiAction {
-                            command: SelfUiActionId::new(CONCERN_OUTCOME_VERB)?,
-                            args: vec![SelfUiValue::Text(LensText::new(input)?)],
-                        },
-                    })),
-                ));
+                row.children.push(wrong_control(
+                    &id,
+                    &plan.wrong_label,
+                    CONCERN_OUTCOME_VERB,
+                    input,
+                    &mut actions,
+                )?);
             }
             node.children.push(row);
         }
         root.children.push(node);
     }
-    GeneratedLens::new(root)
+    // The lens declares no `$state`: its only controls are the wrong taps.
+    HostedLensRender::interactive(
+        frame,
+        GeneratedLens::new(root)?,
+        actions,
+        GeneratedUiStateSnapshot::default(),
+    )
 }
 
 /// What a live lens render keeps (OF-499): the skill and model that
-/// rendered it, when, and the links and health cards it showed, the items
-/// that carry a wrong control. It holds no report body: it only settles the
-/// corrections axis when the reader's next live lens renders.
+/// rendered it, when, and the links, items and health cards it showed, the
+/// rows that carry a wrong control. It holds no report body: it only settles
+/// the corrections axis when the reader's next live lens renders.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KeptLiveLens {
@@ -555,6 +636,8 @@ pub(crate) struct KeptLiveLens {
     rendered_at: u64,
     /// Each link as `(source hex, edge kind byte, target hex)`.
     links: Vec<(String, u8, String)>,
+    /// Each claim, project and budget id, hex.
+    items: Vec<String>,
     /// Each health card's `health:` handle.
     cards: Vec<String>,
 }
@@ -568,6 +651,7 @@ impl KeptLiveLens {
             links: report_links(report)
                 .map(|link| (link.source.to_hex(), link.kind as u8, link.target.to_hex()))
                 .collect(),
+            items: report_items(report).map(|id| id.to_hex()).collect(),
             cards: report_cards(report).collect(),
         }
     }
@@ -588,6 +672,13 @@ impl KeptLiveLens {
             })
             .collect()
     }
+
+    fn items(&self) -> Result<Vec<EntityId>> {
+        self.items
+            .iter()
+            .map(|id| EntityId::from_hex(id).map_err(|_| invalid("kept item")))
+            .collect()
+    }
 }
 
 /// The links `report` shows.
@@ -606,6 +697,15 @@ fn report_links(report: &WeaveReport) -> impl Iterator<Item = EdgeRef> + '_ {
         })
 }
 
+/// The ids of the claim, project and budget rows `report` shows.
+fn report_items(report: &WeaveReport) -> impl Iterator<Item = EntityId> + '_ {
+    report
+        .sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .filter_map(|item| super::WeaveItemTarget::of(item).map(super::WeaveItemTarget::id))
+}
+
 /// The `health:` handles of the cards `report` shows.
 fn report_cards(report: &WeaveReport) -> impl Iterator<Item = String> + '_ {
     report
@@ -618,19 +718,30 @@ fn report_cards(report: &WeaveReport) -> impl Iterator<Item = String> + '_ {
         })
 }
 
-/// Whether `reader` used a wrong control on any of the items at or after
-/// `since`: labelled one of `links` wrong, or dismissed one of `cards`.
+/// Whether `reader` used a wrong control on any of the rows at or after
+/// `since`: labelled one of `links` or `items` wrong, or dismissed one of
+/// `cards`.
 fn corrected_since(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     reader: EntityId,
     links: impl IntoIterator<Item = EdgeRef>,
+    items: impl IntoIterator<Item = EntityId>,
     cards: &[String],
     since: u64,
 ) -> Result<bool> {
     for link in links {
         if vault
             .weave_link_correction_labels_in_txn(txn, link)?
+            .iter()
+            .any(|label| label.actor == reader && label.recorded_at >= since)
+        {
+            return Ok(true);
+        }
+    }
+    for item in items {
+        if vault
+            .weave_item_correction_labels_in_txn(txn, item)?
             .iter()
             .any(|label| label.actor == reader && label.recorded_at >= since)
         {
@@ -658,7 +769,7 @@ fn corrected_since(
 
 /// Settle one live lens render on the skill's corrections axis once the
 /// reader's next live lens renders: whether they used the wrong control on
-/// any link or card it showed since it rendered. A live lens has no notice to open, so it settles
+/// any link, item or card it showed since it rendered. A live lens has no notice to open, so it settles
 /// no read rate (CALLS: weave live lens axes). Keyed by the render, so a
 /// replay replaces its own row.
 pub(crate) fn settle_live_weave_lens(
@@ -671,6 +782,7 @@ pub(crate) fn settle_live_weave_lens(
     let (tag, id) = reader.tag();
     let receipt = format!("weave.live:{tag}:{}:{}", id.to_hex(), kept.rendered_at);
     let links = kept.links()?;
+    let items = kept.items()?;
     let cell = LearningCell::new(LearningPredicate::Reliability, skill)
         .executor(kept.model.clone())
         .axis(WEAVE_LENS_CORRECTIONS_AXIS);
@@ -680,6 +792,7 @@ pub(crate) fn settle_live_weave_lens(
             txn,
             id,
             links.iter().copied(),
+            items.iter().copied(),
             &kept.cards,
             kept.rendered_at,
         )?;
@@ -702,7 +815,7 @@ pub(crate) fn settle_live_weave_lens(
 /// Settle one rendered period on the skill's axes once the reader's next
 /// period has rendered, or its schedule stopped: whether the reader opened
 /// the period's notice, and whether they used the wrong control on any of
-/// its links or cards since it rendered. A period the reader never opened
+/// its links, items or cards since it rendered. A period the reader never opened
 /// and never corrected says nothing about corrections, so it settles only
 /// its read rate (CALLS: OF-499 weave corrections need a read). Each lands
 /// as world-anchored evidence keyed by the period, so a replay replaces its
@@ -741,8 +854,15 @@ pub(crate) fn settle_weave_lens_axes(
                 now,
             )?;
         }
-        let corrected =
-            corrected_since(vault, txn, id, report_links(report), &cards, render.rendered_at)?;
+        let corrected = corrected_since(
+            vault,
+            txn,
+            id,
+            report_links(report),
+            report_items(report),
+            &cards,
+            render.rendered_at,
+        )?;
         if !corrected && seen != Some(true) {
             return Ok(());
         }

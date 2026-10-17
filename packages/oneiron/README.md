@@ -250,7 +250,7 @@ you want to act as instead.
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
-| `handle.vault.receipts(limit?)` | `FacadeReceipt[]` |
+| `handle.vault.receipts(limit?, kinds?)` | `FacadeReceipt[]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
 
 `lensFrameEvent` and `closeLensFrame` are the two lens-card routes outside the
 facade (OF-181), not verbs. A card's frame lives only on the server that

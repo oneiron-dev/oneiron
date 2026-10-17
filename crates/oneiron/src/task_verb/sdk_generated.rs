@@ -212,6 +212,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
             ),
             (
+                "vault.campaign.program.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::CreateCampaignProgramRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.program.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::CampaignProgramReadRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.program.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::UpdateCampaignProgramRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.program.archive",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::ArchiveCampaignProgramRequest,
+                >(),
+            ),
+            (
                 "vault.weave.report",
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveReportRequest>(),
             ),
@@ -226,6 +250,21 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.weave.link.wrong",
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongLinkRequest>(
+                ),
+            ),
+            (
+                "vault.weave.owner.link.wrong",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongLinkRequest>(
+                ),
+            ),
+            (
+                "vault.weave.item.wrong",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongItemRequest>(
+                ),
+            ),
+            (
+                "vault.weave.owner.item.wrong",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongItemRequest>(
                 ),
             ),
             (
@@ -1351,7 +1390,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.artifacts.body.commits",
                 crate::code_run::vault_read::request_schema::<
-                    crate::office_body::OfficeBodyArtifactRequest,
+                    crate::office_body::OfficeBodyCommitsRequest,
                 >(),
             ),
             (
@@ -1552,6 +1591,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.team.record",
                 crate::code_run::vault_read::request_schema::<crate::team::TeamRecordInput>(),
+            ),
+            (
+                "self.team.submit",
+                crate::code_run::vault_read::request_schema::<crate::code_run::TeamSubmitInput>(),
             ),
             (
                 "self.spawn",
@@ -1912,6 +1955,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.campaign.program.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.program.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.program.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.program.archive" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.weave.report" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1934,6 +2005,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.link.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.owner.link.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.owner.item.wrong" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3607,6 +3699,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.kv.namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
+        "vault.campaign.program.create" => {
+            let _input: crate::campaign::surface::CreateCampaignProgramRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.program.read" => {
+            let _input: crate::campaign::surface::CampaignProgramReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.program.update" => {
+            let _input: crate::campaign::surface::UpdateCampaignProgramRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.program.archive" => {
+            let _input: crate::campaign::surface::ArchiveCampaignProgramRequest =
+                decode(value.clone())?;
+        }
         "vault.weave.report" => {
             let _input: crate::claim::WeaveReportRequest = decode(value.clone())?;
         }
@@ -3618,6 +3726,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.weave.link.wrong" => {
             let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
+        }
+        "vault.weave.owner.link.wrong" => {
+            let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
+        }
+        "vault.weave.item.wrong" => {
+            let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
+        }
+        "vault.weave.owner.item.wrong" => {
+            let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
         }
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
@@ -4332,7 +4449,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::office_body::OfficeBodyReadRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.commits" => {
-            let _input: crate::office_body::OfficeBodyArtifactRequest = decode(value.clone())?;
+            let _input: crate::office_body::OfficeBodyCommitsRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.edit" => {
             let _input: crate::office_body::OfficeBodyEditRequest = decode(value.clone())?;
@@ -4487,10 +4604,29 @@ pub fn invoke(
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
+        "vault.campaign.program.create" => {
+            encode(vault_campaign_program_create(memory, decode(value)?)?)
+        }
+        "vault.campaign.program.read" => {
+            encode(vault_campaign_program_read(memory, decode(value)?)?)
+        }
+        "vault.campaign.program.update" => {
+            encode(vault_campaign_program_update(memory, decode(value)?)?)
+        }
+        "vault.campaign.program.archive" => {
+            encode(vault_campaign_program_archive(memory, decode(value)?)?)
+        }
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
         "vault.weave.lens" => encode(vault_weave_lens(memory, decode(value)?)?),
         "vault.weave.link.wrong" => encode(vault_weave_link_wrong(memory, decode(value)?)?),
+        "vault.weave.owner.link.wrong" => {
+            encode(vault_weave_owner_link_wrong(memory, decode(value)?)?)
+        }
+        "vault.weave.item.wrong" => encode(vault_weave_item_wrong(memory, decode(value)?)?),
+        "vault.weave.owner.item.wrong" => {
+            encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
+        }
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
         "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
@@ -5367,6 +5503,30 @@ pub fn vault_kv_namespaces(
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
 }
+pub fn vault_campaign_program_create(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::CreateCampaignProgramRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+    memory.campaign_program_create(&input)
+}
+pub fn vault_campaign_program_read(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::CampaignProgramReadRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramReadResult> {
+    memory.campaign_program_read(&input)
+}
+pub fn vault_campaign_program_update(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::UpdateCampaignProgramRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+    memory.campaign_program_update(&input)
+}
+pub fn vault_campaign_program_archive(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::ArchiveCampaignProgramRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+    memory.campaign_program_archive(&input)
+}
 pub fn vault_weave_report(
     memory: &Memory<'_>,
     input: crate::claim::WeaveReportRequest,
@@ -5382,7 +5542,7 @@ pub fn vault_weave_digest(
 pub fn vault_weave_lens(
     memory: &Memory<'_>,
     input: crate::claim::WeaveReportRequest,
-) -> MemoryResult<crate::lens::GeneratedLens> {
+) -> MemoryResult<crate::lens::LensFrameCard> {
     crate::task_verb::sdk::host_only(memory, "vault.weave.lens", &input)
 }
 pub fn vault_weave_link_wrong(
@@ -5392,6 +5552,34 @@ pub fn vault_weave_link_wrong(
     memory.weave_wrong_link(
         None,
         &memory.embedded_owner("vault.weave.link.wrong")?,
+        &input,
+    )
+}
+pub fn vault_weave_owner_link_wrong(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongLinkRequest,
+) -> MemoryResult<crate::claim::WeaveLinkCorrectionView> {
+    memory.weave_owner_wrong_link(
+        &memory.embedded_owner("vault.weave.owner.link.wrong")?,
+        &input,
+    )
+}
+pub fn vault_weave_item_wrong(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongItemRequest,
+) -> MemoryResult<crate::claim::WeaveItemCorrectionView> {
+    memory.weave_wrong_item(
+        None,
+        &memory.embedded_owner("vault.weave.item.wrong")?,
+        &input,
+    )
+}
+pub fn vault_weave_owner_item_wrong(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongItemRequest,
+) -> MemoryResult<crate::claim::WeaveItemCorrectionView> {
+    memory.weave_owner_wrong_item(
+        &memory.embedded_owner("vault.weave.owner.item.wrong")?,
         &input,
     )
 }
@@ -7169,8 +7357,8 @@ pub fn vault_artifacts_body_read(
 }
 pub fn vault_artifacts_body_commits(
     memory: &Memory<'_>,
-    input: crate::office_body::OfficeBodyArtifactRequest,
-) -> MemoryResult<Vec<crate::provenance::text_commit::TextCommitReceipt>> {
+    input: crate::office_body::OfficeBodyCommitsRequest,
+) -> MemoryResult<Vec<crate::office_body::OfficeBodyCommitView>> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.artifacts.body.commits",

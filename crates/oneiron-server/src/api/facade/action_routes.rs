@@ -15,9 +15,9 @@
 //!
 //! A REST route whose write is a verb-table row runs it here too, through
 //! [`execute_facade_row`], when the credential binds an action at all
-//! ([`action_bound`]; [`rest_action_bound`] for a write whose body can
-//! outgrow one action argument): its button and an agent's call meet one
-//! executor.
+//! ([`action_bound`]; [`rest_action_bound`] for a REST write): its button and
+//! an agent's call meet one executor. The write's whole body rides as one
+//! structured argument, and a refusal answers with the row's own words.
 //!
 //! A memory run row (`vault.search`, `vault.claims.put`,
 //! `vault.claims.supersede`, `vault.edges.put`) has no facade route; the
@@ -25,7 +25,7 @@
 //! and record bounds `execute_code` and `vault.recall` meet, and the door
 //! hands the run the credential's read key: a search reads, and an edge's
 //! target is checked, as the credential reads.
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Router;
 use axum::body::Body;
@@ -36,15 +36,15 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::actions::{
-    ActionArgument, ActionDispatch, ActionHostBinding, AgentActionCall,
+    ActionArgument, ActionDispatch, ActionHostBinding, ActionJson, AgentActionCall,
 };
 use oneiron::code_run::live_run::{LiveRunCredential, is_live_run_verb};
 use oneiron::code_run::{
-    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall,
-    SelfDispatchOutcome, SelfEffect,
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, AgentVerbRefusalWords, RunCall,
+    SelfAgentVerbCall, SelfDispatchOutcome, SelfEffect,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::lens::{GeneratedUiValidatedAction, LensPrincipalBinding, LensText, SelfUiActionId};
+use oneiron::lens::{GeneratedUiValidatedAction, LensPrincipalBinding, SelfUiActionId};
 use oneiron::memory::{
     HostWriteOrigin, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, MemoryError,
 };
@@ -210,11 +210,12 @@ impl ActionBound {
 }
 
 /// What a REST write of `input` runs under as one action, if it runs as
-/// one: a credential [`action_bound`] binds to a person or an agent, on a
-/// request that names no room turn, with an input that fits one action
-/// argument. Every other write runs its row's own door, as its REST route
-/// always admitted it. The route chooses here, before it writes; a refused
-/// action is never written again another way.
+/// one: a credential [`action_bound`] binds (a person, an agent or a system
+/// job), on a request that names no room turn, with an input that fits one
+/// structured action argument (the row route's own body ceiling, past the
+/// REST route's). Every other write runs its row's own door, as its REST
+/// route always admitted it. The route chooses here, before it writes; a
+/// refused action is never written again another way.
 pub(crate) fn rest_action_bound<T: serde::Serialize>(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -227,11 +228,13 @@ pub(crate) fn rest_action_bound<T: serde::Serialize>(
     let Some(bound) = action_bound(server, auth)? else {
         return Ok(None);
     };
-    if matches!(bound.class, EdgeActorClass::System) {
-        return Ok(None);
-    }
-    let text = serde_json::to_string(input).map_err(|_| internal())?;
-    Ok(LensText::new(text).is_ok().then_some(bound))
+    Ok(action_json(input)?.map(|_| bound))
+}
+
+/// `input` as one structured action argument; `None` past its ceiling.
+fn action_json<T: serde::Serialize>(input: &T) -> Result<Option<ActionJson>, FacadeApiError> {
+    let value = serde_json::to_value(input).map_err(|_| internal())?;
+    Ok(ActionJson::new(value).ok())
 }
 
 /// Runs `call` from the app's table under `bound`, its verb-table rows
@@ -250,7 +253,12 @@ async fn execute(
         EdgeActorClass::Agent => {
             LensPrincipalBinding::agent_task(actor.to_hex(), key.clone(), vec![key.clone()])
         }
-        _ => LensPrincipalBinding::human_view(actor.to_hex(), key.clone(), vec![key.clone()]),
+        EdgeActorClass::System => {
+            LensPrincipalBinding::system_job(actor.to_hex(), key.clone(), vec![key.clone()])
+        }
+        EdgeActorClass::Human => {
+            LensPrincipalBinding::human_view(actor.to_hex(), key.clone(), vec![key.clone()])
+        }
     }
     .map_err(engine)?;
     run_bound(
@@ -394,7 +402,9 @@ fn refused(refusal: LiveRunRefusal) -> FacadeApiError {
 
 /// Runs verb-table row `row` on `input` as one action under `bound`, as
 /// `POST /v1/core/actions/<row>` runs it: the REST route whose write is the
-/// row calls this. The row's JSON output; a refusal keeps its code.
+/// row calls this. The row's JSON output; a refusal answers with the code,
+/// words and suggestions the row's route refused with, a replayed one with
+/// those its action's record kept.
 pub(crate) async fn execute_facade_row<T: serde::Serialize>(
     server: &Arc<SyncServer>,
     headers: HeaderMap,
@@ -404,20 +414,30 @@ pub(crate) async fn execute_facade_row<T: serde::Serialize>(
     input: &T,
     idempotency_key: String,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let text = serde_json::to_string(input).map_err(|_| internal())?;
+    let input = action_json(input)?.ok_or_else(|| {
+        FacadeApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            MEMORY_CODE_BAD_REQUEST,
+            "the write is larger than one action argument",
+            ["Send a smaller body."],
+        )
+    })?;
     let call = AgentActionCall {
         verb_id: SelfUiActionId::new(row.as_str()).map_err(engine)?,
-        args: vec![ActionArgument::Text(LensText::new(text).map_err(engine)?)],
+        args: vec![ActionArgument::Json(input)],
         idempotency_key,
     };
-    match execute(server, headers, extensions, bound, call)
-        .await?
-        .outcome
-    {
+    let dispatch = execute(server, headers, extensions, bound, call).await?;
+    match dispatch.outcome {
         SelfDispatchOutcome::AgentVerb(answer) => Ok(answer.output),
-        SelfDispatchOutcome::Denied(denied) => {
-            Err(MemoryError::new(&denied.outcome, "the action was refused", &[]).into())
+        SelfDispatchOutcome::Denied(denied) => Err(match dispatch.refusal {
+            Some(row) => {
+                let suggestions: Vec<&str> = row.suggestions.iter().map(String::as_str).collect();
+                MemoryError::new(&row.code, row.message, &suggestions)
+            }
+            None => MemoryError::new(&denied.outcome, "the action was refused", &[]),
         }
+        .into()),
         SelfDispatchOutcome::Failed(failed) => {
             Err(MemoryError::new(MEMORY_CODE_INTERNAL, failed.error, &[]).into())
         }
@@ -481,12 +501,26 @@ fn internal() -> FacadeApiError {
 ///
 /// A memory run row reads with `read_key`, the credential's own read key
 /// at the caller's locality, which this request was admitted on.
+///
+/// A row's refusal keeps the words its route answered with in `refused`,
+/// which the action's record keeps beside its code; the guest sees only the
+/// code.
 struct FacadeRowDoor {
     rows: Router,
     headers: HeaderMap,
     extensions: Extensions,
     runtime: tokio::runtime::Handle,
     read_key: ScopedReadActorKey,
+    refused: Mutex<Option<AgentVerbRefusalWords>>,
+}
+
+/// A row that did not answer: no route words it.
+fn unfinished() -> AgentVerbRefusalWords {
+    AgentVerbRefusalWords {
+        code: MEMORY_CODE_INTERNAL.to_owned(),
+        message: "the action did not finish".to_owned(),
+        suggestions: Vec::new(),
+    }
 }
 
 impl FacadeRowDoor {
@@ -502,14 +536,16 @@ impl FacadeRowDoor {
             extensions,
             runtime: tokio::runtime::Handle::current(),
             read_key,
+            refused: Mutex::new(None),
         }
     }
 
-    /// The row's reply: its JSON on success, else its refusal's own code.
-    async fn answer(rows: Router, request: Request) -> Result<serde_json::Value, AgentVerbRefusal> {
-        let refused = || AgentVerbRefusal {
-            code: MEMORY_CODE_INTERNAL.to_owned(),
-        };
+    /// The row's reply: its JSON on success, else its refusal as answered.
+    async fn answer(
+        rows: Router,
+        request: Request,
+    ) -> Result<serde_json::Value, AgentVerbRefusalWords> {
+        let refused = unfinished;
         let response = match rows.oneshot(request).await {
             Ok(response) => response,
             Err(never) => match never {},
@@ -526,12 +562,25 @@ impl FacadeRowDoor {
         if status.is_success() {
             return Ok(body);
         }
-        Err(AgentVerbRefusal {
-            code: body
-                .pointer("/error/code")
+        let text = |pointer: &str| {
+            body.pointer(pointer)
                 .and_then(serde_json::Value::as_str)
-                .unwrap_or(MEMORY_CODE_INTERNAL)
-                .to_owned(),
+                .map(str::to_owned)
+        };
+        let fallback = unfinished();
+        Err(AgentVerbRefusalWords {
+            code: text("/error/code").unwrap_or(fallback.code),
+            message: text("/error/message").unwrap_or(fallback.message),
+            suggestions: body
+                .pointer("/error/suggestions")
+                .and_then(serde_json::Value::as_array)
+                .map(|all| {
+                    all.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
     }
 }
@@ -568,7 +617,11 @@ impl FacadeRowDoor {
         self.runtime.spawn(async move {
             let _ = sender.send(Self::answer(rows, request).await);
         });
-        let output = receiver.recv().map_err(|_| refused())??;
+        let output = receiver.recv().map_err(|_| refused())?.map_err(|row| {
+            let code = row.code.clone();
+            *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(row);
+            AgentVerbRefusal { code }
+        })?;
         Ok(AgentVerbAnswer { output, rows: None })
     }
 }
@@ -595,5 +648,12 @@ impl AgentVerbDoor for FacadeRowDoor {
             RunCall::Bridge(SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge)
         )
         .then(|| self.read_key.clone()))
+    }
+
+    fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
+        self.refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }

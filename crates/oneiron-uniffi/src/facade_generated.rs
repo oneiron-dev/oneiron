@@ -166,9 +166,9 @@ export_facade! {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
-"vault.receipts" => fn vault_receipts(&self, limit: u32) -> Vec<FacadeReceipt> = |client| {
+"vault.receipts" => fn vault_receipts(&self, limit: u32, kinds: Option<Vec<String>>) -> Vec<FacadeReceipt> = |client| {
     let limit: usize = limit.lower()?;
-    let output = client.vault_receipts(limit)?;
+    let output = client.vault_receipts(limit, kinds.as_deref().unwrap_or_default())?;
     Lift::lift(output)
 };
 "vault.images.view" => fn vault_images_view(&self, input: ImageViewRequest) -> PulledImage = |client| {
@@ -206,25 +206,60 @@ export_facade! {
     let output = client.vault_kv_namespaces(&input)?;
     crate::codec::lift_record("vault.kv.namespaces", &output)
 };
+"vault.campaign.program.create" => fn vault_campaign_program_create(&self, input: CreateCampaignProgramRequest) -> CampaignProgramRecord = |client| {
+    let input: oneiron::campaign::surface::CreateCampaignProgramRequest = crate::codec::lower_record("vault.campaign.program.create", input)?;
+    let output = client.vault_campaign_program_create(&input)?;
+    crate::codec::lift_record("vault.campaign.program.create", &output)
+};
+"vault.campaign.program.read" => fn vault_campaign_program_read(&self, input: CampaignProgramReadRequest) -> CampaignProgramReadResult = |client| {
+    let input: oneiron::campaign::surface::CampaignProgramReadRequest = crate::codec::lower_record("vault.campaign.program.read", input)?;
+    let output = client.vault_campaign_program_read(&input)?;
+    crate::codec::lift_record("vault.campaign.program.read", &output)
+};
+"vault.campaign.program.update" => fn vault_campaign_program_update(&self, input: UpdateCampaignProgramRequest) -> CampaignProgramRecord = |client| {
+    let input: oneiron::campaign::surface::UpdateCampaignProgramRequest = crate::codec::lower_record("vault.campaign.program.update", input)?;
+    let output = client.vault_campaign_program_update(&input)?;
+    crate::codec::lift_record("vault.campaign.program.update", &output)
+};
+"vault.campaign.program.archive" => fn vault_campaign_program_archive(&self, input: ArchiveCampaignProgramRequest) -> CampaignProgramRecord = |client| {
+    let input: oneiron::campaign::surface::ArchiveCampaignProgramRequest = crate::codec::lower_record("vault.campaign.program.archive", input)?;
+    let output = client.vault_campaign_program_archive(&input)?;
+    crate::codec::lift_record("vault.campaign.program.archive", &output)
+};
 "vault.weave.report" => fn vault_weave_report(&self, input: WeaveReportRequest) -> WeaveReportView = |client| {
     let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.report", input)?;
     let output = client.vault_weave_report(&input)?;
     crate::codec::lift_record("vault.weave.report", &output)
 };
-"vault.weave.digest" => fn vault_weave_digest(&self, input: WeaveDigestRequest) -> Option<WeaveDigestView> = |client| {
+"vault.weave.digest" => fn vault_weave_digest(&self, input: WeaveDigestRequest) -> WireJson = |client| {
     let input: oneiron::claim::WeaveDigestRequest = crate::codec::lower_record("vault.weave.digest", input)?;
     let output = client.vault_weave_digest(&input)?;
-    crate::codec::lift_record("vault.weave.digest", &output)
+    crate::codec::encode("vault.weave.digest", &output)
 };
-"vault.weave.lens" => fn vault_weave_lens(&self, input: WeaveReportRequest) -> GeneratedLens = |client| {
+"vault.weave.lens" => fn vault_weave_lens(&self, input: WeaveReportRequest) -> WireJson = |client| {
     let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.lens", input)?;
     let output = client.vault_weave_lens(&input)?;
-    crate::codec::lift_record("vault.weave.lens", &output)
+    crate::codec::encode("vault.weave.lens", &output)
 };
 "vault.weave.link.wrong" => fn vault_weave_link_wrong(&self, input: WeaveWrongLinkRequest) -> WeaveLinkCorrectionView = |client| {
     let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::lower_record("vault.weave.link.wrong", input)?;
     let output = client.vault_weave_link_wrong(&input)?;
     crate::codec::lift_record("vault.weave.link.wrong", &output)
+};
+"vault.weave.owner.link.wrong" => fn vault_weave_owner_link_wrong(&self, input: WeaveWrongLinkRequest) -> WeaveLinkCorrectionView = |client| {
+    let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::lower_record("vault.weave.owner.link.wrong", input)?;
+    let output = client.vault_weave_owner_link_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.owner.link.wrong", &output)
+};
+"vault.weave.item.wrong" => fn vault_weave_item_wrong(&self, input: WeaveWrongItemRequest) -> WeaveItemCorrectionView = |client| {
+    let input: oneiron::claim::WeaveWrongItemRequest = crate::codec::lower_record("vault.weave.item.wrong", input)?;
+    let output = client.vault_weave_item_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.item.wrong", &output)
+};
+"vault.weave.owner.item.wrong" => fn vault_weave_owner_item_wrong(&self, input: WeaveWrongItemRequest) -> WeaveItemCorrectionView = |client| {
+    let input: oneiron::claim::WeaveWrongItemRequest = crate::codec::lower_record("vault.weave.owner.item.wrong", input)?;
+    let output = client.vault_weave_owner_item_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.owner.item.wrong", &output)
 };
 "vault.packs.put" => fn vault_packs_put(&self, input: PackPutRequest) -> PackPutReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackPutRequest = crate::codec::lower_record("vault.packs.put", input)?;
@@ -241,8 +276,8 @@ export_facade! {
     let output = client.vault_packs_setup_get(&input)?;
     crate::codec::lift_record("vault.packs.setup.get", &output)
 };
-"vault.packs.setup.answer" => fn vault_packs_setup_answer(&self, input: PackSetupAnswerRequest) -> PackSetupReceipt = |client| {
-    let input: oneiron::task_verb::sdk::PackSetupAnswerRequest = crate::codec::lower_record("vault.packs.setup.answer", input)?;
+"vault.packs.setup.answer" => fn vault_packs_setup_answer(&self, input: WireJson) -> PackSetupReceipt = |client| {
+    let input: oneiron::task_verb::sdk::PackSetupAnswerRequest = crate::codec::decode("vault.packs.setup.answer", &input)?;
     let output = client.vault_packs_setup_answer(&input)?;
     crate::codec::lift_record("vault.packs.setup.answer", &output)
 };
@@ -1171,8 +1206,8 @@ export_facade! {
     let output = client.vault_artifacts_body_read(&input)?;
     crate::codec::lift_record("vault.artifacts.body.read", &output)
 };
-"vault.artifacts.body.commits" => fn vault_artifacts_body_commits(&self, input: OfficeBodyArtifactRequest) -> Vec<TextCommitReceipt> = |client| {
-    let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.commits", input)?;
+"vault.artifacts.body.commits" => fn vault_artifacts_body_commits(&self, input: OfficeBodyCommitsRequest) -> Vec<OfficeBodyCommitView> = |client| {
+    let input: oneiron::office_body::OfficeBodyCommitsRequest = crate::codec::lower_record("vault.artifacts.body.commits", input)?;
     let output = client.vault_artifacts_body_commits(&input)?;
     crate::codec::lift_record("vault.artifacts.body.commits", &output)
 };

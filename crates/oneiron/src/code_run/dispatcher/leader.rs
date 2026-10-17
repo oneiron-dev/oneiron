@@ -35,7 +35,10 @@ fn invalid() -> Error {
 pub struct HostPlannerBinding<'a> {
     pub skills: PlannerSkills,
     pub seats: Vec<PlannerSeat>,
-    /// The planner's `model@revision`, stamped on its pack loads.
+    /// The `model@revision` the parent run is stamped with, stamped on its
+    /// pack loads: the model its seat was born on, or the host's template
+    /// seat when the run has none. The planner's decision rungs pin their
+    /// own providers.
     pub executor: String,
     /// The host's ladder for the shape pick and the type placement; unset,
     /// the deterministic plan answers and the placement skill's rule rung

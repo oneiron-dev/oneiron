@@ -77,6 +77,34 @@ pub const CREDIT_DECAY: SettingSpec = SettingSpec {
     seed: 0.5,
 };
 
+/// Whether used lineage hops pass late credit up at all (ARCH-0037
+/// #lineage-credit, the power user's off switch): on at one half or more.
+pub const CREDIT_ENABLED: SettingSpec = SettingSpec {
+    key: "credit_enabled",
+    min: 0.0,
+    max: 1.0,
+    seed: 1.0,
+};
+
+/// The most used hops late credit climbs from an outcome (ARCH-0037
+/// #lineage-credit); at its maximum, the full used chain, canon's default.
+pub const CREDIT_DEPTH_CAP: SettingSpec = SettingSpec {
+    key: "credit_depth_cap",
+    min: 0.0,
+    max: 1024.0,
+    seed: 1024.0,
+};
+
+/// Whether late credit crosses only hops a contribution check measured
+/// (ARCH-0037 #lineage-credit): on at one half or more; off by default, so
+/// an unchecked used hop passes credit.
+pub const CREDIT_CHECK_EVERY_HOP: SettingSpec = SettingSpec {
+    key: "credit_check_every_hop",
+    min: 0.0,
+    max: 1.0,
+    seed: 0.0,
+};
+
 /// The probability of a random audit (`audit_rate`). Its floor is strictly
 /// above zero: the honesty floor never samples nothing.
 pub const AUDIT_RATE: SettingSpec = SettingSpec {
@@ -147,6 +175,9 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     GROUP_COMMIT_WINDOW_MS,
     GROUP_COMMIT_MAX_WRITES,
     CREDIT_DECAY,
+    CREDIT_ENABLED,
+    CREDIT_DEPTH_CAP,
+    CREDIT_CHECK_EVERY_HOP,
     AUDIT_RATE,
     LEARNING_WINDOW_HALF_LIFE_DAYS,
     LEARNING_SHIPPED_PRIOR_RUNS,
@@ -426,8 +457,12 @@ pub(crate) fn setting_value_in_txn(
 
 /// The value in force for `spec` where `project` and `type_ref` apply: the
 /// narrowest pin (the project's, then the type's, then the vault's), else the
-/// vault-scope fit once it has own runs, else the narrowest seed in the same
-/// order, else the catalog seed. With neither named it is [`setting_value`].
+/// narrower seed (the project's, then the type's), else the vault-scope fit
+/// once it has own runs, else the vault's seed, else the catalog seed. The
+/// vault's seed is the vault fit's own prior, so the fit outranks it; a
+/// project or type seed is the owner's word for that scope alone, which no
+/// fit learned from the whole vault overrides. With neither named it is
+/// [`setting_value`].
 ///
 /// # Errors
 ///
@@ -461,6 +496,11 @@ pub(crate) fn setting_value_scoped_in_txn(
             return Ok(value);
         }
     }
+    for scope in scopes.iter().filter(|scope| **scope != SettingScope::Vault) {
+        if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Seed, scope)? {
+            return Ok(value);
+        }
+    }
     if let Some(fit) =
         crate::learning::project::SETTING_FIT.get(store, txn, &spec.key.to_owned())?
         && fit.runs > 0.0
@@ -469,12 +509,8 @@ pub(crate) fn setting_value_scoped_in_txn(
         // A fit never leaves the catalog's bounds, so it never widens a floor.
         return Ok(fit.value.clamp(spec.min, spec.max));
     }
-    for scope in &scopes {
-        if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Seed, scope)? {
-            return Ok(value);
-        }
-    }
-    Ok(spec.seed)
+    let seed = scoped_row_value(store, txn, spec, SettingMode::Seed, &SettingScope::Vault)?;
+    Ok(seed.unwrap_or(spec.seed))
 }
 
 /// Every owner row as stored, in key order: its scope, the row, and the
@@ -608,4 +644,53 @@ pub fn record_setting_check(
         crate::learning::Observation::Magnitude(check.observed),
     );
     crate::learning::record_evidence(vault, &cell, &evidence, now)
+}
+
+/// The one subject `key`'s vault-wide fit is learned on: an id derived from
+/// the key, since a vault-wide knob has no one skill that uses it. Only a
+/// root-typed check on this subject fits the vault (OF-542); a project's or
+/// a skill's check fits that subject alone.
+///
+/// # Errors
+///
+/// The derivation's refusal of a reserved id.
+pub fn global_setting_subject(key: &str) -> Result<crate::entity_id::EntityId> {
+    crate::entity_id::EntityId::derive(
+        crate::entity_id::derived_domains::GLOBAL_SETTING_SUBJECT,
+        &[key.as_bytes()],
+    )
+}
+
+/// [`record_setting_check`] inside `wtxn`, for a writer whose own row and
+/// the check commit together: a random audit's outcome and the audit rate it
+/// fits (OF-542).
+///
+/// # Errors
+///
+/// As [`record_setting_check`].
+pub(crate) fn record_setting_check_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    check: &SettingCheck,
+    now: u64,
+) -> Result<Option<crate::learning::Estimate>> {
+    let spec = setting_spec(&check.key).ok_or(invalid("no learned setting has this key"))?;
+    if !check.observed.is_finite() || check.observed < spec.min || check.observed > spec.max {
+        return Err(invalid(
+            "a fitting check's value lies within its catalog bounds",
+        ));
+    }
+    let cell = crate::learning::LearningCell::new(
+        crate::learning::LearningPredicate::Setting,
+        check.subject,
+    )
+    .setting_key(spec.key)
+    .type_ref(check.type_ref.clone());
+    let evidence = crate::learning::LearningEvidence::anchored(
+        check.receipt.clone(),
+        check.at,
+        check.anchor,
+        crate::learning::Observation::Magnitude(check.observed),
+    );
+    crate::learning::record_evidence_in_txn(vault, wtxn, &cell, &evidence, now)
 }

@@ -97,7 +97,7 @@ const HOST_FACETS: [&str; 6] = [
     COACH_TRADEOFF_ROUTE_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 7] = [
+const MAINTENANCE_FACETS: [&str; 8] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -105,6 +105,7 @@ const MAINTENANCE_FACETS: [&str; 7] = [
     COACH_RESEARCH_SELECT_FACET,
     COACH_LEARNING_SWEEP_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
+    super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 const READ_HARDENING_RUNS: usize = 256;
@@ -395,7 +396,9 @@ impl Vault {
     }
 
     /// Records what the receipts since showed against one offer's promise,
-    /// under the leased `coach.offer_check` attempt its check date queued.
+    /// under the leased `coach.offer_check` attempt its check date queued. A
+    /// check that read whether the promise held is an outcome for the
+    /// Coach's own offer record; an unknown one is none.
     pub fn run_coach_offer_check(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -404,7 +407,19 @@ impl Vault {
     ) -> Result<crate::skill_optimize::OfferCheck> {
         self.require_coach_attempt(attempt, COACH_OFFER_CHECK_FACET)?;
         let offer = offer_check_target(&attempt.status.payload.input)?;
-        crate::skill_optimize::record_offer_check(self, &offer, input, now)
+        let check = crate::skill_optimize::record_offer_check(self, &offer, input, now)?;
+        if let Some(held) = check.held {
+            super::coach_learning::record_coach_outcome(
+                self,
+                super::coach_learning::COACH_OFFER_AXIS,
+                format!("offer_check:{}", check.id.to_hex()),
+                check.at,
+                crate::learning::Anchor::WorldOutcome,
+                held,
+                now,
+            )?;
+        }
+        Ok(check)
     }
 
     /// The leased attempt is this facet's, stamped for the Coach.
@@ -483,6 +498,19 @@ pub(super) fn run_tradeoff_escalation(vault: &Vault, now: u64) -> Result<()> {
     Ok(())
 }
 
+/// The offer a leased `coach.offer_check` attempt checks, for the host
+/// observer that reads it before it calls [`Vault::run_coach_offer_check`].
+///
+/// # Errors
+///
+/// An attempt of another facet, or a payload that names no offer.
+pub fn coach_offer_check_target(attempt: &DreamerAdmittedAttempt) -> Result<EntityId> {
+    if attempt.status.payload.attempt_type != COACH_OFFER_CHECK_FACET {
+        return Err(invalid());
+    }
+    offer_check_target(&attempt.status.payload.input)
+}
+
 /// The offer a `coach.offer_check` job checks.
 fn offer_check_target(input: &Value) -> Result<EntityId> {
     match input {
@@ -526,13 +554,16 @@ fn notify_offer_in_txn(
 /// The nightly offer pass. Each pending offer reaches every owner's inbox as
 /// one NOTIFICATION keyed by offer and owner, so a replayed night delivers
 /// nothing twice and the owner's seen and acked marks stay theirs. Each
-/// offer whose check date came, and that has no check yet, queues its
-/// promise check for the host; the queue's dedupe keeps one per offer.
+/// approved offer whose check date came, and that has no check yet, queues
+/// its promise check for the host; the queue's dedupe keeps one per offer.
+/// A promise is checked only after a yes: a declined, postponed or
+/// unanswered offer kept the baseline and promised nothing.
 pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
     let pending = crate::skill_optimize::pending_training_offers(vault)?;
     let mut due = Vec::new();
-    for (offer, _) in crate::skill_optimize::training_offers(vault, None)? {
+    for (offer, answer) in crate::skill_optimize::training_offers(vault, None)? {
         if offer.check_at <= now
+            && answer.is_some_and(|answer| answer.intent.is_some())
             && crate::skill_optimize::training_offer_checks(vault, &offer.id)?.is_empty()
         {
             due.push(offer.id);

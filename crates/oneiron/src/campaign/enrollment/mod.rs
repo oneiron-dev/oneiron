@@ -9,7 +9,7 @@
 //!    EACH consequence — the cohort write and the outward send — so a node that
 //!    lost leadership after claiming its attempt cannot still act on it;
 //! 2. the attempt lease plus LMDB's single-writer transaction;
-//! 3. ONE-1773's monotonic per-`(query, entity)` epoch watermark, compare-and-set
+//! 3. ONE-1773's monotonic per-`(query, entity, campaign)` epoch watermark, compare-and-set
 //!    inside the commit txn;
 //! 4. ONE-1691's outbound intent ledger, which freezes the outward payload
 //!    before transport and replays the same frozen bytes after a crash.
@@ -38,7 +38,7 @@ mod program;
 mod runner;
 mod storage;
 
-pub use self::audience::{AudienceWakeReport, audience_program, enroll_audience_wake};
+pub use self::audience::{AudienceWakeReport, audience_programs, enroll_audience_wake};
 pub use self::detection::{
     CampaignEnrollmentEvent, DetectEnrollment, EnrollmentDetection, accept_enrollment_baseline,
     campaign_enrollment_event, detect_enrollment,
@@ -50,12 +50,15 @@ pub use self::home_node::{
     require_campaign_home_node,
 };
 pub use self::program::{
+    AuthoredCampaignProgram, CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES, CampaignProgramDefinition,
+    CampaignProgramDraft, CampaignProgramStepDraft, archive_campaign_program,
+    create_campaign_program, read_campaign_program, update_campaign_program,
+};
+pub use self::program::{
     CampaignProgram, CampaignProgramOutbound, CampaignProgramStep, campaign_program,
     campaign_program_step, put_campaign_program, put_campaign_program_step,
 };
-pub use self::program::{
-    CampaignProgramAudience, MAX_CAMPAIGN_PROGRAMS_PER_AUDIENCE_QUERY, campaign_programs_for_query,
-};
+pub use self::program::{CampaignProgramAudience, campaign_programs_for_query};
 pub use self::runner::{
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentRunner,
     EnrollmentExecution, decode_enrollment_attempt_payload, derive_enrollment_outbound_request,

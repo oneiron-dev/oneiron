@@ -327,8 +327,8 @@ export class Oneiron {
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
-    /** Governance receipts, newest first. */
-    receipts: Object.assign((limit: number = 100): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit)), {
+    /** Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds. */
+    receipts: Object.assign((limit: number = 100, kinds?: string[]): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit, kinds)), {
       /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
       get: (input: Facade.CallReceiptRequest): Facade.CallReceipt | null => this.#call(() => this.#client.vaultReceiptsGet(input) as Facade.CallReceipt | null),
     }),
@@ -348,15 +348,42 @@ export class Oneiron {
       /** Exact segment namespace enumeration. Empty namespaces are not retained. */
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
+    campaign: {
+      program: {
+        /** Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns. */
+        create: (input: Facade.CreateCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramCreate(input) as Facade.CampaignProgramRecord),
+        /** One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now. */
+        read: (input: Facade.CampaignProgramReadRequest): Facade.CampaignProgramReadResult => this.#call(() => this.#client.vaultCampaignProgramRead(input) as Facade.CampaignProgramReadResult),
+        /** Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops. */
+        update: (input: Facade.UpdateCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramUpdate(input) as Facade.CampaignProgramRecord),
+        /** Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops. */
+        archive: (input: Facade.ArchiveCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramArchive(input) as Facade.CampaignProgramRecord),
+      },
+    },
     weave: {
       /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
       report: (input: Facade.WeaveReportRequest): Facade.WeaveReportView => this.#call(() => this.#client.vaultWeaveReport(input) as Facade.WeaveReportView),
-      /** One of the bound actor's saved weave digests, or the newest, under the current read policy. */
+      /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
       digest: (input: Facade.WeaveDigestRequest): Facade.WeaveDigestView | null => this.#call(() => this.#client.vaultWeaveDigest(input) as Facade.WeaveDigestView | null),
-      lens: (input: Facade.WeaveReportRequest): Facade.GeneratedLens => this.#call(() => this.#client.vaultWeaveLens(input) as Facade.GeneratedLens),
+      /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
+      lens: (input: Facade.WeaveReportRequest): Facade.LensFrameCard => this.#call(() => this.#client.vaultWeaveLens(input) as Facade.LensFrameCard),
       link: {
         /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
         wrong: (input: Facade.WeaveWrongLinkRequest): Facade.WeaveLinkCorrectionView => this.#call(() => this.#client.vaultWeaveLinkWrong(input) as Facade.WeaveLinkCorrectionView),
+      },
+      owner: {
+        link: {
+          /** The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays. */
+          wrong: (input: Facade.WeaveWrongLinkRequest): Facade.WeaveLinkCorrectionView => this.#call(() => this.#client.vaultWeaveOwnerLinkWrong(input) as Facade.WeaveLinkCorrectionView),
+        },
+        item: {
+          /** The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
+          wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveOwnerItemWrong(input) as Facade.WeaveItemCorrectionView),
+        },
+      },
+      item: {
+        /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
+        wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveItemWrong(input) as Facade.WeaveItemCorrectionView),
       },
     },
     packs: {
@@ -580,8 +607,8 @@ export class Oneiron {
         head: (request: Facade.OfficeBodyArtifactRequest): Facade.OfficeBodyHead | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyHead(keyedJson(request))) as Facade.OfficeBodyHead | null; return result === null ? null : result }),
         /** Reads a DOCX or XLSX live body, at its head or an earlier frontier. */
         read: (request: Facade.OfficeBodyReadRequest): Facade.OfficeBodyView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyRead(keyedJson(request))) as Facade.OfficeBodyView; return result }),
-        /** Every commit receipt of a live body, in commit order. */
-        commits: (request: Facade.OfficeBodyArtifactRequest): Facade.TextCommitReceipt[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyCommits(keyedJson(request))) as Facade.TextCommitReceipt[]; return result.map(item => item) }),
+        /** Every commit receipt of a live body, in commit order, or one actor's. */
+        commits: (request: Facade.OfficeBodyCommitsRequest): Facade.OfficeBodyCommitView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyCommits(keyedJson(request))) as Facade.OfficeBodyCommitView[]; return result.map(item => item) }),
         /** A person's typed operations on the live body. */
         edit: (request: Facade.OfficeBodyEditRequest): Facade.OfficeBodyEdit => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyEdit(keyedJson(request))) as Facade.OfficeBodyEdit; return result }),
         fork: {
@@ -864,7 +891,7 @@ export class Oneiron {
     embed: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiEmbed(input) as Facade.AiAnswer),
     /** Starts a video render as a provider job and answers with its ticket. */
     video: Object.assign((input: Facade.AiCallRequest): Facade.AiVideoTicket => this.#call(() => this.#client.aiVideo(input) as Facade.AiVideoTicket), {
-      /** Where a video job stands; a finished one answers with its clip, once. */
+      /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
       poll: (input: Facade.AiVideoJobRequest): Facade.AiVideoJob => this.#call(() => this.#client.aiVideoPoll(input) as Facade.AiVideoJob),
       /** Stops a video job at its provider. */
       cancel: (input: Facade.AiVideoJobRequest): Facade.AiVideoCancelled => this.#call(() => this.#client.aiVideoCancel(input) as Facade.AiVideoCancelled),

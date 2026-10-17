@@ -66,6 +66,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::EDIT_DISTANCE_MINER_K, LIVE),
     (&t::INBOX_REVIEW_DIAL, LIVE),
     (&t::MODEL_OWNER_FALLBACK, LIVE),
+    (&t::MODEL_OWNER_RESPONSES_STORE, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_ENABLED, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_INSTALL_DEFAULT, LIVE),
     (&t::SKILL_RELIABILITY_FLOOR, LIVE),
@@ -251,6 +252,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_CLEANUP_TEST_BLOCKERS_CLOSED, CONTENT),
     (&t::VAULT_IDENTITY_LOCAL, LIVE),
     // A restore never resets how the vault key unlocks.
+    (&t::VAULT_KEY_ESCROW_RETIRED, LIVE),
     (&t::VAULT_KEY_ESCROW_SPOOLED, LIVE),
     (&t::VAULT_KEY_STATE, LIVE),
     (&t::VAULT_KEY_WRAP, LIVE),
@@ -270,6 +272,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WEAVE_DIGEST, CONTENT),
     (&t::WEAVE_DIGEST_SOURCE, CONTENT),
     (&t::WEAVE_DIGEST_SCHEDULE, CONTENT),
+    (&t::WEAVE_WRONG_ITEM_LABEL, CONTENT),
     (&t::WEAVE_WRONG_LINK_LABEL, CONTENT),
     (&t::WORKSPACE_ROSTER_COMPANION_PRINCIPAL, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER, CONTENT),

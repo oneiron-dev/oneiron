@@ -11,6 +11,7 @@ pub mod consent;
 pub mod live_run;
 pub mod vault_read;
 
+mod action_inputs;
 // The guest authoring request is decoded at the typed component bridge, and
 // a verb hook's rewrite of it as the guest's own.
 mod agent_authoring;
@@ -26,11 +27,13 @@ pub(crate) mod run_verb_call;
 mod run_verbs;
 mod storage;
 mod support;
+mod team_submit;
 mod types;
 
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::action_inputs::self_call_inputs;
 pub(crate) use self::agent_authoring::{agent_put_draft, parse_agent_put_request};
 pub(crate) use self::codec::encode_code_run_replay_value;
 pub use self::codec::{
@@ -74,6 +77,8 @@ pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
+pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
+pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
@@ -123,7 +128,7 @@ pub use run_verbs::{
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
-    AgentVerbRefusal, RunCall, SelfAgentVerbCall,
+    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, SelfAgentVerbCall,
 };
 
 // The flat code_run.rs module used to provide these names to the test module

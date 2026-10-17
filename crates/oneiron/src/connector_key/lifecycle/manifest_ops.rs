@@ -58,9 +58,14 @@ impl ConnectorManifestQualifier for ProbeManifestQualifier<'_> {
                 )
             })
             .collect();
+        // The suite's own failure names the probe, so the owner reads why.
         let report =
             qualify_connector_with_schemas(self.connector, self.plan, self.oracle, Some(&expected))
-                .map_err(|_| probe_failure())?;
+                .map_err(|failure| {
+                    Error::InvalidConfig(format!(
+                        "connector qualification probes failed: {failure}"
+                    ))
+                })?;
         ensure_declared(manifest, &report.tools)?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"connector-manifest-qualification-v1");
@@ -115,7 +120,9 @@ impl Vault {
     /// manifest. Revision changes return the key to Pending; other drift only
     /// marks affected tool rows for confirm-first. No-op changes do not
     /// manufacture an ask. A catalog key changes revision only through
-    /// `revise_connector_protocol`, which re-binds its owner slate.
+    /// `revise_connector_protocol`, which re-binds its owner slate. Each
+    /// write reaches a catalog key's per-grant keys: a staged change holds
+    /// the tools it touches, and an applied one carries or retires them.
     pub fn stage_connector_manifest(
         &self,
         id: &EntityId,
@@ -213,6 +220,7 @@ impl Vault {
                         policy.read_frontier_hash()?,
                         at,
                     )?;
+                    self.sync_derived_keys_in_txn(&mut txn, &reverted, at)?;
                     txn.commit()?;
                 } else {
                     let reverted = ConnectorKeyRecord {
@@ -230,6 +238,7 @@ impl Vault {
                         policy.read_frontier_hash()?,
                         at,
                     )?;
+                    self.sync_derived_keys_in_txn(&mut txn, &reverted, at)?;
                     txn.commit()?;
                 }
             }
@@ -296,6 +305,7 @@ impl Vault {
             policy.read_frontier_hash()?,
             at,
         )?;
+        self.sync_derived_keys_in_txn(&mut txn, &staged, at)?;
         txn.commit()?;
 
         let report_hash = suite.qualify(&manifest, revision)?;
@@ -346,6 +356,7 @@ impl Vault {
             policy.read_frontier_hash()?,
             at,
         )?;
+        self.sync_derived_keys_in_txn(&mut txn, &record, at)?;
         txn.commit()?;
         Ok(Some(drift))
     }
@@ -385,6 +396,12 @@ impl Vault {
         if pending.qualification_report_hash.as_deref() != Some(expected_report_hash) {
             return Err(invalid_body("connector qualification report changed"));
         }
+        // A catalog connector moves to Active only through qualification,
+        // which meets its slate stamp and the suite; an approval alone
+        // leaves its status as it was.
+        let activates = record.catalog.is_none()
+            && (pending.drift.requires_reregistration
+                || record.status == ConnectorKeyStatus::Pending);
         let approved = ConnectorKeyRecord {
             qualification_receipt: Some(ConnectorQualificationReceipt::new(
                 expected_report_hash.to_owned(),
@@ -395,16 +412,12 @@ impl Vault {
             protocol_revision: Some(pending.protocol_revision.clone()),
             retained_manifest: Some(pending.manifest.clone()),
             pending_manifest: None,
-            status: if pending.drift.requires_reregistration
-                || record.status == ConnectorKeyStatus::Pending
-            {
+            status: if activates {
                 ConnectorKeyStatus::Active
             } else {
                 record.status
             },
-            status_changed_at: if pending.drift.requires_reregistration
-                || record.status == ConnectorKeyStatus::Pending
-            {
+            status_changed_at: if activates {
                 Some(at)
             } else {
                 record.status_changed_at
@@ -422,6 +435,7 @@ impl Vault {
             policy.read_frontier_hash()?,
             at,
         )?;
+        self.sync_derived_keys_in_txn(&mut txn, &approved, at)?;
         txn.commit()?;
         Ok(approved)
     }

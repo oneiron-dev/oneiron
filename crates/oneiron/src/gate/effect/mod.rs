@@ -506,10 +506,14 @@ pub(crate) fn evaluate_external_effect_policy(
         // budget stage: enforcement reads ONLY the compiled policy, never the
         // charter text. Drift degrades to proposed-only (Pending) until a
         // human re-stamps; a never-list match denies. Neither debits.
+        // A per-grant key's call meets its catalog connector's charter too
+        // (ONE-1794); the first wall wins.
         let mut charter_wall = None;
-        if key.status == ConnectorKeyStatus::Active
-            && let Some(block) = key.charter.as_ref()
-        {
+        let catalog_charter = connector_key::catalog_charter_in_txn(store, &*wtxn, &key)?;
+        for block in key.charter.iter().chain(catalog_charter.iter()) {
+            if key.status != ConnectorKeyStatus::Active || charter_wall.is_some() {
+                break;
+            }
             let effect_verb = hydrated_effect
                 .scoped_mcp_call
                 .as_ref()
@@ -782,16 +786,24 @@ pub(crate) fn check_external_effect_policy_pair(
         (host.budget_target.as_ref(), authored.budget_target.as_ref()),
         (Some(a), Some(b)) if a.key_id == b.key_id
     );
+    // Two per-grant keys of one catalog share its pool: the authored key
+    // meets only its own rows, so the effect debits the pool once (ONE-1794).
+    let shared_pool = !same_key
+        && match (host.budget_target.as_ref(), authored.budget_target.as_ref()) {
+            (Some(a), Some(b)) => connector_key::shares_budget_pool(store, wtxn, &a.key, &b.key)?,
+            _ => false,
+        };
     if new_effect {
         let now = crate::ports::recorded_at_in_txn(store, wtxn)?;
         for index in 0..2 {
             if index == 1 && same_key {
                 continue;
             }
+            let pool = !(index == 1 && shared_pool);
             let exhausted_preflight = {
                 let governance = if index == 0 { &host } else { &authored };
                 match governance.budget_target.as_ref() {
-                    Some(target) => connector_key::preflight_effector_budgets(
+                    Some(target) => connector_key::preflight_effector_budgets_pooled(
                         store,
                         wtxn,
                         &target.key_id,
@@ -799,6 +811,7 @@ pub(crate) fn check_external_effect_policy_pair(
                         &target.governing_connector,
                         true,
                         now,
+                        pool,
                     )?
                     .is_some(),
                     None => false,
@@ -808,7 +821,8 @@ pub(crate) fn check_external_effect_policy_pair(
                 // The regular charger applies suspend-on-exhaust without
                 // debiting an exhausted key. No other key has been charged.
                 let denied = if index == 0 { &mut host } else { &mut authored };
-                let (_, exhausted) = charge_admitted_external_effect(store, wtxn, denied, true)?;
+                let (_, exhausted) =
+                    charge_admitted_external_effect(store, wtxn, denied, true, pool)?;
                 if !exhausted {
                     return Err(crate::error::Error::InvariantViolation(
                         "linear effect budget preflight diverged",
@@ -824,7 +838,9 @@ pub(crate) fn check_external_effect_policy_pair(
             if index == 1 && same_key {
                 continue;
             }
-            let (_, exhausted) = charge_admitted_external_effect(store, wtxn, governance, true)?;
+            let pool = !(index == 1 && shared_pool);
+            let (_, exhausted) =
+                charge_admitted_external_effect(store, wtxn, governance, true, pool)?;
             if exhausted {
                 // Fail the transaction rather than persisting a partial debit.
                 return Err(crate::error::Error::InvariantViolation(
@@ -867,6 +883,7 @@ pub(crate) fn check_external_effect_policy(
             wtxn,
             &mut governance,
             effect.send_ref.is_some(),
+            true,
         )?;
         if exhausted {
             governance.deny_budget_exhausted();
@@ -906,12 +923,14 @@ pub(crate) fn record_held_external_effect_policy(
 /// Debits the governance-selected connector key exactly once for an admitted
 /// effect, mirroring the chokepoint `charge_once`: send-dimension rows debit
 /// only for send-like effects, an exhausted suspend-class row suspends the key,
-/// and the caller converts exhaustion into a denial.
+/// and the caller converts exhaustion into a denial. `pool` false leaves a
+/// per-grant key's catalog pool to the key charged before it.
 fn charge_admitted_external_effect(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     governance: &mut ExternalEffectGovernance,
     send_like: bool,
+    pool: bool,
 ) -> Result<(Option<EffectorBudgetCharge>, bool)> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let Some(target) = governance.budget_target_mut() else {
@@ -920,7 +939,7 @@ fn charge_admitted_external_effect(
     // Budget windows advance on the engine's trusted clock, not a caller
     // timestamp, so the debit and any receipt echo share the same window.
     let budget_now = mutation_recorded_at;
-    let outcome = connector_key::charge_effector_budgets(
+    let outcome = connector_key::charge_effector_budgets_pooled(
         store,
         wtxn,
         &target.key_id,
@@ -928,6 +947,7 @@ fn charge_admitted_external_effect(
         &target.governing_connector,
         send_like,
         budget_now,
+        pool,
     )?;
     let (mut charge, exhausted) = match outcome {
         EffectorBudgetChargeOutcome::NoRows(charge)

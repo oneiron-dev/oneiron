@@ -1,13 +1,33 @@
 //! The HTTP leg every provider kind shares: one client per provider entry,
 //! and the server-sent-events splitter that streamed replies arrive in.
 use std::collections::{BTreeMap, VecDeque};
+use std::future::Future;
+use std::io::Write;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures_util::Stream;
 use serde_json::Value as JsonValue;
 
 use super::sse::{EventTooLarge, SseDecoder, SseEvent};
-use crate::config::models::ProviderConfig;
+use crate::config::models::{ProviderConfig, RequestCodec, RequestCompression};
+
+/// The smallest request body worth compressing (ARCH-0081 §6).
+const MIN_COMPRESSED_BYTES: usize = 16 * 1024;
+
+/// Whether this process serves from a cloud node, where gzip costs more on
+/// the link than it saves (ARCH-0081 §6): a gzip route then sends plain, and
+/// zstd still compresses.
+static CLOUD_NODE: AtomicBool = AtomicBool::new(false);
+
+/// Marks this process a cloud node: a managed or host-readable deployment.
+pub(crate) fn mark_cloud_node() {
+    CLOUD_NODE.store(true, Ordering::Relaxed);
+}
+const GZIP_LEVEL: u32 = 1;
+const ZSTD_LEVEL: i32 = 3;
 
 /// How a provider expects its key.
 #[derive(Clone, Copy, Debug)]
@@ -89,7 +109,55 @@ pub(super) struct ProviderHttp {
     /// provider redirects to elsewhere is fetched with.
     bare: reqwest::Client,
     base_url: String,
+    /// How JSON request bodies go, shared by every clone of this client.
+    compression: Option<Arc<Compressor>>,
 }
+
+/// One provider's request compression, on until the provider refuses an
+/// encoded body: a 400 or 415 that a plain resend does not repeat turns it
+/// off for this process.
+struct Compressor {
+    compression: RequestCompression,
+    on: AtomicBool,
+}
+
+impl Compressor {
+    /// `plain` in this provider's codec, for a post to `path`: `None` when
+    /// it is off, the route is not one it decodes on, the body is under
+    /// [`MIN_COMPRESSED_BYTES`], the codec is gzip on a cloud node, or
+    /// encoding would not make it smaller.
+    fn encode(&self, path: &str, plain: &[u8]) -> Option<Vec<u8>> {
+        if !self.on.load(Ordering::Relaxed)
+            || self.compression.route.is_some_and(|route| route != path)
+            || plain.len() < MIN_COMPRESSED_BYTES
+            || (self.compression.codec == RequestCodec::Gzip && CLOUD_NODE.load(Ordering::Relaxed))
+        {
+            return None;
+        }
+        let encoded = match self.compression.codec {
+            RequestCodec::Gzip => {
+                let mut encoder = flate2::write::GzEncoder::new(
+                    Vec::with_capacity(plain.len() / 2),
+                    flate2::Compression::new(GZIP_LEVEL),
+                );
+                encoder.write_all(plain).ok()?;
+                encoder.finish().ok()?
+            }
+            RequestCodec::Zstd => zstd::stream::encode_all(plain, ZSTD_LEVEL).ok()?,
+        };
+        (encoded.len() < plain.len()).then_some(encoded)
+    }
+
+    fn token(&self) -> &'static str {
+        match self.compression.codec {
+            RequestCodec::Gzip => "gzip",
+            RequestCodec::Zstd => "zstd",
+        }
+    }
+}
+
+/// One JSON post in flight, owning all it sends.
+type Sending = Pin<Box<dyn Future<Output = Result<reqwest::Response, reqwest::Error>> + Send>>;
 
 impl ProviderHttp {
     /// Builds the client. A configured `key_env` that is unset or empty is a
@@ -145,6 +213,12 @@ impl ProviderHttp {
             client,
             bare,
             base_url: provider.base_url.clone(),
+            compression: provider.request_compression.map(|compression| {
+                Arc::new(Compressor {
+                    compression,
+                    on: AtomicBool::new(true),
+                })
+            }),
         })
     }
 
@@ -168,20 +242,60 @@ impl ProviderHttp {
                 .strip_suffix("/v1")
                 .unwrap_or(&self.base_url)
                 .to_owned(),
+            compression: self.compression.clone(),
         }
     }
 
-    fn post(
-        &self,
-        path: &str,
-        headers: &BTreeMap<String, String>,
-        body: &JsonValue,
-    ) -> reqwest::RequestBuilder {
-        let mut request = self.client.post(self.url(path)).json(body);
+    fn request(&self, path: &str, headers: &BTreeMap<String, String>) -> reqwest::RequestBuilder {
+        let mut request = self.client.post(self.url(path));
+        if !headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("content-type"))
+        {
+            request = request.header(reqwest::header::CONTENT_TYPE, "application/json");
+        }
         for (name, value) in headers {
             request = request.header(name, value);
         }
         request
+    }
+
+    /// Posts `body` as JSON, compressed when this provider's route takes it
+    /// (ARCH-0081 §6). A 400 or 415 to a compressed body is sent once more,
+    /// plain; when the plain answer differs, the encoding was the cause and
+    /// compression turns off for this process.
+    fn post(&self, path: &str, headers: &BTreeMap<String, String>, body: &JsonValue) -> Sending {
+        let plain = serde_json::to_vec(body).unwrap_or_default();
+        let request = self.request(path, headers);
+        let encoded = self.compression.as_ref().and_then(|compressor| {
+            Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
+        });
+        let Some((compressor, encoded)) = encoded else {
+            return Box::pin(request.body(plain).send());
+        };
+        let resend = self.request(path, headers);
+        Box::pin(async move {
+            let response = request
+                .header(reqwest::header::CONTENT_ENCODING, compressor.token())
+                .body(encoded)
+                .send()
+                .await?;
+            if !matches!(response.status().as_u16(), 400 | 415) {
+                return Ok(response);
+            }
+            let refused = response.status();
+            drop(response);
+            let response = resend.body(plain).send().await?;
+            if response.status() != refused {
+                compressor.on.store(false, Ordering::Relaxed);
+                tracing::warn!(
+                    status = refused.as_u16(),
+                    codec = compressor.token(),
+                    "a provider refused a compressed request body; sending plain from now on"
+                );
+            }
+            Ok(response)
+        })
     }
 
     pub(super) async fn post_json(
@@ -202,7 +316,7 @@ impl ProviderHttp {
         body: &JsonValue,
         max_bytes: usize,
     ) -> Result<JsonReply, HttpFailure> {
-        let response = self.post(path, headers, body).send().await?;
+        let response = self.post(path, headers, body).await?;
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
         let bytes = bounded_body(response, max_bytes).await?;
@@ -300,8 +414,8 @@ impl ProviderHttp {
         headers: &BTreeMap<String, String>,
         body: &JsonValue,
     ) -> impl Stream<Item = Result<SseItem, HttpFailure>> + Send + 'static {
-        let request = self.post(path, headers, body);
-        futures_util::stream::unfold(SseState::Start(request), next_sse)
+        let sending = self.post(path, headers, body);
+        futures_util::stream::unfold(SseState::Start(sending), next_sse)
     }
 }
 
@@ -347,7 +461,7 @@ pub(super) enum SseItem {
 }
 
 enum SseState {
-    Start(reqwest::RequestBuilder),
+    Start(Sending),
     Reading {
         response: reqwest::Response,
         decoder: SseDecoder,
@@ -359,8 +473,8 @@ enum SseState {
 async fn next_sse(state: SseState) -> Option<(Result<SseItem, HttpFailure>, SseState)> {
     match state {
         SseState::Done => None,
-        SseState::Start(request) => {
-            let response = match request.send().await {
+        SseState::Start(sending) => {
+            let response = match sending.await {
                 Ok(response) => response,
                 Err(error) => return Some((Err(error.into()), SseState::Done)),
             };

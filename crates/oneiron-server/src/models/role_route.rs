@@ -158,11 +158,15 @@ impl ModelRuntime {
     ) -> Result<RoleCall, RoleRefusal> {
         let seat = self.seat(role).ok_or(RoleRefusal::NoSeat)?;
         let route = self.route_role(vault, role, seat)?;
+        let key = ModelTierRef(role_key(role));
         if route.seat_bound {
             // The seat is this call's binding, as a routed seat's is: a
             // purpose default only places a call nothing binds.
-            request.envelope.tier.per_seat = Some(ModelTierRef(role_key(role)));
+            request.envelope.tier.per_seat = Some(key.clone());
         }
+        // Every call of a role names its seat on its usage event, manifest or
+        // not. Under a manifest that names no override: its tier still binds.
+        request.envelope.tier.seat = Some(key);
         request.model = route.model.clone();
         request.envelope.locality = route.locality;
         let request = vault

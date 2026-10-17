@@ -115,6 +115,10 @@ pub struct PermitFacts {
     pub teacher_target: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
+    /// The seat the call was admitted on (its metered seat), so the meter
+    /// can attribute the call to one seat. `None` for a paid connector.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seat: Option<String>,
     /// False when the run's teacher and budget rules do not hold for this
     /// call: a BYO seat, or a T1 key the owner allowed.
     pub rules_enforced: bool,
