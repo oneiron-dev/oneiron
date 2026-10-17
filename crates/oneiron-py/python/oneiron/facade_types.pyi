@@ -3943,6 +3943,8 @@ class DecisionReceipt(TypedDict):
     person: NotRequired[list[PairedReading]]
     time: NotRequired[DecisionTime | None]
     images: NotRequired[list[ImagePin]]
+    think_row: NotRequired[int | None]
+    person_row: NotRequired[int | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
