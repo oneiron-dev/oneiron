@@ -42669,7 +42669,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
       "crate-vis": 9,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -42707,6 +42707,20 @@
      "purpose": "Calibration policy row in trusted Gate manifests",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResponsePairPick"
+     ],
+     "path": "src/skill_optimize/response_pair.rs",
+     "purpose": "The owner's pick between two frozen responses (ARCH-0053 #judge-swap, FIX 2797): which of a blind preference…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -53659,7 +53673,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53913,7 +53927,7 @@
    },
    "over_bar": 179,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3272,
+   "source_files": 3273,
    "test_files": 902
   },
   "oneiron-android": {
