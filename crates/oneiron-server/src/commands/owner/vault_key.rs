@@ -562,7 +562,8 @@ pub(super) fn backup_key(
     pins: Option<Vec<CheckpointSigner>>,
 ) -> anyhow::Result<Option<CheckpointKey>> {
     let opened = |result: oneiron::Result<CheckpointKey>| {
-        result.map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))
+        result
+            .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))
     };
     match (unlock.engine(), pins) {
         (None, None) => Ok(None),
@@ -581,9 +582,9 @@ pub(super) fn backup_key(
             "--unlock {} needs --trust: the checkpoint signers to trust the backup by",
             unlock.name()
         ),
-        (Some(engine), Some(pins)) => {
-            Ok(Some(opened(CheckpointKey::unlock(backup, &engine))?.trusting(pins)))
-        }
+        (Some(engine), Some(pins)) => Ok(Some(
+            opened(CheckpointKey::unlock(backup, &engine))?.trusting(pins),
+        )),
     }
 }
 

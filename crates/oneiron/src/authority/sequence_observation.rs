@@ -111,8 +111,15 @@ pub(super) fn authority_observation_peer_id(signer: &AuthorityKey) -> String {
 /// machine signs in a world names its previous one there, so a later row
 /// that arrives first vouches for the earlier (Astra #1422b F1).
 fn sequence_key(entry: &AuthorityLogEntry) -> String {
-    let peer = authority_observation_peer_id(entry.signer_key());
-    match super::world_privacy::side_world(&entry.op) {
+    sequence_key_of(
+        entry.signer_key(),
+        super::world_privacy::side_world(&entry.op),
+    )
+}
+
+fn sequence_key_of(signer: &AuthorityKey, world: Option<crate::EntityId>) -> String {
+    let peer = authority_observation_peer_id(signer);
+    match world {
         None => peer,
         Some(world) => format!("{peer}:{}", world.to_hex()),
     }
@@ -152,14 +159,35 @@ pub(super) fn authority_local_observations_in_txn(
     txn: &heed::RoTxn<'_>,
     entries: &[AuthorityLogEntry],
 ) -> Result<AuthorityLocalObservations> {
+    let rows = entries
+        .iter()
+        .map(|entry| {
+            Ok(super::fold_resume::RowMeta::of(
+                Some(authority_entry_hash(entry)?),
+                entry,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    authority_local_observations_of_rows_in_txn(store, txn, &rows)
+}
+
+/// [`authority_local_observations_in_txn`] over the rows' metadata: each
+/// row's hash, signer, world and sequence are all its receipts key on.
+pub(super) fn authority_local_observations_of_rows_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    rows: &[super::fold_resume::RowMeta<'_>],
+) -> Result<AuthorityLocalObservations> {
     let mut sequence_floors = BTreeMap::new();
-    for entry in entries {
-        let hash = authority_entry_hash(entry)?;
-        let current = SEQ_HWM.get(store, txn, &sequence_key(entry))?;
+    for row in rows {
+        let hash = row
+            .hash
+            .ok_or(Error::CorruptedIndex("authority entry hash"))?;
+        let current = SEQ_HWM.get(store, txn, &sequence_key_of(row.signer, row.world))?;
         let receipt = SEQ_OBSERVATION.get(store, txn, &receipt_key(&hash))?;
         let floor = match receipt {
             Some(SequenceReceipt(observed)) => {
-                if current.is_none_or(|current| current < entry.seq)
+                if current.is_none_or(|current| current < row.seq)
                     || observed.is_some_and(|floor| current.is_none_or(|now| floor > now))
                 {
                     return Err(Error::CorruptedIndex("authority sequence high-water mark"));

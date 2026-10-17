@@ -209,7 +209,9 @@ pub(super) fn validate_task_create_in(
     }
     // OF-543: placed once, here at the only door to a TASK write, against
     // the tree in force (OF-541: data inside the team-shape skill, the
-    // brief's project fork when it has one); unsure lands on the root.
+    // brief's project fork when it has one); unsure lands on the root. This
+    // runs in the caller's snapshot, where no model call may hold it, so
+    // the placement skill's rule rung reads alone.
     let kind_for_hint = spec.kind.unwrap_or(TaskKind::Standard);
     let project = spec.brief.as_ref().and_then(|brief| brief.project_ref);
     let mut placement_request = crate::task_type::PlacementRequest::new(spec.label.clone(), None);
@@ -221,7 +223,7 @@ pub(super) fn validate_task_create_in(
     }
     let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, txn, project)?;
     let type_ref =
-        crate::task_type::ensure_type_ref(&tree, spec.type_ref.as_ref(), &placement_request);
+        crate::task_type::ensure_type_ref(&tree, spec.type_ref.as_ref(), &placement_request, None);
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,

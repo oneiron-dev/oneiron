@@ -109,14 +109,16 @@ impl NativeMailPack {
     )> {
         vault.require_builtin_channel_pack("native_mail")?;
         self.validate_intent(intent)?;
-        let row = vault
-            .get_channel_identity(&intent.identity_id)?
+        // The admitted identity is compared against its facts, read from its
+        // `channel_identity.*` heads (OF-272), not the row's own copy.
+        let facts = vault
+            .channel_identity_facts(&intent.identity_id)?
             .ok_or(Error::EntityNotFound)?;
-        if row.state() != ChannelIdentityState::PendingFulfillment
-            || row.address_or_handle() != intent.identity.address_or_handle()
-            || row.binding() != intent.identity.binding()
-            || row.pending_fulfillment() != Some(intent.fulfillment_mode)
-            || actor.actor_entity_ref != row.binding().actor_ref()
+        if facts.state != ChannelIdentityState::PendingFulfillment
+            || facts.address_or_handle != intent.identity.address_or_handle()
+            || facts.binding != intent.identity.binding()
+            || facts.pending_fulfillment.as_deref() != Some(intent.fulfillment_mode.as_str())
+            || actor.actor_entity_ref != facts.binding.actor_ref()
         {
             return Err(Error::InvalidConfig(
                 "native mail fulfillment differs from admitted identity".into(),

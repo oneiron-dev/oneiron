@@ -267,19 +267,17 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     // owner names another unlock and the signers to trust.
     let keystore = config.keystore.open(&config.vault_path)?;
     let unlock = vault_key::HostUnlock::read(&args, backup)?;
-    let pins = args.trust.as_deref().map(vault_key::read_pins).transpose()?;
+    let pins = args
+        .trust
+        .as_deref()
+        .map(vault_key::read_pins)
+        .transpose()?;
     if !args.rehearse && !config.vault_path.join("data.mdb").exists() {
         return emit(&vault_key::restore_fresh(
             backup, &config, keystore, &unlock, pins,
         )?);
     }
-    let key = vault_key::backup_key(
-        backup,
-        &config.vault_path,
-        keystore.as_ref(),
-        &unlock,
-        pins,
-    )?;
+    let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), &unlock, pins)?;
     if args.rehearse {
         // Read off the disk, beside a `serve` that may hold the vault.
         let mut source =
@@ -299,12 +297,7 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         Some(key) => {
             backup::restore_over_keyed(backup, &config.vault_path, vault_config(&config), key)?
         }
-        None => backup::restore_over(
-            backup,
-            &config.vault_path,
-            vault_config(&config),
-            keystore,
-        )?,
+        None => backup::restore_over(backup, &config.vault_path, vault_config(&config), keystore)?,
     })
 }
 
