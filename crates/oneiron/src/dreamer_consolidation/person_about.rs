@@ -65,6 +65,17 @@ struct PersonAbout {
     /// One line per band that has facts, lowest band first.
     lines: Vec<AboutLine>,
     at: u64,
+    /// The lines the Dreamer's newest landing replaced, kept so the owner
+    /// can revert it (owner ruling 10-18: each Dreamer change revertible).
+    previous: Option<PriorAbout>,
+}
+
+/// One landing's before-image: the lines and the facts they stood on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PriorAbout {
+    written: [u8; 32],
+    lines: Vec<AboutLine>,
+    at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,6 +214,7 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
                 row.written = *digest;
                 row.lines.clear();
                 row.at = now;
+                row.previous = None;
             } else {
                 DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
                     txn,
@@ -227,6 +239,43 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
     })?;
     vault.store.notify_attempt_observers();
     Ok(())
+}
+
+/// The owner's revert of the Dreamer's newest `about` landing for `person`:
+/// the lines it replaced stand again on the facts they were written from,
+/// so the board shows them only while those facts hold, and the Dreamer
+/// writes again once the facts move. `false` when no landing is kept to
+/// revert.
+pub(super) fn revert_person_about_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    person: EntityId,
+) -> Result<bool> {
+    let Some(mut row) = PERSON_ABOUT.get(&vault.store, txn, &person)? else {
+        return Ok(false);
+    };
+    let Some(prior) = row.previous.take() else {
+        return Ok(false);
+    };
+    row.written = prior.written;
+    row.lines = prior.lines;
+    row.at = prior.at;
+    PERSON_ABOUT.put(&vault.store, txn, &person, &row)?;
+    Ok(true)
+}
+
+/// Each person whose newest `about` landing the owner may revert, with when
+/// it landed.
+pub(super) fn revertible_person_abouts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, u64)>> {
+    Ok(PERSON_ABOUT
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .filter(|(_, row)| row.previous.is_some())
+        .map(|(person, row)| (person, row.at))
+        .collect())
 }
 
 impl Vault {
@@ -489,8 +538,12 @@ impl<E> PersonAboutExecutor<'_, E> {
             let mut row = PERSON_ABOUT
                 .get(&ctx.vault.store, txn, &person)?
                 .unwrap_or_default();
+            row.previous = Some(PriorAbout {
+                written: row.written,
+                lines: std::mem::replace(&mut row.lines, lines),
+                at: row.at,
+            });
             row.written = digest;
-            row.lines = lines;
             row.at = at;
             PERSON_ABOUT.put(&ctx.vault.store, txn, &person, &row)
         })?;

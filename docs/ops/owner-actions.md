@@ -580,6 +580,30 @@ The Dreamer's nightly strength archive works the same way: it archives a quiet g
 of its own at once, keeps the scored snapshot and leaves one receipt naming the claim, and
 `/v1/owner/cleanup/restore` brings it back.
 
+## Revert anything the Dreamer changed
+
+The Dreamer applies its own work at once and keeps what it replaced as history. You take any one
+change back:
+
+- `GET /v1/owner/dreamer/changes` (optionally `?limit=<n>`): the Dreamer's standing changes,
+  newest first, each with its id, its kind (`claim`, `settlement`, `summary` or `note`), the
+  claim's predicate or the note's kind, and when it landed. The list reads the vault's newest
+  20,000 rows. `people_about` names each person whose newest `about` line the Dreamer wrote.
+- `POST /v1/owner/dreamer/revert` with `{"change": "<32 hex>"}` reverts it, with one receipt:
+  - a claim (a promotion, a merged replacement, a nightly same-as, conflict or arc output) is
+    retracted, and each claim it superseded stands again, as in a settlement's revert. The
+    answers it gave the conflicts its correction closed, and its supersession record, are
+    retracted with it, so those conflicts are open again for you.
+  - a settlement's `conflict.resolved` answer reverts exactly as `/conflicts/revert` does.
+  - a scope summary is archived; the summary it replaced is current again, and the header that
+    announced it on the asking turn is retracted.
+  - a note the Dreamer wrote to answer a task is archived. The task stays done.
+  - a person's id puts back the `about` lines the Dreamer's newest pass replaced. A line shows
+    only while the facts it was written from still hold; the Dreamer writes again once they move.
+
+  The reply lists what was retracted, reopened, restored, copied, left closed, archived and made
+  current again. An archived summary or note comes back through `/v1/owner/cleanup/restore`.
+
 ## Review cleanup
 
 The cleanup job files away husks: a person an extraction minted and never learned anything
