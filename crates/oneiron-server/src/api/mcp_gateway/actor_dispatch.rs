@@ -72,7 +72,12 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     )
     .map_err(|_| mcp_proof_error())?;
     mcp_proof_admits(server, &actor, &auth)?;
-    actor.auth = Some(auth.at(locality));
+    // OF-063 (FIX 1668): its handles act inside the session the request
+    // names, as an HTTP caller's do.
+    actor.auth = Some(
+        auth.at(locality)
+            .in_off_record_session(crate::api::call_receipt::request_session_ref(headers)),
+    );
     // Where this request's writes land, judged once from the session it
     // names (owner ruling FACET-READ).
     let session = crate::api::write_facet::request_session(headers).map_err(|()| {
@@ -84,6 +89,17 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         &actor.scope.facets,
         actor.scope.facet_ref,
     );
+    let room_turn = headers
+        .get(crate::api::facade::ROOM_TURN_HEADER)
+        .map(|room| {
+            room.to_str()
+                .ok()
+                .and_then(|room| oneiron::EntityId::from_hex(room.trim()).ok())
+                .ok_or_else(|| {
+                    McpGatewayError::new(-32602, "tool_args_invalid", "invalid room turn header")
+                })
+        })
+        .transpose()?;
     Ok(McpCallContext {
         actor,
         mode,
@@ -92,6 +108,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         invocation: None,
         off_record_session: crate::api::call_receipt::request_session_ref(headers)
             .map(str::to_owned),
+        room_turn,
         drain: None,
     })
 }

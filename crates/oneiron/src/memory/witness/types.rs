@@ -110,6 +110,25 @@ pub struct WitnessTurn {
     /// Unix seconds; used for both `occurred` and `learned_at` so
     /// migration backfill stays deterministic.
     pub occurred_at: u64,
+    /// The records this reply names as cited or created (OF-063). Each is
+    /// judged by its `id` through the writer's own read lane in the write
+    /// txn, before anything stages; one the writer cannot read refuses the
+    /// whole turn. Absent ⇒ the reply asserts nothing.
+    #[serde(default)]
+    pub assertions: WitnessAssertions,
+}
+
+/// The typed record assertions one witnessed reply makes (OF-063). Both
+/// lists name records that already exist: `created` claims no authorship
+/// the engine checks, only that the writer can read what it names. `kind`,
+/// `short_id` and `label` are display only; the `id` is what is admitted.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WitnessAssertions {
+    /// Records the reply cites.
+    pub cited: Vec<crate::lens::RecordRef>,
+    /// Records the reply reports it created.
+    pub created: Vec<crate::lens::RecordRef>,
 }
 
 /// Receipt for one witnessed turn.

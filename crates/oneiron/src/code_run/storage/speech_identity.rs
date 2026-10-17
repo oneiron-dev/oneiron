@@ -176,6 +176,7 @@ pub(super) fn canonical_witness_executor_turn(
                     order,
                 }],
                 occurred_at,
+                assertions: Default::default(),
             },
             None,
         )
