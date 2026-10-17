@@ -1048,9 +1048,17 @@ language_hints = ["ja", "en"]   # the default; config replaces it
   reply.
 - At 10 minutes of audio the socket ends, and the next one opens on a fresh
   lease. Words finalized before the switch stay in the utterance still open.
-- A live failure ends the call. A failure here means the socket fails or
-  closes early, Soniox reports an error, or more than 4 MiB queues. Nothing
-  falls back to batch transcription.
+- A socket that drops is reconnected once, on a fresh lease. A drop means
+  the socket fails or closes early, or Soniox reports error 408, 500, 502,
+  503 or 504. The words already final stay in the utterance still open, and
+  audio not yet sent goes to the new socket. A cut whose `<fin>` never came
+  is answered with the words already final. Words Soniox had heard but not
+  made final are lost. A second drop before the new socket answers fails
+  the hearing.
+- A live failure ends the call. A failure here means a drop that the
+  reconnect did not clear, any other Soniox error, a frame that does not
+  parse, or more than 4 MiB queued. Nothing falls back to batch
+  transcription.
 
 ### Lazy images and `ask_image`
 

@@ -59,6 +59,16 @@ impl<T: SonioxTransport> SonioxAsrClient<T> {
     pub fn finalizing(&self) -> bool {
         self.finalizing > 0
     }
+    /// After the socket dropped: the words made final that no `<fin>` or
+    /// `finished` handed back, and how many finalizes never got their
+    /// `<fin>`. The stream hears nothing more.
+    pub fn dropped(&mut self) -> (Vec<AsrToken>, usize) {
+        self.ended = true;
+        (
+            std::mem::take(&mut self.committed),
+            std::mem::take(&mut self.finalizing),
+        )
+    }
     /// Receive a provider WebSocket JSON frame outside session state. Final
     /// tokens accumulate until `<fin>` or `finished`; non-final tokens are
     /// replacement hypotheses.

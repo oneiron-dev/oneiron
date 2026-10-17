@@ -54,7 +54,8 @@ pub(super) const HEARD_REVISION: u64 = 1;
 
 /// What a live hearing's failure does to the call: its socket, its queue,
 /// a frame that does not parse, or a provider error (CALLS.md: OF-410
-/// Soniox).
+/// Soniox). A dropped socket is reconnected once before it fails
+/// (`models/soniox.rs`).
 pub(super) const LIVE_ASR_FAILURE: LiveAsrFailure = LiveAsrFailure::EndCall;
 
 /// The policies a live hearing's failure may follow.
