@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 187 facade rows, 666 declarations.
-Inputs: 164 of 187 fully typed, 22 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 153 of 187 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 39; unread shapes: 1.
+Census: 195 facade rows, 691 declarations.
+Inputs: 170 of 195 fully typed, 24 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 161 of 195 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 40; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -46,10 +46,16 @@ class ReportReceipt(TypedDict):
 class DiaryEntryRequest(TypedDict):
     content: str
     kind: NotRequired[str | None]
+class RecordRef(TypedDict):
+    kind: str
+    id: str
+    short_id: NotRequired[str | None]
+    label: str
 class DiaryEntryReceipt(TypedDict):
     entry_id: str
     entry_ref: str
     receipt_ref: str
+    record: NotRequired[RecordRef | None]
 class DiaryReadsRequest(TypedDict):
     limit: NotRequired[int | None]
 EntityId = str
@@ -105,6 +111,34 @@ class IdentityActNowNeedsPerson(TypedDict):
     ask: str
     card: Any
 IdentityActNow = IdentityActNowSettled | IdentityActNowUnknown | IdentityActNowDeciding | IdentityActNowNeedsPerson
+class InboxListRequest(TypedDict):
+    after: NotRequired[str | None]
+    limit: NotRequired[int | None]
+NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask"]
+class NotificationSource(TypedDict):
+    producer: str
+    event: str
+    job_kind: NotRequired[str | None]
+    attempt: NotRequired[str | None]
+    run: NotRequired[str | None]
+    result: NotRequired[str | None]
+class NotificationRow(TypedDict):
+    id: str
+    learned_at: int
+    kind: NotificationKind
+    source: NotificationSource
+    subject_refs: list[str]
+    created_at: int
+    origin_conversation: NotRequired[str | None]
+    seen: bool
+    acked: bool
+class NotificationPage(TypedDict):
+    rows: list[NotificationRow]
+    next_after: NotRequired[str | None]
+NotificationMark = Literal["seen", "acked"]
+class InboxMarkRequest(TypedDict):
+    notification_ref: str
+    mark: NotificationMark
 class ConcernCardRequest(TypedDict):
     card: str
 AgentHealthSignal = Literal["loop", "failed_check_repeat", "cost_spike", "long_wait", "silent", "duplicate_work", "unsupported_done", "misalignment"]
@@ -263,11 +297,6 @@ class MessagePersonRequest(TypedDict):
     pr: str
     text: str
     mention: NotRequired[MentionProvenance | None]
-class RecordRef(TypedDict):
-    kind: str
-    id: str
-    short_id: NotRequired[str | None]
-    label: str
 class WitnessReceipt(TypedDict):
     turn_short_id: str
     message_short_ids: list[str]
@@ -436,6 +465,8 @@ class TaskCreateReceipt(TypedDict):
     approval: ClaimApprovalStatus
     effected: bool
     route: NotRequired[TaskRouteOutcome | None]
+    task_record: NotRequired[RecordRef | None]
+    proposal_record: NotRequired[RecordRef | None]
 class TaskUpdateRequest(TypedDict):
     task_ref: str
     resultRef: NotRequired[str | None]
@@ -2348,6 +2379,21 @@ class RoomRequest(TypedDict):
     room_ref: str
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
+class QuoteAnchorDocument(TypedDict):
+    anchor: Literal["document"]
+    message: EntityId
+    citation: EntityId
+class QuoteAnchorBody(TypedDict):
+    anchor: Literal["body"]
+    message: EntityId
+    body_hash: str
+    start: int
+    end: int
+    quote_hash: str
+QuoteAnchor = QuoteAnchorDocument | QuoteAnchorBody
+class RoomQuote(TypedDict):
+    target_turn: EntityId
+    anchor: QuoteAnchor
 class RoomTurn(TypedDict):
     turn_id: str
     room_id: str
@@ -2359,6 +2405,7 @@ class RoomTurn(TypedDict):
     at: int
     task_ids: NotRequired[list[str]]
     converted_project: NotRequired[str | None]
+    quote: NotRequired[RoomQuote | None]
 class RoomPage(TypedDict):
     rows: list[RoomTurn]
     next_after: NotRequired[str | None]
@@ -3134,6 +3181,60 @@ class QuestionReadRequest(TypedDict):
     version: NotRequired[int | None]
 class QuestionAnswersRequest(TypedDict):
     id: EntityId
+class DecisionAskAnswerRequest(TypedDict):
+    seq: int
+    answer: DecisionAnswer
+class AskPrior(TypedDict):
+    answer: DecisionAnswer
+    probability: NotRequired[float | None]
+    provider: ProviderPin
+    paired: NotRequired[PairedReading | None]
+    person: NotRequired[PairedReading | None]
+class AskRoleResponsible(TypedDict):
+    role: Literal["responsible"]
+    actor: str
+    project: NotRequired[str | None]
+class AskRoleBoard(TypedDict):
+    role: Literal["board"]
+    project: str
+class AskRoleOwner(TypedDict):
+    role: Literal["owner"]
+AskRole = AskRoleResponsible | AskRoleBoard | AskRoleOwner
+RoleRank = Literal["responsible", "board", "owner"]
+AskAct = Literal["judgment", "e_signature", "payment"]
+class AskTo(TypedDict):
+    role: AskRole
+    ceiling: RoleRank
+    act: AskAct
+HolderKind = Literal["person", "agent"]
+class RoleHolder(TypedDict):
+    actor: str
+    kind: HolderKind
+class ResolvedRole(TypedDict):
+    role: AskRole
+    holders: list[RoleHolder]
+class AskAnswer(TypedDict):
+    answer: DecisionAnswer
+    answered_at: int
+    by: str
+    role: AskRole
+    kind: HolderKind
+    changed: bool
+class DecisionAsk(TypedDict):
+    seq: int
+    id: str
+    asked_at: int
+    question: DecisionQuestion
+    principal: str
+    evidence: list[str]
+    reason: HumanAskReason
+    prior: NotRequired[AskPrior | None]
+    queue_pin: ProviderPin
+    to: AskTo
+    role: NotRequired[ResolvedRole | None]
+    answer: NotRequired[AskAnswer | None]
+class DecisionAskClimbRequest(TypedDict):
+    seq: int
 class ConnectorListRequest(TypedDict):
     query: NotRequired[str | None]
 class ConnectorEntry(TypedDict):
@@ -3305,6 +3406,28 @@ class ReadBlobVersionRequest(TypedDict):
     version: int
 class BlobContent(TypedDict):
     content_base64: str
+class ConsolidationEnqueueRequest(TypedDict):
+    scope: str
+    input: Any
+    run_id: NotRequired[str | None]
+    dedupe_key: NotRequired[str | None]
+    now: NotRequired[int | None]
+class DreamerAttemptRef(TypedDict):
+    job_ref: str
+    state: str
+    existing: bool
+class ConsolidationStatusRequest(TypedDict):
+    job_ref: str
+class DreamerAttemptView(TypedDict):
+    job_ref: str
+    state: str
+    kind: str
+    lease_owner: NotRequired[str | None]
+    attempt_count: int
+    run_id: NotRequired[str | None]
+    last_error: NotRequired[str | None]
+    created_at: int
+    updated_at: int
 class OutboundScheduleRequest(TypedDict):
     verb: str
     channel: str
