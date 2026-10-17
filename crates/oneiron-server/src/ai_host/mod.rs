@@ -82,6 +82,12 @@ const DREAMER_ROLE: ModelRole = ModelRole::DreamerCurrent;
 pub(crate) const CHAT_ROLE: ModelRole = ModelRole::GenerativeReasoner;
 /// How long shutdown lets running chat turns finish before stopping them.
 const TURN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+/// How the host words the house mind's project question (OF-501).
+const PROJECT_DETECTION_WORDING: &str = "Does this message start or describe a piece of work \
+with its own goal that will take more than one sitting, worth tracking as a project? \
+Answer no for a passing question, a chat or a single task.";
+/// What one project question may spend on the host's ladder.
+const PROJECT_DETECTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// What request handlers need: seats, status and the session-hint producer.
 /// Cheap to clone; inert when nothing is configured.
@@ -101,7 +107,8 @@ pub struct AiHandle {
     /// The running Dreamer has a summary instruction to write bodies with.
     summaries: bool,
     /// The server's decision host, set once the server staffs it: the
-    /// Dreamer's passes ask their typed questions through it.
+    /// Dreamer's passes ask their typed questions through it, and the
+    /// workflow pump rules on a wave cut's fan-out through it.
     decisions: Arc<OnceLock<DecisionHost>>,
 }
 
@@ -431,13 +438,25 @@ impl AiHost {
         let server = server
             .with_ai(host.handle.clone())
             .with_decision_config(models);
-        // The Dreamer started before the server staffed its ladder; its next
-        // pass asks through it.
+        // The Dreamer and the workflow pump started before the server
+        // staffed its ladder; the Dreamer's next pass and the pump's next
+        // wave cut ask through it.
         let _ = host.handle.decisions.set(server.decision_host().clone());
-        // So did the workflow pump: from its next leaf on, a leaf that ran is
-        // judged on its execution context through the same ladder (OF-540).
+        // From the pump's next leaf on, a leaf that ran is judged on its
+        // execution context through the same ladder (OF-540).
         if let Some(pump) = &host.workflows {
             pump.with_attribution_ladder(server.decision_host().ladder().clone());
+            // And each queued project question runs on it from the next pass
+            // (OF-501), up to the big rung: the card it drafts is the
+            // person's ask, so the ladder queues none of its own.
+            let decisions = server.decision_host();
+            pump.with_project_detection(oneiron::agent_dispatch::ProjectDetection {
+                ladder: decisions.ladder().clone(),
+                dial: decisions.dial(oneiron::llm::decision::DecisionRung::Big),
+                bands: decisions.bands(),
+                wording: PROJECT_DETECTION_WORDING.to_owned(),
+                budget: PROJECT_DETECTION_BUDGET,
+            });
         }
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server =
@@ -531,7 +550,13 @@ impl AiHost {
             }
             Err(reason) => status.update(|status| status.dreamer = WorkStatus::idle(reason)),
         }
-        match start_workflows(&vault, &runtime, models, &status) {
+        match start_workflows(
+            &vault,
+            &runtime,
+            models,
+            &status,
+            Arc::clone(&handle.decisions),
+        ) {
             Ok(pump) => host.workflows = Some(pump),
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
         }
@@ -858,6 +883,7 @@ fn start_workflows(
     runtime: &Arc<ModelRuntime>,
     models: &ModelsConfig,
     status: &Arc<StatusCell>,
+    decisions: Arc<OnceLock<DecisionHost>>,
 ) -> Result<WorkflowPump, IdleReason> {
     if !models.workflows.enabled {
         return Err(IdleReason::Disabled);
@@ -874,6 +900,7 @@ fn start_workflows(
             spent: Default::default(),
         },
         Arc::clone(status),
+        decisions,
     )
     .map_err(|error| {
         tracing::error!(%error, "workflow pump failed to start");

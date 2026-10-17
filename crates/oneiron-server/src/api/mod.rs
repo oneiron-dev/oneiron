@@ -61,6 +61,8 @@ use axum::http::HeaderMap;
 pub(crate) mod ai;
 mod anonymous_chat;
 mod artifacts;
+// OF-469: a kept authority checkpoint and its attestations, for adoption.
+mod authority_checkpoint;
 // OF-511: the artifact family's contract routes (versions, made_by, born-from,
 // export, proposals, Keep/Discard/Undo).
 mod blob_artifacts;
@@ -399,6 +401,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/v1/core/pairing/redeem", post(pairing::redeem))
         .route("/v1/core/pairing/oauth", post(pairing::oauth_exchange))
         .route("/v1/core/slips/revoke", post(pairing::revoke))
+        .route(
+            "/v1/core/authority/checkpoints/{id}",
+            get(authority_checkpoint::bundle),
+        )
         .merge(artifact_routes())
         // ONE-1704: two SEPARATELY REGISTERED MCP endpoints, each pinned to one
         // immutable surface mode by its route entry. Nothing on the wire moves a

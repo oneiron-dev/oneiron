@@ -82,33 +82,7 @@ impl Vault {
         key_spec: ConnectorKeySpec,
         registered_at: u64,
     ) -> Result<(EntityId, ConnectorKeyRecord)> {
-        let mut entry = entry;
-        entry.name = normalize_connector_key(&entry.name);
-        entry.connector = normalize_connector_key(&entry.connector);
-        entry.registered_at = registered_at;
-        entry.validate()?;
-
-        let mut record = ConnectorKeyRecord::active(
-            normalize_connector_key(&key_spec.connector),
-            key_spec.actor_entity_ref,
-            key_spec.budgets,
-            registered_at,
-        );
-        normalize_budget_channel_classes(&mut record.budgets);
-        record.secret_ref = key_spec.secret_ref;
-        record.status = ConnectorKeyStatus::Pending;
-        record.consent_required = true;
-        record.slate_ref = key_spec.slate_ref;
-        record.protocol_revision = key_spec.protocol_revision;
-        record.catalog = Some(entry);
-        if record.slate_ref.is_none() || record.protocol_revision.is_none() {
-            return Err(invalid_body(
-                "catalog registration requires slate and protocol revision",
-            ));
-        }
-        // `validate` binds the entry to the key: a catalog naming a different
-        // connector than the key governs is rejected here, pre-write.
-        record.validate()?;
+        let record = catalog_key_record(entry, key_spec, registered_at)?;
 
         let id = self.store.clock.entity_id()?;
         let mut wtxn = self.store.env.write_txn()?;
@@ -333,4 +307,42 @@ fn scoped_grant_matches(
         .scope
         .scoped_mcp_grant()
         .is_some_and(|scope| scope.server == capability.server()))
+}
+
+/// The Pending catalog key a registration mints for `entry` and `key_spec`,
+/// validated before any transaction opens. The one construction the catalog
+/// doors share.
+pub(super) fn catalog_key_record(
+    entry: ConnectorCatalogEntry,
+    key_spec: ConnectorKeySpec,
+    registered_at: u64,
+) -> Result<ConnectorKeyRecord> {
+    let mut entry = entry;
+    entry.name = normalize_connector_key(&entry.name);
+    entry.connector = normalize_connector_key(&entry.connector);
+    entry.registered_at = registered_at;
+    entry.validate()?;
+
+    let mut record = ConnectorKeyRecord::active(
+        normalize_connector_key(&key_spec.connector),
+        key_spec.actor_entity_ref,
+        key_spec.budgets,
+        registered_at,
+    );
+    normalize_budget_channel_classes(&mut record.budgets);
+    record.secret_ref = key_spec.secret_ref;
+    record.status = ConnectorKeyStatus::Pending;
+    record.consent_required = true;
+    record.slate_ref = key_spec.slate_ref;
+    record.protocol_revision = key_spec.protocol_revision;
+    record.catalog = Some(entry);
+    if record.slate_ref.is_none() || record.protocol_revision.is_none() {
+        return Err(invalid_body(
+            "catalog registration requires slate and protocol revision",
+        ));
+    }
+    // `validate` binds the entry to the key: a catalog naming a different
+    // connector than the key governs is rejected here, pre-write.
+    record.validate()?;
+    Ok(record)
 }
