@@ -788,6 +788,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             })
         },
     );
+    // The nightly Coach jobs that need the host's model or rules (OF-420).
+    let coach_host = crate::ai_host::coach_host::spawn(&sync_server);
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -816,6 +818,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let _ = connector_sends.await;
     builtin_host.abort();
     let _ = builtin_host.await;
+    coach_host.abort();
+    let _ = coach_host.await;
     if let Some(failure_signals) = failure_signals {
         failure_signals.abort();
         let _ = failure_signals.await;
