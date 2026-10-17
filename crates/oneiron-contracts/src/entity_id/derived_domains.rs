@@ -177,7 +177,7 @@ pub const SIDE_ROW_MASK: &[u8] = b"oneiron.side_row.mask.v1\0";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 43] = [
+pub(crate) const ALL: [&[u8]; 44] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
