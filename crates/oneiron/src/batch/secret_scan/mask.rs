@@ -20,6 +20,7 @@
 //! custody records.
 
 pub(super) mod admit;
+pub(super) mod carrier;
 pub(super) mod side_row;
 
 use std::collections::HashMap;
@@ -152,6 +153,31 @@ pub(in crate::batch) fn mask_batch_ops(
         text_index_trusted,
     };
     let minted = plan.mint(&write, wtxn, at)?;
+    put_file_marks_in_txn(store, wtxn, files, &minted, at)?;
+    Masker {
+        handles: minted
+            .into_iter()
+            .map(|(value, (handle, _))| (value, handle))
+            .collect(),
+        minted: true,
+        kept,
+        known,
+        ..Masker::default()
+    }
+    .mask_ops(ops)?;
+    Ok(masked)
+}
+
+/// Records each file `files` marks: each key's span, in the file's bytes or
+/// in the member that holds it, with the custody record `minted` holds it in
+/// or the record custody held it in before, and the file's band.
+fn put_file_marks_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    files: Vec<FoundFile>,
+    minted: &HashMap<Vec<u8>, (String, EntityId)>,
+    at: u64,
+) -> Result<()> {
     for file in files {
         let mut mark = MaskedFile {
             band: MASKED_FILE_BAND,
@@ -194,18 +220,7 @@ pub(in crate::batch) fn mask_batch_ops(
         }
         put_masked_file_in_txn(store, wtxn, &file.hash, &mark)?;
     }
-    Masker {
-        handles: minted
-            .into_iter()
-            .map(|(value, (handle, _))| (value, handle))
-            .collect(),
-        minted: true,
-        kept,
-        known,
-        ..Masker::default()
-    }
-    .mask_ops(ops)?;
-    Ok(masked)
+    Ok(())
 }
 
 /// The record a batch op writes, as the mask's places name it.

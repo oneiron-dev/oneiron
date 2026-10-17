@@ -6,7 +6,8 @@
 //! nothing yet. The vault's own rows win after that: a space the owner door
 //! changed, or a slot a version move swapped, is left as it is. A listed
 //! space the vault holds at another width stops serve, since a new width is a
-//! new space.
+//! new space. A replica of a vault another machine started seeds nothing: its
+//! setup is that vault's rows, even none.
 //!
 //! ```toml
 //! [[embedding.spaces]]
@@ -90,8 +91,11 @@ impl EmbeddingConfig {
 
     /// Declares the listed spaces the vault does not hold, then binds the
     /// listed slots it binds to nothing and no open move carries. Runs
-    /// before the listener binds.
+    /// before the listener binds. On a replica
+    /// ([`oneiron::sync::residence::synced_as_replica`]) it only checks the
+    /// listed widths: rows it seeded would contend with the home's.
     pub fn apply_to(&self, vault: &Vault) -> anyhow::Result<()> {
+        let replica = oneiron::sync::residence::synced_as_replica(vault)?;
         let held = vault.embedding_spaces()?;
         for space in &self.spaces {
             match held.iter().find(|held| held.id == space.id) {
@@ -102,11 +106,16 @@ impl EmbeddingConfig {
                     held.dimensions
                 ),
                 Some(_) => {}
+                None if replica => {}
                 None => {
                     vault.declare_embedding_space(space.clone())?;
                     tracing::info!(space = %space.id, "embedding space declared from [embedding]");
                 }
             }
+        }
+        if replica {
+            tracing::info!("[embedding] seeds nothing on a replica; the vault's own rows stand");
+            return Ok(());
         }
         let bound = vault.kind_slot_bindings()?;
         let moving: BTreeSet<InputKind> = vault

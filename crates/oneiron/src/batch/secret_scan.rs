@@ -11,13 +11,18 @@ pub(crate) use self::container::{
     is_container, is_sealed, masked_copy, scan_members as scan_container_members,
 };
 pub use self::lift_history::{
-    LiftCause, LiftCounts, LiftFamily, LiftTrigger, SecretLiftHistoryProposal, SecretLiftProgress,
-    SecretLiftReceipt, SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner,
+    LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
+    SecretLiftClose, SecretLiftHistoryProposal, SecretLiftProgress, SecretLiftReceipt,
+    SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner,
 };
 pub(crate) use self::lift_history::{enqueue_lift_in_txn, run_lift_pass};
 pub(crate) use self::mask::admit::{
     Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
     scan_document_in_txn,
+};
+pub(crate) use self::mask::carrier::{
+    CarrierText, LiftedKeys, carrier_texts_hit_in_txn, mark_carrier_text_in_txn,
+    mark_carrier_texts_in_txn,
 };
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::mask_origin_in_txn;
