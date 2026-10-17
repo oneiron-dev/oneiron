@@ -170,6 +170,8 @@ fn encode_part(
             media_type,
             image: ImageContent::Url { url },
         } => json!({"fileData":{"mimeType":media_type,"fileUri":url}}),
+        // No audio encoder on this wire yet.
+        ContentPart::Audio { .. } => return Err(FatalLlmError::InvalidRequest.into()),
     })
 }
 pub(super) fn parse_response(body: Value) -> LlmResult<LlmResponse> {
