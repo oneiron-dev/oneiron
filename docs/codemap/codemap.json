@@ -14272,7 +14272,7 @@
      "path": "src/context_board/hook_pins.rs",
      "purpose": "Hook blocks on the board (ARCH-0080 §11, OI-1 = A)",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
