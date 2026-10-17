@@ -73,12 +73,16 @@ pub struct WitnessTurn {
     pub conversation_ref: String,
     /// TURN ref (create-or-get for hex); `None` ⇒ a fresh TURN is created.
     pub turn_ref: Option<String>,
-    /// A quote on a project room's thread reply (OF-460): a scalar span of one
-    /// MESSAGE in the room. The witness proves it in its own write and mints
-    /// the TURN with the engine-issued anchor, the reply pointer to the quoted
-    /// message's TURN and its DAG edges; the reply's thread chain stays its
-    /// own. A stored turn's quote is a birth fact, so a retry carries the same
-    /// one. Absent ⇒ no quote.
+    /// A quote on a room turn (OF-460): a scalar span of one MESSAGE in the
+    /// same room that the speaker's own read admits under the room's, or the
+    /// destination thread's, ceiling; a private thread's MESSAGE only from
+    /// inside that thread. The witness proves it in its own write. A project
+    /// room's thread reply is minted with the engine-issued anchor, the reply
+    /// pointer to the quoted message's TURN and its DAG edges, its thread
+    /// chain its own; a project trunk turn keeps the quote in its room row;
+    /// an ordinary room's turn is minted with the anchor and reply pointer
+    /// alone, no thread. A stored turn's quote is a birth fact, so a retry
+    /// carries the same one. Absent ⇒ no quote.
     #[serde(default)]
     pub quote: Option<crate::conversation_dag::QuoteSpan>,
     /// The audience a project room thread's root names (FIX 2951): room

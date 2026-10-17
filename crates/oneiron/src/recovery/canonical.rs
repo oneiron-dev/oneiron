@@ -914,11 +914,13 @@ pub(crate) fn capture_canonical_window_within(
                 &id(edge.target)?,
                 &edge.value,
             )?
-            && crate::batch::stored_entity_type(&vault.store, &txn, &id(edge.target)?)?
-                != Some(crate::registry::ENTITY_TYPE_PERSON)
+            && !matches!(
+                crate::batch::stored_entity_type(&vault.store, &txn, &id(edge.target)?)?,
+                Some(crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF)
+            )
         {
             return Err(invalid(
-                "retained addressing recipient missing or not a PERSON",
+                "retained addressing recipient missing or not a PERSON or AGENT_DEF",
             ));
         }
     }

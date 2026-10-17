@@ -125,12 +125,16 @@ pub(crate) fn guard_record_put(
         && let Some((_, recipients)) = addressing(body)?
     {
         // Known wrong-kind recipients are a bad carrier now. Unknown ids
-        // remain deferred so an out-of-order peer can deliver PERSON later.
+        // remain deferred so an out-of-order peer can deliver the PERSON or
+        // AGENT_DEF later (FIX 964).
         for recipient in recipients {
-            if crate::batch::stored_entity_type(store, txn, &recipient)?
-                .is_some_and(|kind| kind != crate::registry::ENTITY_TYPE_PERSON)
-            {
-                return Err(invalid("recipient is not a PERSON"));
+            if crate::batch::stored_entity_type(store, txn, &recipient)?.is_some_and(|kind| {
+                !matches!(
+                    kind,
+                    crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF
+                )
+            }) {
+                return Err(invalid("recipient is not a PERSON or AGENT_DEF"));
             }
         }
     }
@@ -526,7 +530,7 @@ pub(crate) fn keep_membership_pin(
 /// Decode the typed record's addressing carrier. Opaque TURNs have no
 /// `dag_kind` and keep their existing unstructured-body admission rules.
 /// Reference existence is not checked here: a peer may deliver the TURN
-/// before its PERSON recipients, reply target, or graph edges.
+/// before its PERSON or AGENT_DEF recipients, reply target, or graph edges.
 pub(crate) fn addressing(body: &[u8]) -> Result<Option<(&'static str, Vec<EntityId>)>> {
     let mut bytes = body;
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
@@ -579,7 +583,7 @@ pub(crate) fn addressing(body: &[u8]) -> Result<Option<(&'static str, Vec<Entity
         for value in list {
             let hex = value
                 .as_str()
-                .ok_or_else(|| invalid("recipient must be a PERSON id"))?;
+                .ok_or_else(|| invalid("recipient must be a PERSON or AGENT_DEF id"))?;
             let id = EntityId::from_hex(hex).map_err(|_| invalid("invalid recipient id"))?;
             if id.to_hex() != hex || !seen.insert(id) {
                 return Err(invalid("duplicate or noncanonical recipient id"));
@@ -635,9 +639,10 @@ pub(crate) fn addressed_to_echo_in_txn(
     let body = raw
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
         .ok_or(Error::CorruptedIndex("addressing source body"))?;
-    if crate::batch::stored_entity_type(store, txn, target)?
-        != Some(crate::registry::ENTITY_TYPE_PERSON)
-    {
+    if !matches!(
+        crate::batch::stored_entity_type(store, txn, target)?,
+        Some(crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF)
+    ) {
         return Ok(false);
     }
     addressed_to_echo(body, header.learned_at, target, fields)
@@ -645,7 +650,8 @@ pub(crate) fn addressed_to_echo_in_txn(
 
 /// Complete addressing indexes when a received/generic typed record first
 /// enters a conversation DAG. The body, not independently supplied edges, is
-/// authority. Missing PERSONs defer adoption; no partial HEAD or edge lands.
+/// authority. Missing PERSON or AGENT_DEF recipients defer adoption; no
+/// partial HEAD or edge lands.
 pub(super) fn reconcile_addressing(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -675,12 +681,7 @@ pub(super) fn reconcile_addressing(
         }
     }
     for recipient in recipients {
-        match super::graph::require_type(
-            &vault.store,
-            txn,
-            &recipient,
-            crate::registry::ENTITY_TYPE_PERSON,
-        ) {
+        match super::graph::require_recipient(&vault.store, txn, &recipient) {
             Ok(_) => {}
             Err(Error::EntityNotFound)
                 if vault.store.port_deletion_state(txn, &recipient)?.deleted =>

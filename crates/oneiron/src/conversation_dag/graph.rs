@@ -91,6 +91,24 @@ pub(crate) fn require_type(
     }
 }
 
+/// A live recipient a record may name in `to` (FIX 964): a PERSON, or an
+/// AGENT_DEF named as itself rather than through a minted PERSON. Naming
+/// one is a label; it grants no read and enrolls no one.
+pub(super) fn require_recipient(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<u8>> {
+    match live_entity_row_in_txn(store, txn, id)? {
+        LiveEntityRow::Live { entity_type, body }
+            if matches!(
+                entity_type,
+                crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF
+            ) =>
+        {
+            Ok(body)
+        }
+        LiveEntityRow::Live { .. } => Err(invalid("recipient is not a PERSON or AGENT_DEF")),
+        _ => Err(Error::EntityNotFound),
+    }
+}
+
 pub(crate) fn actor_in_txn(store: &Store, txn: &RoTxn<'_>, actor: WriteActor) -> Result<()> {
     match live_entity_row_in_txn(store, txn, &actor.entity_ref())? {
         LiveEntityRow::Live { entity_type, .. } => {

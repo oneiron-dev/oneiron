@@ -597,10 +597,12 @@ pub(crate) fn room_roster_in(
 /// Whether `caller` reads `room` as `txn` reads it: a member of the room's
 /// `members`; a person or an agent standing on a live OF-531 Ready join for
 /// the room itself, a person's through its own pen
-/// ([`crate::workspace_roster::room_join_audience_in`], OF-417); or the
-/// room's host, its owner or a delegate (OF-530). A join or host standing
-/// opens the room's reads and takes no seat: the roster, and with it the
-/// audience every disclosure meets, stays the members alone, and the
+/// ([`crate::workspace_roster::room_join_audience_in`], OF-417); one of the
+/// two actors a leader chat binds, while both still lead their projects
+/// ([`crate::workspace_roster::leader_chat_reader_in`], FIX 3121); or the
+/// room's host, its owner or a delegate (OF-530). A join, leader or host
+/// standing opens the room's reads and takes no seat: the roster, and with
+/// it the audience every disclosure meets, stays the members alone, and the
 /// caller's own grants still bound each read.
 pub(crate) fn room_reader_in(
     vault: &Vault,
@@ -611,6 +613,7 @@ pub(crate) fn room_reader_in(
 ) -> crate::Result<bool> {
     if members.contains(&caller)
         || crate::workspace_roster::room_join_audience_in(vault, txn, room, caller)?
+        || crate::workspace_roster::leader_chat_reader_in(vault, txn, room, caller)?
     {
         return Ok(true);
     }

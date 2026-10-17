@@ -445,18 +445,22 @@ impl Vault {
                 }
             } else {
                 // Witness TURNs carry the speaker bucket and, when the writer
-                // is a PERSON, its immutable `actor` author stamp. The private
-                // authenticated proof is their actor/project binding.
+                // is a PERSON, its immutable `actor` author stamp; a quoted
+                // one (FIX 2027) its reply mode and pointer as well. The
+                // private authenticated proof is their actor/project binding.
                 let mut speakers = fields
                     .iter()
                     .filter(|(key, _)| key.as_str() == Some("speaker"));
                 let stamped = fields.iter().any(|(key, _)| key.as_str() == Some("actor"));
+                let quoted =
+                    crate::conversation_dag::carries_quote(&raw[ENTITY_METADATA_HEADER_LEN..])
+                        .map_err(|_| denied())?;
                 if speakers
                     .next()
                     .and_then(|(_, value)| value.as_str())
                     .is_none()
                     || speakers.next().is_some()
-                    || fields.len() != 1 + usize::from(stamped)
+                    || fields.len() != 1 + usize::from(stamped) + 2 * usize::from(quoted)
                     || (stamped && field("actor")? != proof.actor)
                 {
                     return Err(denied());
@@ -527,6 +531,38 @@ pub(crate) fn admit_turn(
         return Err(denied());
     }
     Ok(Some(chat.projects[slot]))
+}
+
+/// Whether `caller` is one of the two actors leader chat `room` binds, and
+/// reads it as a room reader does (FIX 3121): only while both still lead the
+/// projects the chat names, each as the PERSON it spoke as, the same leader
+/// check every turn there passes ([`ensure_leaders`]), and while an anchored
+/// actor's PERSON still sits in the room. It takes no seat. `false` for any
+/// other room or caller, or a chat whose leaders have changed.
+pub(crate) fn bound_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: EntityId,
+) -> Result<bool> {
+    if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &room)? {
+        return Ok(false);
+    }
+    let body = crate::conversation::body_in(vault, txn, room)?;
+    let Some(value) = body.extra.get(CHAT_FIELD) else {
+        return Ok(false);
+    };
+    let bytes = rmp_serde::to_vec_named(value).map_err(|_| denied())?;
+    let chat: LeaderChat = decode(&bytes).map_err(|_| denied())?;
+    let Some(slot) = chat.actors.iter().position(|actor| *actor == caller) else {
+        return Ok(false);
+    };
+    match ensure_leaders(vault, txn, &chat, vault.store.clock.now_recorded_at()) {
+        Ok(()) => {}
+        Err(Error::Record(RecordError::ConversationDenied)) => return Ok(false),
+        Err(error) => return Err(error),
+    }
+    Ok(chat.persons[slot].is_none_or(|person| body.member_ids.contains(&person)))
 }
 
 pub(crate) fn admit_witness(

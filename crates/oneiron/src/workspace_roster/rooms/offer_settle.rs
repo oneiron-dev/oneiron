@@ -110,7 +110,7 @@ impl Settled {
             .get(&vault.store, txn, &stored.card.join_ref)?
             .map(|receipt| JoinOutcome::of(&receipt));
         Ok(Self {
-            card: stored.card,
+            card: stored.into_card(),
             join,
         })
     }

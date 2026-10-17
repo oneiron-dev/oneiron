@@ -104,6 +104,17 @@ pub enum OfferState {
     AgedOut,
 }
 
+/// The advisory ballots on a room-wide card, as counts (FIX 2091): how
+/// many voters said join and how many not now, never who. They keep the
+/// card open and decide nothing; only the host's answer admits. A thread's
+/// card counts none, since it takes no votes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OfferVoteTally {
+    pub join: u64,
+    pub not_now: u64,
+}
+
 /// One offer card, as the room's audience sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +145,10 @@ pub struct OfferCard {
     /// Unix seconds: the card's publication or reopening, or the last reply,
     /// vote, mention or answer that engaged it since.
     pub last_engaged_at: u64,
+    /// The advisory ballots as counts, read from the stored card's votes
+    /// each time a card is shown ([`StoredOffer::into_card`]); no voter is
+    /// named.
+    pub vote_tally: OfferVoteTally,
 }
 
 /// A card as stored: the card, what it was minted from and by whom, and the
@@ -155,6 +170,23 @@ pub(crate) struct StoredOffer {
     /// merges by it: the later reopening wins, and older ballots drop (FIX
     /// 1794).
     pub(super) reopen_epoch: u32,
+}
+
+impl StoredOffer {
+    /// The card as a reader is shown it: its tally counted from `votes` now,
+    /// whatever count the stored card holds. The tally is a projection, never
+    /// a second ballot: nothing reads it back to decide.
+    pub(super) fn into_card(mut self) -> OfferCard {
+        let mut tally = OfferVoteTally::default();
+        for vote in self.votes.values() {
+            match vote {
+                super::offer_settle::OfferAnswer::Join => tally.join += 1,
+                super::offer_settle::OfferAnswer::NotNow => tally.not_now += 1,
+            }
+        }
+        self.card.vote_tally = tally;
+        self.card
+    }
 }
 
 /// A page of the current cards in a room, or in one of its threads.
@@ -448,6 +480,7 @@ fn mint_in_txn(
         created_at: now,
         until: draft.until,
         last_engaged_at: now,
+        vote_tally: OfferVoteTally::default(),
     };
     OFFERS.put(
         &vault.store,
@@ -580,7 +613,7 @@ impl Memory<'_> {
             let stored = OFFERS
                 .get(&vault.store, &txn, &offer)?
                 .ok_or(Error::CorruptedIndex("current offer has no card"))?;
-            current.push((key, stored.card));
+            current.push((key, stored.into_card()));
         }
         drop(txn);
         let mut rows = Vec::new();
@@ -637,7 +670,7 @@ impl Memory<'_> {
             let card = OFFERS
                 .get(&vault.store, &txn, &offer)?
                 .ok_or(Error::CorruptedIndex("current offer has no card"))?
-                .card;
+                .into_card();
             if matches!(card.state, OfferState::Open { .. })
                 && !super::offer_activity::room_offer_expired(&card, now)
             {
