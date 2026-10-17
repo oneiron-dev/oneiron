@@ -650,6 +650,7 @@ pub(crate) fn room_ceiling_in(
         terms: crate::claim::TurnTerms::new(terms),
         peers: peer_read_keys_in(vault, txn, caller, &members)?,
         roster: members,
+        branch: None,
     }))
 }
 
@@ -732,5 +733,6 @@ pub(crate) fn thread_ceiling_in(
         terms: crate::claim::TurnTerms::new(terms),
         peers: peer_read_keys_in(vault, txn, caller, &members)?,
         roster: members,
+        branch: Some(thread),
     }))
 }
