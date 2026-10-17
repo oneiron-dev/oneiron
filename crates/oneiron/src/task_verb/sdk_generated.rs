@@ -576,6 +576,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.diff",
+                crate::code_run::vault_read::request_schema::<crate::code_document::CodeDiffRequest>(
+                ),
+            ),
+            (
+                "vault.code.blame",
+                crate::code_run::vault_read::request_schema::<crate::code_document::CodeStateRequest>(
+                ),
+            ),
+            (
                 "vault.artifacts.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactExportRequest,
@@ -2032,6 +2042,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.diff" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.blame" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3153,6 +3177,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.view" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
         }
+        "vault.code.diff" => {
+            let _input: crate::code_document::CodeDiffRequest = decode(value.clone())?;
+        }
+        "vault.code.blame" => {
+            let _input: crate::code_document::CodeStateRequest = decode(value.clone())?;
+        }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
         }
@@ -3780,6 +3810,8 @@ pub fn invoke(
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
+        "vault.code.diff" => encode(vault_code_diff(memory, decode(value)?)?),
+        "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
         "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
@@ -5026,6 +5058,18 @@ pub fn vault_artifacts_view(
     input: crate::blob_artifact::ArtifactRefRequest,
 ) -> MemoryResult<Option<crate::blob_artifact::ArtifactView>> {
     memory.artifacts_view(&input)
+}
+pub fn vault_code_diff(
+    memory: &Memory<'_>,
+    input: crate::code_document::CodeDiffRequest,
+) -> MemoryResult<Option<crate::code_document::CodeDiffView>> {
+    memory.code_diff(&input)
+}
+pub fn vault_code_blame(
+    memory: &Memory<'_>,
+    input: crate::code_document::CodeStateRequest,
+) -> MemoryResult<Option<crate::code_document::CodeBlameView>> {
+    memory.code_blame(&input)
 }
 pub fn vault_artifacts_export(
     memory: &Memory<'_>,
