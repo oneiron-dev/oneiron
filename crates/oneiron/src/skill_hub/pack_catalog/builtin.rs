@@ -41,7 +41,7 @@ const PACKS: [(&str, &str); 6] = [
 /// Each built-in pack's guided setup skill (OF-378), at the folder its
 /// PACK.md `setup` names. It ships in the same exact source, so the owner
 /// reads it while the connector is still a Candidate.
-const SETUP_SKILLS: [(&str, &str); 5] = [
+const SETUP_SKILLS: [(&str, &str); 6] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
@@ -61,6 +61,10 @@ const SETUP_SKILLS: [(&str, &str); 5] = [
     (
         "browser",
         include_str!("../../../../../packs/builtin/browser/skills/setup/SKILL.md"),
+    ),
+    (
+        "native_mail",
+        include_str!("../../../../../packs/builtin/native_mail/skills/setup/SKILL.md"),
     ),
 ];
 const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";
