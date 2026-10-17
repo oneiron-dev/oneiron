@@ -300,8 +300,8 @@ fn by_tokens(
             None => (rest.len(), false),
         };
         let line = &rest[..line_len];
-        let line_tokens = crate::tokenizer::count_context_pack_tokens(&String::from_utf8_lossy(line))
-            as u64;
+        let line_tokens =
+            crate::tokenizer::count_context_pack_tokens(&String::from_utf8_lossy(line)) as u64;
         let held = at - chunk_start;
         if at > chunk_start
             && (count.saturating_add(line_tokens) > tokens

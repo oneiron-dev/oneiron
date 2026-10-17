@@ -41,9 +41,8 @@ use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::BudgetDenied;
 use oneiron::off_record::OffRecordSession;
 use oneiron::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, LlmBackend,
-    LlmError, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat,
-    TierPrecedence, Vault,
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, LlmBackend, LlmError,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
 };
 
 use crate::admission::Permit;
@@ -687,10 +686,7 @@ impl Child {
         if tokens > budget {
             return ReaderRunEnd::Failed(summary_exceeds_window(tokens, window_tokens));
         }
-        let config = match self
-            .provider
-            .executor_config(vault, job.run, "summarize")
-        {
+        let config = match self.provider.executor_config(vault, job.run, "summarize") {
             Ok(config) => config,
             Err(error) => {
                 tracing::warn!(%error, task = %job.task.to_hex(), "a summary's config did not bind");

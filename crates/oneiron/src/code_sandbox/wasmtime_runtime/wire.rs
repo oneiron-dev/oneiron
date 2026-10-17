@@ -623,9 +623,7 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 bound: None,
             }))
         }
-        RunVerb::SelfTeamStart => {
-            SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?))
-        }
+        RunVerb::SelfTeamStart => SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?)),
         RunVerb::SelfTeamRecord => {
             SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
         }

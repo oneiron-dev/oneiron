@@ -11,17 +11,17 @@ use super::types::{
     JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse, StoreReceiptInput,
 };
 use crate::code_run::{
-    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
-    ReceiptSource, ReceiptTree,
-};
-use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
     CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
-    ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead, ResultReply,
-    RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect,
-    SelfFailedResult, SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall,
-    SelfSkillCallResult, SelfSummarizeCall, SummarizeReply, agent_verb_rows_of, result_cannot,
-    result_card, result_refusal,
+    ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead, ResultReply, RunCall,
+    SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult,
+    SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult,
+    SelfSummarizeCall, SummarizeReply, agent_verb_rows_of, result_cannot, result_card,
+    result_refusal,
+};
+use crate::code_run::{
+    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
+    ReceiptSource, ReceiptTree,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,
@@ -740,7 +740,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         let mut taint: Vec<OccurrenceRef> = Vec::new();
         for (owner, output) in &named {
             let occurrence = OccurrenceRef::new(*owner, &output.path, &output.handle)?;
-            if !taint.iter().any(|held| held.occurrence == occurrence.occurrence) {
+            if !taint
+                .iter()
+                .any(|held| held.occurrence == occurrence.occurrence)
+            {
                 taint.push(occurrence);
             }
         }

@@ -81,6 +81,36 @@ card again from the manifest: name, size, lines, completion, taint and a
 preview a tainted body withholds. The names live in the run's replay record,
 so they survive steps, compaction and restart. An unknown name throws
 `unknown_handle` with the live names.
+`store(value, name, {sources})` names the results a value was made from; the
+stored body inherits their taint. `store(value, name, {receipt: {source,
+tasks, tree?, recipe?}})` stores a fold: the host checks that each task is a
+reader child of this run over `source`, computes the fold receipt (the ranges
+its children read, the ranges none read, the children that stopped short and
+why, the summary tree, every occurrence whose taint the body inherits) and
+writes it with the binding in the checkpoint's one transaction. The card
+answers `receipt: {read, unread, partial, children}`.
+`chunks(r, {tokens, max_bytes?})` cuts text by the executor's tokenizer: each
+chunk grows line by line to about `tokens`, at most `max_bytes`; one call
+tokenizes at most 8 MiB (`CHUNK_TOKEN_PAGE_BYTES`) and answers `next`.
+`summarize(r, {effort?, group?, defer?})` is one verb-table row: one model
+call over `r` and the `group` after it, made by a reader job of the run on its
+route, never inside the step, and memoised by those results' occurrences and
+the recipe. A made summary answers its card and `task`. `defer: true` answers
+`{task, state}` to wait on with `tasks.wait`; otherwise the run parks until the
+summary is made and the same call answers it after the resume. A withheld
+member answers its withheld reply and nothing is summarized; a group too big
+for half the model's window settles `group_exceeds_window`.
+Two bundled helpers are SDK code over those verbs, not engine verbs, and live
+in their own files: `readAll(r, {ask, by?, window?, until?, n_of?, effort?,
+key?})` (`reader_forks.js`) reads a result with reader children (chunks of
+half the child window, one `self.spawn` each, `tasks.wait`, findings deduped
+by the ranges they cite, staged `summarize` groups) and stores the fold as
+`rf_<key>` with its receipt. It runs in phases kept in `rf_<key>_state`: call
+it again with the same arguments until `done`. `diff(a, b, {by?, from?,
+name?})` (`diff.js`) states its algorithm: by lines, Myers' O(ND) inside
+lockstep 4096-line windows, by bytes 64 KiB blocks; hunk text past 1 MiB is
+stored as a result made from both sides. Every default and bound either
+helper keeps is one named top-level const in its file.
 Foreign guests have no `self` object. Their `propose.file(...)` and
 `propose.claim(...)` produce typed proposal deltas, not committed writes.
 Only workspace/output file paths are proposal targets; upload and skill files

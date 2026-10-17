@@ -123,7 +123,9 @@ impl ReaderFoldReceipt {
     /// its marker and its refs, no range, reason or recipe.
     pub(crate) fn refs_only(&self) -> serde_json::Value {
         let refs = |items: &mut dyn Iterator<Item = &OccurrenceRef>| {
-            items.map(|item| item.occurrence.to_hex()).collect::<Vec<_>>()
+            items
+                .map(|item| item.occurrence.to_hex())
+                .collect::<Vec<_>>()
         };
         serde_json::json!({
             "folded": self.folded.occurrence.to_hex(),
@@ -233,19 +235,18 @@ impl ExecutorStorage<'_> {
             );
         }
         match self {
-            Self::Canonical(vault) => vault
-                .put_code_run_replay_record_if_generation_with_heal_and(
-                    record,
-                    expected,
-                    healed_model,
-                    |wtxn| {
-                        for receipt in receipts {
-                            let key = (receipt.folded.owner, receipt.folded.occurrence);
-                            FOLDS.put(&vault.store, wtxn, &key, receipt)?;
-                        }
-                        Ok(())
-                    },
-                ),
+            Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal_and(
+                record,
+                expected,
+                healed_model,
+                |wtxn| {
+                    for receipt in receipts {
+                        let key = (receipt.folded.owner, receipt.folded.occurrence);
+                        FOLDS.put(&vault.store, wtxn, &key, receipt)?;
+                    }
+                    Ok(())
+                },
+            ),
             Self::Session(binding) => {
                 REPLAY_RECORDS.encode_value(record)?;
                 let next = record.generation()?;

@@ -9,12 +9,12 @@ use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 
+use super::reader_folds::{MEMOS, SummaryMemo};
 use super::records::REPLAY_RECORDS;
-use crate::code_run::CodeRunRawOutput;
 use super::wait_delivery::deliver_wait_in_txn;
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendState};
 use crate::attempt_queue::AttemptId;
-use super::reader_folds::{MEMOS, SummaryMemo};
+use crate::code_run::CodeRunRawOutput;
 use crate::code_run::{
     ClaimOutcome, DelegatedSource, ExecutorStorage, ReaderActor, ReaderFindingRef, ReaderJob,
     ReaderJobKind, ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, SpawnHostSeat,
@@ -362,7 +362,9 @@ impl ReaderTxn<'_, '_> {
                     "reason": reason,
                 })
             }
-            _ => serde_json::json!({"task": job.task.to_hex(), "state": "failed", "reason": "no_finding"}),
+            _ => {
+                serde_json::json!({"task": job.task.to_hex(), "state": "failed", "reason": "no_finding"})
+            }
         };
         self.deliver_reply(job.task, reply, now_ms)
     }
@@ -560,7 +562,10 @@ impl ExecutorStorage<'_> {
     }
 
     /// One read of the run's reader rows through its route's view.
-    pub(super) fn reader_read<T>(&self, f: impl FnOnce(&RoTxn<'_>, RoutedDbs<'_>) -> Result<T>) -> Result<T> {
+    pub(super) fn reader_read<T>(
+        &self,
+        f: impl FnOnce(&RoTxn<'_>, RoutedDbs<'_>) -> Result<T>,
+    ) -> Result<T> {
         match self {
             Self::Canonical(vault) => {
                 let txn = vault.store.env.read_txn()?;
@@ -985,9 +990,10 @@ impl ExecutorStorage<'_> {
         task: EntityId,
         generation: u32,
     ) -> Result<Option<(ReaderJob, Vec<DelegatedSource>)>> {
-        let Some(job) = self.reader_job(task)?.filter(|job| {
-            job.state == ReaderJobState::Active && job.generation == generation
-        }) else {
+        let Some(job) = self
+            .reader_job(task)?
+            .filter(|job| job.state == ReaderJobState::Active && job.generation == generation)
+        else {
             return Ok(None);
         };
         let ReaderJobKind::Summarize { members, .. } = &job.kind else {
@@ -998,7 +1004,12 @@ impl ExecutorStorage<'_> {
     }
 
     /// The output at `path` with `handle` in `run`'s committed record.
-    fn recorded(&self, run: EntityId, path: &str, handle: &str) -> Result<Option<CodeRunRawOutput>> {
+    fn recorded(
+        &self,
+        run: EntityId,
+        path: &str,
+        handle: &str,
+    ) -> Result<Option<CodeRunRawOutput>> {
         Ok(self.get_code_run_replay_record(&run)?.and_then(|record| {
             record
                 .outputs
@@ -1102,7 +1113,11 @@ impl ExecutorStorage<'_> {
         }
         let binding =
             crate::code_run::CodeRunResultBinding::new(SUMMARY_RESULT_NAME, output.handle.clone());
-        match record.bindings.iter_mut().find(|held| held.name == binding.name) {
+        match record
+            .bindings
+            .iter_mut()
+            .find(|held| held.name == binding.name)
+        {
             Some(held) => *held = binding,
             None => record.bindings.push(binding),
         }
@@ -1118,10 +1133,12 @@ impl ExecutorStorage<'_> {
             bytes: output.raw_len,
             rows,
         };
-        Ok(match self.report_reader_finding(task, generation, &finding)? {
-            ReportOutcome::Kept | ReportOutcome::Replay => Ok(()),
-            ReportOutcome::Settled => Err("reader_task_settled".to_owned()),
-        })
+        Ok(
+            match self.report_reader_finding(task, generation, &finding)? {
+                ReportOutcome::Kept | ReportOutcome::Replay => Ok(()),
+                ReportOutcome::Settled => Err("reader_task_settled".to_owned()),
+            },
+        )
     }
 }
 
