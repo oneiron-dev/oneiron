@@ -23749,7 +23749,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/record_references.rs",
@@ -45101,7 +45101,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 1,
-      "fn": 8,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -46988,7 +46988,7 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 22,
+      "re-export": 23,
       "struct": 36
      }
     },
@@ -47038,6 +47038,24 @@
       "enum": 1,
       "fn": 6,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CourtesyDeleteAnswerRequest",
+      "CourtesyDeleteAskedWorld",
+      "CourtesyDeleteChoice",
+      "CourtesyDeleteIncoming",
+      "CourtesyDeleteSendRequest",
+      "CourtesyDeleteSent"
+     ],
+     "path": "src/task_verb/sdk_courtesy_delete.rs",
+     "purpose": "The inputs and answers of the owner's courtesy delete rows (OF-273, ARCH-0043 #relationship-lifecycle)…",
+     "surface": {
+      "fn": 1,
+      "struct": 6
      }
     },
     {
@@ -47140,7 +47158,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 324
+      "fn": 328
      }
     },
     {
@@ -53418,7 +53436,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 127,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53579,9 +53597,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 175,
+   "over_bar": 174,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3253,
+   "source_files": 3254,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61648,7 +61666,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 278
+      "fn": 282
      }
     },
     {
@@ -62665,7 +62683,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 279
+      "fn": 283
      }
     },
     {
@@ -65195,7 +65213,7 @@
      "path": "src/api/cooperative_deletion.rs",
      "purpose": "The peer-facing courtesy deletion routes (OF-273)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -65422,6 +65440,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/courtesy_delete_doors.rs",
+     "purpose": "The host doors of the owner's courtesy delete rows (OF-273): `vault.courtesy_delete.send`, `.sent`…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/critic_review_doors.rs",
      "purpose": "The host door of one critic review (`vault.critic.review`, OF-352): the caller binds a target, a session, a…",
      "surface": {
@@ -65505,7 +65533,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 48
+      "crate-vis": 49
      }
     },
     {
@@ -66245,7 +66273,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -66325,7 +66353,7 @@
      "path": "src/api/owner_routes/cooperative_deletion_routes.rs",
      "purpose": "`/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -70971,13 +70999,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/owner/cooperative_deletion.rs",
      "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle): after a disconnect the owner asks a former peer…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 5
      }
     },
     {
@@ -72440,7 +72468,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 302,
+     "files": 303,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72834,7 +72862,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 602,
+   "source_files": 603,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -73186,6 +73214,7 @@
       "ConsultPayloadRef",
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
+      "CooperativeDeletionDispositionKind",
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
@@ -73194,6 +73223,12 @@
       "CoreDagQuoteInput",
       "CoreEntityWriteReceipt",
       "CoreWriteTextField",
+      "CourtesyDeleteAnswerRequest",
+      "CourtesyDeleteAskedWorld",
+      "CourtesyDeleteChoice",
+      "CourtesyDeleteIncoming",
+      "CourtesyDeleteSendRequest",
+      "CourtesyDeleteSent",
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
@@ -73931,8 +73966,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 256,
-      "struct": 648
+      "enum": 257,
+      "struct": 654
      }
     },
     {
