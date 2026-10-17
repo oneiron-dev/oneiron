@@ -32,9 +32,12 @@ impl Memory<'_> {
     pub fn shape_apply(&self, input: &ShapeApplyRequest) -> MemoryResult<ShapeApplyReceipt> {
         let now = crate::unix_seconds_now();
         if let Ok(owner) = self.embedded_owner("vault.shape.apply") {
-            return Ok(self
-                .vault
-                .apply_shape(ShapeApplier::Owner(&owner), input, now, &mut |_| Ok(true))?);
+            return Ok(self.vault.apply_shape(
+                ShapeApplier::Owner(&owner),
+                input,
+                now,
+                &mut |_| Ok(true),
+            )?);
         }
         self.shape_apply_as_principal(input)
     }
@@ -47,11 +50,10 @@ impl Memory<'_> {
     ) -> MemoryResult<ShapeApplyReceipt> {
         let now = crate::unix_seconds_now();
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        Ok(self.vault.apply_shape(
-            ShapeApplier::Actor(self.actor),
-            input,
-            now,
-            &mut |id| read.is_entity_readable(id),
-        )?)
+        Ok(self
+            .vault
+            .apply_shape(ShapeApplier::Actor(self.actor), input, now, &mut |id| {
+                read.is_entity_readable(id)
+            })?)
     }
 }

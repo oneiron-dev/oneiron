@@ -555,6 +555,21 @@ export_facade! {
     let output = client.vault_disclosure_offer(&input)?;
     crate::codec::lift_record("vault.disclosure.offer", &output)
 };
+"reveal" => fn reveal(&self, input: RevealRequest) -> RevealPending = |client| {
+    let input: oneiron::task_verb::sdk::RevealRequest = crate::codec::lower_record("reveal", input)?;
+    let output = client.reveal(&input)?;
+    crate::codec::lift_record("reveal", &output)
+};
+"reveal.wait" => fn reveal_wait(&self, input: RevealWaitRequest) -> RevealWaitAnswer = |client| {
+    let input: oneiron::task_verb::sdk::RevealWaitRequest = crate::codec::lower_record("reveal.wait", input)?;
+    let output = client.reveal_wait(&input)?;
+    crate::codec::lift_record("reveal.wait", &output)
+};
+"reveal.describe" => fn reveal_describe(&self, input: RevealDescribeRequest) -> RevealHandleCard = |client| {
+    let input: oneiron::task_verb::sdk::RevealDescribeRequest = crate::codec::lower_record("reveal.describe", input)?;
+    let output = client.reveal_describe(&input)?;
+    crate::codec::lift_record("reveal.describe", &output)
+};
 "vault.shares.create" => fn vault_shares_create(&self, input: ShareCreateRequest) -> ShareCreated = |client| {
     let input: oneiron::task_verb::sdk::ShareCreateRequest = crate::codec::lower_record("vault.shares.create", input)?;
     let output = client.vault_shares_create(&input)?;

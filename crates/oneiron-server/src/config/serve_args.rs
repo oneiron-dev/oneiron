@@ -145,6 +145,15 @@ pub struct ServeArgs {
     #[arg(long = "artifact-http-socket")]
     pub artifact_http_socket: Option<PathBuf>,
 
+    /// Managed mode: the supervisor's models table, an absolute path to a
+    /// TOML file holding only `[models]`, as a config file writes it. Its
+    /// providers name their keys with `key_secret`, a secret held in the vault
+    /// that the credential broker sends; managed mode reads no environment, so
+    /// `key_env` is refused. Without it a managed vault runs with no model
+    /// seats.
+    #[arg(long = "models-file")]
+    pub models_file: Option<PathBuf>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,
@@ -381,6 +390,7 @@ impl fmt::Debug for ServeArgs {
             )
             .field("escrow_outbox_dir", &self.escrow_outbox_dir)
             .field("artifact_http_socket", &self.artifact_http_socket)
+            .field("models_file", &self.models_file)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)
