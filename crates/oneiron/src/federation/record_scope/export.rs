@@ -1,6 +1,7 @@
 //! The scoped export door.
 use super::{Scope, ScopedRecord, admits, disclosure_scope_for_stored_row};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::provenance::birth::{WithheldKey, row_birth_in_txn};
 use crate::{
     Vault,
     error::{Error, Result},
@@ -73,8 +74,18 @@ impl Vault {
                     bytes: raw,
                     scope: Some(scope),
                     suppressed: false,
+                    birth: None,
                 });
             }
+        }
+        // A birth leaves naming only the rows this export carries; one key
+        // per export, so its handles link to no other copy.
+        let ships: std::collections::BTreeSet<crate::EntityId> =
+            out.iter().map(|record| record.id).collect();
+        let key = WithheldKey::for_export();
+        for record in &mut out {
+            record.birth = row_birth_in_txn(&self.store, &txn, &record.id)?
+                .map(|birth| birth.masked(|row| ships.contains(row), &key));
         }
         Ok(out)
     }

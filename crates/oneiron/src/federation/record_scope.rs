@@ -34,6 +34,9 @@ pub struct ScopedRecord {
     pub scope: Option<Scope>,
     /// Only a Debug result may reveal a row suppressed by the normal selector.
     pub suppressed: bool,
+    /// The row's birth as the export carries it, each ref the export does not
+    /// carry withheld (Q26 = B); a scoped read carries none.
+    pub birth: Option<crate::provenance::birth::RowBirth>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -894,6 +897,7 @@ impl Vault {
                 bytes,
                 scope,
                 suppressed: !allowed,
+                birth: None,
             });
         }
         Ok(out)
