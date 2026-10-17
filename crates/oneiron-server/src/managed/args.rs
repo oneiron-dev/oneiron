@@ -150,6 +150,9 @@ pub struct ManagedArgs {
     /// The owner's break-glass recipient's public key file
     /// (`--break-glass-recipient-file`).
     pub break_glass_recipient: Option<PathBuf>,
+    /// Where the vault spools its escrow capsules for the node to ship
+    /// (`--escrow-outbox-dir`).
+    pub escrow_outbox: Option<PathBuf>,
     /// The artifact origin's socket (`--artifact-http-socket`), when the
     /// supervisor gave the vault one.
     pub artifact_socket: Option<PathBuf>,
@@ -245,6 +248,7 @@ impl ManagedArgs {
             keystore_dir: args.keystore_dir.clone(),
             escrow_recipient: args.escrow_recipient_file.clone(),
             break_glass_recipient: args.break_glass_recipient_file.clone(),
+            escrow_outbox: args.escrow_outbox_dir.clone(),
             artifact_socket: args.artifact_http_socket.clone(),
             artifact_domains: args
                 .artifact_domains
@@ -276,6 +280,7 @@ impl ManagedArgs {
         for (flag, path) in [
             ("escrow-recipient-file", &managed.escrow_recipient),
             ("break-glass-recipient-file", &managed.break_glass_recipient),
+            ("escrow-outbox-dir", &managed.escrow_outbox),
         ] {
             if path.as_deref().is_some_and(std::path::Path::is_relative) {
                 return Err(ManagedError::RelativeRecipientFile { flag });
@@ -515,6 +520,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "break-glass-recipient-file",
         |args| args.break_glass_recipient_file.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "escrow-outbox-dir",
+        |args| args.escrow_outbox_dir.is_some(),
         ArgvUse::Read,
     ),
     // The bind: the supervisor's socket, never a host:port.
