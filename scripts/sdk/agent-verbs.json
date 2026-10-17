@@ -1045,6 +1045,83 @@
       "section": false
     },
     {
+      "name": "vault.shared.object",
+      "description": "A holder of a pending shared act's objector role objects inside its veto window.",
+      "input": "crate::task_verb::sdk::SharedActRequest",
+      "output": "crate::federation::PendingAuthorityAct",
+      "call": "crate::task_verb::sdk::object_to_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.object\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.withdraw_objection",
+      "description": "The holder withdraws their objection; past the deadline the last withdrawal releases the act.",
+      "input": "crate::task_verb::sdk::SharedActRequest",
+      "output": "crate::federation::PendingAuthorityAct",
+      "call": "crate::task_verb::sdk::withdraw_shared_act_objection(memory.vault(), &memory.embedded_owner(\"vault.shared.withdraw_objection\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.started",
+      "description": "The caller's own notices of shared acts started in the vault.",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "Vec<crate::federation::PendingActStarted>",
+      "call": "crate::task_verb::sdk::read_shared_act_started(memory.vault(), &memory.embedded_owner(\"vault.shared.started\")?, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.matured",
+      "description": "The caller's own notices of shared acts whose veto window has passed.",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "Vec<crate::federation::PendingActMatured>",
+      "call": "crate::task_verb::sdk::read_shared_act_matured(memory.vault(), &memory.embedded_owner(\"vault.shared.matured\")?, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.erase_ask",
+      "description": "A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing.",
+      "input": "crate::task_verb::sdk::SharedEraseAskRequest",
+      "output": "crate::federation::SharedEraseAsk",
+      "call": "crate::task_verb::sdk::ask_shared_erase_as(memory.vault(), &memory.embedded_owner(\"vault.shared.erase_ask\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.erase_asks",
+      "description": "The erase asks the caller may see: every ask for an Owner, their own for anyone else.",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "Vec<crate::federation::SharedEraseAsk>",
+      "call": "crate::task_verb::sdk::read_shared_erase_asks(memory.vault(), &memory.embedded_owner(\"vault.shared.erase_asks\")?, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.close_erase_ask",
+      "description": "An Owner closes an open erase ask, as erased (naming its erase act) or declined.",
+      "input": "crate::task_verb::sdk::SharedEraseAskCloseRequest",
+      "output": "crate::federation::SharedEraseAsk",
+      "call": "crate::task_verb::sdk::close_shared_erase_ask_as(memory.vault(), &memory.embedded_owner(\"vault.shared.close_erase_ask\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.guests.revoke",
       "input": "crate::task_verb::sdk::GuestRevokeRequest",
       "output": "crate::receipt::GuestRevokeResponse",
@@ -2554,6 +2631,36 @@
       "input": "crate::receipt::QuestionAnswersRequest",
       "output": "Vec<crate::llm::decision::questions::AnswerRecord>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.answers\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.decisions.asks.answer",
+      "input": "crate::receipt::DecisionAskAnswerRequest",
+      "output": "crate::llm::decision::DecisionAsk",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.answer\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.decisions.asks.climb",
+      "input": "crate::receipt::DecisionAskClimbRequest",
+      "output": "Option<crate::llm::decision::ResolvedRole>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.climb\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.decisions.asks",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::llm::decision::DecisionAsk>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.decisions.asks\", &EmptyRequest {})?",
       "host_door": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},

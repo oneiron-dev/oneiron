@@ -8,8 +8,8 @@
 use super::policy::{DecisionBandPolicy, Reversibility};
 use super::types::invalid;
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionLadder,
-    DecisionQuestion, HumanAskReason, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion,
+    HumanAskReason, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
@@ -115,7 +115,10 @@ impl DecisionLadder<'_> {
             .as_object_mut()
             .ok_or_else(|| invalid("invalid decision state"))?;
         if fields
-            .insert(LOCATE_FIELD.to_owned(), Value::String(question.text.clone()))
+            .insert(
+                LOCATE_FIELD.to_owned(),
+                Value::String(question.text.clone()),
+            )
             .is_some()
         {
             return Err(invalid("the state fills the presence question's field"));
