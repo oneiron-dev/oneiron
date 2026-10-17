@@ -24,29 +24,36 @@ own qualification passes.
    app cannot work without them. Each permission they allow gets its own Gate
    receipt.
 2. Make the app. At api.slack.com/apps the owner creates a new app from a
-   manifest and pastes the manifest the host shows for the Slack adapter. The
-   manifest asks for exactly the scopes on the permission card.
-3. Install the app to the workspace. Slack then shows the Bot User OAuth Token
-   on the app's OAuth and Permissions page, and the Signing Secret on its Basic
-   Information page.
-4. Store both values through the owner secrets form, under the names the card
-   shows, each bound for read to connector:slack. Never ask for either value in
+   manifest and pastes the manifest the setup shows (`app_manifest`, also at
+   `GET /v1/owner/packs/slack/manifest`). It already names this host's URLs:
+   Event Subscriptions and Interactivity go to `/v1/hooks/slack/events`, and
+   the OAuth redirect to `/v1/hooks/slack/oauth`, each after the host's public
+   address. It asks for exactly the scopes on the permission card, and
+   subscribes the bot to `app_mention` and `message.im`.
+3. Store the app's Client ID, Client Secret and Signing Secret, from its Basic
+   Information page, through the owner secrets form, under the names the card
+   shows, each bound for read to connector:slack. Never ask for any value in
    chat, never repeat one back, and never write one into a note or a card.
-5. Check the connection. The check asks Slack who the app is and which scopes
-   it holds. It passes only when Slack names the workspace and the scopes match
-   what the owner allowed, no more and no less.
-6. Once the check passes, turn on Event Subscriptions in the app. The Request
-   URL is the host's public address followed by `/v1/hooks/slack/events`; Slack
-   sends it a challenge, and the host answers it. Subscribe the bot to
-   `app_mention` and `message.im`, so mentions and direct messages reach the
-   agent. Each one is verified with the Signing Secret before it is kept.
+4. Install the app. `POST /v1/owner/packs/slack/install` returns a link; the
+   owner opens it in the browser signed in to the workspace and approves. Slack
+   sends them back to the host, which stores the bot token and checks the
+   connection. The link works once, for ten minutes.
+5. The check asks Slack who the app is and which scopes it holds. It passes
+   only when Slack names the workspace and the scopes match what the owner
+   allowed, no more and no less. The install page says whether it passed; the
+   owner can check again from the setup.
+6. Once the check passes, the host answers Slack's events within a minute. If
+   Slack showed the Request URL as unverified when the app was made, press
+   Retry on the app's Event Subscriptions page. Each event is verified with the
+   Signing Secret before it is kept.
 
 ## When the check fails
 
-- Slack refused the credential. The value was copied wrong, or the app was
-  reinstalled and Slack issued a new one. Store the current one and check again.
+- Slack refused the credential. The app was reinstalled and Slack issued a new
+  one, or its token expired: Slack rotates the app's token every twelve hours.
+  Install again from a new install link.
 - The provider did not grant a scope. The app was installed before its manifest
-  asked for it. Reinstall the app, store the new value, and check again.
+  asked for it. Install again from a new install link.
 - The credential holds a permission the pack never explained. Remove that scope
   from the app, reinstall it, and check again.
 
