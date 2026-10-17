@@ -988,7 +988,7 @@
      "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 7,
       "struct": 3,
@@ -1111,7 +1111,7 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 7,
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 7,
       "fn": 26,
       "struct": 9
@@ -25485,7 +25485,7 @@
      "path": "src/human_task/mod.rs",
      "purpose": "Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 3
      }
     },
@@ -51420,7 +51420,7 @@
      "purpose": "What a room's upkeep reads (ONEIRON-ARCH-0067 §8: the engine performs every room's mechanical upkeep, and a…",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
