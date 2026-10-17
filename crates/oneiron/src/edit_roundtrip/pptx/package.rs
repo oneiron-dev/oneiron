@@ -50,6 +50,8 @@ pub enum PptxError {
     InvalidReference,
     #[error("an undeclared package part changed")]
     PartDiffOutsideTransaction,
+    #[error("a written anchor does not read back as it was resolved")]
+    AnchorReadBack,
 }
 
 pub(super) type PatchResult<T> = std::result::Result<T, PptxError>;

@@ -652,7 +652,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     if managed.artifact_socket.is_some() {
         sync_server = sync_server.with_artifact_socket();
     }
+    // Model seats, the Dreamer and the decision ladder from `[models]`, as
+    // plain serve attaches them. A startup error below drops `ai`, which
+    // tells its workers to stop.
+    let (sync_server, ai) =
+        crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
     let sync_server = Arc::new(sync_server);
+    // The skill-edit gate's replay judge, on the ladder just built (OF-495).
+    crate::replay_judge::register(&sync_server, config.skills.live_pulls_per_axis);
 
     // Adoption stays here, after the gates: the listener was only resolved
     // above, and `bind` is what takes the descriptor over.
@@ -790,6 +797,35 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     );
     // The nightly Coach jobs that need the host's model or rules (OF-420).
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server);
+    // The ladder's workers plain serve runs. Wire health and the standing
+    // pump pass under the same admission.
+    let admitted = || -> crate::server::HousekeepingAdmission {
+        let state = Arc::clone(&state);
+        Arc::new(move || {
+            state
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    };
+    // Crossed thresholds ask the ladder whether everything is okay (OF-520).
+    let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
+    // Due standing questions are answered through the ladder (OF-506).
+    if !ai.bind_question_timer(&sync_server) {
+        ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
+    }
+    // Uncertain identities are decided, or asked of the person (OF-123).
+    ladder_workers.push(crate::ai_host::identity::spawn(&sync_server));
+    // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
+    ladder_workers.push(crate::ai_host::coach_heal::spawn(
+        &sync_server,
+        config.failure_signals.publisher_candidates()?,
+    ));
+    // The owner's model-graded detectors read the retrieval telemetry (OF-418).
+    ladder_workers.extend(crate::ai_host::self_heal_detectors::spawn(
+        &sync_server,
+        &config.self_heal,
+    ));
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -824,6 +860,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         failure_signals.abort();
         let _ = failure_signals.await;
     }
+    for worker in ladder_workers {
+        worker.abort();
+        let _ = worker.await;
+    }
+    // A pass or step in flight reaches its own boundary before this returns.
+    ai.shutdown().await;
     // Frozen, so nothing new is admitted; an admitted write ends before exit.
     oversight.stop().await;
 
