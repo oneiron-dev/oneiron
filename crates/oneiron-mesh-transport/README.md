@@ -69,14 +69,22 @@ No 0-RTT application traffic is exposed. The managed WebSocket sync path and
 federation request-grant revalidation remain independent: a mesh ALPN grant
 never authorizes a federation request or widens its scope.
 
+A transport bound with `bind_paired` leaves a path receipt in the vault
+(`VaultPathReceipts`, `Vault::record_mesh_path_receipt`) for every connection,
+inbound and outbound. It writes the receipt when the connection is admitted
+and again when it closes. The receipt names the MACHINE, the endpoint key and
+the ALPN, which paths were open (direct, relayed, mixed), which ones carried
+data (from `Connection::paths` and `path_events`), the times, and the close
+reason. Refused and failed attempts leave one too. Refusals from one machine,
+or from keys no MACHINE names, fold into one receipt per 60 s window with an
+attempt count. Receipts stay local and are kept 90 days. A refusal before the
+TLS identity is known (in the iroh router) leaves none.
+
 ## Next cuts
 
-1. Path receipt: observe iroh `Connection::paths` / `path_events`, classify the
-   selected path as direct or relayed, and persist a per-connection receipt with
-   the MACHINE, ALPN, endpoint keys, time and outcome. Include refused attempts.
-2. Entry-node relay: deploy our pinned `iroh-relay` with owned TLS hostname,
+1. Entry-node relay: deploy our pinned `iroh-relay` with owned TLS hostname,
    network/abuse policy, health checks and outbound address distribution. The
    relay forwards encrypted packets only; locker and mobile push remain separate.
-3. Fork upkeep/fleet job: pin tested fork commits, automate each upstream-tag
+2. Fork upkeep/fleet job: pin tested fork commits, automate each upstream-tag
    refresh on a staging branch, run the conformance lab across tag/version pairs
    and LAN/hotspot/relay-only hosts, then send narrowly scoped patches upstream.

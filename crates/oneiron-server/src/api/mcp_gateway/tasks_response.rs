@@ -683,12 +683,12 @@ fn mcp_agent_verb_input(
         }
         "tasks.wave" => a.spec.clone().ok_or_else(invalid),
         "tasks.update" => {
-            let mut map = serde_json::Map::new();
-            map.insert(
-                "task_ref".to_owned(),
-                json!(a.task_ref.as_ref().ok_or_else(invalid)?),
-            );
-            Ok(Value::Object(map))
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.task_ref.as_deref() != map.get("task_ref").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
         }
         "vault.witness" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.upsert" => a.spec.clone().ok_or_else(invalid),
@@ -1155,6 +1155,7 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.update" => {
+            arguments.insert("spec".to_owned(), input.clone());
             if let Some(value) = input.get("task_ref") {
                 arguments.insert("task_ref".to_owned(), value.clone());
             }
