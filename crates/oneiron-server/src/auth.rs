@@ -20,11 +20,13 @@ use crate::server::SyncServer;
 pub(crate) mod account_key;
 mod binding_admission;
 mod client_address;
+mod left_notices;
 mod locality;
 mod machine_proof;
 mod slips;
 pub(crate) use binding_admission::admit_http_binding;
 pub(crate) use client_address::ClientAddress;
+pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality};
 pub(crate) use slips::{BindingProof, parse_signature, parse_slip_id};
 
