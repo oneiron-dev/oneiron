@@ -8,9 +8,11 @@
 //! the recipe's person question is the ladder's own. The System One seat fills
 //! its rung when `[models.decisions.system_one]` binds it, and the big model
 //! fills the Big rung when `[models.decisions.big]` names its seat
-//! ([`crate::big_rung`]). The local head has no typed provider on this host
-//! yet, so its slot stays empty and the ladder steps past it. The last rung is the vault owner's
-//! ask queue ([`DecisionAsks`]): durable, answered at `/v1/owner/decisions`.
+//! ([`crate::big_rung`]). The Local-vision seat fills the Local rung when
+//! `[models.roles.local_vision]` binds one: it answers Box, Point and image
+//! questions and abstains, unspent, on a call with no image. The last rung is
+//! the vault owner's ask queue ([`DecisionAsks`]): durable, answered at
+//! `/v1/owner/decisions`.
 //!
 //! Every model rung blocks on the server's runtime: run a ladder call on a
 //! blocking thread.
@@ -78,6 +80,8 @@ const ONE: &str = "1";
 const PERSON_THRESHOLD_VERSION: u32 = 1;
 /// The ThinkThreshold row's version a host's start value takes.
 const THINK_THRESHOLD_VERSION: u32 = 1;
+/// The purpose the host's Local-vision rung budgets its calls under.
+const LOCAL_VISION_PURPOSE: &str = "decision.local_vision";
 /// How long the person row may trail an accept whose commit sent no change
 /// signal.
 const PERSON_THRESHOLD_SWEEP: std::time::Duration = std::time::Duration::from_secs(60);
@@ -225,6 +229,37 @@ impl DecisionHost {
             Err(error) => {
                 tracing::warn!(%error, "the house model's decision read cannot fill the escalation rung");
             }
+        }
+        self
+    }
+
+    /// The Local-vision seat on the Local rung, when
+    /// `[models.roles.local_vision]` binds one, spending on its own meter of
+    /// `default_units` for the server's life. A Box, Point or image question
+    /// reaches it; it abstains on a call with no image before any call, so a
+    /// text question steps past it unspent. A caller with a turn budget still
+    /// seats its own per-call rung in its place.
+    fn with_local_vision(
+        mut self,
+        ai: &crate::ai_host::AiHandle,
+        vault: &Arc<Vault>,
+        default_units: u64,
+        runtime: tokio::runtime::Handle,
+    ) -> Self {
+        self.ladder.local = None;
+        let meter = BudgetGuard::new(
+            LOCAL_VISION_PURPOSE,
+            default_units,
+            BudgetExhaustionPolicy::Suspend,
+        );
+        let run = ai.undeclared_run(format!("{LOCAL_VISION_PURPOSE}:host"), meter);
+        let Some(seat) = crate::ai_host::LocalVisionModel::new(ai, Arc::clone(vault), run, runtime)
+        else {
+            return self;
+        };
+        match seat.rung() {
+            Ok(rung) => self.ladder.local = Some(Arc::new(rung)),
+            Err(error) => tracing::warn!(%error, "the Local-vision seat cannot fill its rung"),
         }
         self
     }
@@ -718,6 +753,12 @@ impl SyncServer {
                 models.decisions.system_one.as_ref(),
                 models.raw_budget_units,
                 posture,
+                tokio::runtime::Handle::current(),
+            )
+            .with_local_vision(
+                &self.ai,
+                &self.vault,
+                models.raw_budget_units,
                 tokio::runtime::Handle::current(),
             )
             .with_big(

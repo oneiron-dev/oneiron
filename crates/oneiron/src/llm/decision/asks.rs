@@ -70,6 +70,10 @@ pub struct DecisionAsk {
     pub role: Option<ResolvedRole>,
     /// `None` while the ask is open.
     pub answer: Option<AskAnswer>,
+    /// Vault clock seconds when its caller withdrew it, its decision no longer waiting on
+    /// it; `None` while it stands. A withdrawn ask is in no role's queue and takes no
+    /// answer.
+    pub withdrawn_at: Option<u64>,
 }
 
 /// The answer the ladder held when it asked, and the provider that read it.
@@ -126,8 +130,14 @@ impl DecisionAsk {
         }
     }
 
+    /// Neither answered nor withdrawn.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.answer.is_none() && self.withdrawn_at.is_none()
+    }
+
     fn is_open_for(&self, request: &HumanDecisionRequest) -> bool {
-        self.answer.is_none()
+        self.is_open()
             && self.question.id == request.question.id
             && self.question.version == request.question.version
             && self.principal == request.principal
@@ -189,6 +199,7 @@ impl Vault {
                 correlation: request.correlation,
                 role,
                 answer: None,
+                withdrawn_at: None,
             };
             ASKS.put(&self.store, txn, &seq, &ask)?;
             Ok(seq)
@@ -214,7 +225,7 @@ impl Vault {
             if ask.seq != seq {
                 return Err(Error::CorruptedIndex("decision ask identity"));
             }
-            if !open_only || ask.answer.is_none() {
+            if !open_only || ask.is_open() {
                 asks.push(ask);
             }
         }
@@ -234,6 +245,31 @@ impl Vault {
         seq: u64,
     ) -> Result<Option<DecisionAsk>> {
         ASKS.get(&self.store, txn, &seq)
+    }
+
+    /// Withdraws open ask `seq`: the decision it was put for no longer waits on it (it
+    /// lapsed, or its caller decided another way). It leaves every role's queue, and a
+    /// later answer is refused. `false` when it was already answered or withdrawn.
+    pub fn withdraw_decision_ask(&self, seq: u64) -> Result<bool> {
+        self.with_write_txn_grouped(|txn| self.withdraw_decision_ask_in_txn(txn, seq))
+    }
+
+    /// [`Self::withdraw_decision_ask`] in the caller's write, beside the state that
+    /// lapsed it.
+    pub(crate) fn withdraw_decision_ask_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        seq: u64,
+    ) -> Result<bool> {
+        let mut ask = ASKS
+            .get(&self.store, &*txn, &seq)?
+            .ok_or_else(|| invalid("no such decision ask"))?;
+        if !ask.is_open() {
+            return Ok(false);
+        }
+        ask.withdrawn_at = Some(self.store.clock.now_recorded_at());
+        ASKS.put(&self.store, txn, &seq, &ask)?;
+        Ok(true)
     }
 
     /// The newest ask for this question version and principal, open or answered: how a
@@ -385,6 +421,9 @@ impl Vault {
             match &held.answer {
                 Some(prior) if prior.answer == answer => return Ok(held),
                 Some(_) => return Err(invalid("decision ask already answered")),
+                None if held.withdrawn_at.is_some() => {
+                    return Err(invalid("decision ask withdrawn"));
+                }
                 None => {}
             }
             let read: &heed::RoTxn<'_> = txn;
@@ -443,6 +482,9 @@ impl Vault {
             if ask.answer.is_some() {
                 return Err(invalid("decision ask already answered"));
             }
+            if ask.withdrawn_at.is_some() {
+                return Err(invalid("decision ask withdrawn"));
+            }
             let next =
                 self.next_ask_role_in_txn(&*txn, &ask.to, ask.role.as_ref().map(|at| &at.role))?;
             if let Some(role) = &next {
@@ -460,7 +502,7 @@ impl Vault {
         let mut held = Vec::new();
         for row in ASKS.iter_range(&self.store, &txn, Bound::Unbounded, Bound::Unbounded)? {
             let (_, ask) = row?;
-            let Some(at) = ask.role.as_ref().filter(|_| ask.answer.is_none()) else {
+            let Some(at) = ask.role.as_ref().filter(|_| ask.is_open()) else {
                 continue;
             };
             if self
@@ -484,7 +526,7 @@ impl Vault {
             let mut unheld = Vec::new();
             for row in ASKS.iter_range(&self.store, &txn, Bound::Unbounded, Bound::Unbounded)? {
                 let (seq, ask) = row?;
-                if ask.answer.is_some() {
+                if !ask.is_open() {
                     continue;
                 }
                 let held = match &ask.role {
@@ -501,9 +543,7 @@ impl Vault {
         };
         let mut climbed = Vec::new();
         for seq in unheld {
-            let still_open = self
-                .decision_ask(seq)?
-                .is_some_and(|ask| ask.answer.is_none());
+            let still_open = self.decision_ask(seq)?.is_some_and(|ask| ask.is_open());
             if !still_open {
                 continue;
             }
@@ -727,6 +767,16 @@ impl DecisionAsks {
         Ok(ask)
     }
 
+    /// Withdraws one ask (see [`Vault::withdraw_decision_ask`]) and wakes its waiters,
+    /// whose wait then fails as withdrawn.
+    pub fn withdraw(&self, seq: u64) -> Result<bool> {
+        let withdrawn = self.vault.withdraw_decision_ask(seq)?;
+        if withdrawn {
+            self.answered.send_replace(seq);
+        }
+        Ok(withdrawn)
+    }
+
     /// See [`Vault::climb_decision_ask`].
     pub fn climb(&self, seq: u64) -> Result<Option<ResolvedRole>> {
         self.vault.climb_decision_ask(seq)
@@ -747,6 +797,9 @@ impl DecisionAsks {
                 .ok_or_else(|| invalid("no such decision ask"))?;
             if let Some(answer) = ask.answer {
                 return Ok(answer);
+            }
+            if ask.withdrawn_at.is_some() {
+                return Err(invalid("decision ask withdrawn"));
             }
             // The sender lives in `self`, so it outlives this wait.
             if changes.changed().await.is_err() {
