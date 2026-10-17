@@ -1,7 +1,7 @@
 //! What the model runtime built, for the owner-facing status route.
 use oneiron::ModelId;
-use oneiron::llm::{BrokerIsolation, SpentKind};
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::{BrokerIsolation, SpentKind};
 use serde::Serialize;
 
 use crate::config::models::{ModelRef, ProviderConfig, ProviderKind, role_key};

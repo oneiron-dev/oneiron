@@ -323,7 +323,9 @@ impl OfferLadder {
         self.rungs
             .iter()
             .map(|rung| {
-                let health = self.rests.offer_health(&rung.offer.binding, &rung.wire_model);
+                let health = self
+                    .rests
+                    .offer_health(&rung.offer.binding, &rung.wire_model);
                 (rung.position, health)
             })
             .collect()
@@ -332,7 +334,12 @@ impl OfferLadder {
     /// Waits for `back`, asking `may_send` meanwhile. Returns what is left
     /// of the call's wait `budget`, in seconds, after the wait. Each wait
     /// spends at least a second, so a chain ends.
-    async fn wait_back(&self, back: Back, budget: u64, may_send: &(dyn Fn() -> bool + Sync)) -> u64 {
+    async fn wait_back(
+        &self,
+        back: Back,
+        budget: u64,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> u64 {
         let waited = self
             .rests
             .wait(back.wait, back.at, back.seen, may_send)
