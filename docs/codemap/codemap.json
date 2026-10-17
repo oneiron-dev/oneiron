@@ -13015,7 +13015,7 @@
      "path": "src/connector_key/setup.rs",
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
-      "const": 5,
+      "const": 7,
       "crate-vis": 4,
       "fn": 6,
       "struct": 3,
@@ -62682,6 +62682,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/builtin_host.rs",
+     "purpose": "The served host's side of the built-in connector packs (OF-519): the connection checks only a served host…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/builtin_host/checks.rs",
+     "purpose": "The served host's connection checks: the engine's provider checks, plus `browser.session`, which is local…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -66923,6 +66943,13 @@
      "layout": "file",
      "purpose": "Broadcast group for multi-device fan-out with echo suppression"
     },
+    "builtin_host": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "The served host's side of the built-in connector packs (OF-519): the connection checks only a served host…"
+    },
     "byte_line": {
      "files": 1,
      "impl_vault": false,
@@ -67192,7 +67219,7 @@
    },
    "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 476,
+   "source_files": 478,
    "test_files": 182
   },
   "oneiron-spawn": {
