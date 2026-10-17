@@ -8781,6 +8781,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/channel_identity_provider/slack_personas.rs",
+     "purpose": "The receiving personas a served Slack app can route a workspace's events to (OF-519)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/channel_identity_provider/slack_validate.rs",
      "purpose": "Slack key, workspace, and field normalizers shared by the Slack adapter paths",
      "surface": {
@@ -36579,7 +36589,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
       "const": 4,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -38962,12 +38972,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "CheckedBuiltinConnection"
+     ],
      "path": "src/skill_hub/pack_catalog/builtin.rs",
      "purpose": "Engine-embedded connector source and local first-open installation",
      "surface": {
       "crate-vis": 5,
-      "fn": 2
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -39090,7 +39103,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 7,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -41238,7 +41251,18 @@
      "path": "src/surface_event/mod.rs",
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)",
      "surface": {
-      "re-export": 4
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/surface_event/provider_payload.rs",
+     "purpose": "Custody of a verified provider event's body (OF-519)",
+     "surface": {
+      "const": 1,
+      "fn": 2
      }
     },
     {
@@ -48871,8 +48895,8 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 23,
-     "impl_vault": false,
+     "files": 24,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)"
@@ -49977,7 +50001,7 @@
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)"
     },
     "surface_event": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50175,7 +50199,7 @@
    },
    "over_bar": 121,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3029,
+   "source_files": 3031,
    "test_files": 903
   },
   "oneiron-android": {
@@ -52975,7 +52999,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 37,
+      "const": 39,
       "crate-vis": 1
      }
     },
@@ -63060,7 +63084,7 @@
      "path": "src/builtin_host.rs",
      "purpose": "The served host's side of the built-in connector packs (OF-519): the connection checks only a served host…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -63071,6 +63095,26 @@
      "purpose": "The served host's connection checks: the engine's provider checks, plus `browser.session`, which is local…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/builtin_host/handles.rs",
+     "purpose": "One handle per served built-in channel: its adapter, the provider account its check bound, and the…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/builtin_host/webhooks.rs",
+     "purpose": "The provider webhooks of the served built-in channels (OF-519)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -67389,9 +67433,9 @@
      "purpose": "Broadcast group for multi-device fan-out with echo suppression"
     },
     "builtin_host": {
-     "files": 2,
+     "files": 4,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The served host's side of the built-in connector packs (OF-519): the connection checks only a served host…"
     },
@@ -67678,7 +67722,7 @@
    },
    "over_bar": 29,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 490,
+   "source_files": 492,
    "test_files": 182
   },
   "oneiron-spawn": {
