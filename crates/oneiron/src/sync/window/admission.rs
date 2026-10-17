@@ -39,6 +39,16 @@ pub(in crate::sync) fn validate_window_update_residence(
     validate_window_update(doc, update, Some(key), None, &HashMap::new())
 }
 
+/// A home's promotion snapshot: the locality admission, with `vault` to judge
+/// each custody transition it carries by (OF-422).
+pub(in crate::sync) fn validate_promotion_snapshot(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    snapshot: &[u8],
+) -> Result<()> {
+    validate_window_update(doc, snapshot, None, Some(vault), &HashMap::new())
+}
+
 /// Owner-lane admission with the vault's durable entity residence as proof
 /// for edges and tombstones. Run before importing or relaying the update.
 pub fn validate_window_update_residence_with_vault(
