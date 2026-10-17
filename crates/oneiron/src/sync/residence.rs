@@ -17,6 +17,7 @@ pub use authority_tail::{
     authority_tail_for, authority_wanted, held_authority_entries, import_authority_page,
 };
 pub use bundle_payload::SealedBundleTake;
+pub use bundle_payload::SealedKitRestore;
 pub use discover::discover_local_window_keys;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
