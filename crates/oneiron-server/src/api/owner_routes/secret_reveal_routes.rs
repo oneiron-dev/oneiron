@@ -66,6 +66,8 @@ struct ReceiptView {
     lease: Option<String>,
     asked_at: u64,
     delivered_at: Option<u64>,
+    /// The file an agent's read of a marked file named, as 32 hex.
+    file: Option<String>,
 }
 
 impl From<SecretRevealReceipt> for ReceiptView {
@@ -87,6 +89,7 @@ impl From<SecretRevealReceipt> for ReceiptView {
             lease: receipt.lease.map(|lease| lease.to_hex()),
             asked_at: receipt.asked_at,
             delivered_at: receipt.delivered_at,
+            file: receipt.file.map(|file| file.to_hex()),
         }
     }
 }

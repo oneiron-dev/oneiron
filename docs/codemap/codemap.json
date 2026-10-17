@@ -2290,6 +2290,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityRepairOutcome"
+     ],
+     "path": "src/authority/history_repair.rs",
+     "purpose": "Staged repair of missing authority history (OF-469)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -2298,7 +2312,7 @@
      "path": "src/authority/history_transfer.rs",
      "purpose": "Signed-history migration and independently authorized per-vault re-root doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 7,
       "fn": 7,
       "struct": 1
      }
@@ -2536,7 +2550,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 19,
-      "re-export": 30
+      "re-export": 31
      }
     },
     {
@@ -2606,7 +2620,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -11551,7 +11565,7 @@
      "path": "src/code_run/vault_read/validate.rs",
      "purpose": "Request-shape validation and short-reference parsing, run before any dispatch",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -14320,13 +14334,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "HookPin"
+      "HookPin",
+      "HookShare"
      ],
      "path": "src/context_board/hook_pins.rs",
      "purpose": "Hook blocks on the board (ARCH-0080 §11, OI-1 = A)",
      "surface": {
-      "fn": 7,
-      "struct": 1
+      "fn": 8,
+      "struct": 2
      }
     },
     {
@@ -14385,7 +14400,7 @@
      "path": "src/context_board/memories_frame.rs",
      "purpose": "Connects typed MEMORIES projections to the shared board frame and shed ladder",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -22233,7 +22248,7 @@
      "path": "src/federation/shared_act/membership.rs",
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7,
       "re-export": 1
      }
@@ -38193,6 +38208,38 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FoundKeyAction",
+      "FoundKeyCard",
+      "FoundKeyNotice",
+      "FoundKeySettled"
+     ],
+     "path": "src/secret_custody/found_keys.rs",
+     "purpose": "The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 9,
+      "enum": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/found_keys/actions.rs",
+     "purpose": "The owner's four answers to a found key: rotate (the rotate door settles it), delete, grant and not a secret",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -38201,7 +38248,7 @@
      "path": "src/secret_custody/masked_files.rs",
      "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 3
      }
@@ -38213,8 +38260,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 15,
-      "re-export": 6
+      "crate-vis": 16,
+      "re-export": 7
      }
     },
     {
@@ -38242,7 +38289,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "HandleReveal",
@@ -38261,7 +38308,7 @@
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
       "const": 6,
-      "crate-vis": 10,
+      "crate-vis": 15,
       "enum": 5,
       "fn": 3,
       "struct": 6
@@ -38274,7 +38321,17 @@
      "path": "src/secret_custody/reveal/agent.rs",
      "purpose": "The agent's doors: `reveal`, `wait` and `describe` on a handle",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/file.rs",
+     "purpose": "An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): \"Agent with a…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -46392,8 +46449,9 @@
      "path": "src/task_verb/sdk_secret.rs",
      "purpose": "`reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret's value by its handle (OF-560…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 7,
       "struct": 8
      }
     },
@@ -48007,6 +48065,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShapeMemberRole",
+      "ShapePreset",
+      "ShapePresetMember",
+      "ShapePresetPick"
+     ],
+     "path": "src/vault_shape/member.rs",
+     "purpose": "Shared-vault membership as shape rows (ARCH-0043 presets as seeds)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -48022,13 +48098,13 @@
      "surface": {
       "const": 2,
       "enum": 3,
-      "fn": 2,
-      "re-export": 4,
+      "fn": 3,
+      "re-export": 5,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ShapeChange",
@@ -51083,7 +51159,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 130,
+     "files": 131,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52154,9 +52230,9 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 15,
+     "files": 18,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…"
     },
@@ -52462,7 +52538,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52525,9 +52601,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 152,
+   "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3177,
+   "source_files": 3182,
    "test_files": 903
   },
   "oneiron-android": {
@@ -55345,6 +55421,7 @@
       "CoreBatchShortIdHydrateRequest",
       "CoreHydrateRequest",
       "CoreMemoryTimelineRequest",
+      "CoreQueryAffect",
       "CoreQueryRequest",
       "CountMode",
       "View"
@@ -55354,7 +55431,7 @@
      "surface": {
       "enum": 2,
       "fn": 3,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -56833,7 +56910,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DocxAnchor",
@@ -56842,15 +56919,18 @@
       "DocxCell",
       "DocxChange",
       "DocxLock",
+      "DocxMark",
       "DocxParagraph",
-      "DocxRevision"
+      "DocxRevision",
+      "DocxRun"
      ],
      "path": "src/docx_body.rs",
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")",
      "surface": {
-      "enum": 4,
-      "fn": 2,
-      "struct": 4
+      "const": 1,
+      "enum": 5,
+      "fn": 7,
+      "struct": 5
      }
     },
     {
@@ -57640,7 +57720,7 @@
     "docx_body": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
@@ -63674,7 +63754,7 @@
      "path": "src/api/context_board/memories.rs",
      "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 28
      }
     },
     {
@@ -64632,7 +64712,7 @@
      "path": "src/api/mcp_gateway/exec_board_verbs.rs",
      "purpose": "Execute-code and board-verb executors",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -65109,6 +65189,16 @@
      "notable": [],
      "path": "src/api/owner_routes/recovery_kit_routes.rs",
      "purpose": "`/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/secret_found_routes.rs",
+     "purpose": "`/v1/owner/secrets/found*`: the owner's side of the found-key notice (OF-560)",
      "surface": {
       "crate-vis": 1
      }
@@ -70858,7 +70948,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 287,
+     "files": 288,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71217,7 +71307,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 569,
+   "source_files": 570,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -71589,6 +71679,8 @@
       "DocxBodyOp",
       "DocxBodyView",
       "DocxCellView",
+      "DocxMark",
+      "DocxRun",
       "DoneMeans",
       "EditNoteRequest",
       "EmbeddingSpaceBindRequest",
@@ -72007,10 +72099,14 @@
       "ShapeGrantBound",
       "ShapeItemClass",
       "ShapeItemState",
+      "ShapeMemberRole",
       "ShapePlan",
       "ShapePlanItem",
       "ShapePlanRequest",
       "ShapePlanSummary",
+      "ShapePreset",
+      "ShapePresetMember",
+      "ShapePresetPick",
       "ShapeRead",
       "ShapeRow",
       "ShapeSeed",
@@ -72188,8 +72284,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 225,
-      "struct": 573
+      "enum": 228,
+      "struct": 576
      }
     },
     {
