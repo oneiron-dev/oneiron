@@ -81,7 +81,9 @@ fn unavailable(message: String) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
         message,
-        &["Serve a model on the Dreamer's narrative role ([models.dreamer]), or read vault.weave.report."],
+        &[
+            "Serve a model on the Dreamer's narrative role ([models.dreamer]), or read vault.weave.report.",
+        ],
     )
 }
 

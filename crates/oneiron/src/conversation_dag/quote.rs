@@ -205,8 +205,7 @@ pub(super) fn prove_quote_in_txn(
     if vault.archive_tombstone_in_txn(txn, &message)?.is_some() {
         return Err(Error::EntityNotFound);
     }
-    if crate::conversation::room_message_owner_in(&vault.store, txn, message)?
-        != Some(conversation)
+    if crate::conversation::room_message_owner_in(&vault.store, txn, message)? != Some(conversation)
     {
         return Err(invalid("quoted message belongs to another room"));
     }
@@ -340,8 +339,15 @@ impl QuotedReply {
     ) -> Result<Self> {
         require_member(&vault.store, txn, &conversation, &parent)?;
         require_type(&vault.store, txn, &parent, ENTITY_TYPE_TURN)?;
-        let proven =
-            prove_quote_in_txn(vault, txn, conversation, Some(parent), actor, quote, citation)?;
+        let proven = prove_quote_in_txn(
+            vault,
+            txn,
+            conversation,
+            Some(parent),
+            actor,
+            quote,
+            citation,
+        )?;
         let target = require_type(&vault.store, txn, &proven.turn, ENTITY_TYPE_TURN)?;
         Ok(Self {
             parent,

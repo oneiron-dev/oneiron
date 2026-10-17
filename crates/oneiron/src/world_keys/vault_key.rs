@@ -250,7 +250,10 @@ impl CarriedVaultKey {
 
     /// Each carried wrap's public facts: what a host may unlock with.
     pub(crate) fn wrap_infos(&self) -> Vec<VaultKeyWrapInfo> {
-        self.wraps.iter().map(|stored| stored.info.clone()).collect()
+        self.wraps
+            .iter()
+            .map(|stored| stored.info.clone())
+            .collect()
     }
 
     /// The key for `context` of the vault key a carried wrap opens to under

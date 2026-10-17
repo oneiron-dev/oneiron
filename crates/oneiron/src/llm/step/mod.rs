@@ -37,11 +37,11 @@ pub use self::peer_wait::{
     send_peer_result_signal,
 };
 pub(crate) use self::trap::wake_trap_in_txn;
-pub(crate) use self::trap_binding::{OpenTrapWait, open_trap_waits};
 pub use self::trap::{
     consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,
     trap_park_owner,
 };
+pub(crate) use self::trap_binding::{OpenTrapWait, open_trap_waits};
 pub use self::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,

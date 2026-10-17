@@ -367,7 +367,13 @@ impl Memory<'_> {
         // anonymous one was refused above), so its room speech keeps its
         // receipt; only an anonymous session keeps none. An imported turn is
         // a source's words, not this writer's.
-        if !matches!(landing, Landing::Base { imported: Some(_), .. }) {
+        if !matches!(
+            landing,
+            Landing::Base {
+                imported: Some(_),
+                ..
+            }
+        ) {
             crate::gate::record_references::admit_witness_prose(self, turn);
         }
         let plan = self.plan_witness(turn, &landing, door, admit)?;

@@ -316,7 +316,12 @@ impl Memory<'_> {
         };
         let report = self.live_weave_report(reader, request)?;
         let sections = self.weave_sections(&report)?;
-        Ok(WeaveLiveLens::prepare(self.vault(), role, report, &sections)?)
+        Ok(WeaveLiveLens::prepare(
+            self.vault(),
+            role,
+            report,
+            &sections,
+        )?)
     }
 
     /// `vault.weave.lens`, after its generate step: re-reads the live report
@@ -334,7 +339,9 @@ impl Memory<'_> {
     ) -> MemoryResult<GeneratedLens> {
         let reader = self.weave_reader(owner)?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let report = read.weave_report(reader, &Self::weave_recipe(request)?)?.value;
+        let report = read
+            .weave_report(reader, &Self::weave_recipe(request)?)?
+            .value;
         if report != live.report {
             return Err(MemoryError::new(
                 crate::memory::MEMORY_CODE_INVALID_STATE,
@@ -363,7 +370,9 @@ impl Memory<'_> {
             model: model.to_owned(),
             rendered_at: self.vault().store.clock.now_recorded_at(),
         };
-        Ok(super::weave_lens::compose_weave_lens(&read, &report, &render)?)
+        Ok(super::weave_lens::compose_weave_lens(
+            &read, &report, &render,
+        )?)
     }
 
     /// The live report for `reader` under the bound actor's read.
@@ -373,7 +382,9 @@ impl Memory<'_> {
         request: &WeaveReportRequest,
     ) -> MemoryResult<WeaveReport> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        Ok(read.weave_report(reader, &Self::weave_recipe(request)?)?.value)
+        Ok(read
+            .weave_report(reader, &Self::weave_recipe(request)?)?
+            .value)
     }
 
     fn weave_recipe(request: &WeaveReportRequest) -> MemoryResult<Vec<WeaveSectionSpec>> {

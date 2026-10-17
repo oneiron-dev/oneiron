@@ -124,7 +124,12 @@ impl Memory<'_> {
     /// A door asks first, so the verb's hooks never run on an export it
     /// refuses; the export asks again in its own snapshot.
     pub fn admit_export(&self, proof: Option<&VerifiedSlip>) -> MemoryResult<()> {
-        let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         self.export_admitted_in_txn(&txn, proof)
     }
 
@@ -161,8 +166,7 @@ impl Memory<'_> {
                     .vault
                     .writer_lease()
                     .is_some_and(crate::store::VaultWriterLease::held_by_current_process)
-                || !crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &owner)?
-                    .is_live()
+                || !crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &owner)?.is_live()
             {
                 return Err(export_forbidden());
             }

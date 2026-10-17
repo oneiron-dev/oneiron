@@ -55,11 +55,8 @@ pub(crate) async fn vault_graph_ask(
             None => input.units,
         };
         let ceiling = input.ceiling.unwrap_or(DecisionRung::Big);
-        let budget = Duration::from_millis(
-            input
-                .unit_deadline_ms
-                .unwrap_or(GRAPH_ASK_UNIT_DEADLINE_MS),
-        );
+        let budget =
+            Duration::from_millis(input.unit_deadline_ms.unwrap_or(GRAPH_ASK_UNIT_DEADLINE_MS));
         let dial = server.decision_host().dial(ceiling);
         let mut answerer = LadderGraphAnswerer::new(&server, asker, dial, budget)?;
         match run_graph_ask_receipted(

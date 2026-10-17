@@ -6,6 +6,7 @@ use super::{
     records::{AnswerRecord, QuestionCriteria},
     store::encode,
 };
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey,
 };
@@ -15,7 +16,6 @@ use crate::llm::decision::{
     MAX_DECISION_AUDIOS_BYTES, MAX_DECISION_IMAGE_BYTES, MAX_DECISION_IMAGES,
     MAX_DECISION_IMAGES_BYTES, PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::receipt::{PixelPull, ServedForm};
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,

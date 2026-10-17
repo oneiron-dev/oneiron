@@ -13,7 +13,9 @@ use crate::{
 /// refused on every local door (put apply and checkpoint restore).
 pub(crate) fn validate_local_identity_body(entity_type: u8, body: &[u8]) -> Result<()> {
     if entity_type == ENTITY_TYPE_FACET && crate::companion::is_identity_facet_body(body) {
-        return Err(Error::InvalidClaimBody("FACET cannot carry PERSON identity"));
+        return Err(Error::InvalidClaimBody(
+            "FACET cannot carry PERSON identity",
+        ));
     }
     Ok(())
 }

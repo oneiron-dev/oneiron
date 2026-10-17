@@ -8,6 +8,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use super::{ArtifactKind, ArtifactVersionView, ArtifactView, BornFromArtifact, BornFromSource};
+use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
@@ -26,7 +27,6 @@ use crate::error::Error;
 use crate::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
 };
-use crate::claim::ClaimReadStatus;
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
 };

@@ -325,11 +325,7 @@ pub(super) fn live_pad_tag_in_txn(
 /// on a claim its key seals: destroying the key destroys every such claim's
 /// sealed bytes, and every path that destroys bytes reads the hold. Only a
 /// claim body names a world (`sync::types::entity_world`).
-fn reject_held_world_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    world: EntityId,
-) -> Result<()> {
+fn reject_held_world_in_txn(store: &Store, txn: &heed::RoTxn<'_>, world: EntityId) -> Result<()> {
     let mut sealed = vec![world];
     let claims = store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)?

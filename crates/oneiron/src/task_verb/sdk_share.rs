@@ -226,9 +226,10 @@ fn render_shared_brief(
 ) -> MemoryResult<ScopedReadResult<Option<SharedBriefView>>> {
     let read = memory.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
     let frame = viewer_frame(&read)?;
-    let rendered = memory
-        .vault()
-        .render_shared_brief(*share_id, memory.actor(), narrowing, &frame, &read)?;
+    let rendered =
+        memory
+            .vault()
+            .render_shared_brief(*share_id, memory.actor(), narrowing, &frame, &read)?;
     Ok(rendered.map(|view| view.map(|view| SharedBriefView::project(share_id, view))))
 }
 

@@ -334,9 +334,7 @@ impl<'a> ScopedRead<'a> {
                 thread,
                 turn.caller,
             )?,
-            None => {
-                crate::context_board::room_ceiling_in(self.vault, txn, turn.room, turn.caller)?
-            }
+            None => crate::context_board::room_ceiling_in(self.vault, txn, turn.room, turn.caller)?,
         };
         let Some(now) = now else {
             return Ok(None);

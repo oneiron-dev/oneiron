@@ -140,9 +140,10 @@ impl Vault {
             let probability = decision
                 .probability
                 .ok_or_else(|| invalid("missing paragraph answer probability"))?;
-            let comment = request
-                .labels
-                .comment(&decision.answer, probability, decision.receipt.band);
+            let comment =
+                request
+                    .labels
+                    .comment(&decision.answer, probability, decision.receipt.band);
             ops.push(json!({
                 "op": "comment_create",
                 "target": id,

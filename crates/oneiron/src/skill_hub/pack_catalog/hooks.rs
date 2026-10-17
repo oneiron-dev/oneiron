@@ -213,7 +213,10 @@ impl PackHook {
             );
         }
         if !selector.render_class.is_deterministic() {
-            tokens.push(format!("{name}/render_class:{}", wire(&selector.render_class)));
+            tokens.push(format!(
+                "{name}/render_class:{}",
+                wire(&selector.render_class)
+            ));
         }
         tokens
     }
@@ -282,7 +285,9 @@ impl PackHook {
         if !served.iter().all(|entry| selector_entry(entry))
             || (!served.is_empty() && phase != HookPhase::Post)
         {
-            return Err(invalid("only a post-hook filters served rows, by row globs"));
+            return Err(invalid(
+                "only a post-hook filters served rows, by row globs",
+            ));
         }
         let render_class = match scalar("render_class")? {
             None => HookRenderClass::DeterministicEager,
@@ -351,7 +356,9 @@ fn selector_entry(entry: &str) -> bool {
         && !entry.starts_with(':')
         && !entry.ends_with(':')
         && entry.bytes().all(|b| {
-            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-' | b'*' | b':')
+            b.is_ascii_lowercase()
+                || b.is_ascii_digit()
+                || matches!(b, b'.' | b'_' | b'-' | b'*' | b':')
         })
 }
 
