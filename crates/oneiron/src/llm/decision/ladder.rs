@@ -6,7 +6,7 @@ use super::policy::{
 use super::types::{invalid, paired_valid};
 use super::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
-    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, PairedReading,
+    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, ImagePin, PairedReading,
     PersonChangedAnswer, ProviderPin, Reasoning, ReasoningCause, StopCause, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
@@ -151,9 +151,9 @@ impl ProviderCapability {
             AnswerContract::Noul => true,
             AnswerContract::Choice { options } => options.len() <= self.max_options,
             AnswerContract::Score { .. } => self.score,
-            // A box is found in an image: the ladder also asks the provider whether it
-            // reads images.
-            AnswerContract::Box => true,
+            // A box or a point is found in an image: the ladder also asks the provider
+            // whether it reads images.
+            AnswerContract::Box | AnswerContract::Point => true,
         }
     }
 }
@@ -182,9 +182,14 @@ pub trait DecisionProvider: Send + Sync {
         ProviderCapability::default()
     }
     /// Whether it reads images. The ladder skips a provider that does not for a call with
-    /// images, and so for every Box question.
+    /// images, and so for every Box or Point question.
     fn reads_images(&self) -> bool {
         false
+    }
+    /// The long edge it fits each image to before sending it; none when it sends the
+    /// pixels as handed in. The receipt pins what each measurement was sent.
+    fn image_edge(&self) -> Option<u32> {
+        None
     }
     /// Whether it hears audio clips. The ladder skips a provider that does not for a call
     /// with any.
@@ -260,6 +265,10 @@ pub trait DecisionModel: Send + Sync {
     fn reads_images(&self) -> bool {
         false
     }
+    /// See [`DecisionProvider::image_edge`].
+    fn image_edge(&self) -> Option<u32> {
+        None
+    }
     /// See [`DecisionProvider::reads_audio`].
     fn reads_audio(&self) -> bool {
         false
@@ -301,6 +310,9 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn reads_images(&self) -> bool {
         self.model.reads_images()
+    }
+    fn image_edge(&self) -> Option<u32> {
+        self.model.image_edge()
     }
     fn reads_audio(&self) -> bool {
         self.model.reads_audio()
@@ -379,6 +391,9 @@ pub struct DecisionLadder<'a> {
     /// person and the policy has a person row, every read asks it beside the call's
     /// questions as its own typed question.
     pub person: Option<&'a DecisionQuestion>,
+    /// The host's versioned presence question ("is the target in the image?"). A Box or
+    /// Point call through [`Self::run_located`] asks it first.
+    pub presence: Option<&'a DecisionQuestion>,
 }
 
 impl DecisionLadder<'_> {
@@ -646,9 +661,7 @@ impl DecisionLadder<'_> {
         DecisionImage::check_call(
             images,
             state,
-            questions
-                .iter()
-                .any(|question| question.contract == AnswerContract::Box),
+            questions.iter().any(|question| question.contract.locates()),
         )
         .map_err(|_| invalid("invalid decision images"))?;
         DecisionAudio::check_call(audio, images, state)
@@ -915,6 +928,7 @@ impl DecisionLadder<'_> {
                     answered,
                     reasoning,
                 }),
+                images: readings.images,
             },
         })
     }
@@ -1030,7 +1044,30 @@ impl DecisionLadder<'_> {
                 .map(|_| Read::NotStarted)
                 .collect());
         }
-        take(&pin, pack, ask(provider, pack, person), readings)
+        let reads = take(&pin, pack, ask(provider, pack, person), readings)?;
+        // Each measurement that answered pins what it was sent of every image.
+        if !pack.images.is_empty() {
+            let edge = provider.image_edge();
+            for (read, readings) in reads.iter().zip(readings.iter_mut()) {
+                if !matches!(read, Read::Answer(_)) {
+                    continue;
+                }
+                for image in pack.images {
+                    if readings
+                        .images
+                        .iter()
+                        .any(|row| row.provider == pin && row.name == image.name)
+                    {
+                        continue;
+                    }
+                    let row = image
+                        .pin(pin.clone(), edge)
+                        .map_err(|_| invalid("invalid decision images"))?;
+                    readings.images.push(row);
+                }
+            }
+        }
+        Ok(reads)
     }
 }
 
@@ -1228,6 +1265,7 @@ pub(super) struct Readings {
     pins: Vec<ProviderPin>,
     paired: Vec<PairedReading>,
     person: Vec<PairedReading>,
+    images: Vec<ImagePin>,
 }
 
 /// A missing person reading never asks; it is not P(yes) = 0, it is no reading.

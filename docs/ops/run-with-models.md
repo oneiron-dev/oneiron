@@ -636,7 +636,13 @@ yes/no question lists no before yes, as test 6b's side questions did; its
 readout still reports yes first), the single-token label verbalizers
 (`tokens`, at least four), the end token (`eos`), `n_probs` (how many of the
 top probabilities come back), `n_probs_full` (the whole vocabulary, for the
-retry below) and, for the owner's probe, `[probe] paired` and `person`.
+retry below) and, for the owner's probe, `[probe] paired` and `person`. An
+optional `[probe] presence` words the presence question every Box or Point
+call asks first, over the same images and clock, with the coordinate
+question's wording in the `locate` state field ("is that target in the image
+at all?"). Only a confident yes, with no person asked, starts the
+coordinates; a confident no answers that the target is absent; anything else
+abstains. Without it, the coordinates are asked directly.
 
 A question and "does this need more thinking?" stay joint (ARCH-0076
 `#ask-a-person`): the question renders the joint template, its text as

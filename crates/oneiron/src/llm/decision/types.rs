@@ -2,6 +2,7 @@
 
 use crate::EntityId;
 use crate::error::{Error, Result};
+use crate::memory::PixelRegion;
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -44,6 +45,8 @@ pub enum AnswerContract {
     /// Where the target the question names sits in an image the call carries: one box,
     /// or none when the target is absent.
     Box,
+    /// Where the target sits as one point, or none when it is absent.
+    Point,
 }
 
 impl AnswerContract {
@@ -76,7 +79,23 @@ impl AnswerContract {
                 value.is_finite() && value >= min && value <= max
             }
             (Self::Box, DecisionAnswer::Box(found)) => found.is_none_or(ImageBox::is_valid),
+            (Self::Point, DecisionAnswer::Point(found)) => found.is_none_or(ImagePoint::is_valid),
             _ => false,
+        }
+    }
+
+    /// Whether it finds its target in an image (a Box or a Point): the call carries at
+    /// least one, and a presence question may go first.
+    pub fn locates(&self) -> bool {
+        matches!(self, Self::Box | Self::Point)
+    }
+
+    /// Its found absence: none for a Box or a Point; no other contract has one.
+    pub fn absent(&self) -> Option<DecisionAnswer> {
+        match self {
+            Self::Box => Some(DecisionAnswer::Box(None)),
+            Self::Point => Some(DecisionAnswer::Point(None)),
+            Self::Noul | Self::Choice { .. } | Self::Score { .. } => None,
         }
     }
 }
@@ -95,6 +114,8 @@ pub enum DecisionAnswer {
     /// The target's box, or none when the target is absent: a found absence, not an
     /// abstain.
     Box(Option<ImageBox>),
+    /// The target's point, or none when it is absent, as for a box.
+    Point(Option<ImagePoint>),
     Abstain,
 }
 
@@ -111,13 +132,13 @@ pub struct ImageBox {
 }
 
 impl ImageBox {
-    /// Every edge inside the image, and the edges in order.
+    /// Every edge inside the image, and the edges strictly in order: a box has area.
     pub fn is_valid(self) -> bool {
         [self.top, self.bottom, self.left, self.right]
             .iter()
             .all(|edge| edge.is_finite() && (0.0..=1.0).contains(edge))
-            && self.top <= self.bottom
-            && self.left <= self.right
+            && self.top < self.bottom
+            && self.left < self.right
     }
 
     /// The box's centre as `(x, y)` fractions: the point answer, for a caller that
@@ -127,6 +148,30 @@ impl ImageBox {
             (self.left + self.right) / 2.0,
             (self.top + self.bottom) / 2.0,
         )
+    }
+
+    /// The box's centre as a Point answer.
+    pub fn point(self) -> ImagePoint {
+        let (x, y) = self.centre();
+        ImagePoint { x, y }
+    }
+}
+
+/// A point in an image, as fractions from its top-left corner: `x` of its width, `y` of
+/// its height. Like a box, it holds at any size the image is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImagePoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl ImagePoint {
+    /// Both coordinates inside the image.
+    pub fn is_valid(self) -> bool {
+        [self.x, self.y]
+            .iter()
+            .all(|coordinate| coordinate.is_finite() && (0.0..=1.0).contains(coordinate))
     }
 }
 
@@ -251,6 +296,34 @@ pub struct DecisionReceipt {
     /// answered. Absent on a receipt made off the decision clock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time: Option<DecisionTime>,
+    /// One row per measurement and image it read: what that provider was sent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImagePin>,
+}
+
+/// What one measurement read of one image: the pixels as handed in, where they sit in
+/// the image they are of, and the size the provider was sent after it fit them to its
+/// long edge. A box or point it answers is in fractions of what it was sent, which are
+/// the same fractions of the pixels handed in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImagePin {
+    pub provider: ProviderPin,
+    /// The state field the image filled.
+    pub name: String,
+    pub evidence: EvidenceVersion,
+    /// The pixels as handed in.
+    pub width: u32,
+    pub height: u32,
+    /// Where those pixels sit in the image `evidence` is; none is the whole image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<PixelRegion>,
+    /// The provider's long edge; none when it states none and was sent the pixels as
+    /// handed in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<u32>,
+    pub sent_width: u32,
+    pub sent_height: u32,
 }
 
 /// What the decision deadline left on a receipt.

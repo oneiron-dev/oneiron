@@ -5,9 +5,10 @@
 //!
 //! A routine Choice offers the step's candidates and three reserved options inside its
 //! 64: NONE (no candidate fits), reobserve (look again before choosing) and "too
-//! complicated, ask up" (the step goes back to the planner). A routine Box finds the
-//! step's target in a screenshot: its centre is the point the driver acts at, and a found
-//! absence is NONE. A ladder that gives no answer sends the step up with its reason.
+//! complicated, ask up" (the step goes back to the planner). A routine Box or Point finds
+//! the step's target in a screenshot, presence first: the point, or the box's centre, is
+//! where the driver acts, and a found absence is NONE. A ladder that gives no answer sends
+//! the step up with its reason.
 //! Every step of one subgoal reads the subgoal's one clock, so a reobserve or a retry
 //! never restarts it.
 
@@ -15,7 +16,7 @@ use super::policy::{DecisionBandPolicy, Reversibility};
 use super::types::invalid;
 use super::{
     AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion,
-    HumanAskReason, ImageBox, TypedDecision,
+    HumanAskReason, ImageBox, LocatedDecision, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
@@ -57,11 +58,11 @@ pub fn routine_choice(candidates: &[String]) -> Result<AnswerContract> {
     Ok(contract)
 }
 
-/// Whether `contract` is a routine step's: a Box, or a Choice closed by the three
-/// reserved options.
+/// Whether `contract` is a routine step's: a Box or a Point, or a Choice closed by the
+/// three reserved options.
 pub fn is_routine(contract: &AnswerContract) -> bool {
     match contract {
-        AnswerContract::Box => true,
+        AnswerContract::Box | AnswerContract::Point => true,
         AnswerContract::Choice { options } => {
             options.len() > ROUTINE_RESERVED.len()
                 && options[options.len() - ROUTINE_RESERVED.len()..]
@@ -80,8 +81,12 @@ pub enum RoutineOutcome {
     /// The decider picked this candidate: the driver takes its step on it.
     Act { candidate: String },
     /// The step's target in the screenshot: the driver acts at `x`, `y` (fractions of
-    /// the image from its top-left), the centre of `found`.
-    Point { x: f64, y: f64, found: ImageBox },
+    /// the image from its top-left), the point answered or the centre of `found`.
+    Point {
+        x: f64,
+        y: f64,
+        found: Option<ImageBox>,
+    },
     /// No candidate fits, or the target is not in the screenshot.
     None,
     /// Look again before choosing.
@@ -94,7 +99,12 @@ pub enum RoutineOutcome {
 impl RoutineOutcome {
     /// The routine reading of `decision`, a typed decision over a routine contract.
     pub fn of(decision: &TypedDecision) -> Result<Self> {
-        Ok(match &decision.answer {
+        Self::read(&decision.answer, decision.human_ask)
+    }
+
+    /// The routine reading of an answer, and the reason the ladder gave none.
+    fn read(answer: &DecisionAnswer, human_ask: Option<HumanAskReason>) -> Result<Self> {
+        Ok(match answer {
             DecisionAnswer::Choice(choice) if choice == ROUTINE_NONE => Self::None,
             DecisionAnswer::Choice(choice) if choice == ROUTINE_REOBSERVE => Self::Reobserve,
             DecisionAnswer::Choice(choice) if choice == ROUTINE_ASK_UP => {
@@ -108,13 +118,16 @@ impl RoutineOutcome {
                 Self::Point {
                     x,
                     y,
-                    found: *found,
+                    found: Some(*found),
                 }
             }
-            DecisionAnswer::Box(None) => Self::None,
-            DecisionAnswer::Abstain => Self::AskUp {
-                reason: decision.human_ask,
+            DecisionAnswer::Point(Some(point)) => Self::Point {
+                x: point.x,
+                y: point.y,
+                found: None,
             },
+            DecisionAnswer::Box(None) | DecisionAnswer::Point(None) => Self::None,
+            DecisionAnswer::Abstain => Self::AskUp { reason: human_ask },
             DecisionAnswer::Noul(_) | DecisionAnswer::Score(_) => {
                 return Err(invalid("not a routine answer"));
             }
@@ -150,12 +163,17 @@ impl RoutineTrail {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RoutineDecision {
     pub outcome: RoutineOutcome,
+    /// The decision that stands: a located step's coordinates when they ran, else its
+    /// presence step.
     pub decision: TypedDecision,
+    /// A located step's presence decision, beside the coordinates it started.
+    pub presence: Option<TypedDecision>,
 }
 
 impl DecisionLadder<'_> {
-    /// One routine driver step: [`Self::run_images`] over a routine contract
-    /// ([`routine_choice`] or a Box), read as a [`RoutineOutcome`]. `deadline` is the
+    /// One routine driver step: [`Self::run_images`] over a routine Choice
+    /// ([`routine_choice`]), or [`Self::run_located`] over a Box or Point, read as a
+    /// [`RoutineOutcome`]. `deadline` is the
     /// subgoal's one clock, borrowed: every step, reobserve and retry of the subgoal reads
     /// the same one. A step whose effect leaves the vault asks with
     /// [`Reversibility::OutboundEffect`], so at a cut it abstains and goes up.
@@ -178,6 +196,26 @@ impl DecisionLadder<'_> {
         if !is_routine(&question.contract) {
             return Err(invalid("not a routine step's question"));
         }
+        if question.contract.locates() {
+            let located: LocatedDecision = self.run_located(
+                question,
+                principal,
+                evidence,
+                images,
+                state,
+                dial,
+                policy,
+                reversibility,
+                deadline,
+            )?;
+            let outcome = RoutineOutcome::read(&located.answer, located.human_ask())?;
+            let (decision, presence) = located.split();
+            return Ok(RoutineDecision {
+                outcome,
+                decision,
+                presence,
+            });
+        }
         let decision = self.run_images(
             question,
             principal,
@@ -192,6 +230,7 @@ impl DecisionLadder<'_> {
         Ok(RoutineDecision {
             outcome: RoutineOutcome::of(&decision)?,
             decision,
+            presence: None,
         })
     }
 }

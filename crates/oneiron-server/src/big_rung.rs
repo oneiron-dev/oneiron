@@ -182,6 +182,7 @@ fn contract_line(contract: &AnswerContract) -> String {
             format!("Answer with one number from {min} to {max}.")
         }
         AnswerContract::Box => "Answer with a box.".to_owned(),
+        AnswerContract::Point => "Answer with a point.".to_owned(),
     }
 }
 
@@ -270,7 +271,7 @@ fn typed(contract: &AnswerContract, answer: &Value) -> Option<DecisionAnswer> {
             (score.is_finite() && score >= *min && score <= *max)
                 .then_some(DecisionAnswer::Score(score))
         }
-        AnswerContract::Box => None,
+        AnswerContract::Box | AnswerContract::Point => None,
     }
 }
 
@@ -293,7 +294,7 @@ impl DecisionModel for BigModel {
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
-        if matches!(call.question.contract, AnswerContract::Box) {
+        if call.question.contract.locates() {
             return Ok(abstained());
         }
         let request = self.request(call)?;

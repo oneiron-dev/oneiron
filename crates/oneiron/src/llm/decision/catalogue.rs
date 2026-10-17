@@ -163,6 +163,15 @@ pub const ASK_UP: QuestionFamily = QuestionFamily {
     class: DecisionClass::Triage,
 };
 
+/// The host's presence question, asked before a Box or Point question over the same
+/// images and clock: is the target the `locate` state field words in the image at all?
+/// Only a confident yes starts the coordinates. Keyed by its wording alone.
+pub const IMAGE_PRESENCE: QuestionFamily = QuestionFamily {
+    name: "decision.image_presence",
+    version: 1,
+    class: DecisionClass::Retrieval,
+};
+
 /// Does this candidate violate one owner-authored policy row? Keyed by the
 /// document hash, row reference and action; wording comes from the row.
 pub const POLICY_OWNER_ROW: QuestionFamily = QuestionFamily {

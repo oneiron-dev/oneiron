@@ -9,8 +9,8 @@ use crate::EntityId;
 use crate::edit_roundtrip::CellValue;
 use crate::llm::decision::{
     DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionImage, DecisionLadder,
-    DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion, MAX_DECISION_STATE_BYTES,
-    Reversibility, TypedDecision,
+    DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion, LocatedDecision,
+    MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{Error, Result};
@@ -53,6 +53,17 @@ pub trait UnitDecider {
     }
     /// The full decision for one call, with the ladder's receipt.
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision>;
+    /// A Box or Point call, presence first ([`DecisionLadder::run_located`]),
+    /// each step with its receipt. The default asks the coordinates directly,
+    /// as a ladder with no presence question does.
+    fn decide_located(&self, call: &UnitCall<'_>) -> Result<LocatedDecision> {
+        let location = self.decide_unit(call)?;
+        Ok(LocatedDecision {
+            presence: None,
+            answer: location.answer.clone(),
+            location: Some(location),
+        })
+    }
 }
 
 impl UnitDecider for DecisionLadder<'_> {
@@ -91,6 +102,20 @@ impl UnitDecider for DecisionLadder<'_> {
             call.deadline,
         )
     }
+
+    fn decide_located(&self, call: &UnitCall<'_>) -> Result<LocatedDecision> {
+        self.run_located(
+            call.question,
+            call.principal,
+            call.evidence,
+            call.images,
+            call.state,
+            call.dial,
+            call.policy,
+            call.reversibility,
+            call.deadline,
+        )
+    }
 }
 
 /// The settings one artifact ask shares across its units, fixed by the
@@ -113,12 +138,13 @@ pub struct ArtifactAsk<'a> {
 }
 
 impl ArtifactAsk<'_> {
-    /// A question an artifact can land: valid, not a Box (no cell, comment
-    /// or column holds a region), on a dial that stops below the person.
+    /// A question an artifact can land: valid, not a Box or Point (no cell,
+    /// comment or column holds a region or a spot), on a dial that stops
+    /// below the person.
     pub(crate) fn validate(&self) -> Result<()> {
         self.question.validate()?;
         self.dial.band.validate()?;
-        if self.question.contract == crate::llm::decision::AnswerContract::Box
+        if self.question.contract.locates()
             || self.dial.first > self.dial.ceiling
             || self.dial.ceiling == crate::llm::decision::DecisionRung::Human
             || self.budget.is_zero()
@@ -218,7 +244,9 @@ pub(crate) fn answer_cell(answer: &DecisionAnswer) -> Result<Option<CellValue>> 
         DecisionAnswer::Noul(value) => Some(CellValue::Bool(*value)),
         DecisionAnswer::Choice(value) => Some(CellValue::Text(value.clone())),
         DecisionAnswer::Score(value) => Some(CellValue::Number(*value)),
-        DecisionAnswer::Box(_) => return Err(invalid("a cell does not hold a box answer")),
+        DecisionAnswer::Box(_) | DecisionAnswer::Point(_) => {
+            return Err(invalid("a cell does not hold a box or point answer"));
+        }
     })
 }
 
