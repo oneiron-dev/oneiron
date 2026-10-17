@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 
 use rmpv::Value;
 
-use super::{Attempts, Dispatches, Finding, entity, live_attempt, run_loop, settled, task_of};
+use super::{
+    Attempts, DialBook, Dispatches, Finding, entity, live_attempt, run_loop, settled, task_of,
+};
 use crate::attempt_queue::AttemptState;
 use crate::receipt::{CallOutcome, CallReceipt};
 use crate::self_heal::AgentHealthSignal;
@@ -32,7 +34,7 @@ pub(super) fn check_repeat_findings(
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
     dispatched: &Dispatches,
     attempts: &Attempts,
-    fails: u64,
+    book: &DialBook,
     since: u64,
 ) -> Result<Vec<Finding>> {
     let mut out = Vec::new();
@@ -50,6 +52,7 @@ pub(super) fn check_repeat_findings(
         let Some(run) = vault.get_code_run_replay_record(&attempt)? else {
             continue;
         };
+        let fails = book.of(Some(dispatch)).check_fails;
         let mut streaks: BTreeMap<Vec<u8>, Streak<'_, Value>> = BTreeMap::new();
         let mut done = Vec::new();
         for call in &run.bridge_calls {
@@ -98,6 +101,8 @@ pub(super) fn check_repeat_findings(
         }
     }
     for (actor, rows) in calls {
+        let attempt = live_attempt(*actor, dispatched, attempts);
+        let fails = book.for_attempt(dispatched, attempt).check_fails;
         let mut streaks: BTreeMap<(&str, &str), Streak<'_, String>> = BTreeMap::new();
         let mut done = Vec::new();
         for (id, row) in rows {
@@ -138,7 +143,7 @@ pub(super) fn check_repeat_findings(
             out.push(finding(
                 *actor,
                 None,
-                live_attempt(*actor, dispatched, attempts),
+                attempt,
                 streak.evidence,
                 (streak.from, streak.to),
                 streak.count,
