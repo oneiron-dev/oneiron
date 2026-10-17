@@ -10161,9 +10161,9 @@
      "path": "src/claim/scoped_read/weave_lens.rs",
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
-      "const": 3,
+      "const": 5,
       "crate-vis": 14,
-      "fn": 2,
+      "fn": 4,
       "struct": 6
      }
     },
@@ -10772,6 +10772,7 @@
       "ActionBuildContext",
       "ActionDispatch",
       "ActionHostBinding",
+      "ActionJson",
       "ActionRegistry",
       "ActionVerbDefinition",
       "AgentActionCall"
@@ -10779,10 +10780,11 @@
      "path": "src/code_run/actions.rs",
      "purpose": "One named verb registry for validated UI events and agent calls",
      "surface": {
+      "const": 1,
       "crate-vis": 4,
       "enum": 2,
-      "fn": 16,
-      "struct": 6,
+      "fn": 18,
+      "struct": 7,
       "type": 1
      }
     },
@@ -13486,7 +13488,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorQualificationError"
@@ -13495,7 +13497,7 @@
      "purpose": "Qualification is a vault door: callers cannot submit a self-graded report",
      "surface": {
       "enum": 1,
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -13534,7 +13536,7 @@
      "purpose": "The owner's consent to a catalog connector's tools (ONE-1794, OF-189)",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 5
@@ -14343,6 +14345,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/fanout.rs",
+     "purpose": "The fan-out launches that wait on the owner, as TASKS lead rows (OF-393): a held launch's pause row with the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -14536,7 +14548,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 9,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -23159,7 +23171,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 61,
+      "crate-vis": 62,
       "re-export": 8
      }
     },
@@ -26718,7 +26730,7 @@
      "purpose": "Principal identity and validated-action outcome types",
      "surface": {
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -39273,13 +39285,15 @@
      "kind": "src",
      "notable": [
       "ExportBody",
+      "ExportBodyFile",
       "ExportValue"
      ],
      "path": "src/serialize/export_value.rs",
      "purpose": "Credential-safe, type-preserving MessagePack values for whole-vault JSON",
      "surface": {
-      "crate-vis": 4,
-      "enum": 2
+      "crate-vis": 10,
+      "enum": 2,
+      "struct": 1
      }
     },
     {
@@ -39498,7 +39512,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/serialize/vault_archive.rs",
-     "purpose": "Writes the whole-vault archive (OF-222) from the credential-nulled document value: every JSONL row and every…",
+     "purpose": "Writes the whole-vault archive (OF-222) from the credential-nulled document value: every JSONL row is cut…",
      "surface": {
       "crate-vis": 1
      }
@@ -45398,13 +45412,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_effect.rs",
+     "purpose": "The typed effects the composed ask doors write beside their ask (OF-393): a project ask joining its…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 7
      }
     },
@@ -45616,6 +45640,7 @@
       "TaskAskHandle",
       "TaskAskHoldReason",
       "TaskAskLadderPrediction",
+      "TaskAskLaunchHold",
       "TaskAskNeed",
       "TaskAskOptionId",
       "TaskAskPersonEvidence",
@@ -45641,8 +45666,8 @@
      "surface": {
       "crate-vis": 3,
       "enum": 16,
-      "fn": 6,
-      "struct": 21
+      "fn": 7,
+      "struct": 22
      }
     },
     {
@@ -45953,9 +45978,9 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 22,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -46103,7 +46128,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "mod": 2,
       "re-export": 24
      }
@@ -46174,7 +46199,7 @@
      "path": "src/task_verb/project_ask.rs",
      "purpose": "Asks addressed to a project, over the ordinary TASK ask (ARCH-0067: a proposal on a project's task goes to…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -46185,7 +46210,7 @@
      "path": "src/task_verb/project_tradeoff.rs",
      "purpose": "A project-bound skill tradeoff over the project's own doors (ARCH-0053 §10a, ARCH-0067 tasks and asks)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 5
      }
     },
@@ -48260,7 +48285,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ShapeApplier",
@@ -48273,7 +48298,7 @@
      "purpose": "Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has",
      "surface": {
       "enum": 2,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -48316,7 +48341,17 @@
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/manifest.rs",
+     "purpose": "A policy manifest as a seed writes it (DEC-0005): its entity id and its exact MessagePack body, as hex",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -49851,6 +49886,7 @@
      "path": "src/workspace_roster/project/widen.rs",
      "purpose": "Cross-project widening routes to an ordinary ask on the common board",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -51729,7 +51765,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52709,7 +52745,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 124,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -52807,9 +52843,9 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
@@ -52870,9 +52906,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 160,
+   "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3200,
+   "source_files": 3203,
    "test_files": 903
   },
   "oneiron-android": {
@@ -63528,7 +63564,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/weave_lens.rs",
@@ -72400,10 +72436,7 @@
       "PackSection",
       "PackSetup",
       "PackSetupAccount",
-      "PackSetupAnswer",
-      "PackSetupAnswerRequest",
       "PackSetupAuth",
-      "PackSetupCardActionInput",
       "PackSetupCheck",
       "PackSetupConnection",
       "PackSetupConnectionState",
@@ -72690,6 +72723,7 @@
       "TaskAskHandle",
       "TaskAskHoldReason",
       "TaskAskLadderPrediction",
+      "TaskAskLaunchHold",
       "TaskAskNeed",
       "TaskAskPersonEvidence",
       "TaskAskPersonKind",
@@ -72788,8 +72822,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 242,
-      "struct": 595
+      "enum": 241,
+      "struct": 594
      }
     },
     {
