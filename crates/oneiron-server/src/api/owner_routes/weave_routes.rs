@@ -18,7 +18,7 @@ use oneiron::claim::{
     WeaveDigestRequest, WeaveDigestView, WeaveLinkCorrectionView, WeaveReaderRef,
     WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveWrongLinkRequest,
 };
-use oneiron::lens::GeneratedLens;
+use oneiron::lens::LensFrameCard;
 use serde::Serialize;
 
 use super::{OwnerReply, blocking, owner};
@@ -127,18 +127,16 @@ async fn report(
 }
 
 /// `POST /v1/owner/weave/lens`: the owner lens, live, rendered through the
-/// weave-report skill on this server's Dreamer narrative route.
+/// weave-report skill on this server's Dreamer narrative route, as a card
+/// whose frame this server holds for the credential's events on it.
 async fn lens(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<WeaveReportRequest>, JsonRejection>,
-) -> OwnerReply<GeneratedLens> {
+) -> OwnerReply<LensFrameCard> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let caller = crate::ai_host::WeaveLensCaller::Owner {
-        owner,
-        locality: auth.locality(),
-    };
+    let caller = crate::ai_host::WeaveLensCaller::Owner { owner, auth };
     let lens = crate::ai_host::render_live_weave_lens(&server, caller, request)
         .await
         .map_err(|error| super::owner_error(memory_refused(error)))?;

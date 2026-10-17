@@ -44,7 +44,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/turn_actions.rs` | src | s | 1 crate-vis | — | The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)… |
 | `src/ai_host/turns.rs` | src | s | 9 crate-vis | — | Chat turns in flight |
 | `src/ai_host/waves.rs` | src | m | 4 crate-vis | — | Live, model-backed wave planning on the server's durable workflow pump |
-| `src/ai_host/weave_lens.rs` | src | s | 2 crate-vis | — | The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST… |
+| `src/ai_host/weave_lens.rs` | src | m | 2 crate-vis | — | The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST… |
 | `src/ai_host/workflows.rs` | src | m | 6 crate-vis | — | The saved-workflow pump: runs each open workflow's ready step on the generative seat and advances it… |
 | `src/api/ai/chat.rs` | src | L | 17 crate-vis | — | `POST /v1/ai/chat`: one chat turn on the generative seat |
 | `src/api/ai/media.rs` | src | m | 10 crate-vis | — | The `ai.*` verbs past text: `GET /v1/ai/options`, `POST /v1/ai/image`, `/video`, `/speech`, `/transcribe`… |
@@ -57,6 +57,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/artifacts/host.rs` | src | s | 5 crate-vis | — | Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`, and one app on an origin of… |
 | `src/api/artifacts/route.rs` | src | m | 7 crate-vis | — | One typed codec for artifact bundle entry and canonical file URLs |
 | `src/api/blob_artifacts.rs` | src | L | 25 crate-vis | — | The artifact family's public HTTP surface (ARCH-0078, OF-511): one contract over every blob kind |
+| `src/api/body_codec.rs` | src | s | 1 crate-vis | — | Compressed bodies on the HTTP API (ARCH-0081 §8, OF-604) |
 | `src/api/booking.rs` | src | m | 14 crate-vis | — | ONE-1819 [BK-08] the agent-readable booking surface |
 | `src/api/booking/admission.rs` | src | m | 2 crate-vis | — | — |
 | `src/api/booking/client_address_tests.rs` | test | m | — | — | Booking admission charges the client the connection proves (C7): its own peer, or the client a configured… |

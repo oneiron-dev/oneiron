@@ -701,6 +701,7 @@ class Oneiron:
             """One of the bound actor's saved weave digests, or the newest, under the current read policy."""
             return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
         def lens(self, spec):
+            """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
             return json.loads(_translate(lambda: self._client.vault_weave_lens(json.dumps(spec))))
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs":
