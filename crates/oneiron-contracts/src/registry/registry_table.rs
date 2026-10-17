@@ -3,6 +3,7 @@
 use super::artifact_kinds::ArtifactFamilyKindId;
 use super::families::TypeByteFamily;
 use super::namespaces::ID_NAMESPACE_REGISTRY;
+use super::type_bytes::ENTITY_TYPE_EMBEDDING_SETUP;
 use super::type_bytes::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CHANNEL_IDENTITY,
@@ -548,6 +549,16 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
     EntityTypeRegistryEntry {
         kind: "SKILL_CONTENT_ANCHOR",
         type_byte: ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
+        short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
+        classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::RegistriesDerived),
+        artifact_kind: None,
+        zone: TypeByteZone::System,
+    },
+    EntityTypeRegistryEntry {
+        kind: "EMBEDDING_SETUP",
+        type_byte: ENTITY_TYPE_EMBEDDING_SETUP,
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,

@@ -195,6 +195,12 @@ impl SyncClient {
                     keys.push(key);
                 }
             }
+            // This vault's embedding setup rows (OF-370) live in one fixed window, which a
+            // fresh device has no row of its own to discover.
+            let setup = WindowKey::from_timestamp(crate::embed::EMBEDDING_SETUP_LEARNED_AT);
+            if !keys.contains(&setup) {
+                keys.push(setup);
+            }
         } else {
             for marker in self
                 .vault

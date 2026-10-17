@@ -129,6 +129,10 @@ pub const FIRST_PARTY_SKILL_HUB: &[u8] = b"oneiron/first-party-skill-hub/v1";
 /// predicate the class describes.
 pub const CLAIM_CLASS_DESCRIPTOR: &[u8] = b"oneiron.comm.claim_class_descriptor.v1";
 
+/// An embedding setup row (`embed::space`, OF-370). Parts: `space` and the
+/// space id, or `slot` and the kind slot's byte.
+pub const EMBEDDING_SETUP: &[u8] = b"oneiron/embedding-setup/v1/";
+
 /// The engine hub of the built-in connector packs
 /// (`skill_hub::pack_catalog::builtin`). No parts.
 pub const BUILTIN_CONNECTOR_PACK_HUB: &[u8] = b"oneiron/built-in-connector-packs/v1";
@@ -203,6 +207,7 @@ pub(crate) const ALL: [&[u8]; 42] = [
     OUTBOUND_RECEIPT_RECORD,
     FIRST_PARTY_SKILL_HUB,
     CLAIM_CLASS_DESCRIPTOR,
+    EMBEDDING_SETUP,
     BUILTIN_CONNECTOR_PACK_HUB,
     HISTORY_CONVERSATION,
     HISTORY_TURN,

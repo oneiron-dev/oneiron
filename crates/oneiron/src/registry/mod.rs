@@ -12,6 +12,7 @@ pub use oneiron_contracts::registry::{
     TYPE_BYTE_FAMILIES, TypeByteFamily, TypeByteFamilyEntry, allocate_type_byte, family_of,
 };
 
+pub use oneiron_contracts::registry::ENTITY_TYPE_EMBEDDING_SETUP;
 pub use oneiron_contracts::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CHANNEL_IDENTITY,

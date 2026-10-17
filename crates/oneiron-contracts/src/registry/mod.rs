@@ -23,6 +23,7 @@ pub use self::registry_table::{
     ENTITY_TYPE_REGISTRY, EntityTypeRegistryEntry, entity_type_registry_entry, is_structural_kind,
     short_id_prefix,
 };
+pub use self::type_bytes::ENTITY_TYPE_EMBEDDING_SETUP;
 pub use self::type_bytes::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CHANNEL_IDENTITY,
