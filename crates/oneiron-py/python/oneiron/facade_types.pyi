@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 258 facade rows, 949 declarations.
-Inputs: 214 of 258 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 209 of 258 fully typed, 41 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 259 facade rows, 967 declarations.
+Inputs: 215 of 259 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 210 of 259 fully typed, 41 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
 """
 
@@ -308,6 +308,32 @@ class EmptyRequest(TypedDict):
 ShapePreset = Literal["personal", "family", "team", "org", "community"]
 ShapeMemberRole = Literal["owner", "admin", "member", "viewer"]
 ShapeCeiling = Literal["auto", "proposed"]
+ShapeSkillSourceLibrary = TypedDict("ShapeSkillSourceLibrary", {"from": Literal["library"], "subtree": str})
+ShapeSkillSourceHub = TypedDict("ShapeSkillSourceHub", {"from": Literal["hub"], "hub": str, "folder": str, "pin_type": str, "pin_value": str, "publisher": str})
+ShapeSkillSource = ShapeSkillSourceLibrary | ShapeSkillSourceHub
+ShapeSelfHeld = Literal["dedicated_address", "dedicated_handle", "shared_presence"]
+ShapeMailScope = Literal["mail.read", "mail.metadata", "mail.send"]
+class ShapeChannelCustodySelfHeld(TypedDict):
+    held: Literal["self_held"]
+    shape: ShapeSelfHeld
+class ShapeChannelCustodyDelegated(TypedDict):
+    held: Literal["delegated"]
+    custody_record_ref: str
+    scopes: list[ShapeMailScope]
+ShapeChannelCustody = ShapeChannelCustodySelfHeld | ShapeChannelCustodyDelegated
+class ShapeChannelBindingActor(TypedDict):
+    to: Literal["actor"]
+    agent_id: str
+    facet: NotRequired[str | None]
+class ShapeChannelBindingVault(TypedDict):
+    to: Literal["vault"]
+    vault_id: int
+ShapeChannelBinding = ShapeChannelBindingActor | ShapeChannelBindingVault
+ShapeChannelFulfillment = Literal["api", "manual", "review"]
+class ShapeChannelProvision(TypedDict):
+    custody: ShapeChannelCustody
+    binding: ShapeChannelBinding
+    fulfillment: ShapeChannelFulfillment
 ShapeGrantBoundAction = TypedDict("ShapeGrantBoundAction", {"domain": Literal["action"], "actor": str, "actor_class": NotRequired[str | None], "class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": NotRequired[bool]})
 ShapeGrantBoundDisclosure = TypedDict("ShapeGrantBoundDisclosure", {"domain": Literal["disclosure"], "audience": list[str], "class": str, "selectors": list[str]})
 ShapeGrantBound = ShapeGrantBoundAction | ShapeGrantBoundDisclosure
@@ -363,10 +389,12 @@ class ShapeRowSkill(TypedDict):
     kind: Literal["skill"]
     skill_id: str
     version: NotRequired[str | None]
+    source: NotRequired[ShapeSkillSource | None]
 class ShapeRowChannel(TypedDict):
     kind: Literal["channel"]
     channel: str
     address: str
+    provision: NotRequired[ShapeChannelProvision | None]
 class ShapeRowGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: NotRequired[str]
@@ -2440,6 +2468,53 @@ class LearningSettingClear(TypedDict):
     mode: LearningSettingMode
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+class SecretLiftRequest(TypedDict):
+    start: NotRequired[bool]
+SecretScanMode = Literal["on", "off"]
+LiftTrigger = Literal["switch", "owner"]
+LiftFamily = Literal["records", "side_rows", "carriers"]
+class LiftCounts(TypedDict):
+    family: LiftFamily
+    read: int
+    masked: int
+    proposals: int
+    failed: int
+class SecretLiftProgress(TypedDict):
+    run_id: str
+    trigger: LiftTrigger
+    requested_at: int
+    family: LiftFamily
+    retrying: int
+    counts: list[LiftCounts]
+class SecretLiftReceipt(TypedDict):
+    receipt_id: str
+    trigger: LiftTrigger
+    requested_by: NotRequired[str | None]
+    requested_at: int
+    finished_at: int
+    families: list[LiftCounts]
+    masked: int
+    proposals: int
+    failed: int
+LiftCause = Literal["unplaceable", "immutable", "held", "file", "no_door", "history"]
+class SecretLiftProposal(TypedDict):
+    path: str
+    detector_reason: str
+    suggested_secret_name: str
+    project_id: str
+class SecretLiftHistoryProposal(TypedDict):
+    family: LiftFamily
+    cause: LiftCause
+    proposal: SecretLiftProposal
+    run_id: str
+    filed_at: int
+class SecretLiftStatus(TypedDict):
+    mode: SecretScanMode
+    paused: bool
+    running: NotRequired[SecretLiftProgress | None]
+    last: NotRequired[SecretLiftReceipt | None]
+    open_proposals: int
+    proposals: list[SecretLiftHistoryProposal]
 WidenProposalState = Literal["pending", "approved", "declined"]
 class WidenProposalsRequest(TypedDict):
     state: NotRequired[WidenProposalState | None]
@@ -4115,6 +4190,7 @@ class DecisionAsk(TypedDict):
     correlation: NotRequired[str | None]
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
+    withdrawn_at: NotRequired[int | None]
 class DecisionAskClimbRequest(TypedDict):
     seq: int
 class ConnectorListRequest(TypedDict):

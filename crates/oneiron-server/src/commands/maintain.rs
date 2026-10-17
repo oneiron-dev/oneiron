@@ -3,11 +3,14 @@
 //! It runs every sweep of the engine's housekeeping pass now, due or not, and
 //! then the repairs the owner names, which only make sense on demand: a
 //! vector-graph rebuild, a short-id recompute, the gate claim-index backfill,
-//! the conversation DAG migration and a text-index rebuild. A running `serve`
-//! runs the same pass on its own tick and answers `POST /v1/owner/maintain`.
-//! The report is JSON on stdout; a sweep that failed makes the exit nonzero.
+//! the conversation DAG migration and a text-index rebuild. `--lift-secrets`
+//! queues a historical secret lift run first, which the pass works to its
+//! end. A running `serve` runs the same pass on its own tick and answers
+//! `POST /v1/owner/maintain`. The report is JSON on stdout; a sweep that
+//! failed makes the exit nonzero.
 
 use oneiron::housekeeping::{HousekeepingBudget, HousekeepingReport};
+use oneiron::policy_model::SecretLiftStatus;
 use serde::Serialize;
 
 use super::owner::{emit, open_stopped_vault_with, vault_config};
@@ -19,6 +22,9 @@ struct MaintainReport {
     housekeeping: HousekeepingReport,
     #[serde(skip_serializing_if = "Repairs::is_empty")]
     repairs: Repairs,
+    /// The lift sweep's state after the pass, when the owner queued a run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    secret_lift: Option<SecretLiftStatus>,
 }
 
 /// What each repair the owner named did; a repair not named is absent.
@@ -89,11 +95,20 @@ pub fn maintain(args: MaintainArgs) -> anyhow::Result<()> {
         "or ask it: `oneiron api raw POST /v1/owner/maintain`",
     )?;
     let repairs = repair(&vault, &args)?;
+    if args.lift_secrets {
+        let owner = crate::owner::local_owner(&vault)?;
+        vault.start_secret_lift(&owner, vault.now_recorded_at())?;
+    }
     let housekeeping = vault.housekeeping_all(HousekeepingBudget::unbounded())?;
     let failed = housekeeping.failed();
+    let secret_lift = args
+        .lift_secrets
+        .then(|| vault.secret_lift_status())
+        .transpose()?;
     emit(&MaintainReport {
         housekeeping,
         repairs,
+        secret_lift,
     })?;
     anyhow::ensure!(
         failed == 0,

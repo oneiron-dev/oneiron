@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 316 code-mode rows (298 host rows, 18 run rows), 1054 declarations.
-// Replies: 257 fully typed, 47 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 317 code-mode rows (299 host rows, 18 run rows), 1072 declarations.
+// Replies: 258 fully typed, 47 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -89,9 +89,16 @@ declare namespace Sdk {
   type ShapePreset = "personal" | "family" | "team" | "org" | "community";
   type ShapeMemberRole = "owner" | "admin" | "member" | "viewer";
   type ShapeCeiling = "auto" | "proposed";
+  type ShapeSkillSource = { from: "library"; subtree: string } | { from: "hub"; hub: string; folder: string; pin_type: string; pin_value: string; publisher: string };
+  type ShapeSelfHeld = "dedicated_address" | "dedicated_handle" | "shared_presence";
+  type ShapeMailScope = "mail.read" | "mail.metadata" | "mail.send";
+  type ShapeChannelCustody = { held: "self_held"; shape: ShapeSelfHeld } | { held: "delegated"; custody_record_ref: string; scopes: ShapeMailScope[] };
+  type ShapeChannelBinding = { to: "actor"; agent_id: string; facet?: string | null } | { to: "vault"; vault_id: number };
+  type ShapeChannelFulfillment = "api" | "manual" | "review";
+  type ShapeChannelProvision = { custody: ShapeChannelCustody; binding: ShapeChannelBinding; fulfillment: ShapeChannelFulfillment };
   type ShapeGrantBound = { domain: "action"; actor: string; actor_class?: string | null; class: string; selectors: string[]; target?: string | null; budget?: number | null; receipt_required?: boolean } | { domain: "disclosure"; audience: string[]; class: string; selectors: string[] };
   type ShapeTarget = { kind: "shared" } | { kind: "member"; member: string } | { kind: "world"; name: string } | { kind: "pack"; name: string } | { kind: "actor"; agent_id: string } | { kind: "skill"; skill_id: string } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string };
-  type ShapeRow = { kind: "shared"; vault_id: number; preset?: ShapePreset | null } | { kind: "member"; member: string; role: ShapeMemberRole } | { kind: "world"; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
+  type ShapeRow = { kind: "shared"; vault_id: number; preset?: ShapePreset | null } | { kind: "member"; member: string; role: ShapeMemberRole } | { kind: "world"; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null; source?: ShapeSkillSource | null } | { kind: "channel"; channel: string; address: string; provision?: ShapeChannelProvision | null } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
   type ShapeSeed = { rows: ShapeRow[] };
   type StoredShapeSeed = { id: string; revision: number; parent?: string | null; author: string; written_at: number; seed: ShapeSeed };
   type ShapeChange = "create" | "update" | "retire";
@@ -480,6 +487,17 @@ declare namespace Sdk {
   type LearningSettingsView = { catalog: LearningSettingSpecView[]; rows: LearningSettingRowView[] };
   type LearningSettingPut = { key: string; mode: LearningSettingMode; value: number; weight_runs?: number | null; why: string; project?: string | null; task_type?: string | null };
   type LearningSettingClear = { key: string; mode: LearningSettingMode; project?: string | null; task_type?: string | null };
+  type SecretLiftRequest = { start?: boolean };
+  type SecretScanMode = "on" | "off";
+  type LiftTrigger = "switch" | "owner";
+  type LiftFamily = "records" | "side_rows" | "carriers";
+  type LiftCounts = { family: LiftFamily; read: number; masked: number; proposals: number; failed: number };
+  type SecretLiftProgress = { run_id: string; trigger: LiftTrigger; requested_at: number; family: LiftFamily; retrying: number; counts: LiftCounts[] };
+  type SecretLiftReceipt = { receipt_id: string; trigger: LiftTrigger; requested_by?: string | null; requested_at: number; finished_at: number; families: LiftCounts[]; masked: number; proposals: number; failed: number };
+  type LiftCause = "unplaceable" | "immutable" | "held" | "file" | "no_door" | "history";
+  type SecretLiftProposal = { path: string; detector_reason: string; suggested_secret_name: string; project_id: string };
+  type SecretLiftHistoryProposal = { family: LiftFamily; cause: LiftCause; proposal: SecretLiftProposal; run_id: string; filed_at: number };
+  type SecretLiftStatus = { mode: SecretScanMode; paused: boolean; running?: SecretLiftProgress | null; last?: SecretLiftReceipt | null; open_proposals: number; proposals: SecretLiftHistoryProposal[] };
   type WidenProposalState = "pending" | "approved" | "declined";
   type WidenProposalsRequest = { state?: WidenProposalState | null };
   type WidenProposalView = { proposal_id: string; state: WidenProposalState; parent_attempt: string; board_attempt?: string | null; target_kind: string; target: string; parent_context: unknown; requested_context: unknown; widened_parent_context: unknown; recorded_at: number; landed_attempt?: string | null; declined_by?: string | null; declined_at?: number | null };
@@ -811,7 +829,7 @@ declare namespace Sdk {
   type RoleHolder = { actor: string; kind: HolderKind };
   type ResolvedRole = { role: AskRole; holders: RoleHolder[] };
   type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean };
-  type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation?: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null };
+  type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation?: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null; withdrawn_at?: number | null };
   type DecisionAskClimbRequest = { seq: number };
   type ConnectorListRequest = { query?: string | null };
   type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number };
@@ -1725,6 +1743,10 @@ declare const vault: Sdk.VaultHost & {
   search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.Reply<Sdk.MemorySearchOutput>>) & {
     /** BM25 text search over the engine index; surfaceable claims only. */
     bm25(input: Sdk.QueryBm25Request): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.LexicalHit[]>>>;
+  };
+  secrets: {
+    /** The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start. */
+    lift_history(input: Sdk.SecretLiftRequest): Promise<Sdk.Reply<Sdk.SecretLiftStatus>>;
   };
   settings: {
     /** Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling. */
