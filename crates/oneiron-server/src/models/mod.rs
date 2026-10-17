@@ -56,6 +56,7 @@ mod role_route;
 mod router;
 mod run_backend;
 mod served;
+pub(crate) mod soniox;
 mod sse;
 mod status;
 #[cfg(test)]
@@ -558,7 +559,8 @@ fn build_provider(
         | ProviderKind::Cartesia
         | ProviderKind::Elevenlabs
         | ProviderKind::Voxcpm2
-        | ProviderKind::Gemini => {
+        | ProviderKind::Gemini
+        | ProviderKind::Soniox => {
             return Ok(None);
         }
     };

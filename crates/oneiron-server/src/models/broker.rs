@@ -230,6 +230,7 @@ pub(super) fn broker_backend(
             anyhow::bail!("a speech provider sends no model call")
         }
         ProviderKind::Gemini => anyhow::bail!("a gemini provider sends media calls only"),
+        ProviderKind::Soniox => anyhow::bail!("a soniox provider hears live audio only"),
     };
     Ok(BrokerBackend {
         wire,
