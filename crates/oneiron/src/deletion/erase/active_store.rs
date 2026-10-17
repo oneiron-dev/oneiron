@@ -276,8 +276,10 @@ impl Vault {
         crate::claim::remove_claim_projection_index(&self.store, wtxn, *id)?;
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
+        // An epoch summary keeps its keyframe, so the next mint numbers above it.
+        let scrubbed = crate::compaction::erased_form(&entity_record);
         self.store
-            .port_entity_scrub(wtxn, id, ScrubbedRecord::Shell, mutation_recorded_at)?;
+            .port_entity_scrub(wtxn, id, scrubbed, mutation_recorded_at)?;
         crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
         IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
