@@ -66,7 +66,7 @@ pub use mesh::OrganService;
 pub use mesh::{ORGAN_ALPN, Offer};
 pub use outcome::{OrganOutcome, OrganOutput};
 #[cfg(unix)]
-pub use pin::install_pinned_binary;
+pub use pin::{install_pinned_binary, pack_spec};
 pub use receipt::{
     AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
 };

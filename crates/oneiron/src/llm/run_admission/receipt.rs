@@ -62,6 +62,9 @@ pub enum RunEvent {
         usage: Option<RunTokenUsage>,
         #[serde(skip_serializing_if = "Option::is_none")]
         service_quantity: Option<u64>,
+        /// A metered stream's audio, alongside its charge in `units`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stream: Option<RunStreamUsage>,
         units: u64,
         unit: LeaseUnit,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,6 +81,15 @@ pub enum RunEvent {
         editor: DeclarationEditor,
         from: u32,
     },
+}
+
+/// One metered stream's audio: the milliseconds it admitted and the bound
+/// its permit reserved for. Admitted audio is what the stream sent, not what
+/// the provider billed or the person heard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RunStreamUsage {
+    pub admitted_ms: u64,
+    pub bound_ms: u64,
 }
 
 /// Token facts reported by one physical model call.
