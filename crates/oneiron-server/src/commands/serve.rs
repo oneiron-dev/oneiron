@@ -390,6 +390,11 @@ pub(crate) async fn start_desktop_workers(
             &sync_server,
             crate::server::admit_every_pass(),
         ));
+        // Due digests, which a Dreamer's timer would otherwise serve (OF-499).
+        workers.push(crate::ai_host::home_digests::spawn(
+            &sync_server,
+            crate::server::admit_every_pass(),
+        ));
     }
     // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
     workers.push(crate::saved_query_sweep::spawn(
