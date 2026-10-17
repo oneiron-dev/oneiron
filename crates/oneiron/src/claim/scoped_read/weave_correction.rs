@@ -112,6 +112,44 @@ struct StoredItemCorrection {
     recorded_at: u64,
 }
 
+/// A hard delete leaves no wrong label that names `gone`: the labels it
+/// filed as a reader, those on it as a claim, project or budget (and on a
+/// budget shown under it as a project), and those on a link it is an end of.
+/// A row that no longer decodes goes too, since it may name it.
+pub(super) fn erase_weave_labels_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    gone: &EntityId,
+) -> Result<()> {
+    for key in LABELS.scan_keys(store, txn, &[])? {
+        let on_link = EdgeRef::decode(&key.0)
+            .map_or(true, |link| link.source == *gone || link.target == *gone);
+        if on_link
+            || LABELS
+                .get_lenient(store, txn, &key)?
+                .is_none_or(|label| label.actor == *gone)
+        {
+            LABELS.delete(store, txn, &key)?;
+        }
+    }
+    for key in ITEM_LABELS.scan_keys(store, txn, &[])? {
+        if key.0 == *gone
+            || ITEM_LABELS
+                .get_lenient(store, txn, &key)?
+                .is_none_or(|label| {
+                    let under = matches!(
+                        label.item,
+                        WeaveItemTarget::Budget { project, .. } if project == *gone
+                    );
+                    label.actor == *gone || under
+                })
+        {
+            ITEM_LABELS.delete(store, txn, &key)?;
+        }
+    }
+    Ok(())
+}
+
 impl ScopedRead<'_> {
     /// File a wrong-link tap only for an authenticated human viewing that live
     /// link in their own report. A caller-chosen edge reference alone grants no

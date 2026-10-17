@@ -1216,6 +1216,7 @@
      "kind": "src",
      "notable": [
       "AgentInboxConcern",
+      "AgentInboxDiaryReview",
       "AgentInboxItemKind",
       "AgentInboxLensItem",
       "AgentInboxLensQuery",
@@ -1229,7 +1230,7 @@
       "enum": 1,
       "fn": 4,
       "re-export": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -8455,7 +8456,7 @@
      "path": "src/campaign/surface/campaign.rs",
      "purpose": "Campaign record types, lifecycle operations, and vault storage",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 3,
       "enum": 1,
       "fn": 6,
@@ -10194,7 +10195,7 @@
      "path": "src/claim/scoped_read/weave_correction.rs",
      "purpose": "Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project or…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 5,
       "struct": 2
@@ -13590,14 +13591,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ActorConnectorRegistration",
       "ConnectorCallRoute",
       "ConnectorDescription"
      ],
      "path": "src/connector_key/lifecycle/catalog_views.rs",
      "purpose": "Read lenses: HISTORY/EXECUTION/DISCOVERY views over the catalog plus key lookups",
      "surface": {
-      "fn": 5,
-      "struct": 2
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -16868,7 +16870,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 9
      }
     },
@@ -38123,7 +38125,7 @@
      "path": "src/runtime_hooks/verb/ask.rs",
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 26
      }
     },
     {
@@ -38174,7 +38176,7 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 13,
       "re-export": 3,
@@ -38235,9 +38237,9 @@
      "path": "src/runtime_hooks/verb/state.rs",
      "purpose": "What a vault holds in memory for verb hooks: the process switch, the cached binding list, the sandbox, the…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -43523,7 +43525,7 @@
      "path": "src/sweep/compact.rs",
      "purpose": "Window shallow-snapshot compaction and erased-id scrub",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -43900,7 +43902,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 7,
       "re-export": 2,
@@ -44008,6 +44010,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HomeSearch"
+     ],
+     "path": "src/sync/connection/home_search.rs",
+     "purpose": "The home search this device's query doors reach through its own sync connection (OF-534): a search an opened…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -44019,7 +44035,7 @@
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
       "fn": 18,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -44071,7 +44087,7 @@
      "purpose": "Host-authorized home-node candidate updates, independent of socket liveness",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -44290,9 +44306,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/ingest/peer_import.rs",
-     "purpose": "Whether the entity doors on this thread carry a federation peer's import (Docs Q04)",
+     "purpose": "Which rows of a window a federation peer's import brought (Docs Q04)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -44870,7 +44886,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 2
      }
@@ -45026,7 +45042,7 @@
      "path": "src/sync/server_state.rs",
      "purpose": "Server-side `sync_state` persistence per the ARCH-0023b key layout",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -52960,7 +52976,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53151,7 +53167,7 @@
    },
    "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3222,
+   "source_files": 3223,
    "test_files": 902
   },
   "oneiron-android": {
