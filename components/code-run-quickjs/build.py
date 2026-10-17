@@ -112,7 +112,10 @@ def main():
     (source / "dtoa.c").write_text(dtoa.replace("#include <setjmp.h>", ""))
     wit = (ROOT / "crates/oneiron/wit/code-run.wit").read_text()
     sdk_js = (ROOT / "crates/oneiron/wit/generated/code-run.mjs").read_text()
-    bootstrap = "(() => {\n" + sdk_js.replace("export function createHostSdk", "function createHostSdk") + "\nreturn " + (HERE / "bootstrap.js").read_text() + "\n})();"
+    # The bundled helpers are plain JS inside the same closure, before the
+    # bootstrap that installs them and freezes the SDK.
+    helpers = "".join("\n" + (HERE / name).read_text() for name in ["reader_forks.js", "diff.js"])
+    bootstrap = "(() => {\n" + sdk_js.replace("export function createHostSdk", "function createHostSdk") + helpers + "\nreturn " + (HERE / "bootstrap.js").read_text() + "\n})();"
     artifacts = {}
     for tier in ["first-party", "foreign"]:
         stage = out / tier
@@ -148,6 +151,7 @@ def main():
                 "patched_dtoa_sha256":sha(source / "dtoa.c"),
                 "wit_sha256":sha(ROOT / "crates/oneiron/wit/code-run.wit"),
                 "sources":{p.name:sha(p) for p in [HERE / "guest.c", HERE / "libc_denials.c", HERE / "bootstrap.js",
+                                                 HERE / "reader_forks.js", HERE / "diff.js",
                                                  HERE / "hook_guest.c", HERE / "hook_bootstrap.js",
                                                  HERE / "generate_bridge.py", HERE / "build.py"]},
                 "artifacts":artifacts}
