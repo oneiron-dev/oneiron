@@ -8,7 +8,7 @@
 //! Consent is the deployment's participation
 //! ([`FailureSignalConfig::exports`](crate::config::failure_signals::FailureSignalConfig::exports)):
 //! the managed terms, or the self-host owner's opt-in. While it holds, the
-//! vault keeps one standing channel grant for the sender's own MACHINE
+//! vault keeps one standing channel grant for the sender's own derived
 //! principal, so the gate admits a batch without a per-send ask; once it
 //! stops, the grant is revoked and nothing is sent. Owner feedback's
 //! per-send approval is never involved.
@@ -163,8 +163,11 @@ impl Vault {
             send_ref.clone(),
             send_ref.clone(),
             intent,
+            // An engine-owned send, like a scoped tool call's: first-party
+            // is the class whose ceiling is Auto, and the grant still
+            // decides what it may send.
             OutboundDispatchActor {
-                actor_class: "system".to_owned(),
+                actor_class: "first_party".to_owned(),
                 actor_ref: Some(sender.to_hex()),
                 actor_entity_ref: Some(sender),
             },
