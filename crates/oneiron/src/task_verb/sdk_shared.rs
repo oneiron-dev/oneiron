@@ -8,14 +8,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
-use crate::batch::export::VAULT_ARCHIVE_FORMAT;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::federation::{
-    FederationGrantRole as Role, PendingAuthorityAct, SharedActExecution,
+    FederationGrantRole as Role, PendingAuthorityAct, RemovalExportDelivery, SharedActExecution,
     SharedActExecutionReceipt, SharedActKind, SharedActOutcome, SharedVaultDeletion,
 };
-use crate::memory::{MemoryError, MemoryExport, MemoryResult};
+use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
 
 /// A shared vault, by the id its creation named.
@@ -153,24 +152,21 @@ pub struct HandoffAlarmRequest {
 }
 
 /// `vault.shared.execute`'s answer: the act's receipt and, for an
-/// export-first removal, the archive of what the removed Owner could read,
-/// in the whole-vault export's wire form, for the host to deliver to them.
+/// export-first removal, where its archive went: to the removed Owner alone,
+/// retrievable by them until the delivery's deadline (FIX 1300). The Owner
+/// who runs the act never receives the archive.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedActExecuted {
     pub receipt: SharedActExecutionReceipt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub export: Option<MemoryExport>,
+    pub delivery: Option<RemovalExportDelivery>,
 }
 
 impl From<SharedActExecution> for SharedActExecuted {
     fn from(execution: SharedActExecution) -> Self {
         Self {
             receipt: execution.receipt,
-            export: execution.export.map(|archive| MemoryExport {
-                format: VAULT_ARCHIVE_FORMAT.to_owned(),
-                digest: blake3::hash(archive.bytes()).to_hex().to_string(),
-                archive: archive.bytes,
-            }),
+            delivery: execution.delivery,
         }
     }
 }
@@ -222,8 +218,9 @@ pub fn propose_shared_remove_owner(
 }
 
 /// `vault.shared.execute`: run a matured act once; running it again answers
-/// the same receipt. A held `erase` act runs its own executor, then its
-/// receipt tells the Owners.
+/// the same receipt, and a remaining Owner's re-run of an export-first
+/// removal delivers its archive to the removed Owner again (FIX 1300). A held
+/// `erase` act runs its own executor, then its receipt tells the Owners.
 pub fn execute_shared_act(
     vault: &Vault,
     executor: &AuthenticatedOwner,
@@ -241,7 +238,7 @@ pub fn execute_shared_act(
             .execute_completed_entity_erase(executor, &input.act_id)?;
         return Ok(SharedActExecuted {
             receipt: vault.record_erase_completion(executor, &input.act_id)?,
-            export: None,
+            delivery: None,
         });
     }
     Ok(vault

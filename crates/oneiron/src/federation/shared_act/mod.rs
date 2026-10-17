@@ -20,7 +20,7 @@ use super::pending_act::{LiveActHolder, check_vault, decode, encode, invalid, ke
 use crate::authority::{HostSlipIssuer, OwnerHandover, OwnerHandoverCause};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::side_table::{self, LegacyJson, SideTable};
+use crate::side_table::{self, LegacyJson, Named, SideTable};
 use crate::{EntityId, Vault};
 use std::collections::BTreeSet;
 
@@ -28,10 +28,11 @@ use super::PendingAuthorityAct;
 
 const RECEIPT_PREFIX: &[u8] = b"shared-act:receipt:v1:";
 const OUTCOME_PREFIX: &[u8] = b"shared-act:outcome:v1:";
-const REMOVAL_EXPORT_PREFIX: &[u8] = b"shared-act:removal-export:v1:";
-/// How long an export-first removal's archive waits on the host for the
-/// removed Owner to fetch it (OF-150), on the store clock.
-pub const REMOVAL_EXPORT_RETAIN_SECS: u64 = 14 * 24 * 60 * 60;
+/// How long an export-first removal's archive stays retrievable by the
+/// removed Owner it was delivered to, from that delivery, on the store clock
+/// (FIX 1300: the Engine's ruling on OF-158 names 90 days). A remaining
+/// Owner's re-run of the removal delivers it again for a full term.
+pub const REMOVAL_EXPORT_RETAIN_SECS: u64 = 90 * 24 * 60 * 60;
 const PLAN_VERSION: u8 = 1;
 /// How long a deleted vault stays in backups, so disaster recovery can return it.
 pub const DELETED_VAULT_BACKUP_RETENTION_SECS: u64 = 90 * 24 * 60 * 60;
@@ -39,6 +40,16 @@ pub const DELETED_VAULT_BACKUP_RETENTION_SECS: u64 = 90 * 24 * 60 * 60;
 /// The executed delete-the-vault act. Key: `()` (singleton).
 const SHARED_VAULT_DELETION: SideTable<(), SharedVaultDeletion, LegacyJson> =
     SideTable::new(&side_table::SHARED_VAULT_DELETION);
+
+/// Each export-first removal's archive, bound to the removed Owner. Key:
+/// hex32 (removed Owner) ":" hex32 (receipt id).
+const REMOVAL_EXPORT: SideTable<String, RemovalExportCopy, Named> =
+    SideTable::new(&side_table::SHARED_ACT_REMOVAL_EXPORT);
+
+/// The row key of `member`'s archive from the removal receipt `receipt_id`.
+fn removal_export_key(member: &str, receipt_id: &str) -> String {
+    format!("{member}:{receipt_id}")
+}
 
 /// The acts the shared preset lists. Their names are the policy row names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -95,8 +106,8 @@ pub struct RemoveOwnerPlan {
     pub successor: Option<String>,
     pub target_keeps: Option<Role>,
     /// The removal flow's "export first?": on yes, the removal runs only
-    /// with an export of what the target could read, handed to the host
-    /// for them. Removal alone exports nothing.
+    /// with an export of what the target could read, delivered to them
+    /// alone (FIX 1300). Removal alone exports nothing.
     pub export_first: bool,
 }
 
@@ -203,28 +214,63 @@ pub struct SharedActExport {
     pub diary_reads: Vec<crate::batch::export::ExportDiaryRead>,
 }
 
-/// An executed act's receipt, and for an export-first removal the archive
-/// of what the removed Owner could read, which the host delivers to them:
-/// the whole-vault archive's shape (OF-222), re-importable into a fresh vault.
+/// An executed act's receipt and, for an export-first removal, where its
+/// archive went. The archive itself is the removed Owner's alone (FIX 1300):
+/// the Owner who ran the act never receives it.
 #[derive(Debug, Clone)]
 pub struct SharedActExecution {
     pub receipt: SharedActExecutionReceipt,
-    pub export: Option<crate::batch::export::WholeVaultExport>,
+    pub delivery: Option<RemovalExportDelivery>,
 }
 
-/// An export-first removal's archive, kept for the removed Owner until
-/// `expires_at` (OF-150). Their device fetches it with the slip the removal
-/// revoked (`Vault::removed_owner_exports`), so a lost answer or a retried
-/// execution never loses it.
+/// Where an export-first removal's archive went (FIX 1300): to the removed
+/// Owner, bound to them as its one recipient, retrievable by them until
+/// `expires_at`. Never the archive's content.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemovalExportDelivery {
+    /// The removal's receipt id, which keys the archive.
+    pub receipt_id: String,
+    /// The removed Owner, PERSON hex.
+    pub recipient: String,
+    /// BLAKE3 of the archive, lowercase hex, as the receipt records it.
+    pub digest: String,
+    /// When it was last delivered: the removal, or a remaining Owner's re-run.
+    pub delivered_at: u64,
+    pub expires_at: u64,
+}
+
+/// An export-first removal's archive of what the removed Owner could read,
+/// in the whole-vault archive's shape (OF-222), re-importable into a fresh
+/// vault. It is delivered to the removed Owner alone and kept for them until
+/// `expires_at` (FIX 1300). Their device fetches it with the slip the removal
+/// revoked (`Vault::removed_owner_archive`, `Vault::removed_owner_exports`),
+/// so a lost answer never loses it; a remaining Owner's re-run of the removal
+/// delivers it again for a full term.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RemovalExportCopy {
     pub receipt_id: String,
     pub vault_id: u64,
-    /// The removed Owner, PERSON hex.
+    /// The removed Owner, PERSON hex: the archive's one recipient.
     pub member: String,
+    /// When it was last delivered: the removal, or a remaining Owner's re-run.
+    pub delivered_at: u64,
     pub expires_at: u64,
     pub export: crate::memory::MemoryExport,
+}
+
+impl RemovalExportCopy {
+    /// What the delivery tells an Owner: never the archive.
+    fn delivery(&self) -> RemovalExportDelivery {
+        RemovalExportDelivery {
+            receipt_id: self.receipt_id.clone(),
+            recipient: self.member.clone(),
+            digest: self.export.digest.clone(),
+            delivered_at: self.delivered_at,
+            expires_at: self.expires_at,
+        }
+    }
 }
 
 /// One recipient's durable notice that a receipt was written.
@@ -512,7 +558,14 @@ impl Vault {
     /// and the host signs an ownership change into the authority log as an
     /// `OwnerHandover` naming the act and its receipt.
     /// An export-first removal exports what its target could read before
-    /// the writer opens, and records that export's digest in the receipt.
+    /// the writer opens, records that export's digest in the receipt, and
+    /// delivers the archive to the removed Owner alone, retrievable by them
+    /// for [`REMOVAL_EXPORT_RETAIN_SECS`] (FIX 1300); the answer names that
+    /// delivery, never the archive. A remaining live Owner's re-run of an
+    /// executed export-first removal answers the same receipt and delivers
+    /// the stored archive to the removed Owner again for a full term; the
+    /// removal never runs twice, and an archive already purged past its term
+    /// is not rebuilt.
     pub fn execute_completed_shared_act(
         &self,
         executor: &AuthenticatedOwner,
@@ -548,13 +601,20 @@ impl Vault {
                 .as_deref()
                 .map(|id| self.shared_act_receipt_in_txn(&txn, id))
                 .transpose()?
-                .flatten();
-            return receipt
-                .map(|receipt| SharedActExecution {
-                    receipt,
-                    export: None,
-                })
-                .ok_or(Error::ConcurrentWrite("authority act already executed"));
+                .flatten()
+                .ok_or(Error::ConcurrentWrite("authority act already executed"))?;
+            let delivery = match &receipt.export {
+                Some(summary) => self.redeliver_removal_export_in_txn(
+                    &mut txn,
+                    &act,
+                    actor,
+                    &summary.member,
+                    &receipt.id,
+                )?,
+                None => None,
+            };
+            txn.commit()?;
+            return Ok(SharedActExecution { receipt, delivery });
         }
         let creation = check_vault(self, &txn, act.vault_id)?;
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
@@ -714,86 +774,128 @@ impl Vault {
             authority_entry,
             now,
         )?;
-        if let (Some(summary), Some(archive)) = (&receipt.export, &archive) {
-            let copy = RemovalExportCopy {
-                receipt_id: receipt.id.clone(),
-                vault_id: act.vault_id,
-                member: summary.member.clone(),
-                expires_at: now
-                    .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
-                    .ok_or_else(invalid)?,
-                export: crate::memory::MemoryExport {
-                    format: crate::batch::export::VAULT_ARCHIVE_FORMAT.to_owned(),
-                    archive: archive.bytes().to_vec(),
-                    digest: summary.digest.clone(),
-                },
-            };
-            self.store.vault_meta.put(
-                &mut txn,
-                &key(
-                    REMOVAL_EXPORT_PREFIX,
-                    &format!("{}:{}", copy.member, copy.receipt_id),
-                ),
-                &encode(&copy)?,
-            )?;
-        }
+        let delivery = match (&receipt.export, archive) {
+            (Some(summary), Some(archive)) => {
+                let copy = RemovalExportCopy {
+                    receipt_id: receipt.id.clone(),
+                    vault_id: act.vault_id,
+                    member: summary.member.clone(),
+                    delivered_at: now,
+                    expires_at: now
+                        .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
+                        .ok_or_else(invalid)?,
+                    export: crate::memory::MemoryExport {
+                        format: crate::batch::export::VAULT_ARCHIVE_FORMAT.to_owned(),
+                        archive: archive.bytes,
+                        digest: summary.digest.clone(),
+                    },
+                };
+                let row_key = removal_export_key(&copy.member, &copy.receipt_id);
+                REMOVAL_EXPORT.put(&self.store, &mut txn, &row_key, &copy)?;
+                Some(copy.delivery())
+            }
+            _ => None,
+        };
         txn.commit()?;
-        Ok(SharedActExecution {
-            receipt,
-            export: archive,
-        })
+        Ok(SharedActExecution { receipt, delivery })
     }
 
-    /// The export-first removal archives kept for `member` that are still
-    /// within their retention at `now`.
+    /// A re-run of the executed export-first removal `act` by `actor`, who
+    /// must stand as a live Owner holding the act's verb (FIX 1300): the
+    /// archive kept for `member` under `receipt_id` is delivered to them again,
+    /// retrievable for a full term from now. `None` once it has been purged
+    /// past its term: it is not rebuilt, as the vault now holds what the
+    /// removed Owner never could read.
+    fn redeliver_removal_export_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        act: &PendingAuthorityAct,
+        actor: EntityId,
+        member: &str,
+        receipt_id: &str,
+    ) -> Result<Option<RemovalExportDelivery>> {
+        check_vault(self, txn, act.vault_id)?;
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let holders = self.live_act_holders(txn, act.vault_id, now)?;
+        if !live_owners(&holders, Some(&act.required_verb)).contains(&actor) {
+            return Err(invalid());
+        }
+        let row_key = removal_export_key(member, receipt_id);
+        let Some(mut copy) = REMOVAL_EXPORT.get(&self.store, txn, &row_key)? else {
+            return Ok(None);
+        };
+        copy.delivered_at = now;
+        copy.expires_at = now
+            .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
+            .ok_or_else(invalid)?;
+        REMOVAL_EXPORT.put(&self.store, txn, &row_key, &copy)?;
+        Ok(Some(copy.delivery()))
+    }
+
+    /// The export-first removal archives delivered to `member` that are still
+    /// within their term at `now`.
     pub(crate) fn removal_exports_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         member: EntityId,
         now: u64,
     ) -> Result<Vec<RemovalExportCopy>> {
-        let prefix = key(REMOVAL_EXPORT_PREFIX, &format!("{}:", member.to_hex()));
-        let mut copies = Vec::new();
-        for row in self.store.vault_meta.prefix_iter(txn, &prefix)? {
-            let (_, raw) = row?;
-            let copy: RemovalExportCopy = decode(&raw)?;
-            if now < copy.expires_at {
-                copies.push(copy);
-            }
-        }
-        Ok(copies)
+        let prefix = removal_export_key(&member.to_hex(), "");
+        Ok(REMOVAL_EXPORT
+            .scan_from(&self.store, txn, prefix.as_bytes())?
+            .into_iter()
+            .map(|(_, copy)| copy)
+            .filter(|copy| now < copy.expires_at)
+            .collect())
     }
 
-    /// Drops every export-first removal archive past its retention. It reads
-    /// first and opens a writer only when one has expired; it answers how
-    /// many it dropped.
+    /// The archive the removal receipt `receipt_id` delivered to `member`,
+    /// while it is within its term at `now`; `None` after it, or when that
+    /// removal delivered `member` none.
+    pub(crate) fn removal_export_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        member: EntityId,
+        receipt_id: EntityId,
+        now: u64,
+    ) -> Result<Option<RemovalExportCopy>> {
+        let row_key = removal_export_key(&member.to_hex(), &receipt_id.to_hex());
+        Ok(REMOVAL_EXPORT
+            .get(&self.store, txn, &row_key)?
+            .filter(|copy| now < copy.expires_at))
+    }
+
+    /// Drops every export-first removal archive past its term. It reads
+    /// first and opens a writer only when one has expired; the writer checks
+    /// each again, so an archive a re-run delivered anew in between stays. It
+    /// answers how many it dropped.
     pub(crate) fn drop_expired_removal_exports(&self) -> Result<usize> {
-        let expired = {
+        let expired: Vec<String> = {
             let txn = self.store.env.read_txn()?;
             let now = self.store.clock.now_recorded_at();
-            let mut expired = Vec::new();
-            for row in self
-                .store
-                .vault_meta
-                .prefix_iter(&txn, REMOVAL_EXPORT_PREFIX)?
-            {
-                let (row_key, raw) = row?;
-                let copy: RemovalExportCopy = decode(&raw)?;
-                if now >= copy.expires_at {
-                    expired.push(row_key.to_vec());
-                }
-            }
-            expired
+            REMOVAL_EXPORT
+                .scan(&self.store, &txn)?
+                .into_iter()
+                .filter(|(_, copy)| now >= copy.expires_at)
+                .map(|(row_key, _)| row_key)
+                .collect()
         };
         if expired.is_empty() {
             return Ok(0);
         }
         let mut txn = self.store.env.write_txn()?;
+        let now = self.store.clock.now_recorded_at();
+        let mut dropped = 0;
         for row_key in &expired {
-            self.store.vault_meta.delete(&mut txn, row_key)?;
+            let lapsed = REMOVAL_EXPORT
+                .get(&self.store, &txn, row_key)?
+                .is_some_and(|copy| now >= copy.expires_at);
+            if lapsed && REMOVAL_EXPORT.delete(&self.store, &mut txn, row_key)? {
+                dropped += 1;
+            }
         }
         txn.commit()?;
-        Ok(expired.len())
+        Ok(dropped)
     }
 
     /// The completion of a held `erase` act (OF-150): once its own executor
