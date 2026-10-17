@@ -17728,7 +17728,33 @@
       "crate-vis": 2,
       "enum": 6,
       "fn": 12,
+      "re-export": 1,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentHealthCoachAnswer",
+      "AgentHealthCoachAsk",
+      "AgentHealthCoachDraft",
+      "AgentHealthCoachRoute",
+      "AgentHealthPadRead",
+      "CoachHealthBrief",
+      "CoachHealthHost",
+      "ConcernMove",
+      "ConcernMoveOutcome",
+      "ConcernMoveRequest"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/ask.rs",
+     "purpose": "Ask the Coach (agent-mind §3.5): a card's reader takes its `ask_coach` move, and a `coach.agent_health_ask`…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 3,
+      "struct": 6,
+      "trait": 1
      }
     },
     {
@@ -44595,7 +44621,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 210
+      "fn": 211
      }
     },
     {
@@ -49514,7 +49540,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -50496,7 +50522,7 @@
    },
    "over_bar": 132,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3049,
+   "source_files": 3050,
    "test_files": 903
   },
   "oneiron-android": {
@@ -58283,7 +58309,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 165
+      "fn": 166
      }
     },
     {
@@ -59258,7 +59284,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
@@ -59270,7 +59296,7 @@
     "lib": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file",
      "purpose": "`oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1)"
     }
@@ -59297,7 +59323,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 166
+      "fn": 167
      }
     },
     {
@@ -60633,6 +60659,16 @@
      "notable": [],
      "path": "src/ai_host/coach_heal.rs",
      "purpose": "The host Coach (ARCH-0066 #coach, OF-418)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_health.rs",
+     "purpose": "The host Coach's answer to an agent-health ask (agent-mind §3.5, OF-568)",
      "surface": {
       "crate-vis": 1
      }
@@ -67847,7 +67883,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68171,7 +68207,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 498,
+   "source_files": 499,
    "test_files": 182
   },
   "oneiron-spawn": {
