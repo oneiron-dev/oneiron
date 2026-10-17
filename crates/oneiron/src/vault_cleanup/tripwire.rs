@@ -334,6 +334,12 @@ pub(super) fn run_cleanup_candidates_in_txn(
                 candidates: candidates.clone(),
             };
             put_proposal_in_txn(vault, wtxn, &proposal)?;
+            crate::failure_ladder::oversight::proposed_in_txn(
+                vault,
+                wtxn,
+                &proposal.id.to_hex(),
+                now,
+            )?;
             Ok(CleanupRunReport {
                 attempt: *attempt,
                 posture,

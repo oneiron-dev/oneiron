@@ -4,7 +4,9 @@ use super::*;
 #[cfg(test)]
 use crate::side_table::{self, Raw, SideTable};
 
-const SYNC_REGATING_CLOSED: bool = false;
+/// ARCH-0066 tooth #5: read/fold verification coverage at consumption.
+const READ_FOLD_COVERAGE_CLOSED: bool = false;
+/// ARCH-0066 tooth #9: OS-level separation of the vault's files.
 const OS_SANDBOX_CLOSED: bool = false;
 
 /// Test-only marker closing both release blockers. Key: (); value: `b"1"`.
@@ -19,7 +21,7 @@ pub(super) fn auto_enabled(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool>
         return Ok(true);
     }
     let _ = (vault, txn);
-    Ok(SYNC_REGATING_CLOSED && OS_SANDBOX_CLOSED)
+    Ok(READ_FOLD_COVERAGE_CLOSED && OS_SANDBOX_CLOSED)
 }
 
 #[cfg(test)]

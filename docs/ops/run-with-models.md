@@ -289,6 +289,15 @@ run per night. Approve a curator run and its next pass applies each demotion
 whose target is unchanged since grading; a retune proposal is advice only and
 changes nothing.
 
+The vault cleanup pass proposes archives and archives nothing until you
+accept (`/v1/owner/cleanup`); automatic archiving stays off until ARCH-0066's
+teeth #5 and #9 close. The next regular proactivity digest
+(`/v1/owner/proactivity/digest`) carries one `dreamer.cleanup` line: what
+cleanup archived since the last digest, and how many records wait in open
+proposals, with the cleanup view to restore any of them. Each proposal and
+your accept or reject count in the healer oversight receipts
+(`/v1/owner/healer/oversight`).
+
 The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
 detectors (refused Dreamer consolidations, consent storms and denials,
 per-actor write drift) over the last day of Gate receipts, and the read-side

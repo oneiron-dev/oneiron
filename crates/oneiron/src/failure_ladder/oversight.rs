@@ -128,6 +128,33 @@ pub(crate) fn proposed_in_txn(
     }
     Ok(())
 }
+/// Records a person's review of `case` inside the transaction that acts on
+/// it (OF-449: an owner's answer to a cleanup proposal). The first review
+/// stands: a later one changes nothing. A case with no activity row yet is
+/// counted as proposed at `proposed_at`, and a review never predates its
+/// proposal.
+pub(crate) fn reviewed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    case: &str,
+    proposed_at: u64,
+    now: u64,
+    escalated: bool,
+) -> Result<()> {
+    validate_case_ref(case)?;
+    let key = case.to_owned();
+    let mut activity = ACTIVITY.get(&vault.store, txn, &key)?.unwrap_or(Activity {
+        proposed_at,
+        reviewed_at: None,
+        escalated: false,
+    });
+    if activity.reviewed_at.is_some() {
+        return Ok(());
+    }
+    activity.reviewed_at = Some(now.max(activity.proposed_at));
+    activity.escalated = escalated;
+    ACTIVITY.put(&vault.store, txn, &key, &activity)
+}
 impl Vault {
     /// The host's reviewed-decision door; this records a fact, never applies a
     /// repair. The ordinary consent gate remains the only repair authority.

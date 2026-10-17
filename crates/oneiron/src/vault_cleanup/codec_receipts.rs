@@ -121,6 +121,8 @@ pub(super) fn put_proposal_in_txn(
     ]);
     let encoded = encode_row(&row, PROPOSAL_ROW_LABEL)?;
     PROPOSAL.put(&vault.store, wtxn, &proposal.id, &encoded)?;
+    // An open proposal is pending digest work too.
+    crate::batch::queue_proactivity_change(vault, wtxn);
     Ok(())
 }
 
@@ -199,6 +201,8 @@ pub(super) fn put_digest_in_txn(
     ]);
     let encoded = encode_row(&row, DIGEST_ROW_LABEL)?;
     DIGEST.put(&vault.store, wtxn, &digest.id, &encoded)?;
+    // The decision is pending digest work: the deadline re-reads after commit.
+    crate::batch::queue_proactivity_change(vault, wtxn);
     Ok(())
 }
 
@@ -263,8 +267,17 @@ fn hex_to_bytes_16(hex: &str) -> Option<[u8; 16]> {
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub fn cleanup_digests(vault: &Vault) -> Result<Vec<CleanupDigest>> {
     let rtxn = vault.store.env.read_txn()?;
+    cleanup_digests_in_txn(vault, &rtxn)
+}
+
+/// [`cleanup_digests`] inside the caller's transaction: the proactivity
+/// digest reads the decisions it reports in the snapshot it commits on.
+pub(crate) fn cleanup_digests_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<CleanupDigest>> {
     DIGEST
-        .scan(&vault.store, &rtxn)?
+        .scan(&vault.store, rtxn)?
         .into_iter()
         .map(|(id, raw)| decode_digest(id, &raw))
         .collect()

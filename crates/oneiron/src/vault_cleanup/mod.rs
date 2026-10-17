@@ -50,7 +50,8 @@
 //!
 //! # Posture: propose-first today, auto later
 //!
-//! ARCH-0066 teeth #5 (sync re-gating) and #9 (OS sandbox) are OPEN, so the
+//! ARCH-0066 teeth #5 (read/fold verification coverage) and #9 (OS-level
+//! vault-file separation) are OPEN, so the
 //! default posture is [`CleanupPosture::ProposeFirst`]: a run emits ONE
 //! proposal carrying the impact preview (counts + ids — the preview IS the
 //! proposal body) and archives nothing. Accepting RE-RUNS the tripwire per
@@ -63,17 +64,23 @@
 //! archives directly and emits ONE digest receipt per run listing the ids —
 //! job-level, never per-entity.
 //!
-//! # Not in this ticket
+//! # Notice and oversight (OF-449)
 //!
-//! * **Forgetting-window routing is OPEN/deferred** (deletion design
-//!   session). This module has no interaction with forgetting windows, by
-//!   decision rather than omission.
-//! * **The ARCH-0024 resolver/matcher is UNBUILT.** This ticket ships the two
-//!   halves that belong to the vault — an archived-aware query
-//!   ([`Vault::archived_entities`]) and the restore door
-//!   ([`Vault::restore_archived`]) — and records the
-//!   "re-mention restores, never duplicates" contract on the door. The
-//!   resolver-side hook is that program's ticket.
+//! Every recorded decision and every open proposal reaches the owner as one
+//! cleanup line in the next regular proactivity digest ("archived N", and
+//! what waits for review), whose view is the owner cleanup surface where any
+//! archive restores. Each proposal is counted in the signed healer oversight
+//! ledger when it opens, and the owner's accept or reject is its review.
+//!
+//! # Restore and erasure
+//!
+//! * **Re-mention restores, never duplicates.** The entity-resolution
+//!   waterfall restores an archived subject it selects, through
+//!   [`Vault::restore_archived`], beside the archived-aware query
+//!   ([`Vault::archived_entities`]).
+//! * **Nothing here erases.** Retention archives and never routes to
+//!   erasure; emptying the archive is a ladder delete and erasure stays the
+//!   owner's, by hand.
 
 use rmpv::Value;
 
@@ -112,7 +119,8 @@ pub use self::tripwire::{
 };
 
 pub(crate) use self::cleanup_types::MAX_CLEANUP_SCAN_ROWS;
-pub(crate) use self::codec_receipts::cleanup_receipts;
+pub(crate) use self::codec_receipts::{cleanup_digests_in_txn, cleanup_receipts};
+pub(crate) use self::proposals_archive::cleanup_proposals_in_txn;
 pub(crate) use self::tripwire::zero_live_members_in_txn;
 pub(crate) use visibility::is_archived_in_txn;
 
