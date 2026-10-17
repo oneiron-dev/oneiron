@@ -940,6 +940,8 @@ fn mcp_agent_verb_input(
         "self.decisions.asks" => a.spec.clone().ok_or_else(invalid),
         "connector.list" => a.spec.clone().ok_or_else(invalid),
         "connector.status" => a.spec.clone().ok_or_else(invalid),
+        "connector.call" => a.spec.clone().ok_or_else(invalid),
+        "connector.schema" => a.spec.clone().ok_or_else(invalid),
         "vault.commit" => a.spec.clone().ok_or_else(invalid),
         "vault.remember" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.retract" => a.spec.clone().ok_or_else(invalid),
@@ -1652,6 +1654,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "connector.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "connector.call" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "connector.schema" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.commit" => {
@@ -4125,6 +4133,32 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::ConnectorNameRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::connector_status(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "connector.call" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("connector.call", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::outbound_consent::ConnectorCallRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::connector_call(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "connector.schema" => {
+            let input: oneiron::task_verb::sdk::ConnectorSchemaRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::connector_schema(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

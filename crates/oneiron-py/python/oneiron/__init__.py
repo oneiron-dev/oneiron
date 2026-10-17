@@ -1336,6 +1336,12 @@ class Oneiron:
         def status(self, spec):
             """One catalogued connector by name, removed ones included."""
             return json.loads(_translate(lambda: self._client.connector_status(json.dumps(spec))))
+        def call(self, spec):
+            """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
+            return json.loads(_translate(lambda: self._client.connector_call(json.dumps(spec))))
+        def schema(self, spec):
+            """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
+            return json.loads(_translate(lambda: self._client.connector_schema(json.dumps(spec))))
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs":
             return Oneiron._ConnectorOutboundVerbs(self._client)

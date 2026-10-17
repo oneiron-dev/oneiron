@@ -10,6 +10,14 @@
 //! [`Vault::resume_connector_call`] re-enters it with the same logical
 //! identity. The tool's own reply comes back to the caller as foreign data;
 //! the ledger's scrub still keeps its raw bytes out of durable storage.
+//!
+//! A host's identity for a call fixes its row's ref, so the same call run
+//! again finds the call it held. Once a resume settles a held call, the row
+//! keeps that outcome, without the reply, until a settler lists it
+//! ([`Vault::pending_connector_calls`]), answers the wait the ref names and
+//! acknowledges it ([`Vault::ack_connector_call_delivery`]).
+//! [`Vault::connector_tool_schema`] reads a tool's approved schema through
+//! the same resolution a call takes.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -46,10 +54,18 @@ pub const CONNECTOR_REPLY_MAX_BYTES: usize = 1024 * 1024;
 const PENDING_CALLS: SideTable<EntityId, PendingConnectorCall, Named> =
     SideTable::new(&side_table::OUTBOUND_CONNECTOR_CALL_PENDING);
 
+/// The derivation domain of the call ref a host's own identity fixes, so the
+/// same logical call finds its held row again instead of holding a second.
+const CONNECTOR_CALL_REF_DOMAIN: &[u8] = b"oneiron:connector-call-ref:v1";
+
+/// The reason a call gets when its host identity already names a held call
+/// with another request.
+const CONNECTOR_CALL_INVOCATION_CONFLICT: &str = "connector_call_invocation_conflict";
+
 /// One guest call: a catalog name, one of its tools, and the arguments. It
 /// carries no endpoint, credential, schema, grant or principal: the engine
 /// and the host resolve those beneath the name.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorCallRequest {
     /// The connector's catalog name.
@@ -154,6 +170,96 @@ struct PendingConnectorCall {
     call_seq: u64,
     principal_ref: String,
     held_at_ms: u64,
+    /// What the call came to once a resume settled it. The row outlives its
+    /// terminal outcome until the settler acknowledges the wait reply that
+    /// carries it, so a crash before that reply commits strands no waiter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    settled: Option<SettledConnectorCall>,
+}
+
+impl PendingConnectorCall {
+    /// Whether `other` asks for exactly this call: the same caller, tool,
+    /// arguments and mutation.
+    fn same_call(&self, other: &Self) -> bool {
+        let arguments = |text: &str| serde_json::from_str::<Value>(text).ok();
+        self.name == other.name
+            && self.tool == other.tool
+            && self.mutation == other.mutation
+            && self.principal_ref == other.principal_ref
+            && arguments(&self.arguments).is_some()
+            && arguments(&self.arguments) == arguments(&other.arguments)
+    }
+}
+
+/// A held call's terminal outcome, without the tool's reply: the ledger
+/// never keeps a reply's bytes, so a recovery from this row is receipt-only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SettledConnectorCall {
+    Delivered {
+        intent: Option<[u8; 32]>,
+    },
+    Refused {
+        decision_ref: Option<String>,
+        reasons: Vec<String>,
+    },
+    Unsettled {
+        intent: [u8; 32],
+        reasons: Vec<String>,
+    },
+}
+
+impl SettledConnectorCall {
+    fn outcome(&self) -> ConnectorCallOutcome {
+        match self.clone() {
+            Self::Delivered { intent } => ConnectorCallOutcome::Delivered {
+                intent,
+                result: None,
+            },
+            Self::Refused {
+                decision_ref,
+                reasons,
+            } => ConnectorCallOutcome::Refused {
+                decision_ref,
+                reasons,
+            },
+            Self::Unsettled { intent, reasons } => ConnectorCallOutcome::PendingDelivery {
+                intent,
+                call_ref: None,
+                reasons,
+            },
+        }
+    }
+}
+
+/// One held or pending-delivery call, as a settler lists it: its ref, the
+/// catalog name and tool it calls, and whether a resume already settled it
+/// (then its row waits only for [`Vault::ack_connector_call_delivery`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingConnectorCallRef {
+    pub call_ref: EntityId,
+    pub name: String,
+    pub tool: String,
+    pub settled: bool,
+}
+
+/// One tool's approved input schema, on the governing key the caller's own
+/// grant resolves, or why there is none. Read-only and secret-free.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnectorToolSchema {
+    Approved {
+        input_schema: Value,
+        destructive_hint: bool,
+    },
+    /// The hold or refusal a call of the tool would meet first.
+    Unavailable { reasons: Vec<String> },
+}
+
+/// The tool beneath one grant, for a schema read: the governing key the
+/// grant mints and the tool's approved schema there.
+struct GoverningTool {
+    key: ConnectorKeyRecord,
+    schema: Value,
 }
 
 /// What one pass came to, before the pending row is settled.
@@ -194,6 +300,35 @@ fn refused(reason: &str) -> Step {
     }
 }
 
+impl Step {
+    /// The reasons a hold or a refusal carries.
+    fn into_reasons(self) -> Vec<String> {
+        match self {
+            Self::Held { reasons, .. }
+            | Self::Refused { reasons, .. }
+            | Self::Retryable { reasons, .. }
+            | Self::Unsettled { reasons, .. } => reasons,
+            Self::Delivered { .. } => Vec::new(),
+        }
+    }
+}
+
+/// The call ref a host's identity fixes for one caller: the same caller's
+/// same logical call always names the same held row.
+fn connector_call_ref(
+    principal_ref: &str,
+    invocation: ConnectorCallInvocation,
+) -> Result<EntityId, IntentLedgerError> {
+    Ok(EntityId::derive(
+        CONNECTOR_CALL_REF_DOMAIN,
+        &[
+            principal_ref.as_bytes(),
+            invocation.attempt_id.as_bytes(),
+            &invocation.call_seq.to_le_bytes(),
+        ],
+    )?)
+}
+
 impl Vault {
     /// Calls one tool on one catalogued connector for the caller `memory`
     /// is bound to. The principal is the verified actor of that scope; the
@@ -210,6 +345,7 @@ impl Vault {
                 "the caller's scope is bound to another vault",
             ));
         }
+        let named = invocation;
         let invocation = invocation.unwrap_or_else(|| ConnectorCallInvocation {
             attempt_id: AttemptId::now(),
             call_seq: 0,
@@ -227,14 +363,40 @@ impl Vault {
             call_seq: invocation.call_seq,
             principal_ref: memory.actor().to_hex(),
             held_at_ms: now_ms(),
+            settled: None,
         };
-        self.drive_connector_call(None, pending, host)
+        let Some(named) = named else {
+            return self.drive_connector_call(None, None, pending, host);
+        };
+        // The host's identity names one logical call: run again, it finds
+        // the call it held instead of holding a second one.
+        let call_ref = connector_call_ref(&pending.principal_ref, named)?;
+        let held = {
+            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            PENDING_CALLS.get(&self.store, &txn, &call_ref)?
+        };
+        match held {
+            None => self.drive_connector_call(None, Some(call_ref), pending, host),
+            Some(held) if !held.same_call(&pending) => Ok(ConnectorCallOutcome::Refused {
+                decision_ref: None,
+                reasons: vec![CONNECTOR_CALL_INVOCATION_CONFLICT.to_owned()],
+            }),
+            Some(held) => {
+                if let Some(settled) = &held.settled {
+                    return Ok(settled.outcome());
+                }
+                self.drive_connector_call(Some(call_ref), None, held, host)
+            }
+        }
     }
 
     /// Re-enters one held or pending-delivery call from its durable row:
     /// the same request, principal, attempt id and call seq, rechecked
     /// against live authority through prepare and execute. It takes no new
-    /// arguments, and deletes the row once the call is delivered or refused.
+    /// arguments. Once the call is delivered or refused its row keeps that
+    /// outcome, without the tool's reply, until
+    /// [`Self::ack_connector_call_delivery`]; a resume of a settled row
+    /// answers that receipt again and sends nothing.
     pub fn resume_connector_call<H: ConnectorCallHost>(
         &self,
         call_ref: &EntityId,
@@ -250,44 +412,138 @@ impl Vault {
                 reasons: vec!["connector_call_not_held".to_owned()],
             });
         };
-        self.drive_connector_call(Some(*call_ref), pending, host)
+        if let Some(settled) = &pending.settled {
+            return Ok(settled.outcome());
+        }
+        self.drive_connector_call(Some(*call_ref), None, pending, host)
     }
 
+    /// Every held or pending-delivery call's row, settled ones included, for
+    /// a settler that resumes each and answers its wait.
+    pub fn pending_connector_calls(
+        &self,
+    ) -> Result<Vec<PendingConnectorCallRef>, IntentLedgerError> {
+        let txn = self.store.env.read_txn().map_err(Error::from)?;
+        Ok(PENDING_CALLS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .map(|(call_ref, pending)| PendingConnectorCallRef {
+                call_ref,
+                name: pending.name,
+                tool: pending.tool,
+                settled: pending.settled.is_some(),
+            })
+            .collect())
+    }
+
+    /// Drops a settled call's row once the wait reply that carries its
+    /// outcome has committed; `true` when it dropped one. A held or
+    /// retryable row stays for its next resume.
+    pub fn ack_connector_call_delivery(
+        &self,
+        call_ref: &EntityId,
+    ) -> Result<bool, IntentLedgerError> {
+        Ok(
+            self.with_write_txn(|txn| match PENDING_CALLS.get(&self.store, txn, call_ref)? {
+                Some(pending) if pending.settled.is_some() => {
+                    PENDING_CALLS.delete(&self.store, txn, call_ref)
+                }
+                _ => Ok(false),
+            })?,
+        )
+    }
+
+    /// One tool's approved input schema for the caller `memory` is bound
+    /// to, through the same route, grant and governing key a call of it
+    /// takes. Reads only; nothing is held, sent or written.
+    pub fn connector_tool_schema(
+        &self,
+        memory: &Memory<'_>,
+        name: &str,
+        tool: &str,
+    ) -> Result<ConnectorToolSchema, IntentLedgerError> {
+        if !std::ptr::eq(memory.vault(), self) {
+            return Err(IntentLedgerError::InvalidInput(
+                "the caller's scope is bound to another vault",
+            ));
+        }
+        let unavailable = |stop: Step| ConnectorToolSchema::Unavailable {
+            reasons: stop.into_reasons(),
+        };
+        let Some(route) = self.route_connector_call(name)? else {
+            return Ok(unavailable(refused("connector_not_routable")));
+        };
+        let Some(server) = canonical_scoped_server_segment(&route.name) else {
+            return Ok(unavailable(refused("connector_name_not_scoped")));
+        };
+        let governed = match self.governing_tool(&memory.actor().to_hex(), &server, tool)? {
+            Ok(governed) => governed,
+            Err(stop) => return Ok(unavailable(stop)),
+        };
+        let (_, destructive_hint) = self.connector_tool_class(&governed.key, &route, tool)?;
+        Ok(ConnectorToolSchema::Approved {
+            input_schema: governed.schema,
+            destructive_hint,
+        })
+    }
+
+    /// One pass and what it leaves durable. `call_ref` names the row the
+    /// call already holds; `new_ref`, the ref a first hold takes (a fresh
+    /// one when `None`). A terminal outcome of a call with a row keeps that
+    /// row, settled, for the settler's acknowledgement; one with none
+    /// writes nothing.
     fn drive_connector_call<H: ConnectorCallHost>(
         &self,
         call_ref: Option<EntityId>,
+        new_ref: Option<EntityId>,
         mut pending: PendingConnectorCall,
         host: &mut H,
     ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
         let step = self.connector_call_step(&mut pending, host)?;
         let keep = |call_ref: Option<EntityId>, pending: &PendingConnectorCall| {
-            let call_ref = call_ref.unwrap_or_else(EntityId::now);
+            let call_ref = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
             self.with_write_txn(|txn| PENDING_CALLS.put(&self.store, txn, &call_ref, pending))?;
             Ok::<_, IntentLedgerError>(call_ref)
         };
-        let settle = |call_ref: Option<EntityId>| {
+        let settle = |call_ref: Option<EntityId>, settled: SettledConnectorCall| {
             if let Some(call_ref) = call_ref {
-                self.with_write_txn(|txn| PENDING_CALLS.delete(&self.store, txn, &call_ref))?;
+                let row = PendingConnectorCall {
+                    settled: Some(settled),
+                    ..pending.clone()
+                };
+                self.with_write_txn(|txn| PENDING_CALLS.put(&self.store, txn, &call_ref, &row))?;
             }
             Ok::<_, IntentLedgerError>(())
         };
         Ok(match step {
             Step::Delivered { intent, result } => {
-                settle(call_ref)?;
+                settle(call_ref, SettledConnectorCall::Delivered { intent })?;
                 ConnectorCallOutcome::Delivered { intent, result }
             }
             Step::Refused {
                 decision_ref,
                 reasons,
             } => {
-                settle(call_ref)?;
+                settle(
+                    call_ref,
+                    SettledConnectorCall::Refused {
+                        decision_ref: decision_ref.clone(),
+                        reasons: reasons.clone(),
+                    },
+                )?;
                 ConnectorCallOutcome::Refused {
                     decision_ref,
                     reasons,
                 }
             }
             Step::Unsettled { intent, reasons } => {
-                settle(call_ref)?;
+                settle(
+                    call_ref,
+                    SettledConnectorCall::Unsettled {
+                        intent,
+                        reasons: reasons.clone(),
+                    },
+                )?;
                 ConnectorCallOutcome::PendingDelivery {
                     intent,
                     call_ref: None,
@@ -419,6 +675,53 @@ impl Vault {
         )?;
         let reply = host.take_result();
         Ok(step_from_dispatch(&dispatch, reply))
+    }
+
+    /// The principal's grant for `server` and `tool`, the governing key it
+    /// mints and the tool's approved schema there, for a schema read. It
+    /// follows `connector_call_step`'s resolution step for step (the same
+    /// grant lookup, capability, governing key, status and manifest checks);
+    /// a stop is the hold or refusal a call meets there.
+    fn governing_tool(
+        &self,
+        principal_ref: &str,
+        server: &str,
+        tool: &str,
+    ) -> Result<std::result::Result<GoverningTool, Step>, IntentLedgerError> {
+        let Some((grant_id, _)) = self.connector_call_grant(principal_ref, server, tool, None)?
+        else {
+            return Ok(Err(held("standing_grant_required")));
+        };
+        // The gate binds the same actor from the same principal reference.
+        let actor = EntityId::from_hex(principal_ref).unwrap_or(grant_id);
+        let Some(capability) = ScopedCapabilityProvenance::mint(server, &grant_id) else {
+            return Ok(Err(refused("connector_name_not_scoped")));
+        };
+        let Some((_, key)) = self.connector_key_for(capability.connector(), Some(&actor))? else {
+            return Ok(Err(held("connector_key_unregistered")));
+        };
+        match key.status {
+            ConnectorKeyStatus::Active => {}
+            ConnectorKeyStatus::Revoked => return Ok(Err(refused("connector_key_revoked"))),
+            ConnectorKeyStatus::Suspended => return Ok(Err(held("connector_key_suspended"))),
+            ConnectorKeyStatus::Pending => return Ok(Err(held("connector_key_pending"))),
+        }
+        let Some(manifest) = key.retained_manifest.as_ref() else {
+            return Ok(Err(held("connector_manifest_unapproved")));
+        };
+        let Some(schema) = manifest
+            .tools()
+            .iter()
+            .find(|found| found.name == tool)
+            .map(|found| found.input_schema.clone())
+        else {
+            return Ok(Err(if key.pending_manifest.is_some() {
+                held("connector_manifest_drift")
+            } else {
+                refused("connector_tool_unknown")
+            }));
+        };
+        Ok(Ok(GoverningTool { key, schema }))
     }
 
     /// The principal's live scoped grant for exactly this server and tool:

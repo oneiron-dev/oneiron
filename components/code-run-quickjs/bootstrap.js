@@ -48,13 +48,27 @@
         throw decode(text)?.error ?? new TypeError("unknown_sdk_verb");
       }),
     });
-    // Every namespace answers a verb it does not hold with that refusal.
+    // `connector.<name>.<tool>(args)` is one tool of one catalogued
+    // connector, sent as the one `connector.call` row ({name, tool,
+    // arguments}) once the host serves it. The root's fixed members (`call`,
+    // `list`, `schema`, `status`, `outbound`) stay the table's rows, and the
+    // wrong roots (`tools.`, `connectors.`, `mcp.`, `self.mcp.`,
+    // `self.connectors.`) keep their refusal below: none of them ever
+    // reaches a connector.
+    let connectorCall = null;
+    const tools = name => new Proxy(Object.create(null), {
+      get: (_, tool) => typeof tool === "string" && !plain.has(tool)
+        ? (args = {}) => connectorCall({name, tool, arguments: args}) : undefined,
+    });
+    // Every namespace answers a verb it does not hold with that refusal;
+    // `connector` answers a name it does not hold with that connector's tools.
     guard = (path, object) => {
       for (const [key, value] of Object.entries(object))
         if (value && typeof value === "object") object[key] = guard(`${path}.${key}`, value);
+      const missing = path === "connector" && connectorCall ? tools : key => refusal(`${path}.${key}`);
       return new Proxy(object, {
         get: (target, key, receiver) => typeof key !== "string" || plain.has(key) || key in target
-          ? Reflect.get(target, key, receiver) : refusal(`${path}.${key}`),
+          ? Reflect.get(target, key, receiver) : missing(key),
       });
     };
     sdk.self.memory ??= Object.create(null);
@@ -73,6 +87,7 @@
       const leaf = parts.at(-1), held = target[leaf];
       if (typeof held === "function") throw new TypeError("verb row shadows a host import");
       target[leaf] = held ? Object.assign(verb(name), held) : verb(name);
+      if (name === "connector.call") connectorCall = target[leaf];
     }
     // A result is named by its ref: a bound name (`r7`), a handle, a range
     // of either (`r7#0-4096`), or a card or chunk that carries one.

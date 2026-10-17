@@ -41,7 +41,9 @@ pub struct HeaderGrantRequirement {
     pub header: String,
     pub data_class: ToolGrantDataClass,
 }
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MutationIntent {
     #[default]

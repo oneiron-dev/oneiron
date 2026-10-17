@@ -56,6 +56,11 @@ for row in ROWS:
     # what an embedded handle answers instead.
     if row.get('host_door') and (row.get('server_door') or row.get('admission', {}).get('owner_grade') or row.get('context', 'memory') != 'memory'):
         raise ValueError(f'{row["name"]}: a host door is a memory row with no other server door')
+    # `host_door_caller` hands the door the caller's own principal (the
+    # facade credential's, or the MCP connector's actor) and the logical
+    # invocation the call resolved: the one its verb hooks fired for.
+    if row.get('host_door_caller') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes its caller')
     # Rule 5: `task_work` marks a row whose run is one piece of task work. The
     # server's dispatch and its MCP dispatch take one turn for it
     # (`SyncServer::admit_task_work`, never refused) before the engine call and
@@ -567,7 +572,7 @@ def mcp_input_dispatch(row):
         # credential the REST facade passes it.
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
-                 f'let output = crate::api::facade::host_doors::{method}(server, auth, input).await.map_err(mcp_facade_error)?;\n')
+                 f'let output = crate::api::facade::host_doors::{method}(server, auth, {"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}input).await.map_err(mcp_facade_error)?;\n')
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
@@ -1017,11 +1022,11 @@ def facade_dispatch(facade_rows):
             # own handles, so no list here names the rows it read.
             dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;
                 {record_scope_guard(r)}
-                facade_outside_room_turn(call, {json.dumps(name)})?;
+                facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(auth)?;" if r.get("host_door_caller") else ""}
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
-                let output = facade_output(super::host_doors::{method}(server, auth, facade_input(hooks.args.clone())?).await?)?;
+                let output = facade_output(super::host_doors::{method}(server, auth, {"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await?)?;
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))
             }}\n'''
             continue

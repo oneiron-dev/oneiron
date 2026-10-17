@@ -12,7 +12,9 @@
 //! questions on the host's ladder, `vault.recall` and `report` with the
 //! host's embedder, a slide review through the host's decider, and
 //! `ai.options` from its model runtime. Its `tasks.wave` is its own wave,
-//! queued under its lease, where a credential's is the owner's root one. An
+//! queued under its lease, where a credential's is the owner's root one. Its
+//! `connector.call` goes through the host's connector transports under the
+//! agent's own grant. An
 //! `ai.*` media call and a hook replay are the owner's, and refused. A browser or desktop row drives the
 //! run's own guest under the browser pack, its checked connection and the
 //! vault's standing grants. The board rows, `self.focus.*` and a keyed
@@ -306,6 +308,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::VaultQuestionsRead
             | AgentVerb::VaultQuestionsAnswers
             | AgentVerb::TasksWave
+            | AgentVerb::ConnectorCall
     )
 }
 
@@ -451,6 +454,12 @@ fn host_row(
                 now,
             )?)?)
         }
+        // The agent's own grant and gate, under the step's invocation.
+        AgentVerb::ConnectorCall => encode(crate::api::connector_call_as(
+            server,
+            memory,
+            decode(input)?,
+        )?),
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),
         _ => Err(owners(verb, "ai.* media calls are the owner's")),
     }
