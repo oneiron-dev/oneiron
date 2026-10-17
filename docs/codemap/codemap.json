@@ -915,7 +915,7 @@
      "path": "src/agent_dispatch/spend_lease.rs",
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 14
      }
     },
@@ -10440,7 +10440,7 @@
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
       "crate-vis": 7,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -25839,6 +25839,7 @@
      "path": "src/linear_sync/effect.rs",
      "purpose": "External-effect admission for Linear mirror mutations",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -25865,7 +25866,7 @@
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 6
      }
     },
@@ -28493,8 +28494,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 36,
-      "fn": 15,
+      "crate-vis": 37,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -30791,7 +30792,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OutboundDispatchPipeline"
@@ -30799,7 +30800,7 @@
      "path": "src/outbound/dispatch_pipeline/pipeline.rs",
      "purpose": "O2 dispatch: shared request preparation, ledger replay, execution and receipts",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -30862,7 +30863,7 @@
      "purpose": "Vault facade seams for dispatching outbound intents",
      "surface": {
       "crate-vis": 3,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -31216,7 +31217,7 @@
      "path": "src/outbound_chokepoint/types.rs",
      "purpose": "Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -43604,8 +43605,18 @@
      "path": "src/task_verb/create_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/create_origin.rs",
+     "purpose": "The creator a created TASK's realizing agent runs under (OF-532)",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -43924,7 +43935,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6
      }
     },
@@ -44094,7 +44105,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "re-export": 10,
       "struct": 32
      }
@@ -44535,7 +44546,7 @@
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -49871,7 +49882,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 108,
+     "files": 109,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -50027,7 +50038,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3021,
+   "source_files": 3022,
    "test_files": 903
   },
   "oneiron-android": {
