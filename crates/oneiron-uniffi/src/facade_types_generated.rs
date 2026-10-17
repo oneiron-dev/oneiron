@@ -3304,6 +3304,12 @@ pub struct CallReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub result_digest: Option<String>,
+    #[serde(
+        rename = "action_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub action_digest: Option<String>,
     #[serde(rename = "served")]
     pub served: Vec<String>,
     #[serde(
