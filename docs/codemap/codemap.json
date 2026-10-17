@@ -11218,14 +11218,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "EmbeddedMediaSeed",
       "InProcessVaultReadAdapter"
      ],
      "path": "src/code_run/vault_read/in_process.rs",
      "purpose": "The in-process adapter: scoped reads against a live vault plus retrieval-budget control",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 2,
-      "struct": 1
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -45025,7 +45027,8 @@
      "path": "src/task_verb/recall_door.rs",
      "purpose": "The recall door: when a recall's clock starts, what it answers when its door stops waiting, and how it…",
      "surface": {
-      "fn": 4,
+      "const": 1,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -54051,14 +54054,17 @@
      "notable": [
       "ContextPackBudgetControls",
       "ContextPackDepthControls",
+      "ContextPackMediaQuery",
       "ContextPackRetrievalBudgetControls",
-      "CoreContextPackRequest"
+      "CoreContextPackRequest",
+      "MediaQueryKind"
      ],
      "path": "src/code_run/vault_read/context_pack.rs",
      "purpose": "The vault-read context-pack request and its depth / budget controls",
      "surface": {
+      "enum": 1,
       "fn": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -59169,7 +59175,7 @@
      "path": "src/facade/convert.rs",
      "purpose": "DTO to/from engine converters plus the forget paging helper",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -59219,6 +59225,7 @@
       "NapiPendingWrite",
       "NapiReadReceipt",
       "NapiReadScope",
+      "NapiRecallMedia",
       "NapiRecallScope",
       "NapiRetrievalMeta",
       "NapiScopeHonesty",
@@ -59233,7 +59240,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 53
+      "struct": 54
      }
     },
     {
@@ -69691,6 +69698,7 @@
       "QuoteSpan",
       "ReadReceipt",
       "ReadScope",
+      "RecallMedia",
       "RecallScope",
       "RerankReport",
       "RerankSkip",
@@ -69713,7 +69721,7 @@
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
       "enum": 7,
-      "struct": 48
+      "struct": 49
      }
     },
     {
