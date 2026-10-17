@@ -8,9 +8,12 @@
 //! A person's operations apply to the deck as of the frontier the caller read
 //! and merge into the head as a CRDT peer's would; the merged deck must still
 //! keep the deck's tree rules, since a converged state is not necessarily a
-//! valid deck. Machine work goes through a `DeckFork`, reviewed by the merge
-//! preflight and landed by someone other than its proposer. Until the deck
-//! export gate opens for its profile, blob versions stay authoritative: an
+//! valid deck. Machine work goes through a typed-body fork of the document,
+//! each call a Loro commit under its maker's receipt; the merge preflight
+//! reviews it as a `DeckFork` (the deck at the fork's base and the operations
+//! its log holds past it), and someone other than its proposer lands it: the
+//! fork's own changes are imported, so its receipts land with them. Until the
+//! deck export gate opens for its profile, blob versions stay authoritative: an
 //! export is a proposal artifact, not a version. The gate opens on the deck
 //! oracle's receipt for the profile ([`Vault::record_pptx_oracle_receipt`]),
 //! all eight steps passed on a clean opening against the current projector.
@@ -26,9 +29,9 @@ mod doc;
 pub(super) use doc::{birth, validate};
 
 use super::{
-    COMMITS, DOCS, EXPORTS, FORKS, ForkState, OfficeBodyEdit, OfficeBodyExportRecord,
-    OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, bounded_ops, check_made_by, invalid, source,
-    version_key, writer,
+    EXPORTS, FORKS, ForkState, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyFork,
+    OfficeBodyHead, OfficeBodyKind, bounded_ops, check_made_by, invalid, source, version_key,
+    writer,
 };
 use crate::Vault;
 use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance};
@@ -36,11 +39,14 @@ use crate::edit_roundtrip::VaultAssets;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, LiveDeckRefusal, Result};
 use crate::provenance::made_by::MadeBy;
-use crate::provenance::text_commit::TextCommitReceipt;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
-use crate::typed_body::{TypedBodyHead, edit_typed_body_in_txn};
+use crate::typed_body::{
+    TypedBodyHead, discard_typed_body_fork_in_txn, edit_typed_body_fork_in_txn,
+    edit_typed_body_in_txn, merge_typed_body_fork_in_txn, open_typed_body_fork_in_txn,
+    typed_body_fork_in_txn,
+};
 use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
 use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
@@ -173,9 +179,9 @@ impl Vault {
         )
     }
 
-    /// The opener's operations on its open deck fork. Each must apply to the
-    /// fork's proposal state. The fork is not a Loro document: its frontier
-    /// names the proposal by its version and state hash.
+    /// The opener's operations on its open deck fork, one Loro commit on the
+    /// fork's document under `made_by`'s receipt. Each must apply to the
+    /// fork's proposal state.
     pub fn edit_pptx_body_fork(
         &self,
         artifact: &EntityId,
@@ -187,48 +193,40 @@ impl Vault {
         bounded_ops(ops.len())?;
         check_made_by(actor, made_by)?;
         let ops = self.name_creations(ops)?;
+        let stamped: Vec<StampedOp> = ops
+            .iter()
+            .map(|op| StampedOp {
+                made_by: actor.entity_ref().to_hex(),
+                at: made_by.at,
+                op: op.clone(),
+            })
+            .collect();
         self.with_write_txn_grouped(|wtxn| {
             let key = (*artifact, *fork);
-            let mut record = FORKS
-                .get(&self.store, wtxn, &key)?
-                .ok_or(Error::EntityNotFound)?;
-            if record.state != ForkState::Open || record.opener != actor.entity_ref() {
+            let mut record = open_record(&self.store, wtxn, artifact, fork)?;
+            if record.opener != actor.entity_ref() {
                 return Err(invalid("only the opener writes to its open fork"));
             }
-            let mut work = load_fork(&self.store, wtxn, fork)?;
-            let mut proposal = work.candidate().map_err(live)?;
-            let start = work.ops.len();
-            for op in &ops {
-                let stamped = StampedOp {
-                    made_by: actor.entity_ref().to_hex(),
-                    at: made_by.at,
-                    op: op.clone(),
-                };
-                proposal.apply(&stamped).map_err(live)?;
-                work.record(stamped);
-            }
-            let receipt = log_receipt(*artifact, start, work.ops.len(), made_by)?;
-            // The fork's operation log is its receipt ledger, as a typed
-            // body's history is: the write door reads it whole and a hit
-            // refuses the call, unless the fork read the same way before it
-            // (OF-067).
-            let logged = serde_json::to_vec(&work).map_err(|_| invalid("deck fork encoding"))?;
-            crate::batch::secret_scan::scan_document_in_txn(&self.store, wtxn, &logged, || {
-                DOCS.get(&self.store, wtxn, fork)
-            })?;
-            store_fork(&self.store, wtxn, fork, &work)?;
-            self.record_commit(wtxn, fork, &mut record.commits, &receipt)?;
+            let writer = writer(OfficeBodyKind::Pptx, actor, made_by);
+            let (_, commit) =
+                edit_typed_body_fork_in_txn(self, wtxn, artifact, fork, writer, |doc| {
+                    let mut body = doc::read(doc)?;
+                    for op in &stamped {
+                        body.deck.apply(op).map_err(live)?;
+                    }
+                    doc::sync_to(doc, &body.deck)?;
+                    doc::append_log(doc, &stamped)
+                })?;
+            record.commits += 1;
             FORKS.put(&self.store, wtxn, &key, &record)?;
-            let mut frontier = proposal.version.to_be_bytes().to_vec();
-            frontier.extend_from_slice(&proposal.state_hash());
             Ok(OfficeBodyEdit {
-                frontier,
+                frontier: commit.frontier,
                 minted: ops
                     .iter()
                     .filter_map(DeckOp::created)
                     .map(|id| id.0.to_string())
                     .collect(),
-                receipt,
+                receipt: commit.receipt,
             })
         })
     }
@@ -250,8 +248,8 @@ impl Vault {
         let ((head, body), work, mut report, assets) = {
             let txn = self.store.env.read_txn()?;
             let (head, body) = self.deck_head(&txn, artifact)?;
-            open_record(&self.store, &txn, artifact, fork)?;
-            let work = load_fork(&self.store, &txn, fork)?;
+            let record = open_record(&self.store, &txn, artifact, fork)?;
+            let work = self.deck_fork(&txn, &record)?;
             let report = preflight(&body.deck, &work).map_err(live)?;
             let assets = HeldAssets::resolve(
                 &VaultAssets {
@@ -285,11 +283,13 @@ impl Vault {
         })
     }
 
-    /// Land a reviewed deck fork as the settler's commit. The settler names
-    /// the head it reviewed; a moved head, an unresolved conflict, the opener
-    /// as settler or a scope that does not cover the fork refuses. The fork's
-    /// operations join the body's log, and its receipts follow the body's
-    /// commits, so attribution survives the landing.
+    /// Land a reviewed deck fork. The settler names the head it reviewed; a
+    /// moved head, an unresolved conflict, the opener as settler or a scope
+    /// that does not cover the fork refuses. Once the landing checks pass, the
+    /// fork's own Loro changes are imported, so its operations join the
+    /// body's log with their receipts; where the imported deck differs from
+    /// the landing's (a switch, or a merge the head moved under), one commit
+    /// of the settler's makes it the landing's.
     #[allow(clippy::too_many_arguments)]
     pub fn merge_pptx_body_fork(
         &self,
@@ -313,9 +313,8 @@ impl Vault {
             if head.frontier != expected_head {
                 return Err(invalid("the deck moved since the review; review it again"));
             }
-            let work = load_fork(&self.store, wtxn, fork)?;
+            let work = self.deck_fork(wtxn, &record)?;
             let report = preflight(&body.deck, &work).map_err(live)?;
-            let before = body.deck.clone();
             let mut receipt = land(
                 &mut body.deck,
                 &work,
@@ -326,37 +325,30 @@ impl Vault {
                 false,
             )
             .map_err(live)?;
-            let unchanged = work.ops.is_empty()
-                && body.deck.semantically_eq(&before)
-                && body.deck.next_node == before.next_node
-                && body.deck.id_marks == before.id_marks;
-            // An empty fork that changes nothing lands without a commit.
-            let frontier = if unchanged {
-                receipt.landed_version = before.version;
-                head.frontier
+            let merged =
+                merge_typed_body_fork_in_txn(self, wtxn, artifact, fork, &head.frontier, actor)?;
+            let (_, imported) = self.deck_head(wtxn, artifact)?;
+            let landed = imported.deck.semantically_eq(&body.deck)
+                && imported.deck.next_node == body.deck.next_node
+                && imported.deck.id_marks == body.deck.id_marks;
+            let frontier = if landed {
+                receipt.landed_version = imported.deck.version;
+                merged.frontier
             } else {
                 let writer = writer(OfficeBodyKind::Pptx, actor, made_by);
                 let (_, commit) =
                     edit_typed_body_in_txn(self, wtxn, artifact, None, writer, |doc| {
-                        doc::sync_to(doc, &body.deck)?;
-                        doc::append_log(doc, &work.ops)
+                        doc::sync_to(doc, &body.deck)
                     })?;
                 receipt.landed_version = self.deck_head(wtxn, artifact)?.1.deck.version;
                 commit.frontier
             };
-            let mut sequence = COMMITS
-                .scan_keys(&self.store, wtxn, artifact.as_bytes())?
-                .len() as u64;
-            for (_, commit) in COMMITS.scan_from(&self.store, wtxn, fork.as_bytes())? {
-                self.record_commit(wtxn, artifact, &mut sequence, &commit)?;
-            }
             record.state = ForkState::Merged {
                 by: actor.entity_ref(),
                 at,
                 head: frontier,
             };
             FORKS.put(&self.store, wtxn, &key, &record)?;
-            DOCS.delete(&self.store, wtxn, fork)?;
             Ok(receipt)
         })
     }
@@ -551,7 +543,8 @@ impl Vault {
     }
 
     /// Open a deck fork at the live head for `actor`'s machine work in the run
-    /// `run_root`, so that run's approve-all scope covers it.
+    /// `run_root`, so that run's approve-all scope covers it: a typed-body
+    /// fork of the document, with the office record that names the run.
     pub(super) fn open_deck_fork(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -559,25 +552,55 @@ impl Vault {
         actor: WriteActor,
         run_root: Option<&EntityId>,
     ) -> Result<OfficeBodyFork> {
-        let (head, body) = self.deck_head(wtxn, artifact)?;
+        let typed = open_typed_body_fork_in_txn(
+            self,
+            wtxn,
+            artifact,
+            OfficeBodyKind::Pptx.schema(),
+            actor,
+        )?;
         let fork = OfficeBodyFork {
-            id: self.new_entity_id()?,
+            id: typed.fork,
             artifact: *artifact,
-            opener: actor.entity_ref(),
-            base: head.frontier,
+            opener: typed.opener,
+            base: typed.base,
             commits: 0,
-            opened_at: self.now_recorded_at(),
+            opened_at: typed.opened_at,
             state: ForkState::Open,
+            run_root: run_root.copied(),
         };
-        let run_root = run_root.map(EntityId::to_hex);
-        let work = body.deck.fork_at(
-            &fork.id.to_hex(),
-            &fork.opener.to_hex(),
-            run_root.as_deref(),
-        );
-        store_fork(&self.store, wtxn, &fork.id, &work)?;
         FORKS.put(&self.store, wtxn, &(*artifact, fork.id), &fork)?;
         Ok(fork)
+    }
+
+    /// The open deck fork as the merge preflight reads it: the deck at the
+    /// fork's base, and the operations the fork's log holds past the base's.
+    fn deck_fork(&self, txn: &RoTxn<'_>, record: &OfficeBodyFork) -> Result<DeckFork> {
+        let (typed, proposal) =
+            typed_body_fork_in_txn(&self.store, txn, &record.artifact, &record.id)?
+                .ok_or(Error::EntityNotFound)?;
+        let proposal = doc::read(&proposal.ok_or_else(|| invalid("the fork is not open"))?)?;
+        let (_, base) = self.loro_body(
+            txn,
+            &record.artifact,
+            OfficeBodyKind::Pptx,
+            Some(&typed.base),
+        )?;
+        let base = doc::read(&base)?;
+        let ops = proposal
+            .log
+            .get(base.log.len()..)
+            .ok_or(Error::CorruptedIndex("deck fork log"))?;
+        let run_root = record.run_root.map(|root| root.to_hex());
+        let mut work = base.deck.fork_at(
+            &record.id.to_hex(),
+            &record.opener.to_hex(),
+            run_root.as_deref(),
+        );
+        for op in ops {
+            work.record(op.clone());
+        }
+        Ok(work)
     }
 
     pub(super) fn discard_deck_fork(
@@ -588,12 +611,12 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<()> {
         let mut record = open_record(&self.store, wtxn, artifact, fork)?;
+        discard_typed_body_fork_in_txn(self, wtxn, artifact, fork, actor)?;
         record.state = ForkState::Discarded {
             by: actor.entity_ref(),
             at: self.now_recorded_at(),
         };
         FORKS.put(&self.store, wtxn, &(*artifact, *fork), &record)?;
-        DOCS.delete(&self.store, wtxn, fork)?;
         Ok(())
     }
 }
@@ -622,36 +645,6 @@ fn open_record(
         return Err(invalid("the fork is not open"));
     }
     Ok(record)
-}
-
-fn load_fork(store: &Store, txn: &RoTxn<'_>, fork: &EntityId) -> Result<DeckFork> {
-    let bytes = DOCS
-        .get(store, txn, fork)?
-        .ok_or(Error::CorruptedIndex("office body fork missing"))?;
-    serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("office body deck fork"))
-}
-
-fn store_fork(store: &Store, wtxn: &mut RwTxn<'_>, fork: &EntityId, work: &DeckFork) -> Result<()> {
-    let bytes = serde_json::to_vec(work).map_err(|_| invalid("deck fork encoding"))?;
-    DOCS.put(store, wtxn, fork, &bytes)
-}
-
-/// A deck fork call's receipt: its span of the fork's operation log (peer 0,
-/// which no Loro peer takes).
-fn log_receipt(
-    document: EntityId,
-    start: usize,
-    end: usize,
-    made_by: &MadeBy,
-) -> Result<TextCommitReceipt> {
-    let span = |at: usize| i32::try_from(at).map_err(|_| invalid("the deck log is too long"));
-    Ok(TextCommitReceipt {
-        document,
-        peer: 0,
-        start: span(start)?,
-        end: span(end)?,
-        made_by: made_by.clone(),
-    })
 }
 
 /// A node identity drawn from fresh entity entropy, top bit set.

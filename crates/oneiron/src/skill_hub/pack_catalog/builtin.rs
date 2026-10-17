@@ -285,6 +285,14 @@ impl Vault {
             let skills = self.admit_pack_skills_in_txn(txn, &source, &hub, None, None, at)?;
             if let Some(prior) = installed.as_ref() {
                 self.supersede_pack_skills_in_txn(txn, prior, &skills, at)?;
+                if prior.content_hash != receipt.content_hash {
+                    self.end_pack_setup_sessions_in_txn(
+                        txn,
+                        None,
+                        &prior.pack_name,
+                        &prior.content_hash,
+                    )?;
+                }
             }
             receipt.skills = skills.iter().map(EntityId::to_hex).collect();
             admission::PACK_INSTALL.put(&self.store, txn, &receipt.pack_name, &receipt)?;
@@ -351,9 +359,11 @@ impl Vault {
 
     /// A built-in channel runs as its engine pack (OF-519): once the vault
     /// is seeded, a send or an inbound event on it needs a pack serving the
-    /// channel installed Active with the built-in adapter. An owner who
-    /// removed or replaced the pack has no such channel. A channel no
-    /// built-in pack names passes.
+    /// channel installed Active with the built-in adapter, and that pack's
+    /// setup connection still checked (OF-378). A withdrawn permission, a
+    /// replaced credential or a revoked key closes the channel until the
+    /// owner checks it again. An owner who removed or replaced the pack has
+    /// no such channel. A channel no built-in pack names passes.
     pub fn require_builtin_channel_pack(&self, channel: &str) -> Result<()> {
         let txn = self.store.env.read_txn()?;
         self.require_builtin_channel_pack_in_txn(&txn, channel)
@@ -374,18 +384,25 @@ impl Vault {
         if !SEEDED.contains(&self.store, txn, &())? {
             return Ok(());
         }
+        let mut unchecked = false;
         for (name, _) in PACKS.iter().filter(|(name, _)| serves(name)) {
-            if let Some(receipt) = self.installed_pack_in_txn(txn, &format!("oneiron.{name}"))?
+            let pack = format!("oneiron.{name}");
+            if let Some(receipt) = self.installed_pack_in_txn(txn, &pack)?
                 && receipt.status == PackInstallStatus::Active
                 && receipt.adapter == Some(PackAdapter::Builtin((*name).to_owned()))
                 && receipt.engine_version.as_deref() == Some(env!("CARGO_PKG_VERSION"))
             {
-                return Ok(());
+                if self.pack_connections_checked_in_txn(txn, &pack)? {
+                    return Ok(());
+                }
+                unchecked = true;
             }
         }
-        Err(super::invalid(
-            "the channel's built-in pack is not installed",
-        ))
+        Err(super::invalid(if unchecked {
+            "the channel's connection is not checked; run the pack's setup before using it"
+        } else {
+            "the channel's built-in pack is not installed"
+        }))
     }
 
     /// What a served host runs a built-in channel on (OF-519): the engine's
