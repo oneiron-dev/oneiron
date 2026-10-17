@@ -2808,7 +2808,9 @@ impl AgentVerb {
             Self::VaultWeaveDigest => {
                 "One of the bound actor's saved weave digests, or the newest, under the current read policy."
             }
-            Self::VaultWeaveLens => "",
+            Self::VaultWeaveLens => {
+                "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."
+            }
             Self::VaultWeaveLinkWrong => {
                 "A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."
             }

@@ -32,6 +32,7 @@ pub enum ActionArgKind {
     Text,
     Token,
     Entity,
+    Json,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -49,6 +50,9 @@ pub enum ActionArgument {
         #[serde(with = "crate::serialize::entity_ref")]
         id: EntityId,
     },
+    /// A verb-table or run row's whole input, structured, past what one text
+    /// holds: a host's REST write carries its full body here.
+    Json(ActionJson),
 }
 impl ActionArgument {
     fn kind(&self) -> ActionArgKind {
@@ -58,7 +62,17 @@ impl ActionArgument {
             Self::Text(_) => ActionArgKind::Text,
             Self::Token(_) => ActionArgKind::Token,
             Self::Entity { .. } => ActionArgKind::Entity,
+            Self::Json(_) => ActionArgKind::Json,
         }
+    }
+    /// Whether this argument fills a `kind` slot of a verb built by `build`.
+    /// A verb-table or run row's one text is its whole JSON input, so that
+    /// slot takes the input structured too.
+    fn fits(&self, kind: ActionArgKind, build: ActionBuild) -> bool {
+        self.kind() == kind
+            || (matches!(self, Self::Json(_))
+                && kind == ActionArgKind::Text
+                && matches!(build, ActionBuild::Verb(_) | ActionBuild::Run(_)))
     }
     fn from_ui(arg: &LensApprovedActionArg) -> Self {
         match arg {
@@ -70,6 +84,40 @@ impl ActionArgument {
                 id: *reference.target().entity_id(),
             },
         }
+    }
+}
+/// One structured JSON argument, at most [`MAX_ACTION_JSON_BYTES`] encoded:
+/// the most a verb-table row's own facade route reads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "serde_json::Value", into = "serde_json::Value")]
+pub struct ActionJson(serde_json::Value);
+/// The most one [`ActionJson`] holds, encoded, in bytes.
+pub const MAX_ACTION_JSON_BYTES: usize = crate::memory::caps::MAX_REMOTE_REQUEST_BYTES;
+impl ActionJson {
+    /// # Errors
+    /// A value that encodes past [`MAX_ACTION_JSON_BYTES`].
+    pub fn new(value: serde_json::Value) -> Result<Self> {
+        let bytes = serde_json::to_vec(&value).map_err(|_| invalid("action JSON encoding"))?;
+        if bytes.len() > MAX_ACTION_JSON_BYTES {
+            return Err(invalid("action JSON argument is too large"));
+        }
+        Ok(Self(value))
+    }
+    /// The structured value.
+    #[must_use]
+    pub const fn value(&self) -> &serde_json::Value {
+        &self.0
+    }
+}
+impl TryFrom<serde_json::Value> for ActionJson {
+    type Error = Error;
+    fn try_from(value: serde_json::Value) -> Result<Self> {
+        Self::new(value)
+    }
+}
+impl From<ActionJson> for serde_json::Value {
+    fn from(json: ActionJson) -> Self {
+        json.0
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -398,10 +446,10 @@ impl ActionRegistry {
             .as_ref()
             .map(|run| run.leased_record(vault))
             .transpose()?;
-        let expected_kind = if actor.actor_class() == EdgeActorClass::Agent {
-            LensActingPrincipalKind::AgentTask
-        } else {
-            LensActingPrincipalKind::HumanView
+        let expected_kind = match actor.actor_class() {
+            EdgeActorClass::Agent => LensActingPrincipalKind::AgentTask,
+            EdgeActorClass::System => LensActingPrincipalKind::SystemJob,
+            EdgeActorClass::Human => LensActingPrincipalKind::HumanView,
         };
         if principal.principal_ref() != actor.entity_ref().to_hex()
             || principal.kind() != expected_kind
@@ -415,7 +463,7 @@ impl ActionRegistry {
                 .args
                 .iter()
                 .zip(&registered.definition.args_schema)
-                .any(|(arg, kind)| arg.kind() != *kind)
+                .any(|(arg, kind)| !arg.fits(*kind, registered.build))
         {
             return Err(invalid("action arguments do not match declared schema"));
         }
@@ -572,23 +620,27 @@ impl ActionRegistry {
     }
 }
 fn build_sdk_verb(verb: AgentVerb, args: &[ActionArgument]) -> Result<SelfCall> {
-    let [ActionArgument::Text(input)] = args else {
-        return Err(invalid(
-            "verb-table action takes its JSON input as one text",
-        ));
+    let input = match args {
+        [ActionArgument::Text(input)] => serde_json::from_str(input.as_str())
+            .map_err(|_| invalid("verb-table action input is not JSON"))?,
+        [ActionArgument::Json(input)] => input.value().clone(),
+        _ => {
+            return Err(invalid(
+                "verb-table action takes its JSON input as one text or JSON",
+            ));
+        }
     };
-    let input = serde_json::from_str(input.as_str())
-        .map_err(|_| invalid("verb-table action input is not JSON"))?;
     Ok(SelfCall::AgentVerb(SelfAgentVerbCall { verb, input }))
 }
 /// A run row's typed call, its defaults on the action's frozen clock in unix
 /// seconds, as a code run's own clock is.
 fn build_run_verb(verb: RunVerb, args: &[ActionArgument], frozen_unix_ms: u64) -> Result<SelfCall> {
-    let [ActionArgument::Text(input)] = args else {
-        return Err(invalid("run-row action takes its JSON input as one text"));
+    let input = match args {
+        [ActionArgument::Text(input)] => serde_json::from_str(input.as_str())
+            .map_err(|_| invalid("run-row action input is not JSON"))?,
+        [ActionArgument::Json(input)] => input.value().clone(),
+        _ => return Err(invalid("run-row action takes its JSON input as one text or JSON")),
     };
-    let input = serde_json::from_str(input.as_str())
-        .map_err(|_| invalid("run-row action input is not JSON"))?;
     super::run_verb_call::run_verb_call(verb, input, frozen_unix_ms / 1000)
 }
 fn build_inference_defaults_read(
