@@ -4482,7 +4482,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.export",
-      "description": "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands.",
+      "description": "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep.",
       "refs": [
         "/artifact_ref"
       ],
