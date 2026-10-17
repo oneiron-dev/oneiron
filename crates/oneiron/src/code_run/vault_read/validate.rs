@@ -76,6 +76,9 @@ fn validate_context_pack_request(request: &CoreContextPackRequest) -> VaultReadR
         non_empty_query(request.query.as_deref()).or(request.media.as_ref().map(|_| "media")),
         request.query_vector.as_deref(),
     )?;
+    if request.axis.is_some() && request.type_ref.is_none() {
+        return Err(invalid_request(METHOD, "axis", "axis needs a type_ref"));
+    }
     let depth = request.resolved_depth();
     if depth.edge_hop.is_some_and(|hop| hop > MAX_EDGE_HOP) {
         return Err(invalid_request(

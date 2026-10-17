@@ -341,7 +341,7 @@ pub(crate) fn erase_refinement_custody_in_txn(
             if BINDING.get(store, txn, &id)? != Some(*candidate) {
                 return Err(Error::CorruptedIndex("refinement owned source binding"));
             }
-            if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some() {
+            if crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)? {
                 let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &id)?;
                 crate::ppr::invalidate_ppr_for_delete(store, txn, &id, &neighbors)?;
                 if graph {

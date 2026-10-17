@@ -40,12 +40,12 @@ mod tests;
 
 pub use self::context_pack::{
     ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery,
-    ContextPackRetrievalBudgetControls, CoreContextPackAccounting, CoreContextPackAccountingReason,
-    CoreContextPackEdgeProvenance, CoreContextPackEdgeRecord, CoreContextPackEmpty,
-    CoreContextPackEmptyReason, CoreContextPackEntityRecord, CoreContextPackItemTokenStats,
-    CoreContextPackProjection, CoreContextPackRequest, CoreContextPackResponse,
-    CoreContextPackSectionTokenStats, CoreContextPackSignal, CoreContextPackStats,
-    CoreContextPackTokenStats, CoreContextPackVad, MediaQueryKind,
+    ContextPackRetrievalBudgetControls, ContextPackTypeRef, CoreContextPackAccounting,
+    CoreContextPackAccountingReason, CoreContextPackEdgeProvenance, CoreContextPackEdgeRecord,
+    CoreContextPackEmpty, CoreContextPackEmptyReason, CoreContextPackEntityRecord,
+    CoreContextPackItemTokenStats, CoreContextPackProjection, CoreContextPackRequest,
+    CoreContextPackResponse, CoreContextPackSectionTokenStats, CoreContextPackSignal,
+    CoreContextPackStats, CoreContextPackTokenStats, CoreContextPackVad, MediaQueryKind,
 };
 pub use self::contract::{
     MEMORY_VERBS, VAULT_READ_METHOD_MAP, VaultReadAdapterKind, VaultReadAvailability,
