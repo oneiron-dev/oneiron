@@ -13,6 +13,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/self.inbox.concern.outcome",
             post(self_inbox_concern_outcome),
         )
+        .route("/self.inbox.concern.move", post(self_inbox_concern_move))
         .route("/vault.people.list", post(vault_people_list))
         .route("/vault.people.get", post(vault_people_get))
         .route("/self.message", post(self_message))
@@ -410,6 +411,26 @@ async fn self_inbox_concern_outcome(
         actor,
         class,
         "self.inbox.concern.outcome",
+        value,
+    )?))
+}
+async fn self_inbox_concern_move(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.inbox.concern.move",
         value,
     )?))
 }

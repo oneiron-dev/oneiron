@@ -194,9 +194,19 @@ fn id(value: &str) -> &str {
 pub(crate) struct ServerReceipts {
     chosen: RwLock<Option<Arc<dyn RunReceiptSink>>>,
     usage: RwLock<Option<Arc<crate::runtime::VaultUsage>>>,
+    /// The vault whose `host.budget.hit` hooks a spent line runs.
+    hooks: Option<Arc<oneiron::Vault>>,
 }
 
 impl ServerReceipts {
+    /// The server's sink, running its vault's budget-hit hooks.
+    pub(crate) fn hooked(vault: Arc<oneiron::Vault>) -> Self {
+        Self {
+            hooks: Some(vault),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn meter(&self, usage: Arc<crate::runtime::VaultUsage>) {
         *self.usage.write().expect("usage sink lock poisoned") = Some(usage);
     }
@@ -223,6 +233,17 @@ impl RunReceiptSink for ServerReceipts {
         match chosen {
             Some(sink) => sink.record(receipt),
             None => LoggedReceipts.record(receipt),
+        }
+    }
+
+    fn budget_hit(
+        &self,
+        seat: &str,
+        guard: &oneiron::BudgetGuard,
+        denied: &oneiron::llm::BudgetDenied,
+    ) {
+        if let Some(vault) = &self.hooks {
+            vault.budget_denied_hooks(denied, guard, seat, None);
         }
     }
 }
