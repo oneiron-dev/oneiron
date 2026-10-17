@@ -195,6 +195,7 @@ vaultCodeBlame(requestJson: string): string
 vaultCodeProposalView(requestJson: string): string
 vaultCodeRepoDiff(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
+vaultAgentsExportPack(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string
 vaultArtifactsWaits(requestJson: string): string

@@ -16,11 +16,13 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{Result, Vault};
 
 pub mod agent_pack;
+mod agent_pack_export;
 
 pub use self::agent_pack::{
     AGENT_PACK_TRAVEL_SCHEMA, AgentPackKnowledge, AgentPackPolicy, AgentPackSkill,
     AgentPackTravelProjection,
 };
+pub use self::agent_pack_export::{AgentPackExport, AgentPackExportFile, AgentPackExportRequest};
 
 /// The share receipt field listing the born-with fields that travelled.
 pub const FIELD_TRAVELLED: &str = "travelled";
@@ -131,15 +133,88 @@ pub fn travelled_value(fields: impl IntoIterator<Item = BornWithField>) -> Strin
         .join(",")
 }
 
-/// One artifact export's travel record: the copy, its digest, who sent it and
-/// the born-with fields that left with it; never the exported bytes.
+/// What one export sent, by its local ref and revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportTarget {
+    /// One version of an artifact.
+    Artifact { artifact_ref: String, version: u64 },
+    /// An agent definition, sent as its travelling AgentPack, with the
+    /// knowledge claims it kept home.
+    AgentPack {
+        agent_ref: String,
+        version: String,
+        omitted: Vec<OmittedKnowledge>,
+    },
+}
+
+/// A knowledge claim an AgentPack export kept home, and why: `ref_value`
+/// (its value names an entity or an edge) or `typed_value` (not text).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OmittedKnowledge {
+    /// The claim, as hex.
+    pub claim: String,
+    pub reason: String,
+}
+
+impl OmittedKnowledge {
+    pub(crate) fn new(claim: EntityId, reason: crate::agent_def::OmittedClaimReason) -> Self {
+        let reason = match reason {
+            crate::agent_def::OmittedClaimReason::RefValue => "ref_value",
+            crate::agent_def::OmittedClaimReason::TypedValue => "typed_value",
+        };
+        Self {
+            claim: claim.to_hex(),
+            reason: reason.to_owned(),
+        }
+    }
+}
+
+impl ExportTarget {
+    /// The share receipt's fields naming the target. An AgentPack's
+    /// `omitted` lists each claim kept home as `<claim>:<reason>`,
+    /// comma-joined.
+    fn receipt_fields(&self) -> Vec<(String, String)> {
+        match self {
+            Self::Artifact {
+                artifact_ref,
+                version,
+            } => vec![
+                ("artifact".to_owned(), artifact_ref.clone()),
+                ("version".to_owned(), version.to_string()),
+            ],
+            Self::AgentPack {
+                agent_ref,
+                version,
+                omitted,
+            } => {
+                let mut fields = vec![
+                    ("agent".to_owned(), agent_ref.clone()),
+                    ("version".to_owned(), version.clone()),
+                ];
+                if !omitted.is_empty() {
+                    let omitted = omitted
+                        .iter()
+                        .map(|row| format!("{}:{}", row.claim, row.reason))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    fields.push(("omitted".to_owned(), omitted));
+                }
+                fields
+            }
+        }
+    }
+}
+
+/// One export's travel record: the copy, its digest, who sent it and the
+/// born-with fields that left with it; never the exported bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportTravel {
     /// Vault clock seconds.
     pub at: u64,
-    pub artifact_ref: String,
-    pub version: u64,
-    /// BLAKE3 of the exported file, lowercase hex.
+    pub target: ExportTarget,
+    /// The exported copy's digest, lowercase hex: BLAKE3 of an artifact
+    /// file, the canonical tree hash of an agent pack's folder.
     pub content_hash: String,
     /// The exporting actor as hex.
     pub by: String,
@@ -182,7 +257,7 @@ pub(crate) fn brief_travel_for_store_in_txn(
         .unwrap_or_else(|| TravelChoice::default_for(TravelKind::Brief)))
 }
 
-/// Every artifact export's share receipt, listing what travelled.
+/// Every export's share receipt, listing what travelled.
 pub(crate) fn export_travel_receipts(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -201,15 +276,18 @@ pub(crate) fn export_travel_receipts(
             job_ref: None,
             trigger_ref: None,
             policy_trace: Vec::new(),
-            fields: BTreeMap::from([
-                ("artifact".to_owned(), travel.artifact_ref.clone()),
-                ("version".to_owned(), travel.version.to_string()),
-                ("content_hash".to_owned(), travel.content_hash.clone()),
-                (
-                    FIELD_TRAVELLED.to_owned(),
-                    travelled_value(travel.travelled.iter().copied()),
-                ),
-            ]),
+            fields: travel
+                .target
+                .receipt_fields()
+                .into_iter()
+                .chain([
+                    ("content_hash".to_owned(), travel.content_hash.clone()),
+                    (
+                        FIELD_TRAVELLED.to_owned(),
+                        travelled_value(travel.travelled.iter().copied()),
+                    ),
+                ])
+                .collect(),
         };
         if query.matches(&receipt) {
             receipts.push(receipt);
@@ -342,10 +420,50 @@ impl Vault {
         by: &EntityId,
         born_with: &BornWith,
     ) -> Result<()> {
+        self.record_travel(
+            ExportTarget::Artifact {
+                artifact_ref,
+                version,
+            },
+            content_hash,
+            by,
+            born_with,
+        )
+    }
+
+    /// Record one travelling AgentPack's share receipt, with the knowledge
+    /// it kept home, on the same terms as [`Self::record_export_travel`].
+    pub(crate) fn record_agent_pack_travel(
+        &self,
+        agent: &EntityId,
+        version: String,
+        content_hash: String,
+        by: &EntityId,
+        born_with: &BornWith,
+        omitted: Vec<OmittedKnowledge>,
+    ) -> Result<()> {
+        self.record_travel(
+            ExportTarget::AgentPack {
+                agent_ref: agent.to_hex(),
+                version,
+                omitted,
+            },
+            content_hash,
+            by,
+            born_with,
+        )
+    }
+
+    fn record_travel(
+        &self,
+        target: ExportTarget,
+        content_hash: String,
+        by: &EntityId,
+        born_with: &BornWith,
+    ) -> Result<()> {
         let travel = ExportTravel {
             at: self.store.clock.now_recorded_at(),
-            artifact_ref,
-            version,
+            target,
             content_hash,
             by: by.to_hex(),
             travelled: born_with.keys().copied().collect(),
@@ -362,7 +480,7 @@ impl Vault {
         });
         match written {
             Err(error) if travel.travelled.is_empty() => {
-                tracing::warn!(%error, "artifact export served without its travel receipt");
+                tracing::warn!(%error, "export served without its travel receipt");
                 Ok(())
             }
             other => other,
