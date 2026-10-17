@@ -216,6 +216,9 @@ pub(super) struct ProviderFile {
     capabilities: Option<Vec<LlmCapability>>,
     #[serde(default)]
     model_capabilities: BTreeMap<String, Vec<LlmCapability>>,
+    family: Option<String>,
+    #[serde(default)]
+    model_families: BTreeMap<String, String>,
     locality: Option<ModelLocality>,
     revision: Option<String>,
     payer: Option<Payer>,
@@ -252,6 +255,13 @@ pub struct ProviderConfig {
     /// One wire model's own capabilities, in place of `capabilities`, so two
     /// models on one provider can differ (one hears audio, one does not).
     pub model_capabilities: BTreeMap<String, Vec<LlmCapability>>,
+    /// The family of models (the line one developer trains) every model on
+    /// this provider belongs to, unless `model_families` names its own.
+    /// Unset, a model's family is unknown: a provider or proxy name is not
+    /// its developer.
+    pub family: Option<String>,
+    /// One wire model's own family, in place of `family`.
+    pub model_families: BTreeMap<String, String>,
     /// Where calls to this provider run, for the engine's route checks.
     pub locality: ModelLocality,
     /// Revision stamped on every engine model id from this provider, so a
@@ -346,6 +356,14 @@ impl ProviderFile {
         {
             anyhow::bail!("models.providers.{name}.model_capabilities names a blank model");
         }
+        if self.family.iter().any(|family| family.trim().is_empty())
+            || self
+                .model_families
+                .iter()
+                .any(|(model, family)| model.trim().is_empty() || family.trim().is_empty())
+        {
+            anyhow::bail!("models.providers.{name}: a family and the model it names are not blank");
+        }
         for rate in &self.rates {
             if rate.per == 0 || LeaseUnit::new(rate.unit.as_str()).is_err() {
                 anyhow::bail!(
@@ -382,6 +400,12 @@ impl ProviderFile {
                 .capabilities
                 .unwrap_or_else(|| kind.default_capabilities()),
             model_capabilities: self.model_capabilities,
+            family: self.family.map(|family| family.trim().to_owned()),
+            model_families: self
+                .model_families
+                .into_iter()
+                .map(|(model, family)| (model, family.trim().to_owned()))
+                .collect(),
             locality: self.locality.unwrap_or_else(|| kind.default_locality()),
             revision,
             payer,

@@ -38,6 +38,7 @@ mod declared;
 mod driven;
 #[cfg(test)]
 mod fallback_tests;
+mod family;
 mod forward;
 mod gemini_media;
 mod hosted_speech;
@@ -85,7 +86,7 @@ pub use router::ModelRouter;
 pub use run_backend::RunBackend;
 pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
 
-use catalog::{catalog_entry, engine_model_id, locality_rank};
+use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
 use ladder::{LadderRung, SeatScope, Wire};
 use offer::provider_offer;
 use output_cap::OutputCap;
@@ -298,6 +299,10 @@ impl ModelRuntime {
                                 model: ladder.model().clone(),
                                 ladder: Arc::downgrade(&ladder),
                             });
+                            router.chat_model(
+                                ladder.model().clone(),
+                                model_family(&model, provider).map(str::to_owned),
+                            );
                         }
                         router.insert(ladder.model().clone(), provider.locality, ladder);
                     }

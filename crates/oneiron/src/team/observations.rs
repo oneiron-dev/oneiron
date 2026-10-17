@@ -4,15 +4,17 @@
 //! confessions their sealed receipts name, the `self.*` calls their runs
 //! made, and the spend their lease scopes settled. A value the host cannot
 //! measure in full is `None`, never a guess or a zero: a member with no seal,
-//! a run with no replay record, an open or unmetered scope. The leader's own
-//! calls and spend are shared with whatever else it runs, so they stay out;
-//! the cap is the hard cap the leader runs under.
+//! a run with no replay record, an open or unmetered scope. A member that
+//! retried is measured on its newest try, which holds its seal, replay
+//! record and scope. The leader's own calls and spend are shared with
+//! whatever else it runs, so they stay out; the cap is the hard cap the
+//! leader runs under.
 
 use std::collections::BTreeSet;
 
 use crate::Vault;
 use crate::agent_dispatch::AgentDispatcher;
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::run_admission::LeaseUnit;
@@ -37,17 +39,18 @@ pub struct TeamRunObservations {
     pub spend_cap: Option<f64>,
 }
 
-/// Measures a team run's members. `leader` names the scope whose hard cap
-/// binds the team.
+/// Measures a team run's members, each on its newest try. `leader` names the
+/// scope whose hard cap binds the team.
 ///
 /// # Errors
 ///
-/// Storage errors.
+/// Storage errors; a member whose retry lineage forks or breaks.
 pub fn team_run_observations(
     vault: &Vault,
     leader: AttemptId,
     members: &[AttemptId],
 ) -> Result<TeamRunObservations> {
+    let members = &newest_tries(vault, members)?;
     let mut sealed = 0_u32;
     let mut flawed = 0_u32;
     for member in members {
@@ -99,6 +102,22 @@ pub fn team_run_observations(
         spend,
         spend_cap,
     })
+}
+
+/// Each member's newest try along its retry lineage, in one snapshot; a
+/// member the queue no longer holds stands for itself.
+fn newest_tries(vault: &Vault, members: &[AttemptId]) -> Result<Vec<AttemptId>> {
+    let txn = vault.store.env.read_txn()?;
+    let queue = AttemptQueue::new(vault);
+    members
+        .iter()
+        .map(|member| {
+            Ok(match queue.get_in_txn(&txn, *member)? {
+                Some(_) => queue.retry_tip_in_txn(&txn, *member)?.id,
+                None => *member,
+            })
+        })
+        .collect()
 }
 
 /// The units the members' closed scopes spent, each scope once; `None` when
