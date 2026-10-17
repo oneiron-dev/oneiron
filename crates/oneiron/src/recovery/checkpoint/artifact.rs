@@ -42,7 +42,9 @@ use oneiron_crypto::{
 use serde::{Deserialize, Serialize};
 
 use super::commitment::{self, ChainHead, CheckpointSigner, Link, Trust};
-use crate::world_keys::{CarriedVaultKey, VaultKeyUnlock, VaultKeyWrapInfo, refused};
+use crate::world_keys::{
+    CarriedVaultKey, OpenedDataKey, VaultKeyUnlock, VaultKeyWrapInfo, VaultPageSeal, refused,
+};
 use crate::{Error, Result, Vault};
 
 const MAGIC: &[u8; 8] = b"ONEIRONS";
@@ -107,6 +109,10 @@ pub struct CheckpointKey {
     vault_id: [u8; 32],
     kek: Kek,
     trust: Trust,
+    /// The data key a carried wrap opened to, kept opaque for a sealed vault
+    /// restored from the artifact ([`Self::restored_page_seal`]); `None` for
+    /// the key an open vault gives.
+    opened: Option<OpenedDataKey>,
 }
 
 impl std::fmt::Debug for CheckpointKey {
@@ -150,13 +156,15 @@ impl CheckpointKey {
     /// It trusts no signer until told whom ([`CheckpointKey::trusting`]).
     pub fn unlock(path: &Path, unlock: &VaultKeyUnlock<'_>) -> Result<Self> {
         let prelude = Prelude::read(&mut File::open(path)?)?;
-        let key = prelude
-            .carried()?
-            .subkey(&prelude.vault_id, unlock, SEAL_CONTEXT)?;
+        let (key, opened) =
+            prelude
+                .carried()?
+                .subkey_opened(&prelude.vault_id, unlock, SEAL_CONTEXT)?;
         Ok(Self {
             vault_id: prelude.vault_id,
             kek: Kek::from_bytes(*key),
             trust: Trust::Nobody,
+            opened: Some(opened),
         })
     }
 
@@ -188,6 +196,18 @@ impl CheckpointKey {
         self.trust = Trust::Device(keystore);
         self
     }
+
+    /// A page seal for a sealed vault restored from this key's artifact where
+    /// no vault is (OF-570 maximum tier): the artifact's vault id and data
+    /// key under a fresh incarnation. The key never leaves as bytes. `None`
+    /// for the key an open vault gave ([`Vault::checkpoint_key`]), whose own
+    /// seal gives a fresh incarnation instead.
+    pub fn restored_page_seal(&self) -> Result<Option<VaultPageSeal>> {
+        self.opened
+            .as_ref()
+            .map(OpenedDataKey::restored_page_seal)
+            .transpose()
+    }
 }
 
 impl Vault {
@@ -200,6 +220,7 @@ impl Vault {
             vault_id: *self.vault_id().as_bytes(),
             kek: Kek::from_bytes(*self.vault_subkey(SEAL_CONTEXT)?),
             trust: Trust::Device(self.device_keystore()?),
+            opened: None,
         })
     }
 
@@ -216,6 +237,7 @@ impl Vault {
                 vault_id: *self.vault_id().as_bytes(),
                 kek: Kek::from_bytes(*key),
                 trust: Trust::Nobody,
+                opened: None,
             },
         ))
     }

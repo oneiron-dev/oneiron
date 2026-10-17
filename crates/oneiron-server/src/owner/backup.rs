@@ -17,11 +17,17 @@
 //! clock, so a clock that steps back cannot make a new backup look oldest.
 //! A backup holds every record its image carries, so while any legal hold
 //! stands none expires (ARCH-0038 #legal-hold).
+//!
+//! A restored vault is created sealed (OF-570 maximum tier) by one rule,
+//! [`restore_target_seal`]: over a vault or beside it, at that vault's tier;
+//! where no vault is, at the tier the config asks for. Re-sealing is a new
+//! sealed vault and a row-level copy, never a converter.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use oneiron::VaultPageSeal;
 use oneiron::recovery::checkpoint::{CheckpointKey, RestoreReason, SideRestoreSource};
 use oneiron::world_keys::VaultKeyUnlock;
 use serde::Serialize;
@@ -375,7 +381,7 @@ fn rehearse_in_with(
 
 fn rehearse_into(
     backup: &Path,
-    config: oneiron::VaultConfig,
+    mut config: oneiron::VaultConfig,
     scratch: &Path,
     source: &SideRestoreSource,
     key: Option<CheckpointKey>,
@@ -386,6 +392,9 @@ fn rehearse_into(
             anyhow::anyhow!("backup {} does not open: {error}", backup.display())
         })?,
     };
+    // The copy keeps the live vault's tier: a sealed vault's rows never land
+    // in a plain scratch vault.
+    config.page_seal = restore_target_seal(RestoreTarget::Beside(source.page_seal()))?;
     // The copy sits beside the live vault, so its key custody forks: an erase
     // in a kept scratch copy never reaches the live vault's keys.
     let (restored, report) = oneiron::Vault::restore_checkpoint_beside(
@@ -630,8 +639,12 @@ fn restore_over_with(
         "{} already exists; try again",
         previous.display()
     );
+    // The live vault opens with its own seal; the copy is created under a
+    // fresh incarnation of it, and so keeps its tier.
+    let mut target = config.clone();
+    target.page_seal = restore_target_seal(RestoreTarget::Beside(config.page_seal.as_ref()))?;
     let staging = Owned::create(vault_path.with_file_name(format!(".{name}.restore-{stamp}")))?;
-    let live = match oneiron::Vault::open_owned(vault_path, config.clone()) {
+    let live = match oneiron::Vault::open_owned(vault_path, config) {
         Ok(live) => live,
         Err(error) => {
             staging.remove();
@@ -652,7 +665,7 @@ fn restore_over_with(
         backup,
         &key,
         &restored_path,
-        config,
+        target,
         &live,
         live.now_recorded_at(),
     ) {
@@ -668,6 +681,17 @@ fn restore_over_with(
             drop(restored);
             staging.remove();
             return Err(error);
+        }
+    };
+    // A sealed vault's mirror sits beside its directory and stays put in the
+    // exchange: until the swap is confirmed, the mirrors beside both name
+    // both incarnations, so each environment opens wherever it ends up.
+    let sealed_swap = match live.stage_sealed_swap(&restored) {
+        Ok(sealed_swap) => sealed_swap,
+        Err(error) => {
+            drop(restored);
+            staging.remove();
+            anyhow::bail!("the restored copy's page-seal mirrors were not staged: {error}");
         }
     };
     // One atomic exchange: the vault path never names nothing, and both
@@ -705,13 +729,27 @@ fn restore_over_with(
         );
     }
     // The old vault now sits inside the staging directory; give it its own
-    // name. If that fails it stays where it is, whole, and is reported there.
-    let previous = match std::fs::rename(&restored_path, &previous) {
+    // name, a sealed one with its mirror beside that name first. If that
+    // fails it stays where it is, whole, beside the mirror that opens it
+    // there, and is reported there.
+    let named = match &sealed_swap {
+        Some(sealed_swap) => sealed_swap
+            .mirror_archive(&previous)
+            .map_err(|error| std::io::Error::other(error.to_string())),
+        None => Ok(()),
+    }
+    .and_then(|()| std::fs::rename(&restored_path, &previous));
+    let previous = match named {
         Ok(()) => {
             staging.remove();
             previous
         }
-        Err(_) => restored_path,
+        Err(_) => {
+            if let Some(sealed_swap) = &sealed_swap {
+                sealed_swap.discard_archive_mirror(&previous);
+            }
+            restored_path
+        }
     };
     let durability_warning = vault_path.parent().and_then(|parent| {
         let error = sync_after_swap(parent).err()?;
@@ -727,6 +765,18 @@ fn restore_over_with(
             previous.display()
         ))
     });
+    // The swap is durable: the vault's mirror names the restored incarnation
+    // alone. Until then, or should this fail, it names both, and the next
+    // open of the vault takes the one that opens it.
+    if durability_warning.is_none()
+        && let Some(sealed_swap) = &sealed_swap
+        && let Err(error) = sealed_swap.confirm(vault_path)
+    {
+        tracing::warn!(
+            %error,
+            "the restored vault's page-seal mirror still names both incarnations"
+        );
+    }
     // Both leases are released only now, after the swap.
     drop(restored);
     drop(live);
@@ -757,11 +807,16 @@ pub(crate) struct RestoredFresh {
 /// none, so gate rows sealed under claim keys kept elsewhere do not come back.
 /// The vault comes back open, its writer lease held, for the caller to unlock
 /// its data key and wrap it to this install.
+///
+/// `finish` runs on the restored vault before it is kept, so the caller wraps
+/// its key to this install before the vault is published; a refusal there
+/// removes the vault and its page-seal mirror.
 pub(crate) fn restore_fresh(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
     key: &CheckpointKey,
+    finish: impl FnOnce(&oneiron::Vault) -> oneiron::Result<()>,
 ) -> anyhow::Result<(oneiron::Vault, RestoredFresh)> {
     let path = std::path::absolute(vault_path)?;
     anyhow::ensure!(
@@ -769,13 +824,14 @@ pub(crate) fn restore_fresh(
         "vault {} exists; a restore over it keeps its authority and custody",
         path.display()
     );
-    let (restored, report) = oneiron::Vault::restore_checkpoint(
+    let (restored, report) = oneiron::Vault::restore_checkpoint_finishing(
         backup,
         key,
         &path,
         config,
         RestoreReason::Restore,
         now_unix_ms() / 1_000,
+        finish,
     )
     .map_err(|error| anyhow::anyhow!("backup {} does not restore: {error}", backup.display()))?;
     let kinds = kind_counts(&restored)?;
@@ -807,13 +863,15 @@ pub(crate) struct Activated {
 /// `previous`, as a side vault of the vault that replaced it. Its key custody
 /// forks as a rehearsal's does: from then on an erase in either vault never
 /// reaches the other's keys. `vault_path` is read off the disk, so a `serve`
-/// may hold it.
+/// may hold it; a sealed one reads with `live_seal`. The archive keeps its
+/// own tier: `config` carries the seal its own mirror unlocked, if any.
 pub(crate) fn activate(
     previous: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
+    live_seal: Option<VaultPageSeal>,
 ) -> anyhow::Result<Activated> {
-    let source = SideRestoreSource::read(vault_path)
+    let source = SideRestoreSource::read(vault_path, live_seal)
         .map_err(|error| anyhow::anyhow!("read vault {}: {error}", vault_path.display()))?;
     oneiron::Vault::activate_archived(previous, config, &source)
         .map_err(|error| anyhow::anyhow!("activate {}: {error}", previous.display()))?;
@@ -822,6 +880,44 @@ pub(crate) fn activate(
         replaced_by: vault_path.to_path_buf(),
         shared_path: shared_path_warning(&source),
     })
+}
+
+/// Where a restored vault's tier comes from ([`restore_target_seal`]).
+pub(crate) enum RestoreTarget<'a> {
+    /// Over or beside a vault, sealed under this seal or plain.
+    Beside(Option<&'a VaultPageSeal>),
+    /// Where no vault is: sealed when the config's `maximum_tier` asks, under
+    /// the data key `key` unlocked from the backup.
+    Fresh {
+        maximum_tier: bool,
+        key: &'a CheckpointKey,
+    },
+}
+
+/// The page seal a restored vault is created under (OF-570 maximum tier),
+/// one rule for every restore. Over a vault or beside it (a rehearsal), the
+/// copy keeps that vault's tier, under a fresh incarnation of its seal. Where
+/// no vault is, it follows the config's `maximum_tier`, under the backup's
+/// own vault id and data key. An activated archive is no restore: it keeps
+/// its own tier and opens with its own mirror. `None` is a plain vault.
+pub(crate) fn restore_target_seal(
+    target: RestoreTarget<'_>,
+) -> anyhow::Result<Option<VaultPageSeal>> {
+    match target {
+        RestoreTarget::Beside(seal) => {
+            Ok(seal.map(VaultPageSeal::fresh_incarnation).transpose()?)
+        }
+        RestoreTarget::Fresh {
+            maximum_tier: false,
+            ..
+        } => Ok(None),
+        RestoreTarget::Fresh { key, .. } => key.restored_page_seal()?.map(Some).ok_or_else(|| {
+            anyhow::anyhow!(
+                "the maximum tier restores a backup under its own data key, and this key did not \
+                 come from the backup"
+            )
+        }),
+    }
 }
 
 /// Atomically exchanges two directory entries.

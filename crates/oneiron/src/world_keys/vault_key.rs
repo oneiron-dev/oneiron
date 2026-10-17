@@ -34,7 +34,7 @@ use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::page_seal::WrapTransition;
+use super::page_seal::{OpenedDataKey, WrapTransition};
 use super::{os_fill, refused};
 use crate::Vault;
 use crate::error::Result;
@@ -322,15 +322,17 @@ impl CarriedVaultKey {
     }
 
     /// The key for `context` of the vault key a carried wrap opens to under
-    /// `unlock`.
-    pub(crate) fn subkey(
+    /// `unlock`, and that vault key, kept opaque for a sealed vault restored
+    /// from the artifact (OF-570).
+    pub(crate) fn subkey_opened(
         &self,
         vault_id: &[u8; 32],
         unlock: &VaultKeyUnlock<'_>,
         context: &str,
-    ) -> Result<Zeroizing<[u8; 32]>> {
+    ) -> Result<(Zeroizing<[u8; 32]>, OpenedDataKey)> {
         let key = self.open(vault_id, unlock)?;
-        Ok(Zeroizing::new(key.derive(context, vault_id)))
+        let subkey = Zeroizing::new(key.derive(context, vault_id));
+        Ok((subkey, OpenedDataKey::new(*vault_id, key)))
     }
 
     /// The vault key a carried wrap opens to under `unlock`.
