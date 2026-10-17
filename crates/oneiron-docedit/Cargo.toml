@@ -21,6 +21,8 @@ stemma = { path = "vendor/stemma-engine", version = "0.6.0" }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
+# The engine's own diff: a body's mark changes align to the text it keeps.
+similar = "2.6"
 
 [dev-dependencies]
 proptest = "1"
