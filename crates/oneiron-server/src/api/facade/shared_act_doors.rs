@@ -316,19 +316,21 @@ pub(crate) async fn vault_authority_handoff_alarms_acknowledge(
 /// the claimant's proof that they control the organization owning the vault.
 /// The engine checks only what it holds (no live Owner left, `from` still an
 /// Owner, `claimant` a live person) and signs the handover with the host's
-/// slip issuer. It answers the receipt the membership doors answer.
+/// slip issuer, keeping `proof` (the BLAKE3 of the judged proof note, never
+/// the note) with it. It answers the receipt the membership doors answer.
 pub(crate) async fn operator_recover_shared_owner(
     server: &Arc<SyncServer>,
     vault_id: u64,
     from: oneiron::EntityId,
     claimant: oneiron::EntityId,
+    proof: Option<[u8; 32]>,
 ) -> MemoryResult<SharedActExecutionReceipt> {
     const VERB: &str = "operator.shared.recover_owner";
     off_runtime(server, VERB, move |server| {
         with_slips(server, VERB, |issuer| {
             Ok(server
                 .vault()
-                .recover_shared_owner(issuer, vault_id, from, claimant)?)
+                .recover_shared_owner_with_proof(issuer, vault_id, from, claimant, proof)?)
         })
     })
     .await
