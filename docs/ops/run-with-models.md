@@ -127,7 +127,8 @@ never read off the provider's name), `model_families` (one wire model's own
 family in place of `family`: `model_families = { "claude-opus-5-5" = "claude",
 "gpt-6.1" = "gpt" }`; a judge's tie-breaker is asked only of a model whose
 family neither judge has),
-`locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
+`locality` (`own_server` or `third_party`), `revision` (`live`) and
+`responses_socket` (below). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
 
@@ -197,6 +198,21 @@ OpenAI-compatible endpoint reads it from `max_tokens` unless
 `output_limit_field = "max_completion_tokens"` says otherwise (some hosted
 reasoning models accept only that one). An Anthropic-compatible call always
 carries `max_tokens`, 4096 when nothing else names it.
+
+An `openai-compat` provider at `https://api.openai.com` or `https://api.x.ai`
+runs each call as one Responses turn on a held WebSocket at its
+`/v1/responses`. A call whose conversation extends the last response that
+socket finished sends only the new items, with `previous_response_id` and
+`store = false`; any other call sends the whole conversation. A socket is
+replaced 5 minutes before its age limit (60 minutes at OpenAI, 59 at xAI).
+Idle sockets wait 10 minutes for a next turn, at most 8 per provider. A
+call whose socket will not open, or that carries audio, goes out over
+`/v1/chat/completions` as before. An upgrade refused with a 4xx (other than
+408 or 429) keeps that provider on HTTP until restart. Set
+`responses_socket = false` to keep a provider on HTTP. Any other origin, a CPA
+route say, holds a socket when its entry sets `responses_socket = true` (a
+59-minute limit) or `responses_socket = { max_age_secs = 3600 }`. A
+`key_secret` provider stays on HTTP: the credential broker runs no socket yet.
 
 A reply may name its model differently from the request (a proxy that strips a
 login prefix, say). The answer is kept, and the receipt records both names under
@@ -521,7 +537,19 @@ secret the mask on write found has no binding, so `self.use` refuses it and
 names the owner door that adds one. Every use, and every refused one, leaves a
 Gate record with the handle, generation, effector, operation and send status.
 When the host's model ladder served the turn, each verb call the turn's
-program makes carries the provider that answered it.
+program makes carries the provider that answered it, and a reveal's ask names
+that provider. An agent no host model drives, such as an external HTTP or MCP
+agent, gets an ask that says the host does not know its provider.
+
+A value custody already holds, including one a reveal delivered, does not stay
+in what comes back. It may come back in a run's output (its console, answer,
+stored results and files, and the model's reply kept as evidence), or in a
+later write or side row. Each copy is replaced by its own record's handle, and
+no new record is minted. The match is exact and needs at least 12 bytes. It
+reads a keyed index that holds each value's length and fingerprint, never the
+value. The index's key never leaves this machine. The owner's "not a secret"
+ruling for a record wins over the match. The step's program is stored as the
+model wrote it, so a resumed step runs the same code.
 
 ### Reader children, summaries and fold receipts
 
@@ -1454,8 +1482,11 @@ bind:
   `person_threshold` becomes its row.
 - **Big**: the big model, through the seat `[models.decisions.big]` names
   (below).
-- **The local head**: no typed provider fills it yet, so the ladder steps
-  past it.
+- **Local**: the Local-vision seat, when `[models.roles.local_vision]`
+  binds one, on its own meter (`models.raw_budget_units`). It answers Box,
+  Point and image questions. On a call with no image it abstains before any
+  model call, so the ladder steps past it. A caller with a turn budget
+  (`ai.verdict`, `graph.ask`) seats its own per-call rung there instead.
 - **The owner**: the last rung is a durable queue. Each ask waits in the
   vault until you answer it (owner-actions.md, "Answer the decision
   ladder's asks").

@@ -4,11 +4,16 @@
 //! attempt's own skill-load door, so the load is stamped on the attempt. The
 //! period's admitted items go in under their keys; the answer is a plan that
 //! cites those keys only (`claim::WeaveLensPlan`). A plan that drops, adds
-//! or repeats an item is refused. The plan lands on the period's row, and
-//! opening the digest composes it into the reader's lens.
+//! or repeats an item is refused, and goes back to the model with why for a
+//! repair turn. The plan lands on the period's row, and opening the digest
+//! composes it into the reader's lens. A plan still refused after its repair
+//! lands as the period's refusal, which the opened digest names.
 
 use super::step_charge::StepChargeTally;
-use crate::claim::{WeaveLensPlan, WeaveLensRender, WeaveLiveLens};
+use crate::claim::{
+    WEAVE_LENS_PLAN_REPAIRS, WeaveLensRefusal, WeaveLensRender, WeaveLiveLens,
+    weave_lens_answer_plan, weave_lens_repair_text,
+};
 use crate::dreamer_runner::{
     DREAMER_WEAVE_LENS_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
 };
@@ -20,7 +25,7 @@ use crate::llm::manifest::ModelRole;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    ModelId, ModelLocality, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence,
+    LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence,
     call_as_step,
 };
 use crate::{Vault, WriteActor};
@@ -50,6 +55,85 @@ fn invalid(reason: &str) -> Error {
 
 fn owed_nothing() -> Result<DreamerAttemptExecution> {
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+}
+
+/// One generate step of a period render.
+enum LensStep {
+    Answer(LlmResponse),
+    /// The answer missed the plan's schema through the step's own
+    /// corrections; it is paid and there is no text to repair.
+    Refused(String),
+    /// The attempt ends here instead: parked, or checkpointed with spend.
+    Exit(DreamerAttemptExecution),
+}
+
+/// Runs `request` as a durable step, tallying what it spent.
+async fn lens_step(
+    step_ctx: &DurableStepContext<'_>,
+    model: &WeaveLensModel<'_>,
+    request: LlmRequest,
+    charges: &mut StepChargeTally,
+) -> Result<LensStep> {
+    let step_hash = request
+        .canonical_hash()
+        .map_err(|_| invalid("the request did not hash"))?;
+    Ok(
+        match call_as_step(step_ctx, model.backend, model.guard, request).await {
+            Ok(StepOutcome::Finished { response, .. }) => {
+                charges.record_terminal(
+                    step_ctx.vault,
+                    step_ctx.attempt_id,
+                    step_hash,
+                    &response.usage,
+                )?;
+                LensStep::Answer(response)
+            }
+            Ok(StepOutcome::Trapped { .. }) => LensStep::Exit(DreamerAttemptExecution::Park {
+                reason: "durable step trapped for resume".to_owned(),
+                cause: DreamerParkCause::Signal,
+            }),
+            Err(DurableStepError::SpentFinalizeRefused { usage }) => {
+                charges.record_usage(&usage);
+                LensStep::Exit(charges.checkpoint())
+            }
+            Err(DurableStepError::SpentSchemaValidation { errors, usage, .. }) => {
+                charges.record_usage(&usage);
+                LensStep::Refused(format!(
+                    "weave lens: the answer missed the plan's schema: {}",
+                    errors.join("; ")
+                ))
+            }
+            Err(DurableStepError::DeadlineHardCut) => {
+                LensStep::Exit(DreamerAttemptExecution::Park {
+                    reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                    cause: DreamerParkCause::Checkpoint,
+                })
+            }
+            Err(DurableStepError::FinalizeRefused) => {
+                LensStep::Exit(DreamerAttemptExecution::Park {
+                    reason: "wake pass finalize window".to_owned(),
+                    cause: DreamerParkCause::Checkpoint,
+                })
+            }
+            Err(DurableStepError::Engine(error)) => return Err(error),
+            Err(other) => LensStep::Exit(DreamerAttemptExecution::Park {
+                reason: other.to_string(),
+                cause: DreamerParkCause::of_step(&other),
+            }),
+        },
+    )
+}
+
+fn answer_text(response: &LlmResponse) -> String {
+    response
+        .message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The generate step's request: the skill's SKILL.md as the instruction,
@@ -135,8 +219,10 @@ pub fn live_weave_lens_request(
 
 /// Renders one period: re-reads it for its reader, loads the skill, asks
 /// the lent model, checks the plan against the period's items and lands it
-/// on the row. A period re-rendered, withheld or already rendered since it
-/// was queued is owed nothing, and neither is one whose skill is retired.
+/// on the row. A refused plan gets [`WEAVE_LENS_PLAN_REPAIRS`] repair turns;
+/// then its refusal lands on the row instead. A period re-rendered, withheld,
+/// already rendered or refused since it was queued is owed nothing, and
+/// neither is one whose skill is retired.
 pub async fn run_weave_lens(
     attempt: &DreamerAdmittedAttempt,
     ctx: &WakeAttemptContext<'_>,
@@ -151,7 +237,7 @@ pub async fn run_weave_lens(
     let Some(stored) = ctx.vault.weave_digest_for_lens(reader, scheduled_for)? else {
         return owed_nothing();
     };
-    if stored.rendered_at != rendered_at || stored.lens.is_some() {
+    if stored.rendered_at != rendered_at || stored.lens.is_some() || stored.lens_refused.is_some() {
         return owed_nothing();
     }
     let skill = crate::claim::weave_report_skill_id()?;
@@ -188,9 +274,6 @@ pub async fn run_weave_lens(
         .authorize_model_role(model.role, request, &model.inference)?
         .into_request();
     super::roles::bind_reasoning(ctx.vault, model.backend, &mut request)?;
-    let step_hash = request
-        .canonical_hash()
-        .map_err(|_| invalid("the request did not hash"))?;
     let step_ctx = DurableStepContext {
         vault: ctx.vault,
         attempt_id: record.id,
@@ -201,77 +284,68 @@ pub async fn run_weave_lens(
         now_ms: ctx.now_ms,
     };
     let mut charges = StepChargeTally::default();
-    let response = match call_as_step(&step_ctx, model.backend, model.guard, request).await {
-        Ok(StepOutcome::Finished { response, .. }) => {
-            charges.record_terminal(ctx.vault, record.id, step_hash, &response.usage)?;
-            response
-        }
-        Ok(StepOutcome::Trapped { .. }) => {
-            return Ok(DreamerAttemptExecution::Park {
-                reason: "durable step trapped for resume".to_owned(),
-                cause: DreamerParkCause::Signal,
-            });
-        }
-        Err(DurableStepError::SpentFinalizeRefused { usage }) => {
-            charges.record_usage(&usage);
+    let mut reason = String::new();
+    for _ in 0..=WEAVE_LENS_PLAN_REPAIRS {
+        let response = match lens_step(&step_ctx, &model, request.clone(), &mut charges).await? {
+            LensStep::Answer(response) => response,
+            LensStep::Refused(refused) => {
+                reason = refused;
+                break;
+            }
+            LensStep::Exit(exit) => return Ok(exit),
+        };
+        if ctx.deadline.expired() {
             return Ok(charges.checkpoint());
         }
-        Err(DurableStepError::DeadlineHardCut) => {
-            return Ok(DreamerAttemptExecution::Park {
-                reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-                cause: DreamerParkCause::Checkpoint,
-            });
+        match weave_lens_answer_plan(&answer_text(&response), &stored.report.value) {
+            Ok(plan) => {
+                ctx.vault.attach_weave_lens(
+                    reader,
+                    scheduled_for,
+                    rendered_at,
+                    &WeaveLensRender {
+                        plan,
+                        skill_ref: skill.to_hex(),
+                        skill_version: loaded.record.version.clone(),
+                        model: model.model.as_str().to_owned(),
+                        rendered_at: ctx.vault.store.clock.now_recorded_at(),
+                    },
+                )?;
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: charges.units,
+                });
+            }
+            // The refused answer and why go back to the model; the repair
+            // is its own durable step, so a resumed attempt replays both.
+            Err(refused) => {
+                request.messages.push(response.message);
+                request.messages.push(LlmMessage {
+                    role: LlmMessageRole::User,
+                    content: vec![ContentPart::Text {
+                        text: weave_lens_repair_text(&stored.report.value, &refused),
+                    }],
+                });
+                reason = refused;
+            }
         }
-        Err(DurableStepError::FinalizeRefused) => {
-            return Ok(DreamerAttemptExecution::Park {
-                reason: "wake pass finalize window".to_owned(),
-                cause: DreamerParkCause::Checkpoint,
-            });
-        }
-        Err(DurableStepError::Engine(error)) => return Err(error),
-        Err(other) => {
-            return Ok(DreamerAttemptExecution::Park {
-                reason: other.to_string(),
-                cause: DreamerParkCause::of_step(&other),
-            });
-        }
-    };
-    if ctx.deadline.expired() {
-        return Ok(charges.checkpoint());
     }
-    let answer: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    // A plan that does not parse, or does not cite every item exactly once,
-    // is refused: the period keeps its data and no render.
-    let plan = match serde_json::from_str::<WeaveLensPlan>(answer.trim()) {
-        Ok(plan) if plan.validate(&stored.report.value).is_ok() => plan,
-        _ => {
-            tracing::warn!(
-                attempt = ?record.id,
-                "the weave lens plan did not meet its period; no render"
-            );
-            return Ok(DreamerAttemptExecution::Completed {
-                completed_units: charges.units,
-            });
-        }
-    };
-    ctx.vault.attach_weave_lens(
+    // Still refused: the period keeps its data, and its row names why it
+    // has no render.
+    tracing::warn!(
+        attempt = ?record.id,
+        %reason,
+        "the weave lens plan did not meet its period; no render"
+    );
+    ctx.vault.refuse_weave_lens(
         reader,
         scheduled_for,
         rendered_at,
-        &WeaveLensRender {
-            plan,
+        &WeaveLensRefusal {
+            reason,
             skill_ref: skill.to_hex(),
             skill_version: loaded.record.version.clone(),
             model: model.model.as_str().to_owned(),
-            rendered_at: ctx.vault.store.clock.now_recorded_at(),
+            refused_at: ctx.vault.store.clock.now_recorded_at(),
         },
     )?;
     Ok(DreamerAttemptExecution::Completed {

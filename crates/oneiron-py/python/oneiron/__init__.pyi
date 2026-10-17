@@ -73,6 +73,12 @@ class RecallMedia(TypedDict):
     bytes_b64: str
     kinds: NotRequired[list[Literal["text", "image", "audio"]]]
 
+class QueryAffect(TypedDict):
+    """A recall's query affect (OF-423): valence in -1..1, arousal and dominance in 0..1."""
+    valence: float
+    arousal: float
+    dominance: float
+
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -354,10 +360,12 @@ class Oneiron:
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...
         @property
         def shape(self) -> "Oneiron._VaultShapeVerbs": ...
+        @property
+        def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
-        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None) -> MemoryPack: ...
+        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None) -> MemoryPack: ...
         def export(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         @property
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs": ...
@@ -387,6 +395,8 @@ class Oneiron:
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
+        @property
+        def secrets(self) -> "Oneiron._VaultSecretsVerbs": ...
         @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs": ...
         @property
@@ -461,6 +471,13 @@ class Oneiron:
             """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
         def apply(self, spec: Facade.ShapeApplyRequest) -> Facade.ShapeApplyReceipt:
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
+    class _VaultFanoutVerbs:
+        def launch(self, spec: Facade.FanoutLaunchRequest) -> Facade.FanoutLaunchView | None:
+            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."""
+        def resume(self, spec: Facade.FanoutResumeRequest) -> Facade.FanoutLaunchView:
+            """The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."""
+        def ack(self, spec: Facade.FanoutAckRequest) -> Facade.FanoutLaunchView:
+            """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
     class _VaultClaimsVerbs:
         def upsert(self, claim: ClaimInput) -> CommitReceipt: ...
         def retract(self, input: Facade.ClaimRefRequest) -> Facade.CommitReceipt:
@@ -643,6 +660,9 @@ class Oneiron:
             """Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling."""
         def replace(self, spec: Facade.InferenceDefaultsReplaceRequest) -> Facade.PolicyActionOutcome:
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
+    class _VaultSecretsVerbs:
+        def lift_history(self, spec: Facade.SecretLiftRequest) -> Facade.SecretLiftStatus:
+            """The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."""
     class _VaultWidenProposalsVerbs:
         def __call__(self, spec: Facade.WidenProposalsRequest) -> Facade.WidenProposalsView:
             """The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."""
@@ -659,8 +679,8 @@ class Oneiron:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
         def list(self, spec: Facade.LensListRequest) -> Facade.LensListPage:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
-        def default(self, spec: Facade.LensDefaultRequest) -> Facade.ScopedReadResult[Facade.GeneratedLens]:
-            """Composes the default vault lens from the named sources, read under the caller's own scope."""
+        def default(self, spec: Facade.LensDefaultRequest) -> Facade.ScopedReadResult[Facade.LensFrameCard]:
+            """Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."""
     class _VaultDisclosureVerbs:
         def offer(self, spec: Facade.DisclosureOfferRequest) -> Facade.DisclosureOffered:
             """An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."""
@@ -703,6 +723,8 @@ class Oneiron:
         def edit(self, request: Facade.OfficeBodyEditRequest) -> Facade.OfficeBodyEdit: ...
         @property
         def fork(self) -> "Oneiron._VaultArtifactsBodyForkVerbs": ...
+        @property
+        def proposal(self) -> "Oneiron._VaultArtifactsBodyProposalVerbs": ...
         def export(self, request: Facade.OfficeBodyExportVerbRequest) -> Facade.OfficeBodyExportView: ...
         def preview(self, request: Facade.OfficeBodyArtifactRequest) -> Facade.XlsxPreview: ...
         @property
@@ -713,6 +735,9 @@ class Oneiron:
         def diff(self, request: Facade.OfficeBodyForkRequest) -> Facade.OfficeBodyDiff: ...
         def merge(self, request: Facade.OfficeBodyForkMergeRequest) -> Facade.OfficeBodyDiff: ...
         def discard(self, request: Facade.OfficeBodyForkRequest) -> Facade.OfficeBodyFork: ...
+    class _VaultArtifactsBodyProposalVerbs:
+        def read(self, request: Facade.OfficeBodyProposalRequest) -> Facade.OfficeBodyProposal: ...
+        def settle(self, request: Facade.OfficeBodyProposalSettleRequest) -> Facade.OfficeBodyProposal: ...
     class _VaultArtifactsBodyDeckVerbs:
         def review(self, request: Facade.OfficeBodyForkRequest) -> Facade.DeckReviewView: ...
         def merge(self, request: Facade.DeckForkMergeRequest) -> Facade.LandingReceipt: ...
@@ -889,7 +914,7 @@ class Oneiron:
         def wave(self, spec: Facade.TaskWaveRequest) -> Facade.TaskWaveReceipt:
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
         def update(self, spec: Facade.TaskUpdateRequest) -> Facade.TaskUpdateReceipt:
-            """Records the owner's acknowledgement of a failed TASK; any other task stays as it was."""
+            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
