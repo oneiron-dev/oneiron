@@ -18139,9 +18139,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 16,
+      "const": 17,
       "crate-vis": 8,
-      "fn": 7,
+      "fn": 8,
       "trait": 1
      }
     },
@@ -41029,6 +41029,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "JudgeIncumbent",
+      "JudgeShadowAnswer",
+      "JudgeShadowCase",
+      "JudgeShadowHost",
+      "JudgeSwapReceipt",
+      "JudgeSwapReport"
+     ],
+     "path": "src/skill_optimize/judge_swap.rs",
+     "purpose": "The judge-swap shadow ladder (ARCH-0053, OF-184)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "JudgeAsk",
       "JudgeAskReason",
       "JudgeLabel"
@@ -41049,8 +41071,8 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 12
+      "crate-vis": 7,
+      "re-export": 13
      }
     },
     {
@@ -51476,7 +51498,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51730,7 +51752,7 @@
    },
    "over_bar": 145,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3127,
+   "source_files": 3128,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62077,6 +62099,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/judge_swap.rs",
+     "purpose": "The Coach's judge-swap upkeep on this server (OF-184)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -69826,7 +69858,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70178,7 +70210,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 553,
+   "source_files": 554,
    "test_files": 182
   },
   "oneiron-spawn": {
