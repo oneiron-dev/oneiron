@@ -530,7 +530,7 @@
      "path": "src/agent_def/portable.rs",
      "purpose": "Canonical, inert AGENT_PACK facets derived from real definitions and selected rows",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
