@@ -292,11 +292,44 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
                 request_id: *attempt.as_bytes(),
             };
             vault.put_archive_tombstone_in_txn(txn, &id, &marker)?;
+            vault
+                .store
+                .append_gate_decision_in_txn(txn, &archive_receipt(actor, id, &snapshot, now_ms))?;
             archived += 1;
         }
         Ok(archived)
     })
 }
+/// The receipt one archive leaves (owner ruling 10-18: the Dreamer applies
+/// and the owner reverts): the Dreamer's, naming the claim and the revision
+/// its snapshot scored, so the owner finds it and restores the claim through
+/// the cleanup restore door.
+fn archive_receipt(
+    actor: WriteActor,
+    claim: EntityId,
+    snapshot: &ConsolidationStrengthSnapshot,
+    now_ms: u64,
+) -> crate::store::GateDecisionRecord {
+    crate::store::GateDecisionRecord {
+        version: crate::store::GATE_DECISION_LEDGER_VERSION,
+        decision_id: crate::store::GateDecisionId::now(),
+        created_at: now_ms,
+        outcome: "approved".to_owned(),
+        reason_codes: vec!["dreamer.strength.archived".to_owned()],
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: actor.actor_class().gate_actor_class().to_owned(),
+        actor_ref: Some(actor.entity_ref().to_hex()),
+        content_kind: "dreamer_strength_archive".to_owned(),
+        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+        claim_id: Some(*claim.as_bytes()),
+        grant_ref: None,
+        diff_handle: snapshot.revision.to_vec(),
+        read_frontier_hash: [0; 32],
+        redacted_at: None,
+    }
+}
+
 fn read_key(actor: WriteActor) -> Result<ScopedReadActorKey> {
     ScopedReadActorKey::with_actor_class(
         actor.entity_ref().to_hex(),
