@@ -216,18 +216,42 @@ impl Landing {
         let (id, fresh) = write_in_txn(vault, txn, finding, &self.envelope, now)?;
         if self.applied && fresh {
             let inverse = effect(txn)?;
-            applied::record_in_txn(
-                vault,
-                txn,
-                id,
-                self.attempt,
-                &self.facet,
-                self.envelope.actor(),
-                inverse,
-                now,
-            )?;
+            self.record_in_txn(vault, txn, id, inverse, now)?;
         }
         Ok(id)
+    }
+
+    /// The envelope a finding lands under here.
+    pub(super) const fn envelope(&self) -> &WriteEnvelope {
+        &self.envelope
+    }
+
+    /// Records `id`, a claim the caller landed fresh under [`Self::envelope`]
+    /// in this write, as applied with `inverse` and its receipt, for a write
+    /// that lands its own claim. A held landing records nothing; true when
+    /// it recorded.
+    pub(super) fn record_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        inverse: MaintenanceInverse,
+        now: u64,
+    ) -> Result<bool> {
+        if !self.applied {
+            return Ok(false);
+        }
+        applied::record_in_txn(
+            vault,
+            txn,
+            id,
+            self.attempt,
+            &self.facet,
+            self.envelope.actor(),
+            inverse,
+            now,
+        )?;
+        Ok(true)
     }
 }
 

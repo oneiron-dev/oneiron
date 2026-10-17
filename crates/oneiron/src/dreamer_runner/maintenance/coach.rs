@@ -67,6 +67,10 @@ pub const COACH_RESEARCH_SELECT_FACET: &str = "coach.research_select";
 /// fading runs no new evidence reached, and the coordination re-derivation
 /// of every labeled or projected run.
 pub const COACH_LEARNING_SWEEP_FACET: &str = "coach.learning_sweep";
+/// Contribution checks (ARCH-0037 #lineage-credit): each sampled credited
+/// run's skill measured on matched forks through the host's replay capsule
+/// (see [`super::ContributionReplayHost`]).
+pub const COACH_CONTRIBUTION_CHECK_FACET: &str = "coach.contribution_check";
 /// Issues (ARCH-0066 #coach, OF-418): the blocked reports agents filed, each
 /// asked which fix its agent needs and filed as a proposed heal. A report
 /// wakes it at once; the nightly pass wakes it again while reports wait.
@@ -88,9 +92,10 @@ pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
 /// named on the host, and a changed tree put in force (see
 /// [`super::type_tree_upkeep`]).
 pub const COACH_TYPE_TREE_UPKEEP_FACET: &str = "coach.type_tree_upkeep";
-/// Room upkeep (ARCH-0067 §8, OF-417): each room the Coach reads gets its
-/// summary declared when its turns moved, and each quiet thread with open
-/// TASKs a Proposed nudge for the room's host. A closed-form job.
+/// Room upkeep (ARCH-0067 §8, OF-417): each room in the Coach's room reach
+/// (refs and turn times of what the Dreamer reads) gets its summary declared
+/// when its turns moved, and each quiet thread with open TASKs a Proposed
+/// nudge for the room's host. A closed-form job.
 pub const COACH_ROOM_UPKEEP_FACET: &str = "coach.room_upkeep";
 /// Tradeoff routing (FIX-LIST 817): each pending project-bound skill tradeoff
 /// ask is handed to the leader of every project board it reached, to ask on
@@ -114,13 +119,14 @@ const HOST_FACETS: [&str; 8] = [
     COACH_TYPE_TREE_UPKEEP_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 9] = [
+const MAINTENANCE_FACETS: [&str; 10] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
     COACH_TRAINING_OFFERS_FACET,
     COACH_RESEARCH_SELECT_FACET,
     COACH_LEARNING_SWEEP_FACET,
+    COACH_CONTRIBUTION_CHECK_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
     super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
     COACH_ROOM_UPKEEP_FACET,

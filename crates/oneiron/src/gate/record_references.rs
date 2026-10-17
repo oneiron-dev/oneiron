@@ -489,10 +489,7 @@ fn record_ref_ok(reference: &[u8]) -> bool {
         && reference.len() <= crate::lens::RECORD_REF_MAX_BYTES
         && reference.iter().all(|&byte| {
             byte.is_ascii_graphic()
-                && !matches!(
-                    byte,
-                    b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'"' | b'\\'
-                )
+                && !matches!(byte, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'"' | b'\\')
         })
 }
 

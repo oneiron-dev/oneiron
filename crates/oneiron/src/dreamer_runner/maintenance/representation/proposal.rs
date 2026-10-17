@@ -1,8 +1,12 @@
 //! Pre-materialized author seam and durable maintenance execution. No delivery here.
-use super::context::{validate_citations, validate_packet};
+use super::super::applied::{MaintenanceInverse, MaintenanceRevert};
+use super::super::proposals;
+use super::context::{
+    reach_out_stands, reach_out_stands_in_txn, validate_citations, validate_packet,
+};
 use super::{
-    PREDICATE, Packet, REPRESENTATION_FACET, RepresentationCitation, RepresentationContext,
-    RepresentationRequest, RepresentationSource, invalid,
+    PREDICATE, Packet, REPRESENTATION_FACET, ReachOutPin, RepresentationCitation,
+    RepresentationContext, RepresentationRequest, RepresentationSource, invalid,
 };
 use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
@@ -11,8 +15,8 @@ use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
 use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, Result, TimeRange,
-    Vault, WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
+    Result, TimeRange, Vault, WriteActor,
 };
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -86,10 +90,39 @@ pub(super) struct StoredProposal {
 }
 impl Vault {
     /// Reads real context, verifies the pre-materialized draft, stores it below
-    /// the claim graph, then queues a proposal-only maintenance facet.
+    /// the claim graph, then queues the maintenance facet that saves the plan
+    /// for the owner's send review. Nothing is sent.
     pub fn schedule_representation(
         &self,
         request: &RepresentationRequest,
+        planner: &mut dyn RepresentationPlanner,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.schedule_plan(request, None, planner, now)
+    }
+
+    /// [`Self::schedule_representation`] for a stewardship follow-up: the plan
+    /// carries the reach-out it drafts, at `revision`, and lands only while
+    /// that reach-out still stands there.
+    pub(in crate::dreamer_runner::maintenance) fn schedule_follow_up(
+        &self,
+        request: &RepresentationRequest,
+        reach_out: EntityId,
+        revision: [u8; 32],
+        planner: &mut dyn RepresentationPlanner,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let pin = ReachOutPin {
+            claim: reach_out,
+            revision,
+        };
+        self.schedule_plan(request, Some(pin), planner, now)
+    }
+
+    fn schedule_plan(
+        &self,
+        request: &RepresentationRequest,
+        reach_out: Option<ReachOutPin>,
         planner: &mut dyn RepresentationPlanner,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
@@ -105,6 +138,7 @@ impl Vault {
             content: crate::compaction::output::store_output(self, draft.text.as_bytes())?,
             evidence: draft.evidence,
             voice: draft.voice,
+            reach_out,
         };
         // Re-read after the host callback. A source edited while authoring is
         // not the source the model saw, even when its old quote still exists.
@@ -119,49 +153,28 @@ impl Vault {
         )
     }
 }
+/// Saves one queued plan for the owner's send review. The Dreamer applies it
+/// at once (OF-023): it lands Auto with a receipt the owner reverts, and the
+/// inbox's finding notice tells them; a plan the Gate parks waits Proposed
+/// in the run tray as before. Saving arms no send. A follow-up whose
+/// reach-out no longer stands lands nothing.
 pub(in crate::dreamer_runner::maintenance) fn run(
     vault: &Vault,
     attempt: &DreamerAdmittedAttempt,
     now: u64,
-) -> Result<EntityId> {
+) -> Result<Option<EntityId>> {
     let packet: Packet =
         serde_json::from_str(attempt.status.payload.input.as_str().ok_or_else(invalid)?)
             .map_err(|_| invalid())?;
+    if let Some(pin) = &packet.reach_out
+        && !reach_out_stands(vault, pin.claim, pin.revision)?
+    {
+        return Ok(None);
+    }
     validate_packet(vault, &packet)?;
     let id = packet.id()?;
-    let shared =
-        vault.dreamer_proposal_envelope(REPRESENTATION_FACET, attempt.status.attempt.id)?;
+    let authority = vault.dreamer_authority()?.entity_ref();
     let run = crate::entity_id::bytes_to_hex_lower(attempt.status.attempt.id.as_bytes());
-    let mut provenance = shared
-        .provenance()
-        .value()
-        .as_map()
-        .ok_or_else(invalid)?
-        .clone();
-    // The shared authority stamp is retained. These are the existing gate's
-    // run-tray keys, not another policy or another Dreamer actor.
-    for (key, value) in [("runner", "dreamer"), ("run", run.as_str())] {
-        let existing = provenance
-            .iter()
-            .filter(|(k, _)| k.as_str() == Some(key))
-            .collect::<Vec<_>>();
-        if existing.len() > 1
-            || existing
-                .first()
-                .is_some_and(|(_, v)| v.as_str() != Some(value))
-        {
-            return Err(invalid());
-        }
-        if existing.is_empty() {
-            provenance.push((Value::from(key), Value::from(value)));
-        }
-    }
-    let envelope = WriteEnvelope::new(
-        shared.actor(),
-        shared.source(),
-        WriteProvenance::new(Value::Map(provenance))?,
-        shared.approval(),
-    );
     let value = String::from_utf8(packet.bytes()?).map_err(|_| invalid())?;
     let evidence = crate::dreamer_consolidation::encode_consolidation_evidence(
         &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
@@ -184,68 +197,128 @@ pub(in crate::dreamer_runner::maintenance) fn run(
     .with_evidence(evidence);
     // Rule A: the draft is concluded from the claims it cites, over their
     // validated quotes, the first MAX_BIRTH_INPUTS citations.
-    let birth = {
-        let cited: Vec<_> = packet
-            .evidence
-            .iter()
-            .chain(&packet.voice)
-            .take(MAX_BIRTH_INPUTS)
-            .collect();
-        let inputs: Vec<EntityId> = cited.iter().map(|citation| citation.claim).collect();
-        let quotes: Vec<&[u8]> = cited
-            .iter()
-            .map(|citation| citation.quote.as_bytes())
-            .collect();
-        RowBirth::written(
-            envelope.actor(),
-            MadeByClass::Concluded,
-            "dreamer.representation",
-            &inputs,
-            &quotes,
-            now,
-        )
-    };
-    vault.with_write_txn_grouped(|txn| {
-        if let Some(existing) = PROPOSAL.get(&vault.store, &*txn, &id)? {
-            if existing.packet != packet || vault.get_claim_in_txn(&*txn, &id)?.is_none() {
-                return Err(invalid());
-            }
-            // Approval/rejection is terminal owner state, never reset by replay.
-            return Ok(id);
-        }
-        if vault.get_claim_in_txn(&*txn, &id)?.is_some() {
-            return Err(invalid());
-        }
-        let mut envelope = envelope.clone();
-        vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
-        vault
-            .batch_in()
-            .claim_candidate(
-                &id,
-                candidate,
-                &envelope,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-            )
-            .made_by(&id, birth)
-            .apply_recording_gate_decisions(txn)?;
-        let landed = vault.get_claim_in_txn(&*txn, &id)?.ok_or_else(invalid)?;
-        if landed.approval != ClaimApprovalStatus::Proposed {
-            return Err(invalid());
-        }
-        let record = StoredProposal {
-            packet,
-            run,
-            revision: review_revision(&landed)?,
-        };
-        PROPOSAL.put(&vault.store, txn, &id, &record)?;
-        Ok(id)
-    })
+    let cited: Vec<_> = packet
+        .evidence
+        .iter()
+        .chain(&packet.voice)
+        .take(MAX_BIRTH_INPUTS)
+        .collect();
+    let inputs: Vec<EntityId> = cited.iter().map(|citation| citation.claim).collect();
+    let quotes: Vec<&[u8]> = cited
+        .iter()
+        .map(|citation| citation.quote.as_bytes())
+        .collect();
+    // The landing's envelope keeps the shared authority stamp and the Gate's
+    // run-tray keys, not another policy or another Dreamer actor.
+    proposals::land(
+        vault,
+        REPRESENTATION_FACET,
+        attempt.status.attempt.id,
+        |landing| {
+            vault.with_write_txn_grouped(|txn| {
+                if let Some(existing) = PROPOSAL.get(&vault.store, &*txn, &id)? {
+                    if existing.packet != packet || vault.get_claim_in_txn(&*txn, &id)?.is_none() {
+                        return Err(invalid());
+                    }
+                    // The owner's review and revert are terminal, never reset
+                    // by replay.
+                    return Ok(Some(id));
+                }
+                if let Some(pin) = &packet.reach_out
+                    && !reach_out_stands_in_txn(vault, &*txn, authority, pin.claim, pin.revision)?
+                {
+                    return Ok(None);
+                }
+                if vault.get_claim_in_txn(&*txn, &id)?.is_some() {
+                    return Err(invalid());
+                }
+                let mut envelope = landing.envelope().clone();
+                vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
+                let birth = RowBirth::written(
+                    envelope.actor(),
+                    MadeByClass::Concluded,
+                    "dreamer.representation",
+                    &inputs,
+                    &quotes,
+                    now,
+                );
+                vault
+                    .batch_in()
+                    .claim_candidate(
+                        &id,
+                        candidate.clone(),
+                        &envelope,
+                        TimeRange {
+                            start: now,
+                            end: now,
+                        },
+                        now,
+                    )
+                    .made_by(&id, birth)
+                    .apply_recording_gate_decisions(txn)?;
+                let landed = vault.get_claim_in_txn(&*txn, &id)?.ok_or_else(invalid)?;
+                if landed.approval != landing.envelope().approval() {
+                    return Err(invalid());
+                }
+                let record = StoredProposal {
+                    packet: packet.clone(),
+                    run: run.clone(),
+                    revision: review_revision(&landed)?,
+                };
+                PROPOSAL.put(&vault.store, txn, &id, &record)?;
+                if landing.record_in_txn(
+                    vault,
+                    txn,
+                    id,
+                    MaintenanceInverse::RepresentationPlan,
+                    now,
+                )? {
+                    vault.record_finding_notification_in_txn(txn, id, packet.request.owner, now)?;
+                }
+                Ok(Some(id))
+            })
+        },
+    )
 }
-pub(super) fn review_revision(body: &crate::ClaimBody) -> Result<[u8; 32]> {
+
+/// Withdraws, as `owner`, each live plan drafted from `reach_out`, for the
+/// owner's revert of that reach-out, and lists it as closed. The plan's
+/// content and receipts stay as history; one already sent stays sent.
+pub(in crate::dreamer_runner::maintenance) fn withdraw_follow_ups_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    reach_out: EntityId,
+    owner: WriteActor,
+    now: u64,
+    out: &mut MaintenanceRevert,
+) -> Result<()> {
+    let mut drafted = Vec::new();
+    for row in PROPOSAL.iter_from(&vault.store, &*txn, &[])? {
+        let (id, record) = row?;
+        if record
+            .packet
+            .reach_out
+            .is_some_and(|pin| pin.claim == reach_out)
+        {
+            drafted.push(id);
+        }
+    }
+    for id in drafted {
+        if vault
+            .get_claim_in_txn(&*txn, &id)?
+            .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
+        {
+            vault.retract_claim_in_txn_as(txn, &id, now, Some(owner))?;
+            out.closed.push(id);
+        }
+    }
+    Ok(())
+}
+/// A plan's (or a pinned reach-out's) body hashed with its approval set
+/// aside, so a review or an approval moves nothing while any rewrite does.
+pub(in crate::dreamer_runner::maintenance) fn review_revision(
+    body: &crate::ClaimBody,
+) -> Result<[u8; 32]> {
     let mut normalized = body.clone();
     normalized.approval = ClaimApprovalStatus::Proposed;
     Ok(*blake3::hash(&crate::claim::encode_claim_body(&normalized)?).as_bytes())

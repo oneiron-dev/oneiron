@@ -6,7 +6,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::skill_attribution::{
     AttemptOutcome, AttributionDecisions, AttributionLane, AttributionSplit, AttributionVerdict,
-    EditHunk, JudgeRequest, OutcomeEvidence, classify_split, settled_split,
+    AuditAnswerSource, EditHunk, JudgeRequest, JudgeTrace, OutcomeEvidence, RawAnswer,
+    classify_split_traced, settled_split,
 };
 
 // ---------------------------------------------------------------------------
@@ -294,8 +295,31 @@ pub fn classify_amendment(
     hunks: &[EditHunk<'_>],
     floor: f32,
 ) -> Result<Option<AttributionSplit>> {
+    classify_amendment_traced(evidence, decisions, hunks, floor).map(|(split, _)| split)
+}
+
+/// [`classify_amendment`], beside what answered it for the held-out audit's
+/// batch (OF-542): nothing for an unsettled cause, a settled cause's certain
+/// label, or the judge's raw answers before the floor held any.
+///
+/// # Errors
+///
+/// As [`classify_amendment`].
+pub(super) fn classify_amendment_traced(
+    evidence: &AmendmentEvidence,
+    decisions: Option<&AttributionDecisions<'_>>,
+    hunks: &[EditHunk<'_>],
+    floor: f32,
+) -> Result<(Option<AttributionSplit>, JudgeTrace)> {
     let settled = match evidence.cause {
-        None => return Ok(None),
+        None => {
+            let trace = JudgeTrace {
+                source: AuditAnswerSource::NotJudged,
+                answers: Vec::new(),
+                revision: None,
+            };
+            return Ok((None, trace));
+        }
         Some(AmendmentCause::ExternalChange) => Some(AmendmentClass::Environment),
         Some(AmendmentCause::DeciderPreference) => Some(AmendmentClass::PreferenceShift),
         Some(AmendmentCause::ProposalWrong) => None,
@@ -316,8 +340,24 @@ pub fn classify_amendment(
         floor,
     };
     match settled {
-        Some(class) => settled_split(class, &request, &masses).map(Some),
-        None => Ok(classify_split(decisions, &request, &masses)?.map(|(split, _)| split)),
+        Some(class) => {
+            let trace = JudgeTrace {
+                source: AuditAnswerSource::SettledCause,
+                answers: vec![
+                    RawAnswer {
+                        label: Some(class.as_str().to_owned()),
+                        confidence: Some(1.0),
+                    };
+                    request.regions()
+                ],
+                revision: None,
+            };
+            Ok((Some(settled_split(class, &request, &masses)?), trace))
+        }
+        None => {
+            let (split, trace) = classify_split_traced(decisions, &request, &masses)?;
+            Ok((split.map(|(split, _)| split), trace))
+        }
     }
 }
 
