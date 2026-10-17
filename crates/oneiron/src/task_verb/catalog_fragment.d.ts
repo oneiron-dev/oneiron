@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 369 code-mode rows (349 host rows, 20 run rows), 1302 declarations.
-// Replies: 316 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 370 code-mode rows (350 host rows, 20 run rows), 1315 declarations.
+// Replies: 317 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1115,6 +1115,19 @@ declare namespace Sdk {
   type HabitCheckinInput = { habit_ref: string; id?: string | null; data?: unknown | null; occurred_at: number; learned_at?: number | null };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
   type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
+  type DocumentKind = "document" | "template";
+  type EsignItem = { artifact_ref: string; original_version: number };
+  type RecipientRole = "signer" | "approver" | "viewer" | "cc";
+  type EsignRecipient = { id: string; email: string; name: string; role: RecipientRole; order: number; expires_at: number; principal_ref?: string | null; automated: boolean; natural_person?: string | null };
+  type FieldGeometry = { page: number; x_percent: number; y_percent: number; width_percent: number; height_percent: number };
+  type FieldMeta = { kind: "signature" } | { kind: "initials" } | { kind: "name" } | { kind: "email" } | { kind: "date" } | { kind: "text"; max_bytes: number } | { kind: "checkbox" } | { kind: "select"; options: string[] };
+  type EsignField = { id: string; item: number; recipient: string; required: boolean; geometry: FieldGeometry; meta: FieldMeta };
+  type EsignNoticeSwitches = { invite: boolean; pending: boolean; completed: boolean; rejection: boolean; void: boolean; expiry: boolean };
+  type EsignLifecycleRules = { expiry_after_seconds: number; first_reminder_after_seconds: number; repeat_reminder_every_seconds: number; reminder_cap_seconds: number; notices: EsignNoticeSwitches };
+  type EsignDocument = { schema_version: number; kind: DocumentKind; title: string; sequential: boolean; expires_at: number; items: EsignItem[]; recipients: EsignRecipient[]; fields: EsignField[]; full_trail_appendix: boolean; lifecycle?: EsignLifecycleRules | null; project?: EntityId | null };
+  type EsignCreateRequest = { document_ref: string; draft: EsignDocument };
+  type DocumentStatus = "draft" | "pending" | "completed" | "rejected" | "voided" | "expired";
+  type EsignDraftView = { document_ref: string; status: DocumentStatus; title: string; expires_at: number; project_ref?: string | null; recipients: string[]; fields: number };
   type CoreWriteTextField = { field: string; value: string };
   type ConversationCreateInput = { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreEntityWriteReceipt = { id: string; entity_type: number; learned_at: number; body: unknown };
@@ -1801,6 +1814,10 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
     retire(input: Sdk.EmbeddingSpaceRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
+  };
+  esign: {
+    /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
+    create(input: Sdk.EsignCreateRequest): Promise<Sdk.EsignDraftView | StoredResult>;
   };
   explain: {
     /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */

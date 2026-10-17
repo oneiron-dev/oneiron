@@ -4581,6 +4581,19 @@
       "section": false
     },
     {
+      "name": "vault.esign.create",
+      "description": "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act.",
+      "refs": ["/document_ref", "/draft/items/*/artifact_ref"],
+      "input": "crate::blob_artifact::esign::EsignCreateRequest",
+      "output": "crate::blob_artifact::esign::EsignDraftView",
+      "call": "memory.esign_create(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.conversations.create",
       "description": "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller.",
       "input": "crate::core_write::ConversationCreateInput",
