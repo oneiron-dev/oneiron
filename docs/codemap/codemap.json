@@ -4624,7 +4624,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "enum": 1
      }
     },
@@ -4635,7 +4635,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -13713,7 +13713,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 24,
       "struct": 2
      }
@@ -18243,7 +18243,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CandidateRun",
@@ -18260,7 +18260,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 7,
       "trait": 1
      }
@@ -37264,17 +37264,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "HookReplayCase",
+      "HookReplayCompare",
       "HookReplayEntry",
       "HookReplayResult"
      ],
      "path": "src/runtime_hooks/replay.rs",
-     "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome",
+     "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome beside the one…",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
+      "crate-vis": 4,
+      "enum": 3,
       "fn": 1,
       "struct": 1
      }
@@ -37290,7 +37292,7 @@
      "purpose": "The fact-hook runner (ARCH-0080 §4 Delivery)",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 4,
       "struct": 2,
       "type": 1
@@ -37346,13 +37348,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/store.rs",
-     "purpose": "The runner's durable rows: cursors, the run memo, saved intents and the Hook receipts (ARCH-0080 §4…",
+     "purpose": "The runner's durable rows: cursors, the run memo, saved intents, the Hook receipts and the run index…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 25
      }
     },
     {
@@ -37387,12 +37389,22 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 12,
       "re-export": 2,
       "struct": 3,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/record.rs",
+     "purpose": "A verb hook run's saved copy (ARCH-0080 §6 Replay): the exact input its body saw, the reads it made and what…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -37860,8 +37872,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 13,
-      "re-export": 4
+      "crate-vis": 14,
+      "re-export": 5
      }
     },
     {
@@ -37887,6 +37899,52 @@
      "path": "src/secret_custody/owner_door/tests.rs",
      "purpose": "ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HandleReveal",
+      "OwnerSecretReveal",
+      "RevealTarget",
+      "SecretHandleCard",
+      "SecretProvenance",
+      "SecretRevealAnswer",
+      "SecretRevealAnswered",
+      "SecretRevealAsk",
+      "SecretRevealDecision",
+      "SecretRevealReceipt",
+      "SecretRevealState"
+     ],
+     "path": "src/secret_custody/reveal.rs",
+     "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
+     "surface": {
+      "const": 6,
+      "crate-vis": 10,
+      "enum": 5,
+      "fn": 3,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/agent.rs",
+     "purpose": "The agent's doors: `reveal`, `wait` and `describe` on a handle",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/owner.rs",
+     "purpose": "The owner's doors: the asks and receipts, the answer to one ask, and the owner's own read of a value",
+     "surface": {
+      "fn": 3
+     }
     },
     {
      "bucket": "L",
@@ -37935,7 +37993,7 @@
      "path": "src/secret_lease/admission.rs",
      "purpose": "The one cap-only admission rule, pure + door-side halves",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -37977,7 +38035,7 @@
      "path": "src/secret_lease/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-02 (ONE-1920): the T0/T1/T2 materialization rungs behind a single…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 2
      }
     },
@@ -37988,7 +38046,7 @@
      "path": "src/secret_lease/storage.rs",
      "purpose": "Txn row reads/writes, teardown, lazy expiry, and the one stamping body",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -41730,13 +41788,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -41756,7 +41814,17 @@
      "path": "src/store/local_replica.rs",
      "purpose": "Local-only removal of one canonical window's replica (OF-534 demotion)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/local_replica/left_env.rs",
+     "purpose": "Local purge of a left shared vault's dedicated environment (OF-158)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -45572,7 +45640,7 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 16,
+      "re-export": 17,
       "struct": 35
      }
     },
@@ -45670,7 +45738,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 273
+      "fn": 276
      }
     },
     {
@@ -45809,6 +45877,28 @@
       "enum": 1,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RevealDecision",
+      "RevealDescribeRequest",
+      "RevealHandleCard",
+      "RevealPending",
+      "RevealProvenance",
+      "RevealReceipt",
+      "RevealRequest",
+      "RevealWaitAnswer",
+      "RevealWaitRequest"
+     ],
+     "path": "src/task_verb/sdk_secret.rs",
+     "purpose": "`reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret's value by its handle (OF-560…",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 8
      }
     },
     {
@@ -51458,7 +51548,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51486,7 +51576,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 10,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51640,7 +51730,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51696,7 +51786,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 119,
+     "files": 120,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51857,9 +51947,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 145,
+   "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3134,
+   "source_files": 3140,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59732,7 +59822,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 228
+      "fn": 231
      }
     },
     {
@@ -60748,7 +60838,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 229
+      "fn": 232
      }
     },
     {
@@ -64339,6 +64429,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/secret_reveal_routes.rs",
+     "purpose": "`/v1/owner/secrets/reveal*`: the owner's side of reveal by handle (OF-560; ARCH-0069 #reveal-check)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -65437,6 +65537,7 @@
       "SecretAnchorSignArgs",
       "SecretClass",
       "SecretRegisterArgs",
+      "SecretRevealArgs",
       "SecretRevokeArgs",
       "SecretRotateArgs",
       "SecretScanArgs",
@@ -65455,7 +65556,7 @@
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
       "enum": 14,
-      "struct": 42
+      "struct": 43
      }
     },
     {
@@ -65776,7 +65877,7 @@
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
       "crate-vis": 5,
-      "fn": 18,
+      "fn": 19,
       "re-export": 2
      }
     },
@@ -67423,7 +67524,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -69993,7 +70094,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 282,
+     "files": 283,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70338,7 +70439,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 556,
+   "source_files": 557,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70689,6 +70790,7 @@
       "ExpectedSpend",
       "ExportDiaryRead",
       "FactKind",
+      "FactSource",
       "FanoutStatement",
       "FatalLlmError",
       "FederationGrantRole",
@@ -70714,6 +70816,9 @@
       "GuestSlipMinted",
       "HandoffAlarmRequest",
       "HolderKind",
+      "HookPhase",
+      "HookReplayCase",
+      "HookReplayCompare",
       "HookReplayOutcome",
       "HookReplayRow",
       "HooksReplayRequest",
@@ -70954,6 +71059,15 @@
       "ResolveRecordRefRequest",
       "ResolvedRole",
       "RetryableLlmError",
+      "RevealDecision",
+      "RevealDescribeRequest",
+      "RevealHandleCard",
+      "RevealPending",
+      "RevealProvenance",
+      "RevealReceipt",
+      "RevealRequest",
+      "RevealWaitAnswer",
+      "RevealWaitRequest",
       "RoleHolder",
       "RoleRank",
       "RoomClaimOutcome",
@@ -71165,8 +71279,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 183,
-      "struct": 471
+      "enum": 188,
+      "struct": 479
      }
     },
     {

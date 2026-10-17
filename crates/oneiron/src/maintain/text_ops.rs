@@ -47,7 +47,7 @@ pub(super) fn clear_text_index(vault: &Vault, reindex: bool) -> Result<ClearText
     let mut reindexed = 0;
     if reindex {
         for (id, fields) in INDEX_SOURCE_TEXT.scan(&vault.store, &wtxn)? {
-            if vault.store.port_entity_raw(&wtxn, &id)?.is_none() {
+            if !vault.store.port_entity_present(&wtxn, &id)? {
                 continue;
             }
             crate::bm25::index_text(&vault.store, &mut wtxn, &vault.analyzer, &id, &fields)?;

@@ -750,6 +750,9 @@ fn mcp_agent_verb_input(
         "vault.lenses.list" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.default" => a.spec.clone().ok_or_else(invalid),
         "vault.disclosure.offer" => a.spec.clone().ok_or_else(invalid),
+        "reveal" => a.spec.clone().ok_or_else(invalid),
+        "reveal.wait" => a.spec.clone().ok_or_else(invalid),
+        "reveal.describe" => a.spec.clone().ok_or_else(invalid),
         "vault.shares.create" => a.spec.clone().ok_or_else(invalid),
         "vault.shares.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.shares.view" => a.spec.clone().ok_or_else(invalid),
@@ -1345,6 +1348,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.disclosure.offer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "reveal" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "reveal.wait" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "reveal.describe" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shares.create" => {
@@ -3264,6 +3276,30 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::DisclosureOfferRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_disclosure_offer(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "reveal" => {
+            let input: oneiron::task_verb::sdk::RevealRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::reveal(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "reveal.wait" => {
+            let input: oneiron::task_verb::sdk::RevealWaitRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::reveal_wait(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "reveal.describe" => {
+            let input: oneiron::task_verb::sdk::RevealDescribeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::reveal_describe(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
