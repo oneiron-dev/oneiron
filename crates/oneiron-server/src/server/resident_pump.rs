@@ -61,7 +61,9 @@ use super::{ReaderSeats, SyncServer};
 use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::config::models::PlannerSettings;
 use crate::decision_host::DecisionHost;
-use crate::mcp::{EngineRunError, McpCodeModeProvider, engine_run_seat, enter_engine_native_run};
+use crate::mcp::{
+    EngineRunError, McpCodeModeProvider, ScopeMeter, engine_run_seat, enter_engine_native_run,
+};
 
 const LEASE_OWNER: &str = "oneiron-server-agent-runs";
 /// The park a run waiting on a durable signal holds its lease under, owned
@@ -449,7 +451,7 @@ fn run_bound(
         provider.reader_window_tokens(),
     );
     // One door for the whole run, so its browser lives as long as the run.
-    let door: Arc<dyn AgentVerbDoor> = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
+    let door = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -506,10 +508,12 @@ fn run_bound(
 /// reaches the TASK it realizes, a TASK it creates runs under it, its
 /// program calls the vault's callable skills, its host rows take `door`,
 /// its model calls spend under `spend`, and `seat`, which its reader
-/// children spawn under. It runs on `model_seat`, the one `run_bound` bore
-/// it on. With the host's `[models.planner]` seats, its spawns are planned
-/// on `decisions`' ladder and its leader calls answer; `issuer` signs its
-/// leader's subproject spawn.
+/// children spawn under. Its `ai.speech` spends on the meter its other model
+/// calls do (FIX 3194): `spend`'s guard for the entry, else the provider's.
+/// It runs on `model_seat`, the one `run_bound` bore it on. With the host's
+/// `[models.planner]` seats, its spawns are planned on `decisions`' ladder
+/// and its leader calls answer; `issuer` signs its leader's subproject
+/// spawn.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -520,7 +524,7 @@ fn enter_run(
     status: &AgentDispatchStatus,
     actor: WriteActor,
     config: &EngineExecutorConfig,
-    door: &Arc<dyn AgentVerbDoor>,
+    door: &Arc<RunHostDoor>,
     seat: &SpawnHostSeat,
     model_seat: Option<&ModelSeat>,
     spend: Option<&SpendScopeId>,
@@ -534,7 +538,7 @@ fn enter_run(
         .map_err(text)?
         .with_callable_skills(Arc::clone(vault))
         .map_err(text)?
-        .with_agent_verb_door(Arc::clone(door))
+        .with_agent_verb_door(Arc::clone(door) as Arc<dyn AgentVerbDoor>)
         .with_reader_spawn(seat.clone());
     let planner = decisions.host_planner_decisions(actor.entity_ref());
     if let Some(planner) = planner_binding(vault, provider, config, planner)? {
@@ -559,9 +563,16 @@ fn enter_run(
         )
         .map_err(text)?
         .enter();
-    enter_engine_native_run(
-        vault, provider, &bound, config, compaction, reactor, spend, model_seat,
-    )
+    let meter = spend.map(|scope| ScopeMeter::open(vault, scope)).transpose()?;
+    door.bind_meter(match &meter {
+        Some(meter) => Some((meter.guard.clone(), meter.payer.clone())),
+        None => provider.host_meter().map(|guard| (guard, None)),
+    });
+    let entered = enter_engine_native_run(
+        vault, provider, &bound, config, compaction, reactor, meter, model_seat,
+    );
+    door.bind_meter(None);
+    entered
 }
 
 /// The host's planner for one entry of a leased agent run (OF-541, OF-389):
