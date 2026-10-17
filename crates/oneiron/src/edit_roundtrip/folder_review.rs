@@ -37,6 +37,9 @@ pub struct FolderAsk<'a> {
     pub sheet: &'a str,
     pub answer_col: u32,
     pub max_count_override: Option<u64>,
+    /// How the asker sees secret spans: a call reads each file as the asker
+    /// would export it. The answer stays pinned to the stored version.
+    pub sight: crate::secret_custody::SecretSight,
 }
 
 impl Vault {
@@ -120,8 +123,9 @@ impl Vault {
                 id: item.artifact,
                 body_hash: *blake3::hash(&file).as_bytes(),
             };
+            let seen = self.sighted_asset_bytes(file, request.sight)?;
             let (text, images) = file_content(
-                &file,
+                &seen,
                 &body.media_type,
                 &pin,
                 package_limits,

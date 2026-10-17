@@ -699,16 +699,43 @@ impl Memory<'_> {
                         })
                     })
                     .collect::<MemoryResult<Vec<_>>>()?;
-                vault.ask_folder_items_into_sheet(
-                    &artifact,
-                    &FolderAsk {
-                        ask,
-                        items: &items,
-                        sheet,
-                        answer_col: *answer_column,
-                        max_count_override: *max_count,
-                    },
-                )?
+                // A credential reads only the files its lane serves; the rest
+                // are refused, never sent to a model.
+                let ids: Vec<EntityId> = items.iter().map(|item| item.artifact).collect();
+                let readable = self.credential_readable_ids(&ids)?;
+                let (asked, unread): (Vec<FolderItem>, Vec<FolderItem>) =
+                    items.into_iter().partition(|item| {
+                        readable
+                            .as_ref()
+                            .is_none_or(|readable| readable.contains(&item.artifact))
+                    });
+                let mut run = if asked.is_empty() {
+                    crate::edit_roundtrip::ArtifactAskRun {
+                        proposal: None,
+                        abstained: Vec::new(),
+                        refused: Vec::new(),
+                    }
+                } else {
+                    vault.ask_folder_items_into_sheet(
+                        &artifact,
+                        &FolderAsk {
+                            ask,
+                            items: &asked,
+                            sheet,
+                            answer_col: *answer_column,
+                            max_count_override: *max_count,
+                            sight: self.secret_sight()?,
+                        },
+                    )?
+                };
+                run.refused.extend(unread.iter().map(|item| UnitRefusal {
+                    unit: serde_json::json!({
+                        "file": item.artifact.to_hex(),
+                        "row": item.row,
+                    }),
+                    reason: "unreadable_file".into(),
+                }));
+                run
             }
         };
         let proposed = match &run.proposal {
