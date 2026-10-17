@@ -4248,9 +4248,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/facet_identity.rs",
-     "purpose": "FACET overwrite checks for immutable substrate identity and retired privacy axes",
+     "purpose": "FACET write checks: the local identity-body refusal, immutable substrate identity and retired privacy axes",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -4318,7 +4318,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 1,
       "re-export": 3
      }
@@ -12617,11 +12617,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/companion/keys.rs",
-     "purpose": "Retired register discriminator and durable companion task payload keys",
+     "purpose": "Durable companion task payload keys",
      "surface": {
       "const": 3,
-      "crate-vis": 8,
-      "re-export": 1
+      "crate-vis": 8
      }
     },
     {
@@ -12631,7 +12630,7 @@
      "path": "src/companion/mod.rs",
      "purpose": "Companion task queue and PERSON/FACET persona compilation",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "re-export": 4
      }
     },
@@ -21363,7 +21362,7 @@
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
       "crate-vis": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -41050,7 +41049,7 @@
      "path": "src/store/structural_kind_registry/registry.rs",
      "purpose": "Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -41442,9 +41441,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/bridge/companion_identity.rs",
-     "purpose": "Retired identity-carrier scrub, identity topology ingest, and edge key/value helpers",
+     "purpose": "Identity topology ingest, endpoint hydration, and edge key/value helpers",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -41491,7 +41490,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "re-export": 4
      }
     },
@@ -42670,7 +42669,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1,
       "fn": 2
      }
@@ -42762,7 +42761,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 5
      }
     },
@@ -43066,13 +43065,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/reverse.rs",
      "purpose": "Reverse rematerialization plus skip/policy predicates and carrier removal",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -50285,7 +50284,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 123,
+   "over_bar": 122,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3037,
    "test_files": 903
@@ -53042,16 +53041,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/companion.rs",
-     "purpose": "The retired companion-register identity, reserved in the type registry",
-     "surface": {
-      "const": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "EdgeActorClass"
      ],
@@ -53338,7 +53327,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 23,
+      "mod": 22,
       "re-export": 2
      }
     },
@@ -53691,13 +53680,6 @@
      "layout": "file+dir",
      "purpose": "Shared vocabulary of the code-run vault-read contract"
     },
-    "companion": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "The retired companion-register identity, reserved in the type registry"
-    },
     "edge": {
      "files": 1,
      "impl_vault": false,
@@ -53827,7 +53809,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 56,
+   "source_files": 55,
    "test_files": 1
   },
   "oneiron-crypto": {
