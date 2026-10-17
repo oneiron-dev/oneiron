@@ -1,8 +1,10 @@
-//! The fan-out launches that wait on the owner, as TASKS lead rows (OF-393):
-//! a held launch's pause row with the resume door, and a launched cut's
-//! width check with the ack door. A held ask's pause row is a held launch's.
-//! Each row names its durable surface ref and the door's arguments verbatim;
-//! the doors are the owner's alone, whoever reads the board.
+//! The fan-out launches that wait on an approver, as TASKS lead rows
+//! (OF-393): a held launch's pause row with the resume door, and a launched
+//! cut's width check with the ack door. A held ask's pause row is a held
+//! launch's. Each row names its durable surface ref and the door's arguments
+//! verbatim. The doors are the owner's, whoever reads the board; a held
+//! launch bound to a project also names its live lead and board's door,
+//! which approves once or denies.
 use crate::entity_id::bytes_to_hex_lower;
 use crate::task_verb::FanoutLaunchReceipt;
 
@@ -40,11 +42,18 @@ fn fanout_action_row(launch: &FanoutLaunchReceipt) -> Option<(u8, String)> {
         } else {
             (0, "paused")
         };
+        let holder = if launch.approval_project.is_some() {
+            " holder_resume=vault.fanout.resume_as holder_ruling=approve_once|deny \
+             by=project_lead_or_board"
+        } else {
+            ""
+        };
         return Some((
             rank,
             format!(
                 "{} {state} tasks={tasks} resume=vault.fanout.resume launch_ref={launch_ref} \
-                 plan_digest={digest} ruling=approve_once|approve_and_remember|deny by=owner",
+                 plan_digest={digest} ruling=approve_once|approve_and_remember|deny \
+                 by=owner{holder}",
                 pause.surface_ref
             ),
         ));

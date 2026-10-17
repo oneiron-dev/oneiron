@@ -56,6 +56,7 @@ tasksCreate(input: unknown): unknown
 tasksWave(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
+vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt

@@ -318,10 +318,14 @@ pub(super) fn board_parts(
         named.push(project);
         lead.push(row);
     }
-    // The fan-out launches that wait on the owner (OF-393): the reader's
-    // own, or every one for the owner. They are actor-wide, so a narrowed
-    // credential reads none, as it reads no TASKS row without an id.
-    if let Some(memory) = memory.as_ref().filter(|_| auth.verified_slip().is_none()) {
+    // The fan-out launches that wait on an approver (OF-393): the reader's
+    // own, those whose bound lead or board role it holds, or every one for
+    // the owner. They are actor-wide, so a narrowed or record-restricted
+    // credential reads none; this mirrors board_setup.rs `mcp_fanout_rows`.
+    if let Some(memory) = memory
+        .as_ref()
+        .filter(|_| auth.require_unrestricted_record_scope().is_ok())
+    {
         let launches = memory
             .pending_task_fanout_launches()
             .map_err(|error| board_memory_error("board fan-outs failed", "tasks", error))?;

@@ -16,9 +16,10 @@ enum AskThen<F> {
     /// A closure run in the admission's transaction. The closure cannot
     /// wait, so this ask is never held for launch approval.
     Now(F),
-    /// A typed effect, or none. In `manual` mode the ask may be held for the
-    /// owner's launch approval (ASK-3); the effect is kept on its hold and
-    /// runs as the approval releases the ask.
+    /// A typed effect, or none. In `manual` mode the ask may be held for a
+    /// launch approval (ASK-3) by the owner, or its project's lead or board;
+    /// the effect is kept on its hold and runs as the approval releases the
+    /// ask.
     Typed(Option<AskEffect>),
 }
 
@@ -154,21 +155,29 @@ impl Memory<'_> {
         let question_digest =
             super::ask_settlement::question_digest(self.vault(), txn, &census.effective.what)?
                 .ok_or(crate::Error::EntityNotFound)?;
+        // The project whose lead and board may release a hold, bound now
+        // from the asked TASK or the project effect; none leaves the owner.
+        let approval_project = match &then {
+            AskThen::Typed(effect) => self.ask_launch_project_in(txn, input, effect.as_ref())?,
+            AskThen::Now(_) => None,
+        };
         let then = match then {
             AskThen::Typed(effect)
                 if super::fanout_launch::ask_launch_needs_approval(
                     self.vault(),
                     txn,
                     &census.holders,
+                    approval_project,
                 )? =>
             {
                 // Held: no guest grant, no member TASK and no group exist
-                // until the owner approves; the effect waits on the hold.
+                // until an approver releases it; the effect waits on the hold.
                 return super::fanout_launch::hold_ask_in(
                     self.vault(),
                     txn,
                     super::fanout_launch::AskHold {
                         group_ref,
+                        approval_project,
                         actor: self.actor(),
                         actor_class: self.actor_class(),
                         requested: input,
@@ -239,6 +248,33 @@ impl Memory<'_> {
         }
         receipt.idempotent_replay = false;
         Ok(receipt)
+    }
+
+    /// The project a held launch of this ask binds its approvers to: the
+    /// asked TASK's served project, else a project effect's project, read
+    /// again here, else none. A TASK placed in two projects refuses, as its
+    /// project route does.
+    fn ask_launch_project_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &TaskAskSpec,
+        effect: Option<&AskEffect>,
+    ) -> MemoryResult<Option<EntityId>> {
+        if let Some(task) = input.task_ref
+            && let Some(project) = self.vault().task_served_project_in_txn(txn, task)?
+        {
+            return Ok(Some(project));
+        }
+        if let Some(AskEffect::Project { project, task, .. }) = effect {
+            let (current, _) = self.vault().project_ask_route_in_txn(txn, *task)?;
+            if current != *project {
+                return Err(MemoryError::bad_request(
+                    "project ask placement changed; ask again",
+                ));
+            }
+            return Ok(Some(*project));
+        }
+        Ok(None)
     }
 
     /// An actor that may not ask is refused before any census runs.

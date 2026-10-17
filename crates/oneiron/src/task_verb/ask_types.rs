@@ -559,8 +559,7 @@ pub struct TaskAskReceipt {
     pub idempotent_replay: bool,
     /// The fan-out statement frozen at admission, before any member TASK:
     /// counts, expected spend, cap or none, and any width check. A replay
-    /// returns the frozen copy. `None` only on a code-mode replay record,
-    /// which does not carry it yet.
+    /// returns the frozen copy, and so does a code-mode replay record.
     pub statement: Option<crate::agent_dispatch::FanoutStatement>,
     /// The member TASKs as typed record refs (OF-063), in `task_refs`
     /// order, built from their ids with no read.

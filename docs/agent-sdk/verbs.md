@@ -33,6 +33,7 @@ both bindings and their export-census tests in one change.
 - `tasks.wave`
 - `vault.fanout.launch`
 - `vault.fanout.resume`
+- `vault.fanout.resume_as`
 - `vault.fanout.ack`
 - `tasks.update`
 - `vault.witness`
