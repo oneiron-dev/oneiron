@@ -120,6 +120,7 @@ async fn serve_prepared<A: AppHost>(
     {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
+    crate::owner::house::bind_house_leader_at_start(&vault, server_config.auth_secret.as_deref());
     if server_config.auth_secret.is_none() && !server_config.allow_unauthenticated {
         tracing::warn!(
             "embedded server started with no auth_secret and allow_unauthenticated=false; refusing all requests"
