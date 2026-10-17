@@ -1400,8 +1400,8 @@ def outputs():
     files['packages/oneiron-client/src/facade-types.ts'] = facade_types
     files['crates/oneiron-py/python/oneiron/facade_types.pyi'] = INVENTORY.python(census)
     # ONE-2510 S2: the code-mode catalog fragment over every row code mode
-    # serves, with its revision; its own inventory leaves the facade types above
-    # as they are.
+    # serves, at catalog_fragment.d.ts and at code-mode.d.ts, with its
+    # revision; its own inventory leaves the facade types above as they are.
     files.update(catalog_fragment(ROOT, ROWS + RUN_ROWS, HEADER))
     for path, text in list(files.items()):
         if path.endswith('.rs'):
@@ -1573,35 +1573,9 @@ def uniffi_facade(facade_rows):
     ]
     return HEADER + 'export_facade! {\n' + arms + '}\n', types.render(HEADER, lines)
 
-# The code-mode declarations a model is taught and a shadow type check reads.
-# The engine renders each row's signature from its compiled input schema
-# (`code_mode_declarations`), which this script cannot see, and its test keeps
-# the checked-in copy current; here the copy must declare exactly the rows code
-# mode serves, so a table edit flags it without a build.
-CODE_MODE_DTS = 'crates/oneiron/src/task_verb/code-mode.d.ts'
-CODE_MODE_DTS_REGENERATE = 'ONEIRON_UPDATE_TEST_FIXTURES=1 cargo test -p oneiron --lib code_mode_declarations_file_is_the_verb_table'
-# A declaration line opens a root, a namespace or a verb: `declare namespace
-# self {`, `declare const vault: {`, `declare function describe(input: …`,
-# `const focus: {`, `claims: {`, `upsert(input: …`, or a verb that holds
-# verbs, `diary: ((input: …) => Promise<unknown>) & {`.
-# `self.fold` is the one positional verb, `fold: (span: …` (ARCH-0067 #folds).
-DTS_LINE = re.compile(r'(?:declare (?:namespace|const|function) |const )?(\w+)(\(input: |: \(\(input: |: \(input: |: \(span: |: \{| \{)')
-def code_mode_dts_current():
-    declared, scope = set(), []
-    for line in (ROOT/CODE_MODE_DTS).read_text().splitlines():
-        text = line.strip()
-        if text in ('}', '};'):
-            scope.pop(); continue
-        head = DTS_LINE.match(text)
-        if not head: continue
-        name, form = head.groups()
-        if 'input' in form or 'span' in form: declared.add('.'.join(scope + [name]))
-        if text.endswith('{'): scope.append(name)
-    return declared == {r['name'] for r in ROWS + RUN_ROWS}
-
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true');args=parser.parse_args()
-    stale=[] if code_mode_dts_current() else [f'{CODE_MODE_DTS} (regenerate: {CODE_MODE_DTS_REGENERATE})']
+    stale=[]
     for path,text in outputs().items():
         p=ROOT/path
         if text is None:
@@ -1615,8 +1589,6 @@ def main():
             p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
     if args.check and stale:
         raise SystemExit('SDK-GENERATED-STALE: '+', '.join(stale))
-    if not args.check and not code_mode_dts_current():
-        print(f'{CODE_MODE_DTS} is stale; regenerate: {CODE_MODE_DTS_REGENERATE}')
     # OF-246: how many row types read fully, and each leaf that did not.
     if not args.check:
         print('\n'.join(INVENTORY.census(FACADE_ROWS)))
