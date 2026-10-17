@@ -10,10 +10,11 @@
 //! (ARCH-0068:308); the host's admission is then what it asks for, and the
 //! vault's membership is read live. One card is current per agent per room
 //! or thread: a new one replaces it, which is never a count cap. An open card
-//! ages out with its thread, read from the room's own liveness fold; there is
-//! no TTL and no close flag. Answering a card is [`super::offer_settle`].
+//! ages out with its thread, read from the room's own liveness fold
+//! ([`super::offer_liveness`]); there is no TTL and no close flag. Answering a
+//! card is [`super::offer_settle`].
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
@@ -180,12 +181,43 @@ pub(super) fn is_offer_id(value: &str) -> bool {
 
 /// Deletes every card minted in `room`, whatever its state (a superseded
 /// card keeps its row after the new one is current), then the room's
-/// current-card pointers. OFFERS is keyed by offer id, not by room, so the
-/// sweep reads the whole table in keyset pages.
+/// current-card pointers.
 pub(super) fn delete_room_offers(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     room: EntityId,
+) -> Result<()> {
+    delete_offers_where(store, txn, |card| card.room == room)?;
+    OFFER_CURRENT.delete_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?;
+    Ok(())
+}
+
+/// [`delete_room_offers`] for the one thread of `room` rooted at `thread`,
+/// when that root is erased: its cards in every state, then its current-card
+/// pointers. The room's own cards and every other thread's stay.
+pub(super) fn delete_thread_offers(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+) -> Result<()> {
+    delete_offers_where(store, txn, |card| {
+        card.room == room && card.branch == Some(thread)
+    })?;
+    OFFER_CURRENT.delete_from(
+        store,
+        txn,
+        format!("{}/{}/", room.to_hex(), thread.to_hex()).as_bytes(),
+    )?;
+    Ok(())
+}
+
+/// Deletes every stored card `doomed` names. OFFERS is keyed by offer id, not
+/// by room, so the sweep reads the whole table in keyset pages.
+fn delete_offers_where(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    doomed: impl Fn(&OfferCard) -> bool,
 ) -> Result<()> {
     let page_limit = super::history::PAGE_LIMIT;
     let mut after: Option<String> = None;
@@ -196,7 +228,7 @@ pub(super) fn delete_room_offers(
             .take(page_limit)
             .collect::<Result<_>>()?;
         for (offer_id, stored) in &page {
-            if stored.card.room == room {
+            if doomed(&stored.card) {
                 OFFERS.delete(store, txn, offer_id)?;
             }
         }
@@ -205,7 +237,6 @@ pub(super) fn delete_room_offers(
         }
         after = page.last().map(|(offer_id, _)| offer_id.clone());
     }
-    OFFER_CURRENT.delete_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?;
     Ok(())
 }
 
@@ -519,56 +550,6 @@ impl Memory<'_> {
             rows,
             next_after: if more { last } else { None },
         })
-    }
-
-    /// The threads among `threads` of `room` that have ended, so their open
-    /// cards age out (ARCH-0006a:233): the room's own fold, as the caller
-    /// reads it, lists them quiet, with no open task, open wait or fresh
-    /// message. A card for the room itself, a branch the fold does not hold,
-    /// and a room that keeps no thread fold end nothing.
-    pub(super) fn ended_offer_threads(
-        &self,
-        room: EntityId,
-        threads: &BTreeSet<EntityId>,
-    ) -> MemoryResult<BTreeSet<EntityId>> {
-        if threads.is_empty() {
-            return Ok(BTreeSet::new());
-        }
-        let Some(project_room) = self.vault().project_room(room)? else {
-            return Ok(BTreeSet::new());
-        };
-        let turns = self.room_turn_snapshot(room)?;
-        let selected: BTreeMap<EntityId, EntityId> = super::liveness::thread_root_map(&turns)?
-            .into_iter()
-            .filter(|(_, root)| threads.contains(root))
-            .collect();
-        if selected.is_empty() {
-            return Ok(BTreeSet::new());
-        }
-        let members = project_room.member_ids.into_iter().collect();
-        let now = crate::unix_seconds_now();
-        // Task and wait reads run inside the room, as the room's own fold
-        // reads them.
-        let bindings = super::liveness::thread_task_bindings(&turns, &selected)?;
-        let tasks = crate::task_verb::room_thread_tasks(
-            self.for_room_projection(room)?.memory(),
-            &selected,
-            &bindings,
-            &members,
-            now,
-        )?;
-        let mut ended = BTreeSet::new();
-        for thread in threads {
-            let held: Vec<_> = tasks
-                .iter()
-                .filter(|task| task.thread == *thread)
-                .cloned()
-                .collect();
-            if super::liveness::thread_is_live(&turns, &held, room, *thread, now)? == Some(false) {
-                ended.insert(*thread);
-            }
-        }
-        Ok(ended)
     }
 
     /// Whether the caller's own reads admit `id`'s record: a thread root a
