@@ -2330,6 +2330,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "InvocationSlipBinding"
+     ],
+     "path": "src/authority/invocation_slip.rs",
+     "purpose": "The signed instrument a request was admitted on, kept with the work it queued, so that work's standing is…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/authority/left_notices.rs",
      "purpose": "A removed person's own notices of losing a shared vault (OF-158 client leave)",
@@ -2476,7 +2490,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 19,
-      "re-export": 28
+      "re-export": 29
      }
     },
     {
@@ -21301,6 +21315,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/failure_signals/live.rs",
+     "purpose": "Live tier-1 counting (OF-380)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/failure_signals/policy.rs",
      "purpose": "Versioned tier-1 aggregation dials from trusted POLICY_MANIFEST rows",
      "surface": {
@@ -29102,8 +29126,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 41,
-      "fn": 22,
+      "crate-vis": 43,
+      "fn": 24,
       "struct": 2,
       "type": 1
      }
@@ -49649,7 +49673,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 128,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50181,7 +50205,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -51072,7 +51096,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3085,
+   "source_files": 3087,
    "test_files": 903
   },
   "oneiron-android": {
@@ -64135,7 +64159,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
