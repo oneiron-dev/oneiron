@@ -567,15 +567,15 @@ pub fn secret_scan(args: SecretScanArgs) -> anyhow::Result<()> {
 const SECRET_VALUE_LIMIT: usize = 1 << 20;
 
 pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
-    let value = read_secret_value(raw_stdin()?)?;
+    // Only a door that takes a value reads stdin; revoke and reveal read
+    // nothing.
+    let value = || -> anyhow::Result<_> { read_secret_value(raw_stdin()?) };
     match command {
-        SecretsCommand::Register(args) => emit(&register_secret(*args, &value)?),
-        SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
-        // `run_cli` sends revoke and reveal straight to their doors, before
-        // the read.
+        SecretsCommand::Register(args) => emit(&register_secret(*args, &value()?)?),
+        SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value()?)?),
         SecretsCommand::Revoke(args) => revoke_secret(*args),
         SecretsCommand::Reveal(args) => reveal_secret(*args),
-        SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value)?),
+        SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value()?)?),
     }
 }
 
