@@ -800,7 +800,17 @@ impl Vault {
         port.attempt = Some(attempt.clone());
         port.origin = origin;
         let validated = WaveOrchestrator::<VaultWaveTaskPort<'_>>::validate(plan)?;
-        WaveOrchestrator::new(port).apply(validated, now)
+        let mut orchestrator = WaveOrchestrator::new(port);
+        // Stated from the bound port, so an agent-created wave is priced
+        // against its creator's lease tree; the apply freezes the same
+        // statement into the receipt.
+        let statement = orchestrator.state(&validated, now)?;
+        tracing::info!(
+            plan = validated.plan_ref(),
+            ?statement,
+            "wave plan stated before apply"
+        );
+        orchestrator.apply(validated, now)
     }
 
     /// [`Self::apply_wave_plan_attempt`] under the vault's fan-out approval
