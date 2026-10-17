@@ -60,6 +60,11 @@ declare namespace self {
     answer(input: { ask: string; choice: string }): Promise<unknown>;
     settle(input: { conversation?: string | null; effect: "send" | "pay" | "invite" | "share"; name: string; prompt: string; someone_new: string }): Promise<unknown>;
   };
+  const inbox: {
+    concern: ((input: { card: string }) => Promise<unknown>) & {
+      outcome(input: { card: string; outcome: "confirmed" | "dismissed" | "unresolved" }): Promise<unknown>;
+    };
+  };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
       query(input: { agent: string; reason: string }): Promise<unknown>;

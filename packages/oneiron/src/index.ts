@@ -148,6 +148,11 @@ export class Oneiron {
       /** Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask. */
       settle: (input: Facade.IdentityActNowRequest): Facade.IdentityActNow => this.#call(() => this.#client.selfIdentitySettle(input) as Facade.IdentityActNow),
     },
+    inbox: {
+      concern: Object.assign((input: Facade.ConcernCardRequest): Facade.AgentHealthCardView => this.#call(() => this.#client.selfInboxConcern(input) as Facade.AgentHealthCardView), {
+        outcome: (input: Facade.ConcernOutcomeRequest): Facade.ConcernCardSummary => this.#call(() => this.#client.selfInboxConcernOutcome(input) as Facade.ConcernCardSummary),
+      }),
+    },
     /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
     message: (input: Facade.MessagePersonRequest): Facade.MessagePersonReceipt => this.#call(() => this.#client.selfMessage(input) as Facade.MessagePersonReceipt),
     grants: {
