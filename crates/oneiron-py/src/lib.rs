@@ -2203,6 +2203,35 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_artifacts_body_proposal_read(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.body.proposal.read")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.proposal.read", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_body_proposal_settle(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(request_json, "vault.artifacts.body.proposal.settle")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.proposal.settle", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_body_export(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.artifacts.body.export")?;
         let output = py
@@ -2283,6 +2312,20 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.artifacts.body.deck.oracle", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_body_deck_preview(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.body.deck.preview")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.deck.preview", input)
             })
             .map_err(raise)?;
         encode(&output)

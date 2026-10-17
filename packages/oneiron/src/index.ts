@@ -545,10 +545,16 @@ export class Oneiron {
           edit: (request: Facade.OfficeBodyForkEditRequest): Facade.OfficeBodyEdit => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkEdit(keyedJson(request))) as Facade.OfficeBodyEdit; return result }),
           /** A fork's three-way diff against the live head. */
           diff: (request: Facade.OfficeBodyForkRequest): Facade.OfficeBodyDiff => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkDiff(keyedJson(request))) as Facade.OfficeBodyDiff; return result }),
-          /** A person lands a reviewed fork. */
+          /** Lands one reviewed fork on an answer. */
           merge: (request: Facade.OfficeBodyForkMergeRequest): Facade.OfficeBodyDiff => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkMerge(keyedJson(request))) as Facade.OfficeBodyDiff; return result }),
           /** Abandons an open fork's unlanded work. */
           discard: (request: Facade.OfficeBodyForkRequest): Facade.OfficeBodyFork => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkDiscard(keyedJson(request))) as Facade.OfficeBodyFork; return result }),
+        },
+        proposal: {
+          /** An office proposal: its members, answers and settlement. */
+          read: (request: Facade.OfficeBodyProposalRequest): Facade.OfficeBodyProposal => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyProposalRead(keyedJson(request))) as Facade.OfficeBodyProposal; return result }),
+          /** Accepts or rejects an office proposal's reviewed forks. */
+          settle: (request: Facade.OfficeBodyProposalSettleRequest): Facade.OfficeBodyProposal => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyProposalSettle(keyedJson(request))) as Facade.OfficeBodyProposal; return result }),
         },
         /** Exports the live body as the artifact's next version. */
         export: (request: Facade.OfficeBodyExportVerbRequest): Facade.OfficeBodyExportView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyExport(keyedJson(request))) as Facade.OfficeBodyExportView; return result }),
@@ -565,6 +571,8 @@ export class Oneiron {
           gate: (request: Facade.DeckGateRequest): Facade.DeckGateView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckGate(keyedJson(request))) as Facade.DeckGateView; return result }),
           /** Records the deck oracle's receipt for its export profile. */
           oracle: (request: Facade.DeckOracleRequest): Facade.DeckGateView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckOracle(keyedJson(request))) as Facade.DeckGateView; return result }),
+          /** The asked slides of a deck's head, drawn by the host's review renderer (provisional). */
+          preview: (request: Facade.DeckPreviewRequest): Facade.DeckPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckPreview(keyedJson(request))) as Facade.DeckPreview; return result }),
         },
       },
       /** Appends one version of bytes to a blob artifact's append-only chain. */

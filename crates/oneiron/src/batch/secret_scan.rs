@@ -8,7 +8,7 @@ mod wordlist;
 use heed::{RoTxn, RwTxn};
 
 pub(crate) use self::container::{
-    is_container, masked_copy, scan_members as scan_container_members,
+    is_container, is_sealed, masked_copy, scan_members as scan_container_members,
 };
 pub use self::lift_history::{
     LiftCause, LiftCounts, LiftFamily, LiftTrigger, SecretLiftHistoryProposal, SecretLiftProgress,
@@ -128,6 +128,12 @@ pub(super) fn scan_batch_ops(
                 // (a custody byte on a non-custody path is rejected later by
                 // the apply_ops door regardless).
                 if *entity_type == ENTITY_TYPE_SECRET_CUSTODY {
+                    continue;
+                }
+                // A sealed file (a container no reader here reads whole) is
+                // stored as it is, unmarked: a serving door gives it to the
+                // owner alone (owner ruling C2).
+                if *entity_type == ENTITY_TYPE_ASSET && is_sealed(data) {
                     continue;
                 }
                 let _secrets_nulled = scan_payload(data)?;
