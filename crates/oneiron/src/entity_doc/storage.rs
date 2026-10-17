@@ -130,7 +130,25 @@ pub(super) fn persist(
         Some(entity_type) => text_changed(store, txn, entity, doc)?.then_some(entity_type),
         None => None,
     };
-    crate::batch::secret_scan::scan_content_in_txn(store, txn, doc.text().as_bytes())?;
+    // A text whose only hits are values the lift sweep lifted from this
+    // document before is admitted for them, and marked again (OF-067).
+    let text = doc.text();
+    let remark = match crate::batch::secret_scan::scan_content_in_txn(store, txn, text.as_bytes()) {
+        Ok(()) => false,
+        Err(refusal) => match super::lift::screened_in_txn(store, txn, h, &text)? {
+            Some(screened)
+                if crate::batch::secret_scan::scan_content_in_txn(
+                    store,
+                    txn,
+                    screened.as_bytes(),
+                )
+                .is_ok() =>
+            {
+                true
+            }
+            _ => return Err(refusal),
+        },
+    };
     // A NOTE written on this plane keeps the NOTE door's body bound and its
     // seal (OF-073 stage 1).
     if vault.get_entity_type_in_txn(txn, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {
@@ -170,6 +188,9 @@ pub(super) fn persist(
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::dreamer_wake::mark_on_publication_in_txn(store, txn, entity)?;
+    }
+    if remark {
+        super::lift::remark_entity_text_in_txn(vault, txn, entity, &text)?;
     }
     Ok(())
 }

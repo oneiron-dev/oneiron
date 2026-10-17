@@ -209,7 +209,8 @@ pub(crate) fn export_travel_receipts(
 impl Vault {
     /// The text born with `entity`, read here: its birth's prompt rows (or
     /// `made_by`'s, for one version of a body), its `why` and `keep`, and a
-    /// lens's intent prompt. Only the prose is read; the refs that point at it
+    /// lens's intent prompt, and on a copy from another vault the text that
+    /// travelled with it. Only the prose is read; the refs that point at it
     /// stay home. A part with no text document reads as absent, so a failed
     /// read sends less, never more.
     pub fn born_with_text(&self, entity: &EntityId, made_by: Option<&MadeBy>) -> Result<BornWith> {
@@ -249,6 +250,12 @@ impl Vault {
             if !intent.prompt().trim().is_empty() {
                 text.insert(BornWithField::IntentPrompt, intent.prompt().to_owned());
             }
+        }
+        // A copy from another vault reads the text its sharer let travel with
+        // it, where nothing here holds that field.
+        #[cfg(feature = "sync")]
+        for (field, value) in crate::sync::selector::carried_born_with(self, entity)? {
+            text.entry(field).or_insert(value);
         }
         Ok(text)
     }

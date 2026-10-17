@@ -499,6 +499,8 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     scrub_redacted_attribution_carriers(vault, key, doc)?;
     scrub_withdrawn_delete_carriers(vault, key, doc)?;
     super::withdrawn::scrub_withdrawn_generation_carriers(vault, key, doc)?;
+    // A deleted room's turn rows leave the window (OF-522).
+    crate::sync::room_turns::scrub_deleted_room_turns(vault, doc, Some(key))?;
     // FIX 1794: an erased room's or thread's side rows leave the window.
     crate::sync::room_facts::scrub_room_facts(vault, doc)?;
     // A persisted or returned snapshot carries the same project history as
