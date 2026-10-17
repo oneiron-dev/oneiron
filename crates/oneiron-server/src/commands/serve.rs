@@ -289,7 +289,14 @@ pub(super) async fn serve_with_config(
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
-        workers.extend(spawn_fact_hooks(&sync_server, stopped.clone()).await);
+        workers.extend(
+            spawn_fact_hooks(
+                &sync_server,
+                crate::server::admit_every_pass(),
+                stopped.clone(),
+            )
+            .await,
+        );
     }
     if !config.hooks {
         sync_server.vault().suppress_verb_hooks();
@@ -387,11 +394,12 @@ pub(super) async fn serve_with_config(
 }
 
 /// Builds the hook sandbox off the runtime (it compiles and probes the
-/// component) and starts the fact-hook runner. A sandbox that fails to load
-/// starts no runner.
+/// component) and starts the fact-hook runner, each pass under `admit`. A
+/// sandbox that fails to load starts no runner. Managed serve starts it too.
 #[cfg(feature = "code-sandbox-wasmtime")]
-async fn spawn_fact_hooks(
+pub(crate) async fn spawn_fact_hooks(
     server: &Arc<SyncServer>,
+    admit: crate::server::HousekeepingAdmission,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     use oneiron::runtime_hooks::{FactHookRunner, sandbox};
@@ -415,6 +423,7 @@ async fn spawn_fact_hooks(
                 Arc::clone(server.vault()),
                 runtime,
                 Some(verdict),
+                admit,
                 stop,
             ))
         }
