@@ -71,6 +71,7 @@ impl NoteKind {
     }
 }
 
+mod archive_read;
 pub(crate) mod documents;
 pub(crate) mod erase;
 mod kinds;
@@ -79,6 +80,7 @@ pub(crate) mod recovery;
 pub(crate) mod storage;
 pub(crate) use kinds::validate_registered_kind;
 mod proposals;
+mod tombstone_review;
 mod verbs;
 mod write_gate;
 pub use documents::{
@@ -92,6 +94,11 @@ pub use kinds::{
 pub use lifecycle::{NoteLifecycleStatus, NoteLifecycleView, NoteRefRequest, NoteSeal};
 pub(crate) use lifecycle::{note_sealed_in_txn, seal_note_in_txn};
 pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};
+pub use tombstone_review::NoteTombstoneProposal;
+pub(crate) use tombstone_review::{
+    decline_tombstone, open_tombstone_proposals_in_txn, review_note_tombstones, tombstone_accepted,
+    tombstone_still_proposed_in_txn,
+};
 pub(crate) use write_gate::check_doc_plane_note_commit_in_txn;
 const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 

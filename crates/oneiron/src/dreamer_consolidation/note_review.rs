@@ -17,6 +17,9 @@
 //! its marks (ARCH-0032 #scratchpad-marks): its `scratch` lines are blanked
 //! before the model reads it, each `keep` line is asked for, and every other
 //! line is the model's to decide.
+//!
+//! The first review to finish in a calendar month also runs the NOTE
+//! tombstone review (`note/tombstone_review.rs`, FIX 2419).
 
 use std::collections::BTreeSet;
 
@@ -155,6 +158,9 @@ impl ConsolidationExecutor<'_> {
                     None => CURSOR.delete(&ctx.vault.store, txn, &()).map(|_| ()),
                 })?;
             if !full {
+                // The month's first finished NOTE review also proposes the
+                // month's NOTE tombstones (FIX 2419); it only asks the owner.
+                crate::note::review_note_tombstones(ctx.vault)?;
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
                 });

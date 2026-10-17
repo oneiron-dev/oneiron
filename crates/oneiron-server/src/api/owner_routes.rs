@@ -33,8 +33,8 @@ use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::schedule::OwnerHost;
 use crate::owner::{
-    OwnerError, backup, cleanup, feedback, graph_fs, healer, imports, location, off_record,
-    pack_drift, persona, runs, secrets,
+    OwnerError, backup, cleanup, feedback, graph_fs, healer, imports, location, note_tombstones,
+    off_record, pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
 mod budget_hold_routes;
@@ -101,6 +101,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/cleanup/accept", post(accept_cleanup))
         .route("/cleanup/reject", post(reject_cleanup))
         .route("/cleanup/restore", post(restore_archived))
+        .route("/notes/tombstones", get(note_tombstone_review))
+        .route("/notes/tombstones/accept", post(accept_note_tombstone))
+        .route("/notes/tombstones/decline", post(decline_note_tombstone))
         .route("/persona", get(preview_persona))
         .route("/persona/export", post(export_persona))
         .route("/graph-fs", get(read_graph_fs))
@@ -707,6 +710,39 @@ async fn reject_cleanup(
         cleanup::review(server.vault())
     })
     .await?;
+    Ok(Json(review))
+}
+
+async fn note_tombstone_review(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<note_tombstones::TombstoneReview> {
+    let owner = owner(&auth, &server)?;
+    let review = blocking(move || note_tombstones::review(server.vault(), &owner)).await?;
+    Ok(Json(review))
+}
+
+async fn accept_note_tombstone(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<note_tombstones::Decide>, JsonRejection>,
+) -> OwnerReply<note_tombstones::Tombstoned> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let tombstoned =
+        blocking(move || note_tombstones::accept(server.vault(), &owner, &request)).await?;
+    Ok(Json(tombstoned))
+}
+
+async fn decline_note_tombstone(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<note_tombstones::Decide>, JsonRejection>,
+) -> OwnerReply<note_tombstones::TombstoneReview> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let review =
+        blocking(move || note_tombstones::decline(server.vault(), &owner, &request)).await?;
     Ok(Json(review))
 }
 
