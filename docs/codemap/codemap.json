@@ -8068,7 +8068,7 @@
       "AudienceWakeReport"
      ],
      "path": "src/campaign/enrollment/audience.rs",
-     "purpose": "The saved-query sweep's enrollment leg (ARCH-0059, decide-host 1193): a query a campaign program names as…",
+     "purpose": "The saved-query sweep's enrollment leg (ARCH-0059, decide-host 1193): a query campaign programs name as…",
      "surface": {
       "fn": 2,
       "struct": 1
@@ -8141,7 +8141,6 @@
      "path": "src/campaign/enrollment/program.rs",
      "purpose": "Persisted campaign program and step state authorizing both halves of the consequence",
      "surface": {
-      "const": 1,
       "fn": 6,
       "struct": 4
      }
