@@ -38,6 +38,7 @@ mod caps;
 mod embedded;
 mod error;
 mod invocation;
+mod lens_frames;
 pub mod llm;
 mod remote;
 
@@ -57,6 +58,7 @@ use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
 use crate::error::forbidden;
 pub use crate::invocation::pending_invocation;
+pub use crate::lens_frames::{CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest};
 use crate::remote::RemoteClient;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).

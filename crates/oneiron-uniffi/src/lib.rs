@@ -164,6 +164,34 @@ impl Oneiron {
             .retry::<serde_json::Value>(&pending, &verb, &input)?;
         codec::encode(&verb, &output)
     }
+
+    /// Sends one event on a lens card the connected server rendered
+    /// (OF-181).
+    ///
+    /// `request` is the route's `{event, idempotencyKey}` body as one JSON
+    /// value, camelCase as the wire spells it; the reply is its wire JSON,
+    /// `{"$state": ...}` for a local action or `{outcome, readReceipt}` for a
+    /// deterministic tool. A card the server no longer holds fails
+    /// `NOT_FOUND`: render the lens again. An embedded handle fails
+    /// `BAD_REQUEST`: lens frames live on the server that rendered the card.
+    pub fn lens_frame_event(
+        &self,
+        card_id: String,
+        request: WireJson,
+    ) -> Result<WireJson, OneironError> {
+        let request: oneiron_remote::LensFrameEventRequest =
+            codec::decode("lens_frame_event", &request)?;
+        let reply = self.inner.lens_frame_event(&card_id, &request)?;
+        codec::encode("lens_frame_event", &reply)
+    }
+
+    /// Closes a lens card the connected server rendered and frees its frame
+    /// (OF-181); the reply is the route's `{closed}`. An embedded handle
+    /// fails `BAD_REQUEST`.
+    pub fn close_lens_frame(&self, card_id: String) -> Result<WireJson, OneironError> {
+        let reply = self.inner.close_lens_frame(&card_id)?;
+        codec::encode("close_lens_frame", &reply)
+    }
 }
 
 /// Redeems a one-use pairing link and returns the origin and credential

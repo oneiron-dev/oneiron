@@ -28,8 +28,8 @@ edit them by hand:
   shapes as TypedDicts (`oneiron/facade_types.pyi`).
 
 Written by hand: `src/index.ts`, the HTTP transport (origin pinning, header
-merging, redirect hops) and the `discover`, `searchText`, `getEntity` and
-`callVerb` conveniences.
+merging, redirect hops) and the `discover`, `searchText`, `getEntity`,
+`callVerb`, `lensFrameEvent` and `closeLensFrame` conveniences.
 
 ### Typed coverage census
 
@@ -121,6 +121,17 @@ PENDING_ASK`, resolves to a `FacadePending` carrying that id, the ask and the
 envelope instead of a `Response`. `client.retry(pending, init?)` resends the same
 verb and input under the same id: the same pending while the ask is open, the
 saved call run once after it is answered.
+
+A lens card that `vault.lenses.default` rendered takes its events at routes
+outside the facade (OF-181). `client.lensFrameEvent(cardId, request, init?)`
+is `POST /v1/core/lens-frames/{cardId}/events` with the
+`{ event, idempotencyKey }` body (`LensFrameEventRequest`), and
+`client.closeLensFrame(cardId, init?)` is `DELETE
+/v1/core/lens-frames/{cardId}`. Both return the original `Response`;
+`LensFrameEventReply` (`{ $state }` or `{ outcome, readReceipt }`) and
+`CloseLensFrameReply` (`{ closed }`) type their 2xx bodies. Send them with the
+credential that rendered the card: the frame lives on that server, under that
+principal.
 
 ## What this client will not do
 

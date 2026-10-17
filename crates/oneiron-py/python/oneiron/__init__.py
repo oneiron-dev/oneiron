@@ -234,6 +234,30 @@ class Oneiron:
             _translate(lambda: self._client.retry(json.dumps(refusal), verb, json.dumps(input)))
         )
 
+    def lens_frame_event(self, card_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """Sends one event on a lens card the connected server rendered (OF-181).
+
+        ``request`` is the route's body, ``{"event": ..., "idempotencyKey":
+        ...}``, with the event as the rendered card names it; its keys keep
+        the wire's camelCase (``cardId``, ``occurredAt``). The reply is the
+        wire JSON: ``{"$state": ...}`` for a local action, or ``{"outcome":
+        ..., "readReceipt": ...}`` for a deterministic tool. A card the server
+        no longer holds raises ``NOT_FOUND``: render the lens again. An
+        embedded handle raises ``BAD_REQUEST``: lens frames live on the
+        server that rendered the card.
+        """
+        return json.loads(
+            _translate(lambda: self._client.lens_frame_event(card_id, json.dumps(request)))
+        )
+
+    def close_lens_frame(self, card_id: str) -> dict[str, Any]:
+        """Closes a lens card the connected server rendered and frees its frame (OF-181).
+
+        Answers ``{"closed": bool}``; a card the server does not hold answers
+        ``False``. An embedded handle raises ``BAD_REQUEST``.
+        """
+        return json.loads(_translate(lambda: self._client.close_lens_frame(card_id)))
+
     # BEGIN GENERATED FACADE VERBS
     def report(self, spec):
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
