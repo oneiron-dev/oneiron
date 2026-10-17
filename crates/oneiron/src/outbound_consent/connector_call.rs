@@ -25,7 +25,7 @@
 //! A held call the ledger already admitted resumes from that frozen row by
 //! its intent id (`connector_call_resume`), never from bytes prepared again.
 //!
-//! A `self.use` call ([`Vault::call_connector_with_secret`], OF-560) names a
+//! A `self.use` call (`Vault::call_connector_with_secret`, OF-560) names a
 //! custody record as its credential in place of the route's own secret. Its
 //! row keeps the record, so every pass presents the same one through the
 //! host ([`ConnectorCallHost::present_credential`]), the credential door

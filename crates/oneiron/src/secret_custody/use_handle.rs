@@ -25,10 +25,10 @@
 //! Beside the table, a server sends [`SECRET_USE_CONNECTOR_CALL`]: one
 //! connector call with the handle's secret as its credential, in place of
 //! the route's own, for the effector `connector:<connector>` the route
-//! names. Its body is the same use ([`Vault::use_secret_with`]); the call's
+//! names. Its body is the same use (`Vault::use_secret_with`); the call's
 //! row keeps the record, so a held call that a resume sends presents the
 //! same one, and its reply is cleared of the value as this one is
-//! ([`Vault::clear_secret_record_from`]).
+//! (`Vault::clear_secret_record_from`).
 
 mod bind;
 
