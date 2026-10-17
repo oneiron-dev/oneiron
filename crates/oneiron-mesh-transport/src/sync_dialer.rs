@@ -33,7 +33,8 @@ impl MeshSyncDialer {
     /// Binds this install's own endpoint on `bind_addr` for sync and dials
     /// `home` through it: the transport key derives from this install's
     /// machine key, and only the paired machine `home` names is admitted.
-    /// Refused before the install has a machine id.
+    /// Each dial leaves a path receipt in the vault. Refused before the
+    /// install has a machine id.
     #[cfg(feature = "iroh")]
     pub async fn bind_for_install(
         vault: Arc<oneiron::Vault>,
@@ -45,7 +46,7 @@ impl MeshSyncDialer {
             .ok_or(MeshError::Unavailable)?;
         let policy = crate::AcceptPolicy {
             roster: Arc::new(crate::VaultMachineRoster(Arc::clone(&vault))),
-            grants: Arc::new(crate::PairedMachineGrants(vault)),
+            grants: Arc::new(crate::PairedMachineGrants(Arc::clone(&vault))),
         };
         let transport = crate::iroh_transport::IrohTransport::bind_paired(
             key,
@@ -53,6 +54,7 @@ impl MeshSyncDialer {
             vec![SYNC_ALPN.to_vec()],
             bind_addr,
             crate::iroh_transport::private_relay_map(relays)?,
+            Arc::new(crate::VaultPathReceipts(vault)),
         )
         .await?;
         Ok(Self::new(Arc::new(transport), home))
