@@ -146,12 +146,19 @@ declare const vault: {
     append(input: { artifact_ref: string; content_base64: string; learned_at?: number | null; occurred_at: number; run_ref?: string | null }): Promise<unknown>;
     body: {
       commits(input: { artifact_ref: string }): Promise<unknown>;
-      edit(input: { artifact_ref: string; base?: number[] | null; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
+      deck: {
+        export(input: { artifact_ref: string; run_ref: string; made_by?: unknown }): Promise<unknown>;
+        gate(input: { profile?: string | null }): Promise<unknown>;
+        merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[]; scope?: object | null; landing?: "merge" | "switch" | null; made_by?: unknown }): Promise<unknown>;
+        oracle(input: { receipt: object }): Promise<unknown>;
+        review(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
+      };
+      edit(input: { artifact_ref: string; base?: number[] | null; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] } | { format: "pptx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
       export(input: { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown }): Promise<unknown>;
       fork: {
         diff(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
         discard(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
-        edit(input: { artifact_ref: string; fork_ref: string; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
+        edit(input: { artifact_ref: string; fork_ref: string; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] } | { format: "pptx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
         merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[] }): Promise<unknown>;
         open(input: { artifact_ref: string; run_root_ref?: string | null }): Promise<unknown>;
       };
@@ -349,6 +356,7 @@ declare const vault: {
   };
   questions: {
     answers(input: { id: string }): Promise<unknown>;
+    backfill(input: { at?: number | null; expected_version: number; id: string }): Promise<unknown>;
     create(input: { definition: unknown }): Promise<unknown>;
     edit(input: { definition: unknown; expected_version: number; id: string }): Promise<unknown>;
     pause(input: { id: string; paused: boolean }): Promise<unknown>;

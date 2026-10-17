@@ -46,16 +46,26 @@ pub struct InProcessVaultReadAdapter<'v> {
     media: Option<&'v [EmbeddedMediaSeed]>,
 }
 
-/// The engine code a context pack naming `media` is refused with when its
-/// host serves no media runtime: the accepted route's own code for a media
-/// query no `ai.embed` rung serves.
+/// The engine code a context pack or query naming `media` is refused with
+/// when its host serves no media runtime: the accepted route's own code for a
+/// media query no `ai.embed` rung serves.
 pub const MEDIA_UNAVAILABLE_ENGINE_CODE: &str = "EMBEDDER_UNAVAILABLE";
 
-/// One ranked list a host embedded from a context pack's `media` (OF-370):
-/// the declared space, the tower that encoded the vector, the vector, and the
-/// kinds of item the list keeps (every kind when empty). The host embeds it
-/// through its admitted `ai.embed` rung before the read; the adapter only
-/// searches it.
+/// A read naming `media` on a host that serves no media runtime.
+fn media_unavailable(method: VaultReadMethod) -> VaultReadError {
+    VaultReadError::Engine {
+        narrowing: None,
+        method,
+        engine_code: MEDIA_UNAVAILABLE_ENGINE_CODE.to_owned(),
+        message: "this host serves no ai.embed rung for media; retry without media".to_owned(),
+    }
+}
+
+/// One ranked list a host embedded from a context pack's or query's `media`
+/// (OF-370): the declared space, the tower that encoded the vector, the
+/// vector, and the kinds of item the list keeps (every kind when empty). The
+/// host embeds it through its admitted `ai.embed` rung before the read; the
+/// adapter only searches it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmbeddedMediaSeed {
     pub space: String,
@@ -76,11 +86,12 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         }
     }
 
-    /// Searches `seeds`, which the host embedded from a context pack's
-    /// `media` (and, on the one-space preset, from its text query), beside
-    /// its text and vector seeds. Without them a pack that names `media` is
-    /// refused with [`MEDIA_UNAVAILABLE_ENGINE_CODE`]: this adapter embeds
-    /// nothing, and never reads such a pack without its media.
+    /// Searches `seeds`, which the host embedded from a context pack's or
+    /// query's `media` (and, on the one-space preset, from its text query),
+    /// beside its text and vector seeds. Without them a pack or query that
+    /// names `media` is refused with [`MEDIA_UNAVAILABLE_ENGINE_CODE`]: this
+    /// adapter embeds nothing, and never reads such a request without its
+    /// media.
     #[must_use]
     pub fn with_media_seeds(mut self, seeds: &'v [EmbeddedMediaSeed]) -> Self {
         self.media = Some(seeds);
@@ -92,6 +103,13 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     /// costs no embedding.
     pub fn check_context_pack(request: &CoreContextPackRequest) -> VaultReadResult<()> {
         super::validate::validate_request(VaultReadRequest::ContextPack(request.clone())).map(drop)
+    }
+
+    /// The accepted validation a query passes here, run before its host pays
+    /// to embed the query's `media` (or, on the one-space preset, its text),
+    /// so a query this adapter refuses costs no embedding.
+    pub fn check_query(request: &CoreQueryRequest) -> VaultReadResult<()> {
+        super::validate::validate_request(VaultReadRequest::Query(request.clone())).map(drop)
     }
 
     /// The typed skill-reliability query a pack's `type_ref` and `axis` name,
@@ -135,22 +153,42 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         self
     }
 
+    /// Host media seeds, the one-space preset's text-slot seed among them,
+    /// are each one more ranked list beside the text and vector seeds, as on
+    /// the accepted route's `run_core_query`.
     fn run_query(
         &self,
         query: Option<&str>,
         vector: Option<&[f32]>,
+        media: &[EmbeddedMediaSeed],
         limit: usize,
     ) -> VaultReadResult<crate::claim::ScopedReadResult<Vec<ScoredEntity>>> {
-        let results = match (query, vector) {
-            (Some(query), Some(vector)) => self.scoped_read.search(query, vector, limit, None),
-            (Some(query), None) => self.scoped_read.search_text(query, limit, None),
-            (None, Some(vector)) => self.scoped_read.search_vector(vector, limit, None),
-            (None, None) => self.scoped_read.read_receipt(None, 0).map(|receipt| {
-                crate::claim::ScopedReadResult {
-                    value: Vec::new(),
-                    receipt,
-                }
-            }),
+        let results = if media.is_empty() {
+            match (query, vector) {
+                (Some(query), Some(vector)) => self.scoped_read.search(query, vector, limit, None),
+                (Some(query), None) => self.scoped_read.search_text(query, limit, None),
+                (None, Some(vector)) => self.scoped_read.search_vector(vector, limit, None),
+                (None, None) => self.scoped_read.read_receipt(None, 0).map(|receipt| {
+                    crate::claim::ScopedReadResult {
+                        value: Vec::new(),
+                        receipt,
+                    }
+                }),
+            }
+        } else {
+            let media: Vec<_> = media
+                .iter()
+                .map(|seed| {
+                    (
+                        seed.space.as_str(),
+                        seed.kind,
+                        seed.vector.as_slice(),
+                        seed.kinds.as_slice(),
+                    )
+                })
+                .collect();
+            self.scoped_read
+                .search_seeded(query, vector, &media, limit, None)
         };
         results.map_err(|error| engine_failure(VaultReadMethod::Query, &error))
     }
@@ -162,9 +200,13 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let count_mode = request.count_mode.for_search_response();
         let (limit, limit_clamped) = crate::memory::caps::clamp_search_limit(request.limit);
         let fetch_limit = search_fetch_limit(count_mode, limit);
+        if self.media.is_none() && request.media.is_some() {
+            return Err(media_unavailable(METHOD));
+        }
         let admitted = self.run_query(
             non_empty_query(request.query.as_deref()),
             request.query_vector.as_deref(),
+            self.media.unwrap_or_default(),
             fetch_limit,
         )?;
         if let Some(producers) = self.producers {
@@ -279,15 +321,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                     );
                 }
             }
-            None if request.media.is_some() => {
-                return Err(VaultReadError::Engine {
-                    narrowing: None,
-                    method: METHOD,
-                    engine_code: MEDIA_UNAVAILABLE_ENGINE_CODE.to_owned(),
-                    message: "this host serves no ai.embed rung for media; retry without media"
-                        .to_owned(),
-                });
-            }
+            None if request.media.is_some() => return Err(media_unavailable(METHOD)),
             None => {}
         }
         let (builder, response_budget) = apply_budget_controls(

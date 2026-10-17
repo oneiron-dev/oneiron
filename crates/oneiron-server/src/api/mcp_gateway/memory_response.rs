@@ -6,8 +6,8 @@ use crate::server::SyncServer;
 use oneiron::claim::ScopedReadReceipt;
 use oneiron::code_run::vault_read::{
     CoreContextPackRequest, CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus,
-    EmbeddedMediaSeed, InProcessVaultReadAdapter, VaultReadClient, VaultReadError, VaultReadMethod,
-    View,
+    CoreQueryRequest, EmbeddedMediaSeed, InProcessVaultReadAdapter, VaultReadClient,
+    VaultReadError, VaultReadMethod, View,
 };
 use oneiron::context_board::CapabilityHit;
 use serde_json::{Value, json};
@@ -22,7 +22,7 @@ pub(super) async fn execute(
     args: &McpVerbToolArgs,
     actor: &McpResolvedActor,
 ) -> Result<(Value, Vec<CapabilityHit>, Vec<oneiron::EntityId>), McpGatewayError> {
-    let media = context_pack_media(server, args).await?;
+    let media = memory_read_media(server, args, actor).await?;
     let mut produced = execute_read(server, args, actor, media.as_deref())?;
     if !produced.served.is_empty() {
         let mut target = super::board_observations::read_set(server, actor).await;
@@ -110,27 +110,7 @@ fn execute_read(
         McpGatewayError::new(-32602, "tool_args_invalid", "native request is required")
             .with_field("arguments.request")
     })?;
-    // A query past `[limits].retrieval_query_bytes` is refused with the typed
-    // tool error before any read (F21 H301, A3).
-    let door = match method {
-        VaultReadMethod::Query => Some(crate::server::QueryDoor::McpMemoryQuery),
-        VaultReadMethod::ContextPack => Some(crate::server::QueryDoor::McpMemoryContextPack),
-        _ => None,
-    };
-    if let Some(door) = door
-        && let Some(query) = body.get("query").and_then(Value::as_str)
-    {
-        server
-            .check_retrieval_query(
-                &actor.actor_ref.to_hex(),
-                door,
-                "arguments.request.query",
-                query,
-            )
-            .map_err(|over| {
-                McpGatewayError::payload_too_large(over.field, over.bound, over.bytes)
-            })?;
-    }
+    check_query_bound(server, actor, method, &body)?;
     let reader = mcp_scoped_read(&server.vault, actor)?;
     let producers = oneiron::memory::ProducerRows::default();
     let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone())
@@ -146,7 +126,7 @@ fn execute_read(
     }
     let response = match method {
         VaultReadMethod::Query => {
-            let request: oneiron::code_run::vault_read::CoreQueryRequest = request(body)?;
+            let request: CoreQueryRequest = request(body)?;
             let full = request.view == Some(View::Full);
             let response = adapter.query(request).map_err(native_error)?;
             for row in &response.items {
@@ -211,23 +191,52 @@ fn execute_read(
     })
 }
 
-/// A native context pack's media seeds (OF-370), embedded before the read
-/// through the server's shared seed embedding, the one `POST
-/// /v1/core/context-pack` runs: the pack's own `media`, and on the one-space
-/// preset (the text kind slot bound to a declared space) its text query
-/// through that space's text tower. The pack's own checks and the media's
-/// decoding come first and are free; the embed is the paid call. Any other
-/// method, or a pack that seeds nothing, embeds nothing.
-async fn context_pack_media(
+/// A query past `[limits].retrieval_query_bytes` is refused with the typed
+/// tool error before any read or paid embed (F21 H301, A3).
+fn check_query_bound(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    method: VaultReadMethod,
+    body: &Value,
+) -> Result<(), McpGatewayError> {
+    let door = match method {
+        VaultReadMethod::Query => crate::server::QueryDoor::McpMemoryQuery,
+        VaultReadMethod::ContextPack => crate::server::QueryDoor::McpMemoryContextPack,
+        _ => return Ok(()),
+    };
+    if let Some(query) = body.get("query").and_then(Value::as_str) {
+        server
+            .check_retrieval_query(
+                &actor.actor_ref.to_hex(),
+                door,
+                "arguments.request.query",
+                query,
+            )
+            .map_err(|over| {
+                McpGatewayError::payload_too_large(over.field, over.bound, over.bytes)
+            })?;
+    }
+    Ok(())
+}
+
+/// A native query's or context pack's media seeds (OF-370), embedded before
+/// the read through the server's shared seed embedding, the one `POST
+/// /v1/core/query` and `POST /v1/core/context-pack` run: the request's own
+/// `media`, and on the one-space preset (the text kind slot bound to a
+/// declared space) its text query through that space's text tower. The
+/// query-byte bound, the method's own checks and the media's decoding come
+/// first and are free; the embed is the paid call. Any other method, or a
+/// request that seeds nothing, embeds nothing.
+async fn memory_read_media(
     server: &SyncServer,
     args: &McpVerbToolArgs,
+    actor: &McpResolvedActor,
 ) -> Result<Option<Vec<EmbeddedMediaSeed>>, McpGatewayError> {
-    if !matches!(
-        args.tool.memory_method(),
-        Some(VaultReadMethod::ContextPack)
-    ) {
+    let Some(method @ (VaultReadMethod::Query | VaultReadMethod::ContextPack)) =
+        args.tool.memory_method()
+    else {
         return Ok(None);
-    }
+    };
     let Some(body) = args.payload.arguments.request.as_ref() else {
         return Ok(None);
     };
@@ -239,22 +248,37 @@ async fn context_pack_media(
     if !names_media && !names_query {
         return Ok(None);
     }
-    let pack: CoreContextPackRequest = request(body.clone())?;
-    InProcessVaultReadAdapter::check_context_pack(&pack).map_err(native_error)?;
-    InProcessVaultReadAdapter::context_pack_skill_query(&server.vault, &pack)
-        .map_err(native_error)?;
-    let decoded = pack
-        .media
+    check_query_bound(server, actor, method, body)?;
+    let (media, query) = if method == VaultReadMethod::Query {
+        let query: CoreQueryRequest = request(body.clone())?;
+        InProcessVaultReadAdapter::check_query(&query).map_err(native_error)?;
+        (query.media, query.query)
+    } else {
+        let pack: CoreContextPackRequest = request(body.clone())?;
+        InProcessVaultReadAdapter::check_context_pack(&pack).map_err(native_error)?;
+        InProcessVaultReadAdapter::context_pack_skill_query(&server.vault, &pack)
+            .map_err(native_error)?;
+        (pack.media, pack.query)
+    };
+    let falls_back = text_slot_refusal_falls_back(method, media.is_some());
+    let decoded = media
         .map(|media| {
             crate::api::ContextPackMediaQuery::from(media)
                 .decode(server.config.limits.retrieval_query_bytes)
         })
         .transpose()
         .map_err(media_error)?;
-    let query = crate::api::non_empty_query(pack.query.as_deref());
-    let seeds = crate::api::embed_media_seeds(server, decoded, query)
-        .await
-        .map_err(media_error)?;
+    let query = crate::api::non_empty_query(query.as_deref());
+    let seeds = match crate::api::embed_media_seeds(server, decoded, query).await {
+        Ok(seeds) => seeds,
+        Err(_) if falls_back => {
+            tracing::warn!(
+                "memory.query text-slot embed refused or unavailable; answering from the text index"
+            );
+            return Ok(None);
+        }
+        Err(error) => return Err(media_error(error)),
+    };
     if seeds.is_empty() {
         return Ok(None);
     }
@@ -269,6 +293,14 @@ async fn context_pack_media(
             })
             .collect(),
     ))
+}
+
+/// Engine call (OF-370, open in CALLS.md): with no explicit `media`, a native
+/// query whose text-slot embed is refused or unavailable answers from the
+/// vault's own text index, as it did before media; explicit media refusals
+/// still fail. The context pack keeps #2153's refusal.
+fn text_slot_refusal_falls_back(method: VaultReadMethod, explicit_media: bool) -> bool {
+    method == VaultReadMethod::Query && !explicit_media
 }
 
 /// A media query's refusal as the native tool's error, its field named under
