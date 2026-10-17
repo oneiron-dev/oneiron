@@ -42,6 +42,8 @@ pub fn project_bound_outcomes(
 
 /// Labels are observations of immutable answer receipts. Current facts and
 /// authority are checked again within one read snapshot before returning them.
+/// A window that closed in silence pairs its answer with the binding's
+/// silence label; such a pair names the answer as its own fact.
 /// A caller at `locality` gets no pair derived from a row a device-local
 /// world keeps from it, and each pair names the rows it was derived from.
 pub fn calibration_pairs(
@@ -138,6 +140,58 @@ pub fn calibration_pairs(
             prediction: answer.decision.answer.clone(),
             probability,
             outcome,
+            derived_from,
+        });
+    }
+    // A window that closed in silence labels its answer by the binding's
+    // silence label, unless a fact in the window has labelled it since.
+    for (_, close) in super::windows::QUESTION_WINDOW.scan_from(
+        &vault.store,
+        &txn,
+        &family_prefix(question, b"window"),
+    )? {
+        let WindowOutcome::Silence(label) = close.outcome else {
+            continue;
+        };
+        let Some(answer) = answers.iter().find(|a| a.claim == close.answer) else {
+            continue;
+        };
+        let Some(record) = QUESTION_VERSION.get(
+            &vault.store,
+            &txn,
+            &VersionKey {
+                id: question,
+                version: close.question_version,
+            },
+        )?
+        else {
+            continue;
+        };
+        let Some(binding) = &record.definition.binding else {
+            continue;
+        };
+        let Some(probability) = answer.decision.probability else {
+            continue;
+        };
+        let derived_from = vec![question, answer.claim, answer.unit];
+        if record.principal != principal
+            || (!kept.is_empty() && kept_any(vault, &txn, &kept, &derived_from)?)
+            || !super::windows::silence_stands(&vault.store, &txn, &policy, &record, answer)?
+            || super::windows::fact_labelled(&vault.store, &txn, &policy, &record, answer)?
+        {
+            continue;
+        }
+        pairs.push(CalibrationPair {
+            prediction: answer.decision.answer.clone(),
+            probability,
+            outcome: OutcomeLabel {
+                answer: answer.claim,
+                fact: answer.claim,
+                fact_value_hash: super::windows::silence_hash()?,
+                label,
+                noise_weight: binding.noise_weight,
+                occurred_at: close.ends_at,
+            },
             derived_from,
         });
     }

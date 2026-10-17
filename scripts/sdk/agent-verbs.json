@@ -512,6 +512,7 @@
       "section": false,
       "binding": {
         "assemble": true,
+        "defaults": true,
         "options": "RecallOptions",
         "args": [
           {
@@ -2973,6 +2974,16 @@
       "input": "crate::receipt::QuestionPauseRequest",
       "output": "crate::receipt::QuestionPaused",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.pause\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.backfill",
+      "input": "crate::receipt::QuestionBackfillRequest",
+      "output": "crate::llm::decision::questions::ScheduledBackfill",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.backfill\", &input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},

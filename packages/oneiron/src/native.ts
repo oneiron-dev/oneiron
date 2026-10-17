@@ -221,6 +221,7 @@ vaultGraphAsk(input: unknown): unknown
 vaultQuestionsCreate(input: unknown): unknown
 vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
+vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
 vaultDecisionsAsksAnswer(input: unknown): unknown
@@ -281,6 +282,7 @@ vaultNotesLifecycle(requestJson: string): string
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
   lastReceiptRef(): string | null
+  retry(pending: unknown, verb: string, input: unknown): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */
