@@ -2651,6 +2651,7 @@ async fn can(
     auth.require_unrestricted_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "can", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -2679,6 +2680,7 @@ async fn ask(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "ask", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -2693,6 +2695,7 @@ async fn wait(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "wait", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -2707,6 +2710,7 @@ async fn tasks_answer(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
