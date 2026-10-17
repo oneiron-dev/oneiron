@@ -2,7 +2,8 @@
 //! vault (frontiers, input hashes, made_by rows, actors and triggers) never
 //! travel. Text born with the body (the prompt, the why, the keep memo, a lens
 //! pack's intent prompt) travels only when the sharer says so, and the share
-//! receipt lists what travelled.
+//! receipt lists what travelled. An AgentPack travels as the reference-free
+//! projection in [`agent_pack`].
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,6 +14,13 @@ use crate::provenance::made_by::{MadeBy, MadeByInputRole};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::side_table::{self, Named, SideTable};
 use crate::{Result, Vault};
+
+pub mod agent_pack;
+
+pub use self::agent_pack::{
+    AGENT_PACK_TRAVEL_SCHEMA, AgentPackKnowledge, AgentPackPolicy, AgentPackSkill,
+    AgentPackTravelProjection,
+};
 
 /// The share receipt field listing the born-with fields that travelled.
 pub const FIELD_TRAVELLED: &str = "travelled";
@@ -67,6 +75,7 @@ pub enum TravelKind {
     Brief,
     Artifact,
     Document,
+    AgentPack,
 }
 
 /// The sharer's choice of born-with text to send. Refs are never a choice.
@@ -80,7 +89,9 @@ pub struct TravelChoice {
 impl TravelChoice {
     /// What travels unless the sharer says otherwise: a lens pack's intent
     /// prompt, because it is the recipe. A summary's prompt and keep memo, and
-    /// every other kind's born-with text, stay home.
+    /// every other kind's born-with text, stay home. An agent pack's
+    /// instructions and skill bodies are the pack, not born-with text, so they
+    /// travel whatever this says.
     #[must_use]
     pub fn default_for(kind: TravelKind) -> Self {
         let born_with = match kind {
@@ -88,7 +99,8 @@ impl TravelChoice {
             TravelKind::Summary
             | TravelKind::Brief
             | TravelKind::Artifact
-            | TravelKind::Document => BTreeSet::new(),
+            | TravelKind::Document
+            | TravelKind::AgentPack => BTreeSet::new(),
         };
         Self { born_with }
     }
