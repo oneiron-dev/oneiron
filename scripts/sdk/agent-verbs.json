@@ -506,6 +506,7 @@
       "section": false,
       "binding": {
         "assemble": true,
+        "defaults": true,
         "options": "RecallOptions",
         "args": [
           {
