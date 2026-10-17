@@ -95,8 +95,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     }
 
     /// The typed skill-reliability query a pack's `type_ref` and `axis` name,
-    /// on the vault's type tree (OF-184). A placement that tree does not hold
-    /// at that version is refused. Free: a host runs it before a paid embed.
+    /// on the tree it was placed in: its project's, else the vault's, at the
+    /// version it names (OF-184). A placement no kept tree holds at that
+    /// version is refused. Free: a host runs it before a paid embed.
     pub fn context_pack_skill_query(
         vault: &Vault,
         request: &CoreContextPackRequest,
@@ -105,8 +106,21 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let Some(placed) = &request.type_ref else {
             return Ok(None);
         };
-        let tree = crate::task_type::type_tree(vault, None)
-            .map_err(|error| engine_failure(METHOD, &error))?;
+        let project = match &placed.project {
+            Some(hex) => Some(crate::EntityId::from_hex(hex).map_err(|_| {
+                invalid_request(METHOD, "type_ref", "type_ref.project is not an entity id")
+            })?),
+            None => None,
+        };
+        let tree = crate::task_type::type_tree_at(vault, project, placed.tree_version)
+            .map_err(|error| engine_failure(METHOD, &error))?
+            .ok_or_else(|| {
+                invalid_request(
+                    METHOD,
+                    "type_ref",
+                    "no kept type tree is at that tree_version",
+                )
+            })?;
         let type_ref = crate::learning::TypeRef {
             node_id: placed.node_id.clone(),
             tree_version: placed.tree_version,
@@ -120,7 +134,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             Ok(None) => Err(invalid_request(
                 METHOD,
                 "type_ref",
-                "type_ref is not a node of the vault's type tree at that version",
+                "type_ref is not a node of its type tree at that version",
             )),
             Err(error) => Err(invalid_request(METHOD, "axis", &error.to_string())),
         }
