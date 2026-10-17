@@ -371,6 +371,8 @@ impl TombstoneStoreRead for Memory {
             ),
             DeletionMarker::RowFence => value.reason != Reason::ArchivedByCleanup,
             DeletionMarker::IdentitySoftDelete => value.reason == Reason::UserDelete,
+            // The model keeps no sync windows.
+            DeletionMarker::WindowAddress => false,
         };
         Ok(marked.then(|| value.encode().to_vec()))
     }

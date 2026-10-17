@@ -4,13 +4,14 @@ use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::{EntityId, Vault, error::Result, store::ManifestDbs};
 use heed::RoTxn;
 
-/// The `sync_state` table of one marker family; each is keyed by the row id.
+/// The `sync_state` table of one deletion family; each is keyed by the row id.
 fn marker_table(marker: DeletionMarker) -> SideTable<HexId, Vec<u8>, Raw> {
     SideTable::new(match marker {
         DeletionMarker::Archive => &side_table::DELETION_ARCHIVE_MARKER,
         DeletionMarker::HardDelete => &side_table::DELETION_HARD_DELETE_MARKER,
         DeletionMarker::RowFence => &side_table::DELETION_ROW_FENCE,
         DeletionMarker::IdentitySoftDelete => &side_table::DELETION_IDENTITY_SOFT_DELETE_MARKER,
+        DeletionMarker::WindowAddress => &side_table::DELETION_WINDOW_LABEL,
     })
 }
 impl<T: ManifestDbs> TombstoneStoreRead for T {

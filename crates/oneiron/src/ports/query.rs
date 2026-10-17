@@ -250,8 +250,8 @@ pub enum DeletionFamily {
     HardDelete,
 }
 
-/// One per-row deletion marker family, keyed by the row id alone. Each
-/// answers for itself; [`DeletionState`] is the verdict they feed.
+/// One per-row deletion family, keyed by the row id alone. Each answers for
+/// itself; [`DeletionState`] is the verdict the markers feed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeletionMarker {
     /// `ac:`, a local archive; the row stays whole.
@@ -262,6 +262,9 @@ pub enum DeletionMarker {
     RowFence,
     /// `it:deleted:`, an identity soft delete once applied.
     IdentitySoftDelete,
+    /// `m:dw:`, the window address a deletion kept for the row
+    /// (`<month>@<world>`), so its tombstone is found after the body goes.
+    WindowAddress,
 }
 
 /// Stored job rows without a queue transition, for cleanup, admission and
