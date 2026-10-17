@@ -1,6 +1,5 @@
 use std::fmt;
 
-use oneiron::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use oneiron::memory::ReadMode;
 use oneiron::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
@@ -368,12 +367,6 @@ fn entity_kind(entity_type: u8) -> String {
 }
 
 fn decode_body_fields(entity_type: u8, body: &[u8]) -> Map<String, Value> {
-    if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
-        return Map::from_iter([(
-            "redacted".to_owned(),
-            Value::String("retired_companion_register_body".to_owned()),
-        )]);
-    }
     if entity_type == ENTITY_TYPE_FACET {
         let mut cursor = std::io::Cursor::new(body);
         let parsed = rmpv::decode::read_value(&mut cursor).ok();
@@ -381,20 +374,6 @@ fn decode_body_fields(entity_type: u8, body: &[u8]) -> Map<String, Value> {
             return Map::from_iter([(
                 "redacted".to_owned(),
                 Value::String("invalid_facet_body".to_owned()),
-            )]);
-        }
-        // Old persona/relationship-shaped FACET bytes may still be present in
-        // development vaults or hostile replay. Never feed their opaque value
-        // and provenance through the generic JSON projection.
-        if let Some(rmpv::Value::Map(entries)) = parsed
-            && entries.iter().any(|(key, value)| {
-                key.as_str() == Some("kind")
-                    && matches!(value.as_str(), Some("persona" | "relationship"))
-            })
-        {
-            return Map::from_iter([(
-                "redacted".to_owned(),
-                Value::String("retired_companion_facet_body".to_owned()),
             )]);
         }
     }

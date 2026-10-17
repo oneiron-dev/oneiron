@@ -66,19 +66,11 @@ def gen_clean(entity, moves):
 # free item: (kind, name, cfg, header_change). method: (name, cfg, header_change).
 INTRICATE = {
     "companion": {
-        "free": [("fn", "companion_record_id_for_key_in_txn", "-", "no"),
-                 ("fn", "companion_record_any_id_for_key_in_txn", "-", "no"),
-                 ("struct", "CompanionRecordKeyLookup", "-", "no"),
-                 ("fn", "companion_record_key_lookup_in_txn", "-", "no")],
+        "free": [],
         "methods": [(n, c, "no") for (_, n, c) in
                     [m for m in gen.VAULT_A["moves"] if m[0] == "companion"][0][1] if _ == "method"] if False else
-                   [("companion_profile_access_grant", "-", "no"), ("create_companion_record", "-", "no"),
-                    ("update_companion_record", "-", "no"), ("get_companion_record", "-", "no"),
-                    ("retire_companion_record", "-", "no"), ("end_companion_relationship", "-", "no"),
-                    ("revive_companion_record", "-", "no"), ("companion_record_id_for_key", "-", "no"),
-                    ("companion_register", "-", "no"), ("ensure_companion_register_kind", "-", "no"),
-                    ("companion_register_kind_registered", "-", "no"), ("read_companion_record_in_txn", "-", "no"),
-                    ("apply_companion_record_body", "-", "no")],
+                   [("companion_profile_access_grant", "-", "no"),
+                    ("end_companion_relationship", "-", "no")],
         "frag": [],
     },
     "affect": {

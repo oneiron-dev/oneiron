@@ -847,13 +847,12 @@ impl Memory<'_> {
     }
 
     /// PRE-TRANSACTION variant of the hard-delete refusal, used ONLY where
-    /// the engine owns the write transaction internally (companion create,
+    /// the engine owns the write transaction internally (imported-claim
     /// ingest admission) and the marker check cannot ride it. Residual for
-    /// those two verbs: a hard delete landing between this check and the
-    /// engine's commit recreates at the purged id; closing it needs in-txn
-    /// engine seams (`create_companion_record_in_txn`, ingest). Every other
-    /// id-accepting verb checks the marker INSIDE its own write
-    /// transaction (A1).
+    /// that verb: a hard delete landing between this check and the engine's
+    /// commit recreates at the purged id; closing it needs an in-txn ingest
+    /// seam. Every other id-accepting verb checks the marker INSIDE its own
+    /// write transaction (A1).
     pub(super) fn refuse_hard_deleted_id(&self, id: &EntityId) -> MemoryResult<()> {
         let rtxn = self
             .vault

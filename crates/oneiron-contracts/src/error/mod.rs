@@ -67,7 +67,6 @@ pub enum ErrorKind {
     ConnectorKeyAlreadyExists,
     ChannelIdentityAlreadyExists,
     CounterpartyContactAlreadyExists,
-    CompanionRecordAlreadyExists,
     ConcurrentWrite,
     ArithmeticOverflow,
     InvariantViolation,

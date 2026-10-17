@@ -1,4 +1,5 @@
-//! FACET overwrite checks for immutable substrate identity and retired privacy axes.
+//! FACET write checks: the local identity-body refusal, immutable substrate
+//! identity and retired privacy axes.
 use super::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::{
@@ -7,7 +8,17 @@ use crate::{
     store::Store,
 };
 
-/// A substrate cannot be replaced by an arbitrary opaque mask or old identity.
+/// The one local identity-body refusal. PERSON holds identity; a FACET is a
+/// scenario mask, so a FACET body shaped as a persona or relationship is
+/// refused on every local door (put apply and checkpoint restore).
+pub(crate) fn validate_local_identity_body(entity_type: u8, body: &[u8]) -> Result<()> {
+    if entity_type == ENTITY_TYPE_FACET && crate::companion::is_identity_facet_body(body) {
+        return Err(Error::InvalidClaimBody("FACET cannot carry PERSON identity"));
+    }
+    Ok(())
+}
+
+/// A substrate cannot be replaced by an arbitrary opaque mask.
 pub(super) fn validate_facet_overwrite(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -54,12 +65,6 @@ pub(super) fn validate_facet_overwrite(
         return Ok(());
     }
     let prior = &raw[ENTITY_METADATA_HEADER_LEN..];
-    let profile = crate::companion::is_identity_facet_body(prior);
-    if profile && !crate::companion::is_identity_facet_body(data) {
-        return Err(Error::InvalidClaimBody(
-            "identity facet shape cannot change",
-        ));
-    }
     if let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &prior[..])
         && entries
             .iter()

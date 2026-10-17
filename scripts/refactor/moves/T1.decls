@@ -188,7 +188,6 @@ crates/oneiron/src/batch.rs	Ok(header.entity_type == crate::types::ENTITY_TYPE_C
 crates/oneiron/src/batch.rs	if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {	if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
 crates/oneiron/src/bm25.rs	if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {	if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
 crates/oneiron/src/bm25.rs	if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {	if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-crates/oneiron/src/companion.rs	pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = crate::types::TYPE_BYTE_BAND_COMPANION_START;	pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = crate::registry::TYPE_BYTE_BAND_COMPANION_START;
 crates/oneiron/src/context_pack/tests.rs	crate::types::ENTITY_TYPE_TURN,	crate::registry::ENTITY_TYPE_TURN,
 crates/oneiron/src/context_pack/tests.rs	crate::types::ENTITY_TYPE_PERSON,	crate::registry::ENTITY_TYPE_PERSON,
 crates/oneiron/src/context_pack/tests.rs	crate::types::ENTITY_TYPE_PERSON,	crate::registry::ENTITY_TYPE_PERSON,

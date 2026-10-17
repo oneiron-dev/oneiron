@@ -524,7 +524,6 @@ impl From<Error> for MemoryError {
             ),
             ErrorKind::ClaimAlreadyClosed
             | ErrorKind::ClaimSelfSupersession
-            | ErrorKind::CompanionRecordAlreadyExists
             | ErrorKind::ConcurrentWrite
             | ErrorKind::EntityTypeImmutable => Self::new(
                 MEMORY_CODE_INVALID_STATE,

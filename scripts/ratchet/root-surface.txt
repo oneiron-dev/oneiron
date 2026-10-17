@@ -165,7 +165,6 @@ CompactionWindowMessage
 CompanionAssembly
 CompanionBirthIntent
 CompanionExpression
-CompanionRecordKind
 CompanionScope
 CompanionSubject
 CompanionTaskKind

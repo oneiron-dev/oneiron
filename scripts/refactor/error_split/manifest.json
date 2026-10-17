@@ -3,8 +3,8 @@
  "base_rev": "51d7e4a79ecf801ee316f1cc9a079a89c5bb55dc",
  "source": "crates/oneiron/src/error/mod.rs",
  "totals": {
-  "variants": 224,
-  "error_kind_variants": 219,
+  "variants": 222,
+  "error_kind_variants": 218,
   "per_domain": {
    "root": 21,
    "artifact": 24,
@@ -13,7 +13,7 @@
    "gate": 16,
    "maintenance": 5,
    "offrecord": 12,
-   "record": 28,
+   "record": 26,
    "registry": 16,
    "relay": 7,
    "secret": 16,
@@ -21,9 +21,9 @@
    "sync": 16
   },
   "shapes": {
-   "tuple": 79,
+   "tuple": 78,
    "struct": 111,
-   "unit": 34
+   "unit": 33
   },
   "cfg_gated": 11
  },
@@ -4848,40 +4848,6 @@
    "note": null
   },
   {
-   "name": "CompanionRecordAlreadyExists",
-   "domain": "record",
-   "enum": "RecordError",
-   "file": "crates/oneiron/src/error/record.rs",
-   "shape": "unit",
-   "payload": null,
-   "error_attr": "#[error(\"companion record already exists\")]",
-   "cfg": [],
-   "other_attrs": [],
-   "has_source": false,
-   "has_from": false,
-   "src_line": 36,
-   "refs": {
-    "prod": 4,
-    "test": 5,
-    "total": 9,
-    "files": 4,
-    "modules": 3,
-    "crates": {
-     "oneiron": 9
-    },
-    "top_modules": [
-     "batch",
-     "companion",
-     "sync"
-    ]
-   },
-   "action": "move",
-   "dead": false,
-   "reachable_via": null,
-   "dead_verdict": null,
-   "note": null
-  },
-  {
    "name": "InvalidFederationGrantBody",
    "domain": "record",
    "enum": "RecordError",
@@ -4988,41 +4954,6 @@
    "reachable_via": null,
    "dead_verdict": null,
    "note": "cross-record assembly anomaly; constructed in context_pack/"
-  },
-  {
-   "name": "InvalidCompanionRecordBody",
-   "domain": "record",
-   "enum": "RecordError",
-   "file": "crates/oneiron/src/error/record.rs",
-   "shape": "tuple",
-   "payload": [
-    "&'static str"
-   ],
-   "error_attr": "#[error(\"invalid companion record body: {0}\")]",
-   "cfg": [],
-   "other_attrs": [],
-   "has_source": false,
-   "has_from": false,
-   "src_line": 65,
-   "refs": {
-    "prod": 1,
-    "test": 3,
-    "total": 4,
-    "files": 2,
-    "modules": 2,
-    "crates": {
-     "oneiron": 4
-    },
-    "top_modules": [
-     "batch",
-     "sync"
-    ]
-   },
-   "action": "move",
-   "dead": false,
-   "reachable_via": null,
-   "dead_verdict": null,
-   "note": null
   },
   {
    "name": "InvalidPsychProfileBody",

@@ -30,12 +30,7 @@ pub(crate) struct ContextBoardMemoriesSlotControls {
     #[serde(default)]
     #[schema(example = 1)]
     pub(crate) facets: Option<usize>,
-    /// Companion-register row cap.
-    #[serde(default)]
-    #[schema(example = 1)]
-    pub(crate) companions: Option<usize>,
-    /// Row cap for all other entity types; defaults to the retrieval
-    /// budget's other cap minus companions.
+    /// Row cap for all other entity types; defaults to the retrieval budget's other cap.
     #[serde(default)]
     #[schema(example = 1)]
     pub(crate) other: Option<usize>,
@@ -106,7 +101,6 @@ pub(crate) enum ContextBoardMemorySlot {
     Turns,
     Summaries,
     Facets,
-    Companions,
     Other,
 }
 
@@ -134,9 +128,6 @@ pub(crate) struct ContextBoardMemoriesBudget {
     /// Facet row cap.
     #[schema(example = 1)]
     facets: usize,
-    /// Companion-register row cap.
-    #[schema(example = 0)]
-    companions: usize,
     /// Row cap for all other entity types.
     #[schema(example = 2)]
     other: usize,
@@ -150,12 +141,14 @@ pub(crate) struct ContextBoardCompanionAssembly {
     /// Effective caller/session identity used for the MEMORIES section.
     #[schema(example = "session-123")]
     caller: Option<String>,
-    /// Effective companion scope selected from active companion records.
+    /// Effective companion scope: personal when both refs resolve to PERSON
+    /// identities, otherwise neutral.
     #[schema(example = "personal")]
     scope: Option<String>,
-    /// Active relationship record that selected the companion scope.
+    /// How the companion scope was resolved: `person_identity` when both refs
+    /// are PERSON entities, otherwise `neutral_default`.
     #[serde(rename = "scope_source")]
-    #[schema(example = "relationship_record")]
+    #[schema(example = "person_identity")]
     scope_source: Option<String>,
     /// Optional PERSON identity used for companion-aware assembly metadata.
     #[serde(rename = "person_ref")]
@@ -345,7 +338,7 @@ pub(crate) fn resolve_companion_assembly(
             expression: Some(fallback_expression.as_str().to_owned()),
         });
     }
-    // A companion persona is a PERSON identity, not a companion-register row.
+    // A companion persona is a PERSON identity.
     // Authorization is checked above, before either identity is inspected.
     let personal = match (person_ref, persona_ref) {
         (Some(person), Some(persona)) => {
@@ -444,7 +437,6 @@ pub(crate) fn memories_budget(
         retrieval_defaults.turns,
         retrieval_defaults.summaries,
         retrieval_defaults.facets,
-        0,
         retrieval_defaults.other,
     );
     let Some(slots) = controls.and_then(|controls| controls.slots.as_ref()) else {
@@ -453,17 +445,12 @@ pub(crate) fn memories_budget(
             .map_or(defaults, |total| defaults.with_shared_total(total));
     };
 
-    let companions = slots.companions.unwrap_or(defaults.companions);
-    let other = slots
-        .other
-        .unwrap_or_else(|| retrieval_defaults.other.saturating_sub(companions));
     let selected = oneiron::MemoriesBudget::new(
         slots.claims.unwrap_or(defaults.claims),
         slots.turns.unwrap_or(defaults.turns),
         slots.summaries.unwrap_or(defaults.summaries),
         slots.facets.unwrap_or(defaults.facets),
-        companions,
-        other,
+        slots.other.unwrap_or(defaults.other),
     );
     controls
         .and_then(|controls| controls.shared_total)

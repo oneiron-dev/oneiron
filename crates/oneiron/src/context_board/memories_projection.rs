@@ -4,7 +4,6 @@ use super::memories::{
     CompanionAssembly, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesSection, MemoryRow,
     MemorySlot, MemorySource, MemoryTier,
 };
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::context_pack::{ContextEntity, ContextPack};
 use crate::disclosure::DisclosureAssembly;
 use crate::registry::{
@@ -154,7 +153,6 @@ pub(super) fn memory_slot(entity_type: u8) -> MemorySlot {
         ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE => MemorySlot::Turns,
         ENTITY_TYPE_SUMMARY => MemorySlot::Summaries,
         ENTITY_TYPE_FACET => MemorySlot::Facets,
-        ENTITY_TYPE_COMPANION_REGISTER => MemorySlot::Companions,
         _ => MemorySlot::Other,
     }
 }

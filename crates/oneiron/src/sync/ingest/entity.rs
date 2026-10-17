@@ -81,9 +81,6 @@ pub(in crate::sync) enum EntityStep {
     /// Nothing to write: a delete gate holds, the local bytes already match, or the kind never
     /// replicates.
     Skip,
-    /// A retired identity carrier (a companion register row). It stays local, and its carrier
-    /// and every edge touching it must leave the shared document.
-    LocalOnlyCompanion(EntityId),
     /// The replicated row was written.
     Materialized(EntityId),
     /// A delete-protected engine row passed its door (and was written when `wrote`). Its `dt:`
@@ -203,8 +200,7 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
     } else {
         // Rule A: the row's carried birth lands in the savepoint that
         // admitted the row, or not at all.
-        if !matches!(step, EntityStep::LocalOnlyCompanion(_))
-            && let Some(doc) = ctx.carrier_doc()
+        if let Some(doc) = ctx.carrier_doc()
             && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
             && crate::vault::live_entity_row_in_txn(&ctx.vault.store, &savepoint, &id)?.is_live()
         {
@@ -389,13 +385,6 @@ fn admit(
         return Ok(EntityStep::Skip);
     }
     let data = &blob[ENTITY_METADATA_HEADER_LEN..];
-    if crate::companion::is_retired_identity_carrier(header.entity_type, data) {
-        tracing::warn!(
-            entity = %id.to_hex(),
-            "sync ingest: refused local-only companion register materialization"
-        );
-        return Ok(EntityStep::LocalOnlyCompanion(id));
-    }
     if header.entity_type == ENTITY_TYPE_DIAGNOSTIC {
         // T1 observations and eligibility receipts are local to their account: replay may not
         // revive a remote detector's local observations.

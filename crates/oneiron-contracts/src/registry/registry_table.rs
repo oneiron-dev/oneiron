@@ -1,7 +1,5 @@
 //! Registry rows: the `ENTITY_TYPE_REGISTRY` table and its lookups.
 
-use crate::companion::{COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER};
-
 use super::artifact_kinds::ArtifactFamilyKindId;
 use super::families::TypeByteFamily;
 use super::namespaces::ID_NAMESPACE_REGISTRY;
@@ -256,19 +254,6 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         artifact_kind: None,
         zone: TypeByteZone::Core,
     },
-    EntityTypeRegistryEntry {
-        kind: "COMPANION_REGISTER",
-        type_byte: ENTITY_TYPE_COMPANION_REGISTER,
-        short_id_prefix: Some(COMPANION_REGISTER_SHORT_ID_PREFIX),
-        legacy_short_id_prefixes: &[],
-        classification: EntityClassification::Pack,
-        family: Some(TypeByteFamily::Companion),
-        artifact_kind: None,
-        zone: TypeByteZone::CompiledProduct,
-    },
-    // The system zone holds both engine-authored and publicly writable kinds:
-    // classification — not zone position — drives the public-write rejection.
-    // COMPANION_REGISTER above and this row are the two live proofs.
     EntityTypeRegistryEntry {
         kind: "IDENTITY_TOPOLOGY_EVENT",
         type_byte: ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,

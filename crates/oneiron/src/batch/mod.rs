@@ -14,6 +14,7 @@ pub(crate) use verified_claim_transition::VerifiedClaimTransition;
 mod deindex;
 mod edge_apply;
 mod facet_identity;
+pub(crate) use facet_identity::validate_local_identity_body;
 mod facet_validation;
 mod gate_mode;
 mod gate_staging;

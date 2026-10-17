@@ -1053,10 +1053,10 @@ Authentication: `Authorization: Bearer <credential>` with `core:read`, unless de
 Request body (every block is optional; `{}` returns the prefix beside the caller's current cursor):
 
 - `retrieval` optional: a Context Pack request body (see above). When present, retrieval runs and its pack rides the response.
-- `memories` optional: `enabled` (default `true`) and `slots` per-slot row caps (`claims`, `turns`, `summaries`, `facets`, `companions`, `other`).
+- `memories` optional: `enabled` (default `true`) and `slots` per-slot row caps (`claims`, `turns`, `summaries`, `facets`, `other`).
 - `session` optional: `session_id` that carries the cursor across calls; defaults to the caller identity.
 - `companion` optional: `person_ref` identifies the PERSON, `persona_ref` supplies the other relationship endpoint, and `expression` selects `professional`, `warm`, or `unrestricted`.
-  Only an active relationship record can select a non-neutral companion scope.
+  The scope is `personal` (`scope_source` `person_identity`) only when the caller is authorized for that pair and both refs are PERSON identities; otherwise it is `neutral` (`neutral_default`).
 
 Response fields:
 

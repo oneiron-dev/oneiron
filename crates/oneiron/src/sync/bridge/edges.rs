@@ -6,8 +6,7 @@ use loro::LoroDoc;
 
 use super::childof::{apply_materialized_edge_ops, replayed_child_of_candidates};
 use super::companion_identity::{
-    CompanionCrdtScrub, EndpointHydration, ensure_entity_materialized_from_crdt, parse_edge_key,
-    scrub_local_only_companions_from_crdt,
+    EndpointHydration, ensure_entity_materialized_from_crdt, parse_edge_key,
 };
 #[cfg(test)]
 use super::entities::take_injected_batch_commit_failure;
@@ -79,7 +78,6 @@ pub(super) fn materialize_edges_from_delta(
     // tracked (e.g. the partner endpoint failed LOCALLY and aborted the batch
     // BEFORE `applied_edges.push`).
     let mut hydrated_endpoints: Vec<(EntityId, Vec<u8>)> = Vec::new();
-    let mut pending_companion_scrubs = Vec::new();
     let result = vault.with_write_txn_grouped(|wtxn| {
         let entities_map = doc.get_map("entities");
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
@@ -208,12 +206,6 @@ pub(super) fn materialize_edges_from_delta(
                     if let Ok(EndpointHydration::Hydrated(blob)) = &tgt_ready {
                         hydrated_endpoints.push((tgt, blob.clone()));
                     }
-                    if matches!(&src_ready, Ok(EndpointHydration::LocalOnly)) {
-                        pending_companion_scrubs.push(CompanionCrdtScrub::new(src.to_hex(), src));
-                    }
-                    if matches!(&tgt_ready, Ok(EndpointHydration::LocalOnly)) {
-                        pending_companion_scrubs.push(CompanionCrdtScrub::new(tgt.to_hex(), tgt));
-                    }
 
                     // ARCH-0055 reserved-kind gate: `merged_into` /
                     // `split_into` carry redirect-shell lifecycle meaning,
@@ -262,14 +254,6 @@ pub(super) fn materialize_edges_from_delta(
                             Ok(EndpointHydration::Ready | EndpointHydration::Hydrated(_)),
                             Ok(EndpointHydration::Ready | EndpointHydration::Hydrated(_)),
                         ) => {}
-                        (Ok(EndpointHydration::LocalOnly), Ok(_))
-                        | (Ok(_), Ok(EndpointHydration::LocalOnly)) => {
-                            tracing::warn!(
-                                edge = %key,
-                                "observer-b: edge scrubbed because it touches a local-only companion register row"
-                            );
-                            continue;
-                        }
                         (Ok(EndpointHydration::RejectedBlob), Ok(_))
                         | (Ok(_), Ok(EndpointHydration::RejectedBlob)) => {
                             // The endpoint's CRDT blob is undecodable REMOTE
@@ -641,16 +625,6 @@ pub(super) fn materialize_edges_from_delta(
             crate::sync::ingest::note_born(vault, *id, blob);
         }
     }
-    if result.is_ok()
-        && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)
-    {
-        tracing::error!(
-            kind = ?e.kind(),
-            window = %window_key,
-            "observer-b: local-only companion CRDT scrub failed after edge batch commit"
-        );
-    }
-
     if let Err(e) = &result {
         // ONE-1147: whole-txn failure — same marker semantics and
         // best-effort layering as the entity swallow site above. Two classes

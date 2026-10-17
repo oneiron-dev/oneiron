@@ -1,6 +1,6 @@
 //! Record-domain errors: body validation and identity-collision refusals for
 //! the stored record families — grants, connector keys, channel identities,
-//! companion records, notes, tasks and the authority log.
+//! notes, tasks and the authority log.
 //!
 //! Reached from the root as `Error::Record(..)`, a transparent wrapper: Display
 //! and `source()` are the leaf's, so every message string is what it was when
@@ -92,9 +92,6 @@ pub enum RecordError {
     /// (identity_ref, counterparty) key.
     #[error("counterparty contact already exists")]
     CounterpartyContactAlreadyExists,
-    /// Companion register creation attempted to reuse an existing id or key.
-    #[error("companion record already exists")]
-    CompanionRecordAlreadyExists,
     /// A FEDERATION_GRANT (type 124) body failed structural validation.
     #[error("invalid federation grant body: {0}")]
     InvalidFederationGrantBody(&'static str),
@@ -107,15 +104,6 @@ pub enum RecordError {
     /// Context-pack assembly found a cross-record anomaly before surfacing output.
     #[error("context pack validation failed for entity {}: {reason}", id.to_hex())]
     ContextPackValidation { id: EntityId, reason: &'static str },
-    /// A COMPANION_REGISTER body failed the pinned STATELESS structural
-    /// validation at the FEDERATION ADMISSION door. Nothing was written, and
-    /// nothing was staged.
-    ///
-    /// Retired companion identity carriers are refused before import staging.
-    /// This typed variant is retryable rather than a terminal staged receipt:
-    /// repeated presentation must never confirm a row storage cannot admit.
-    #[error("invalid companion record body: {0}")]
-    InvalidCompanionRecordBody(&'static str),
     /// A PSYCH_PROFILE entity body failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid psych profile body: {0}")]
@@ -289,7 +277,6 @@ impl RecordError {
             Self::ConnectorKeyAlreadyExists => ErrorKind::ConnectorKeyAlreadyExists,
             Self::ChannelIdentityAlreadyExists => ErrorKind::ChannelIdentityAlreadyExists,
             Self::CounterpartyContactAlreadyExists => ErrorKind::CounterpartyContactAlreadyExists,
-            Self::CompanionRecordAlreadyExists => ErrorKind::CompanionRecordAlreadyExists,
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
             Self::InvalidAuthorityLogBody(_) => ErrorKind::InvalidAuthorityLogBody,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
@@ -310,12 +297,6 @@ impl RecordError {
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::AskDependencyPending => ErrorKind::AskDependencyPending,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
-            // Deliberately the SAME coarse kind a companion body fault has
-            // always reported: only the variant is distinct, so the staging
-            // terminal classifier can tell them apart without changing what
-            // `kind()`-based callers (quarantine classification, API error
-            // codes) observe.
-            Self::InvalidCompanionRecordBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
             Self::InvalidPersonaSnapshot(_) => ErrorKind::InvalidPersonaSnapshot,
             Self::InvalidNoteBody(_) => ErrorKind::InvalidNoteBody,

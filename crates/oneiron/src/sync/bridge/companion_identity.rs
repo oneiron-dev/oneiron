@@ -1,20 +1,16 @@
-//! Retired identity-carrier scrub, identity topology ingest, and edge key/value helpers.
+//! Identity topology ingest, endpoint hydration, and edge key/value helpers.
 
-use std::collections::HashSet;
-
-use loro::{CommitOptions, LoroDoc, LoroMap};
-
-use super::BRIDGE_ORIGIN;
+use loro::LoroMap;
 
 use crate::affect::Vad;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::EntityMetadataHeader;
 use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
 };
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, SyncError};
 use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn};
-use crate::sync::loro_support::{TombstoneIndex, map_delete, map_for_each_bytes, map_get_bytes};
+use crate::sync::loro_support::{TombstoneIndex, map_get_bytes};
 use crate::sync::quarantine::{
     QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
 };
@@ -166,70 +162,6 @@ fn validate_replicated_identity_topology_record_before_mutation(
         })
 }
 
-pub(super) fn companion_register_blob_is_local_only(blob: &[u8]) -> Result<bool> {
-    let Some(header) = EntityMetadataHeader::parse(blob) else {
-        return Err(Error::CorruptedIndex("entity metadata"));
-    };
-    Ok(crate::companion::is_retired_identity_carrier(
-        header.entity_type,
-        &blob[ENTITY_METADATA_HEADER_LEN..],
-    ))
-}
-
-pub(in crate::sync) struct CompanionCrdtScrub {
-    entity_key: String,
-    id: EntityId,
-}
-
-impl CompanionCrdtScrub {
-    pub(in crate::sync) fn new(entity_key: impl Into<String>, id: EntityId) -> Self {
-        Self {
-            entity_key: entity_key.into(),
-            id,
-        }
-    }
-}
-
-pub(in crate::sync) fn scrub_local_only_companions_from_crdt(
-    doc: &LoroDoc,
-    scrubs: &[CompanionCrdtScrub],
-) -> Result<()> {
-    if scrubs.is_empty() {
-        return Ok(());
-    }
-
-    let entities_map = doc.get_map("entities");
-    let edges_map = doc.get_map("edges");
-    let mut changed = false;
-    let mut ids = HashSet::new();
-
-    for scrub in scrubs {
-        ids.insert(scrub.id);
-        if entities_map.get(scrub.entity_key.as_str()).is_some() {
-            map_delete(&entities_map, scrub.entity_key.as_str())?;
-            changed = true;
-        }
-    }
-
-    let mut edge_keys = Vec::new();
-    map_for_each_bytes(&edges_map, |edge_key, _| {
-        if let Some((src, _, tgt)) = parse_edge_key(edge_key)
-            && (ids.contains(&src) || ids.contains(&tgt))
-        {
-            edge_keys.push(edge_key.to_owned());
-        }
-    });
-    for edge_key in &edge_keys {
-        map_delete(&edges_map, edge_key)?;
-        changed = true;
-    }
-
-    if changed {
-        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    }
-    Ok(())
-}
-
 /// Endpoint hydration outcome for Observer B edge materialization.
 pub(super) enum EndpointHydration {
     /// Endpoint already present in LMDB — NO write was performed, so a batch
@@ -246,9 +178,6 @@ pub(super) enum EndpointHydration {
     /// Endpoint absent or tombstoned — defer the edge (it stays in the CRDT
     /// and re-materializes when its endpoint does).
     Deferred,
-    /// Endpoint is a local-only companion register row. Edges touching it
-    /// must not materialize or remain in a shared CRDT window.
-    LocalOnly,
     /// The endpoint's CRDT entities-map blob is structurally undecodable —
     /// REMOTE garbage by construction (the blob came from the remote doc),
     /// so the edge op is rejected with it (quarantined by the caller). Never
@@ -332,9 +261,6 @@ pub(super) fn ensure_entity_materialized_from_crdt(
         {
             return Ok(EndpointHydration::Deferred);
         }
-        if companion_register_blob_is_local_only(&raw)? {
-            return Ok(EndpointHydration::LocalOnly);
-        }
         return Ok(EndpointHydration::Ready);
     }
 
@@ -348,9 +274,6 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     // LOCAL `CorruptedIndex` at the caller's classification.
     if EntityMetadataHeader::parse(&blob).is_none() {
         return Ok(EndpointHydration::RejectedBlob);
-    }
-    if companion_register_blob_is_local_only(&blob)? {
-        return Ok(EndpointHydration::LocalOnly);
     }
     // Late body/project validation can fail after staging. The edge batch
     // quarantines remote failures and commits siblings, so hydration needs

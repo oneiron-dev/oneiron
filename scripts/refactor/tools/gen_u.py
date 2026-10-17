@@ -154,10 +154,6 @@ def main():
     allow |= {"crates/oneiron/src/types.rs", "crates/oneiron/src/lib.rs",
               "crates/oneiron/src/companion.rs", "crates/oneiron/src/psych_profile.rs"}
 
-    # U-gap use line (types.rs) is a private `use` -> not in inventory; it lands via
-    # check C exemption. Record as an add for documentation only.
-    ugap = "use crate::companion::{COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER};"
-
     with open(os.path.join(OUT, "U.tsv"), "w") as f:
         f.write("# U: types.rs #[path] un-mount — no item moves (edits + lib re-point only)\n")
     with open(os.path.join(OUT, "U.decls"), "w") as f:
@@ -169,7 +165,7 @@ def main():
         f.write("## consumer-exempt\ncrates/oneiron/src/types.rs\n\n")
         f.write("## decl\n" + "".join(d + "\n" for d in sorted(decl)) + "\n")
         f.write("## edit\n" + "".join(f"{e[0]}\t{e[1]}\t{e[2]}\n" for e in sorted(set(edits))))
-        f.write("\n## add\ncrates/oneiron/src/types.rs\t" + ugap + "\n")
+        f.write("\n## add\n")
     print(f"U: comp42={len(comp42)} psych9={len(psych9)} lib572={len(lib572)} "
           f"flat_comp={len(flat_comp)} native={len(native)}; {len(set(edits))} consumer edits, "
           f"{len(allow)} allowed files")

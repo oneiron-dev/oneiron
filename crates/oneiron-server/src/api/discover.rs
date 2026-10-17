@@ -81,7 +81,6 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "turns.annotate",
     "companion.profile",
     "companion.access_grants",
-    "companion.register",
     "lease.revoke",
     "usage.event",
     "usage.rollup",

@@ -7,8 +7,8 @@
 /// NOT a StructuralKind; core and pack kinds ARE StructuralKinds; the system
 /// zone's engine-authored records (REDACTION_AUDIT … SKILL_CONTENT_ANCHOR) are
 /// not StructuralKinds either. Classification, not zone position, is what makes
-/// a kind engine-authored: COMPANION_REGISTER sits inside the same 64–99 zone
-/// and stays publicly writable because it is classified `Pack`.
+/// a kind engine-authored: a kind classified `Pack` stays publicly writable
+/// wherever its byte sits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityClassification {
     /// `"semantic"` — CLAIM, the single subject·predicate·value type.

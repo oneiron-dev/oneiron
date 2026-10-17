@@ -1,8 +1,8 @@
 //! Companion task queue and PERSON/FACET persona compilation.
 //!
-//! Old persona/relationship-shaped FACET bodies and the retired register type
-//! are classified here solely so every storage, sync and export door refuses
-//! them. Scenario masks remain ordinary FACET rows.
+//! PERSON holds baseline and evolved identity; a FACET is an explicit scenario
+//! mask. A FACET body shaped as a persona or relationship is refused at write
+//! admission, on both the local and the sync door.
 
 mod codec;
 mod keys;
@@ -11,14 +11,8 @@ mod persona;
 mod queue;
 mod vault;
 
-/// The retired identity carrier is never a PERSON baseline or scenario mask.
-/// Byte 115 is closed outright; legacy persona/relationship bodies hidden on
-/// FACET are equally non-portable at every storage and sync outlet.
-pub(crate) fn is_retired_identity_carrier(kind: u8, data: &[u8]) -> bool {
-    kind == ENTITY_TYPE_COMPANION_REGISTER
-        || (kind == crate::registry::ENTITY_TYPE_FACET && is_identity_facet_body(data))
-}
-
+/// A FACET body naming `kind` `persona` or `relationship` carries identity,
+/// which belongs on PERSON. Both write-admission refusals share this shape test.
 pub(crate) fn is_identity_facet_body(data: &[u8]) -> bool {
     let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..]) else {
         return false;
@@ -29,8 +23,7 @@ pub(crate) fn is_identity_facet_body(data: &[u8]) -> bool {
 }
 
 pub use self::keys::{
-    COMPANION_REGISTER_SHORT_ID_PREFIX, COMPANION_TASK_ATTEMPT_KIND, COMPANION_TASK_PAYLOAD_KEYS,
-    COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ENTITY_TYPE_COMPANION_REGISTER,
+    COMPANION_TASK_ATTEMPT_KIND, COMPANION_TASK_PAYLOAD_KEYS, COMPANION_TASK_PAYLOAD_SCHEMA_VERSION,
 };
 pub use self::model::{
     CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKey,

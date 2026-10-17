@@ -7,8 +7,7 @@
 //! It deliberately owns NO type byte. Byte-space v3 assigns CAMPAIGN's byte at
 //! registration time within the compiled-product zone; a static constant here (or a
 //! `registry.rs` row) would re-introduce the compile-time allocation this pack
-//! exists to avoid. `companion.rs` is the module-layout precedent only — its
-//! `ENTITY_TYPE_COMPANION_REGISTER` static-byte style is explicitly not copied.
+//! exists to avoid.
 //!
 //! Ratified separation law: CAMPAIGN is an entity, the cohort is claims, and a
 //! campaign never stores or owns a member list. This module mints the

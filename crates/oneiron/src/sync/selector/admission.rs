@@ -720,20 +720,17 @@ fn downweight_federated_claim(
 /// layer, and the maintenance kinds are unreachable — the writability test
 /// above has already rejected them.
 ///
-/// Retired companion-register rows and persona/relationship-shaped FACETs are
-/// refused before an import receipt can be staged. The typed refusal stays
-/// retryable: a peer cannot confirm bytes that materialization must discard.
+/// A FACET is a scenario mask, never a store for PERSON identity: an
+/// identity-shaped FACET body takes the shared sync identity refusal before an
+/// import receipt can be staged, so a peer cannot confirm bytes that
+/// materialization must discard.
 #[cfg(feature = "sync")]
 fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]) -> Result<()> {
     if entity_type != crate::registry::ENTITY_TYPE_AGENT_DEF {
         crate::agent_def::validate_put_at_seeded_id(id, entity_type, None)?;
     }
+    validate_sync_identity_body(entity_type, body)?;
     match entity_type {
-        crate::companion::ENTITY_TYPE_COMPANION_REGISTER => {
-            return Err(Error::Record(RecordError::InvalidCompanionRecordBody(
-                "CompanionRecord storage retired; use PERSON/FACET",
-            )));
-        }
         crate::registry::ENTITY_TYPE_RECEIPT_RECORD => {
             crate::receipt::validate_receipt_record_body(id, body)?;
         }
@@ -754,12 +751,21 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
             crate::agent_def::validate_reserved_logical_id(id, &definition)?;
             crate::agent_def::validate_put_at_seeded_id(id, entity_type, Some(&definition))?;
         }
-        crate::registry::ENTITY_TYPE_FACET if crate::companion::is_identity_facet_body(body) => {
-            return Err(Error::Record(RecordError::InvalidCompanionRecordBody(
-                "retired companion-shaped FACET; use PERSON identity and scenario masks",
-            )));
-        }
         _ => {}
+    }
+    Ok(())
+}
+
+/// The one sync identity-body refusal. PERSON holds identity and a FACET is a
+/// scenario mask, so a FACET body shaped as a persona or relationship is
+/// refused. Federated body admission and raw full-window admission both call
+/// this; neither copies the predicate.
+#[cfg(feature = "sync")]
+pub(in crate::sync) fn validate_sync_identity_body(entity_type: u8, body: &[u8]) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_FACET
+        && crate::companion::is_identity_facet_body(body)
+    {
+        return Err(Error::InvalidClaimBody("FACET cannot carry PERSON identity"));
     }
     Ok(())
 }
