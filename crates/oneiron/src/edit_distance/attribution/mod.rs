@@ -74,8 +74,8 @@ mod stored;
 mod taxonomy;
 
 pub use self::audit::{
-    AmendmentAuditFixture, held_out_amendment_fixtures, judge_audit_reports, run_judge_audit,
-    run_judge_audit_with_decisions,
+    AmendmentAuditFixture, AmendmentAuditRecord, held_out_amendment_fixtures, judge_audit_records,
+    judge_audit_reports, run_judge_audit, run_judge_audit_with_decisions,
 };
 pub use self::evidence_judge::{
     amendment_evidence, amendment_judgments, judge_amendment, judge_amendment_hunks,
