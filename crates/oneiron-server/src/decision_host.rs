@@ -22,6 +22,7 @@
 use std::sync::Arc;
 
 use oneiron::booking::constraint::BookingDecisions;
+use oneiron::critic::review::{REVIEW_DIAL, ReviewDecisions, ReviewWording};
 use oneiron::fanout_auto::FanoutDecisions;
 use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, THINK_MORE};
 use oneiron::llm::decision::{
@@ -41,6 +42,9 @@ use oneiron::memory::ImagePick;
 use oneiron::policy_model::PolicyDecisions;
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::saved_query::MembershipDecisions;
+use oneiron::skill_attribution::{
+    ATTRIBUTION_DIAL, AttributionDecisions, AttributionNotes, AttributionRules,
+};
 use oneiron::skill_hub::{ClaimReplayDecisions, UsefulUpstreamDecisions};
 use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::TaskDecisions;
@@ -79,6 +83,38 @@ const PLANNER_WORDING: &str = "Which team shape should take this need? Pick the 
 model, pattern and width fit the need and its care level at the least expected spend.";
 /// How long one shape pick may take before the planner's deterministic pick stands.
 const PLANNER_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+/// A served wave cut's fan-out AUTO ruling (FIX 939): this host's wording.
+const WAVE_FANOUT_WORDING: &str = "Should this wave's fan-out launch go ahead without its owner? \
+Answer allow when its width and the history of launches like it show the owner would let it \
+run, deny when they show the owner would refuse it, and escalate-to-human when they settle \
+neither.";
+/// How long one wave cut's fan-out ruling may take; a ruling still open then
+/// leaves the cut held for the owner's approval.
+pub(crate) const WAVE_FANOUT_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+/// The skill-attribution sweep's per-outcome question (OF-420): this host's
+/// wording.
+const ATTRIBUTION_WORDING: &str = "Which label fits this finished attempt's outcome? Answer \
+skill_defect when the skill's own text was wrong, execution_lapse when the attempt did not do \
+what the skill said, discovery when the skill left out the step that was needed, environment \
+when neither the skill nor the attempt caused it, and unclear when the record does not settle \
+it.";
+/// How long one outcome's attribution may take; an outcome still open then
+/// abstains and attributes to nobody.
+const ATTRIBUTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+/// A critic review's four typed questions, asked after each lens's own
+/// prompt contract: this host's wording.
+const REVIEW_VERDICT_WORDING: &str = "Under this lens, what should happen to the artifact? \
+Answer accept when it stands as it is, revise when it needs changes first, and discard when \
+no change would make it stand.";
+const REVIEW_SEVERITY_WORDING: &str = "Under this lens, how serious is the worst problem it \
+finds? Answer info, low, medium, high or blocking; info when it finds none.";
+const REVIEW_HARD_CHECK_WORDING: &str = "Does the artifact pass this lens's hard check? Yes \
+only when the check's condition holds in full.";
+const REVIEW_OUT_OF_SCOPE_WORDING: &str = "Is this artifact outside what this lens reviews? Yes \
+when the lens's contract does not apply to it, so its answers should not count.";
+/// How long one lens's questions may take; a lens still open then fails the
+/// review, as a failed critic call did.
+const REVIEW_LENS_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
@@ -656,6 +692,82 @@ impl DecisionHost {
             bands: self.bands.clone(),
             wording,
             deadline,
+        }
+    }
+
+    /// A served wave cut's fan-out AUTO ruling (FIX 939) for `principal`, the
+    /// actor whose request queued the cut, in this host's wording, on
+    /// `deadline` ([`WAVE_FANOUT_BUDGET`] from the ask).
+    #[must_use]
+    pub(crate) fn wave_fanout_decisions<'a>(
+        &'a self,
+        principal: EntityId,
+        deadline: &'a RetrievalDeadline,
+    ) -> FanoutDecisions<'a> {
+        self.fanout_decisions(principal, WAVE_FANOUT_WORDING.to_owned(), deadline)
+    }
+
+    /// The skill-attribution sweep's ladder (OF-420): this host's, with the
+    /// rule tier ([`AttributionRules`]) on its Rule rung, so a settled cause
+    /// is routed before any model is asked.
+    #[must_use]
+    pub(crate) fn attribution_ladder(&self) -> HeldLadder {
+        HeldLadder {
+            rule: Some(Arc::new(AttributionRules) as Arc<dyn DecisionProvider>),
+            ..self.ladder.clone()
+        }
+    }
+
+    /// The attempt sweep's attribution for `principal` on `ladder` (from
+    /// [`Self::attribution_ladder`]), in this host's wording: the rules
+    /// first, then this host's model rungs up to Big, never a person, since
+    /// a doubtful outcome already holds in the unclear ledger. Each doubtful
+    /// answer takes its note from `notes`.
+    #[must_use]
+    pub(crate) fn attribution_decisions<'a>(
+        &self,
+        ladder: &'a HeldLadder,
+        principal: EntityId,
+        notes: &'a dyn AttributionNotes,
+    ) -> AttributionDecisions<'a> {
+        AttributionDecisions {
+            ladder: ladder.ladder(),
+            principal,
+            dial: DecisionDial {
+                first: DecisionRung::Rule,
+                ..ATTRIBUTION_DIAL
+            },
+            bands: self.bands.clone(),
+            wording: ATTRIBUTION_WORDING.to_owned(),
+            budget: ATTRIBUTION_BUDGET,
+            notes: Some(notes),
+        }
+    }
+
+    /// A critic review's questions through this ladder for `principal`, the
+    /// caller, over `state`, the target as the caller reads it: the engine's
+    /// review dial, this host's bands and wording, one clock per lens, and no
+    /// notes.
+    #[must_use]
+    pub(crate) fn review_decisions<'a>(
+        &'a self,
+        principal: EntityId,
+        state: &'a serde_json::Value,
+    ) -> ReviewDecisions<'a> {
+        ReviewDecisions {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: REVIEW_DIAL,
+            bands: self.bands.clone(),
+            state,
+            budget: REVIEW_LENS_BUDGET,
+            wording: ReviewWording {
+                verdict: REVIEW_VERDICT_WORDING.to_owned(),
+                severity: REVIEW_SEVERITY_WORDING.to_owned(),
+                hard_check: REVIEW_HARD_CHECK_WORDING.to_owned(),
+                out_of_scope: REVIEW_OUT_OF_SCOPE_WORDING.to_owned(),
+            },
+            notes: None,
         }
     }
 

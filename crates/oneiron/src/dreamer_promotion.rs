@@ -489,6 +489,16 @@ fn promote_one(
             )?;
             #[cfg(test)]
             crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Promotion);
+            // A landed finding reaches its owner's inbox in the same
+            // transaction; a pended or refused one never does.
+            if let crate::claim::ClaimSubject::Entity(subject) = landed.subject {
+                vault.record_finding_notification_in_txn(
+                    wtxn,
+                    candidate.claim_id,
+                    subject,
+                    run.now_ms,
+                )?;
+            }
         }
         // Both write paths reach here; a replayed attempt keeps the claim's
         // first birth.

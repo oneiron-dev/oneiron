@@ -2168,6 +2168,17 @@
       }
     },
     {
+      "name": "vault.critic.review",
+      "description": "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target.",
+      "input": "crate::critic::review::CriticReviewSubmit",
+      "output": "crate::critic::review::CriticReviewOutcome",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.critic.review\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false
+    },
+    {
       "name": "vault.artifacts.propose_deck",
       "description": "Runs one native deck transaction over an artifact's head and holds the proposal for Keep.",
       "refs": ["/context/thread", "/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],

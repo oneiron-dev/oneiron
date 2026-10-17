@@ -69,6 +69,8 @@ impl Vault {
         if reason.active_store_hard_purge_v1() {
             let txn = self.store.env.read_txn()?;
             self.store.reject_legal_hold_in_txn(&txn, id.as_bytes())?;
+            // A row may have landed since the header read (OF-470).
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
         }
         let crdt_persisted = self.write_crdt_tombstone(
             id,
@@ -102,6 +104,7 @@ impl Vault {
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
         if reason.active_store_hard_purge_v1() {
             self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         }
         if !crdt_persisted && reason.active_store_hard_purge_v1() {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;

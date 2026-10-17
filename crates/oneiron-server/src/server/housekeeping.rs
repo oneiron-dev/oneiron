@@ -2,11 +2,12 @@
 //! the engine's pass ([`oneiron::Vault::housekeeping`]) on a blocking thread,
 //! off the request path, unless the last pass is still running; the engine
 //! decides which sweeps are due. After it, the host prunes what only the
-//! process holds, MCP credentials that were revoked or have expired. Hourly,
-//! on a task of its own, the host runs the served repositories' git
-//! maintenance, each repository waiting for a git exchange permit. The
-//! owner's "run now" is a pass of the same kind. Every pass is held in
-//! [`HousekeepingPasses`], so stopping the host stops and waits for each.
+//! process holds: MCP credentials that were revoked or have expired, and live
+//! runs whose lease has gone. Hourly, on a task of its own, the host runs the
+//! served repositories' git maintenance, each repository waiting for a git
+//! exchange permit. The owner's "run now" is a pass of the same kind. Every
+//! pass is held in [`HousekeepingPasses`], so stopping the host stops and
+//! waits for each.
 //!
 //! Log lines carry a sweep's code, its counts and an error's kind, never row
 //! text or an error's message.
@@ -32,6 +33,11 @@ const OWNER_PASS_BUDGET: Duration = Duration::from_secs(60);
 
 /// How often the served repositories get their git maintenance.
 pub(super) const SERVED_REPOSITORY_MAINTENANCE_EVERY: Duration = Duration::from_secs(60 * 60);
+
+/// How often the host checks whether this vault's authority log grew past
+/// its newest checkpoint image, and if so writes and attests a new one
+/// (OF-469). The canon's default checkpoint cutoff is 24 hours.
+pub(super) const AUTHORITY_CHECKPOINT_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// How often repository maintenance waiting for a git exchange permit asks
 /// again.
@@ -136,6 +142,14 @@ impl SyncServer {
                 }
             }
             server.prune_mcp_credentials().await;
+            // OF-181: a parked run cancelled, which no entry or call touches
+            // again, leaves the host's live runs here.
+            let live = Arc::clone(&server);
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || live.live_runs.prune(live.vault())).await
+            {
+                tracing::warn!(panicked = error.is_panic(), "live-run prune failed");
+            }
             let courier = Arc::clone(&server);
             if let Err(error) =
                 tokio::task::spawn_blocking(move || courier.deliver_cooperative_deletions()).await
@@ -210,6 +224,65 @@ impl SyncServer {
             server.end_lifecycle_job(LifecycleJobKind::MirrorPush).await;
         });
         self.housekeeping_passes.hold(run);
+    }
+
+    /// Starts this vault's authority checkpoint upkeep on a task of its own
+    /// (OF-469), held for the host's stop, unless the last run is still
+    /// going, the host is stopping, or the host's gate refused it. When the
+    /// authority log grew past the newest image, the run writes a new one and
+    /// attests it with the host root. Returns whether a run started.
+    pub(super) async fn start_authority_checkpoint(
+        self: &Arc<Self>,
+        admit: &HousekeepingAdmission,
+    ) -> bool {
+        if self.housekeeping_passes.stopping()
+            || !self
+                .begin_lifecycle_job(LifecycleJobKind::AuthorityCheckpoint)
+                .await
+        {
+            return false;
+        }
+        let Some(admission) = admit() else {
+            self.end_lifecycle_job(LifecycleJobKind::AuthorityCheckpoint)
+                .await;
+            return false;
+        };
+        let server = Arc::clone(self);
+        let run = tokio::spawn(async move {
+            let _admission = admission;
+            let upkeep = Arc::clone(&server);
+            match tokio::task::spawn_blocking(move || upkeep.upkeep_authority_checkpoint()).await {
+                Ok(Ok(Some(_))) => tracing::info!("authority checkpoint written and attested"),
+                Ok(Ok(None)) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(kind = ?error.kind(), "authority checkpoint upkeep failed");
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        panicked = error.is_panic(),
+                        "authority checkpoint task failed"
+                    );
+                }
+            }
+            server
+                .end_lifecycle_job(LifecycleJobKind::AuthorityCheckpoint)
+                .await;
+        });
+        self.housekeeping_passes.hold(run);
+        true
+    }
+
+    /// The upkeep under this host's root: the managed issuer, or the one the
+    /// configured host secret derives. A host with neither attests nothing.
+    fn upkeep_authority_checkpoint(&self) -> oneiron::Result<Option<[u8; 32]>> {
+        if let Some(issuer) = self.managed_issuer.as_ref() {
+            return self.vault().upkeep_authority_checkpoint(issuer);
+        }
+        let Some(secret) = self.config.auth_secret.as_deref() else {
+            return Ok(None);
+        };
+        let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+        self.vault().upkeep_authority_checkpoint(&issuer)
     }
 
     /// Pushes every due mirror. Each push waits for a git exchange permit,
