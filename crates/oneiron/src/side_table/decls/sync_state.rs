@@ -211,6 +211,11 @@ side_tables! {
     /// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
     /// Key: hex32.
     GATE_MANIFEST_TRUSTED_ORIGIN: SyncState b"manifest:trusted:" Raw;
+    /// One submitted `ai.video` job (FIX-LIST 465): its rung, provider handle and call, and its end
+    /// once a poll saw it, so a restart takes it up again and an ended job answers every poll until
+    /// its caller deletes it. Its clips' bytes sit beside it. Key: ticket (`job_` hex24), or ticket
+    /// ":part:" index for a clip's bytes.
+    MODEL_MEDIA_JOB: SyncState b"models:media-job:v1:" Named;
     /// A model offer a provider refused for a quota or a limit, out of rotation until its reset
     /// (OF-305): this deployment's routing state, never replicated, and runtime to a checkpoint,
     /// which keeps none. Key: hex64 (blake3 of the offer's adapter, origin, key binding and wire

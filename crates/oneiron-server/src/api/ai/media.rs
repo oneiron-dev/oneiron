@@ -474,7 +474,8 @@ pub(super) async fn video(
     }
 }
 
-/// Where a video job stands; a finished one answers with its clip, once.
+/// Where a video job stands; a finished one answers with its clip on every
+/// poll until its caller deletes it.
 pub(super) async fn video_job(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
