@@ -1,8 +1,9 @@
 //! Reads the whole-vault archive (OF-222) back into its typed document. Each
 //! member is checked against the manifest (length and BLAKE3) before a row is
 //! read, each attached file must hash to its name, and the archive holds no
-//! member the manifest does not list. The document then passes the same
-//! validation and admission doors as before; nothing here grants authority.
+//! member the manifest does not list. No ceiling caps the whole (rule 5). The
+//! document then passes the same validation and admission doors as before;
+//! nothing here grants authority.
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
 
@@ -14,18 +15,17 @@ use super::{
     WholeVaultDocumentManifest, blake3_hex,
 };
 use crate::error::{Error, Result};
-
-/// The whole archive's unpacked ceiling: the remote export ceiling, so an
-/// archive a vault can export over the wire is one it can read back.
-const MAX_ARCHIVE_UNPACKED_BYTES: u64 = crate::memory::caps::MAX_REMOTE_EXPORT_BYTES as u64;
+use crate::serialize::ExportBody;
 
 /// An archive's document, and the custody records the owner's own archive
 /// carries beside it (never part of the document, and never nulled).
 pub(crate) struct VaultArchive {
     pub(crate) document: WholeVaultDocument,
     pub(crate) secrets: Vec<ArchiveSecretCustody>,
-    /// Result bodies by BLAKE3, text or binary, staged from these bytes.
-    pub(crate) result_files: BTreeMap<String, Vec<u8>>,
+    /// Every attached file by BLAKE3, each checked against its name and
+    /// length: result bodies stage from these bytes, and an ASSET's file body
+    /// (OF-222) is read from them.
+    pub(crate) files: BTreeMap<String, Vec<u8>>,
 }
 
 pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
@@ -144,26 +144,35 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
         "slot_bindings": slot_bindings,
     });
     let mut cited = BTreeSet::new();
-    let result_files = result_body_files(&document, &files, &mut cited)?;
+    cite_result_bodies(&document, &files, &mut cited)?;
     attach_trees(&mut document, &files, &mut cited)?;
+    let document: WholeVaultDocument = serde_json::from_value(document)
+        .map_err(|_| invalid("invalid whole-vault archive rows"))?;
+    // OF-222: an ASSET's file body names one attached file, at its length.
+    for row in document.entities() {
+        if let ExportBody::File(file) = &row.body {
+            file.resolve(&files)
+                .map_err(|_| invalid("archive entity file is absent or another length"))?;
+            cited.insert(file.blake3().to_owned());
+        }
+    }
     if cited.len() != files.len() {
         return Err(invalid("archive file no record names"));
     }
-    let document = serde_json::from_value(document)
-        .map_err(|_| invalid("invalid whole-vault archive rows"))?;
     Ok(VaultArchive {
         document,
         secrets,
-        result_files,
+        files,
     })
 }
 
-/// Every member, by name, read whole under the unpacked ceiling.
+/// Every member, by name, read whole. No ceiling caps the archive (rule 5):
+/// each member is held to its declared length here, and to its manifest
+/// length and BLAKE3 after.
 fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
         .map_err(|_| invalid("invalid whole-vault archive"))?;
     let mut members = BTreeMap::new();
-    let mut unpacked = 0u64;
     for index in 0..archive.len() {
         let member = archive
             .by_index(index)
@@ -184,10 +193,6 @@ fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
             )));
         }
         let declared = member.size();
-        unpacked = unpacked.saturating_add(declared);
-        if unpacked > MAX_ARCHIVE_UNPACKED_BYTES {
-            return Err(invalid("whole-vault archive exceeds the export ceiling"));
-        }
         let mut body = Vec::new();
         member
             .take(declared.saturating_add(1))
@@ -203,19 +208,19 @@ fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
     Ok(members)
 }
 
-/// Each result body the export did not withhold, text or binary, by its
-/// file's BLAKE3; the import stages these bytes before any row names them.
-fn result_body_files(
+/// Each result body the export did not withhold, text or binary, names an
+/// attached file by its BLAKE3; the import stages those bytes before any row
+/// names them.
+fn cite_result_bodies(
     document: &Value,
     files: &BTreeMap<String, Vec<u8>>,
     cited: &mut BTreeSet<String>,
-) -> Result<BTreeMap<String, Vec<u8>>> {
-    let mut out = BTreeMap::new();
+) -> Result<()> {
     let Some(bodies) = document
         .pointer("/run_results/bodies")
         .and_then(Value::as_array)
     else {
-        return Ok(out);
+        return Ok(());
     };
     for body in bodies {
         let fields = body
@@ -235,13 +240,12 @@ fn result_body_files(
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("archive result body without a digest"))?
             .to_owned();
-        let bytes = files
-            .get(&blake3)
-            .ok_or_else(|| invalid("archive result body file is absent"))?;
-        out.insert(blake3.clone(), bytes.clone());
+        if !files.contains_key(&blake3) {
+            return Err(invalid("archive result body file is absent"));
+        }
         cited.insert(blake3);
     }
-    Ok(out)
+    Ok(())
 }
 
 /// A source-tree file's `file` comes back as its text.

@@ -183,7 +183,7 @@ impl OneironClient {
                     Option<oneiron::claim::WeaveDigestView>,
                 >(client, verb, &input),
                 "vault.weave.lens" => {
-                    remote_agent_verb_output::<oneiron::lens::GeneratedLens>(client, verb, &input)
+                    remote_agent_verb_output::<oneiron::lens::LensFrameCard>(client, verb, &input)
                 }
                 "vault.weave.link.wrong" => remote_agent_verb_output::<
                     oneiron::claim::WeaveLinkCorrectionView,
@@ -782,6 +782,12 @@ impl OneironClient {
                 "vault.artifacts.body.fork.discard" => remote_agent_verb_output::<
                     oneiron::office_body::OfficeBodyFork,
                 >(client, verb, &input),
+                "vault.artifacts.body.proposal.read" => remote_agent_verb_output::<
+                    oneiron::office_body::OfficeBodyProposal,
+                >(client, verb, &input),
+                "vault.artifacts.body.proposal.settle" => remote_agent_verb_output::<
+                    oneiron::office_body::OfficeBodyProposal,
+                >(client, verb, &input),
                 "vault.artifacts.body.export" => remote_agent_verb_output::<
                     oneiron::office_body::OfficeBodyExportView,
                 >(client, verb, &input),
@@ -802,6 +808,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.artifacts.body.deck.oracle" => remote_agent_verb_output::<
                     oneiron::office_body::DeckGateView,
+                >(client, verb, &input),
+                "vault.artifacts.body.deck.preview" => remote_agent_verb_output::<
+                    oneiron::office_body::DeckPreview,
                 >(client, verb, &input),
                 "vault.artifacts.append" => remote_agent_verb_output::<
                     oneiron::memory::BlobVersionView,
@@ -1471,7 +1480,7 @@ impl OneironClient {
     pub fn vault_weave_lens(
         &self,
         input: &oneiron::claim::WeaveReportRequest,
-    ) -> Result<oneiron::lens::GeneratedLens, MemoryError> {
+    ) -> Result<oneiron::lens::LensFrameCard, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -3875,7 +3884,7 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.body.fork.diff", value)
     }
-    /// A person lands a reviewed fork.
+    /// Lands one reviewed fork on an answer.
     pub fn vault_artifacts_body_fork_merge(
         &self,
         input: &oneiron::office_body::OfficeBodyForkMergeRequest,
@@ -3900,6 +3909,32 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.body.fork.discard", value)
+    }
+    /// An office proposal: its members, answers and settlement.
+    pub fn vault_artifacts_body_proposal_read(
+        &self,
+        input: &oneiron::office_body::OfficeBodyProposalRequest,
+    ) -> Result<oneiron::office_body::OfficeBodyProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.proposal.read", value)
+    }
+    /// Accepts or rejects an office proposal's reviewed forks.
+    pub fn vault_artifacts_body_proposal_settle(
+        &self,
+        input: &oneiron::office_body::OfficeBodyProposalSettleRequest,
+    ) -> Result<oneiron::office_body::OfficeBodyProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.proposal.settle", value)
     }
     /// Exports the live body as the artifact's next version.
     pub fn vault_artifacts_body_export(
@@ -3991,6 +4026,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.body.deck.oracle", value)
+    }
+    /// The asked slides of a deck's head, drawn by the host's review renderer (provisional).
+    pub fn vault_artifacts_body_deck_preview(
+        &self,
+        input: &oneiron::office_body::DeckPreviewRequest,
+    ) -> Result<oneiron::office_body::DeckPreview, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.deck.preview", value)
     }
     pub fn vault_artifacts_append(
         &self,

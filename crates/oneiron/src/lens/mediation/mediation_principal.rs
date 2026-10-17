@@ -59,6 +59,8 @@ pub struct GeneratedUiAgentCallback {
 pub enum LensActingPrincipalKind {
     HumanView,
     AgentTask,
+    /// A system-class credential's own job: a host service acting as itself.
+    SystemJob,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +93,21 @@ impl LensPrincipalBinding {
         Self::new(
             principal_ref,
             LensActingPrincipalKind::AgentTask,
+            selected_read_key,
+            held_read_keys,
+        )
+    }
+
+    /// A system-class credential acting as itself, on its own system read
+    /// key, as a host job's REST write does.
+    pub fn system_job(
+        principal_ref: impl Into<String>,
+        selected_read_key: ScopedReadActorKey,
+        held_read_keys: Vec<ScopedReadActorKey>,
+    ) -> Result<Self> {
+        Self::new(
+            principal_ref,
+            LensActingPrincipalKind::SystemJob,
             selected_read_key,
             held_read_keys,
         )
@@ -148,6 +165,15 @@ impl LensPrincipalBinding {
                 {
                     return Err(Error::InvalidConfig(
                         "lens agent-task principal must use an agent read key".to_string(),
+                    ));
+                }
+            }
+            LensActingPrincipalKind::SystemJob => {
+                if selected_read_key.actor_class()
+                    != Some(EdgeActorClass::System.gate_actor_class())
+                {
+                    return Err(Error::InvalidConfig(
+                        "lens system-job principal must use a system read key".to_string(),
                     ));
                 }
             }

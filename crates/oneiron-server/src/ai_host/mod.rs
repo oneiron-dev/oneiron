@@ -38,6 +38,7 @@ mod connector_event;
 mod dreamer;
 pub(crate) mod failure_signals;
 mod harness;
+pub(crate) mod home_digests;
 pub(crate) mod identity;
 mod judge_swap;
 mod local_vision;
@@ -54,6 +55,7 @@ mod sync_wake;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+mod training_offer;
 mod turn_actions;
 mod turns;
 pub(crate) mod waves;

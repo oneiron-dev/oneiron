@@ -16,6 +16,7 @@
 //! too (`admit`): a stream's text, a NOTE's body.
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use heed::RwTxn;
 use rmpv::Value;
@@ -27,6 +28,7 @@ use super::admit::Lifted;
 use super::{HANDLE_OPEN, Masker, STAND_IN};
 use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
+use crate::secret_custody::KnownValues;
 use crate::side_table::{CodecName, SideTableDbs, SideTableDecl};
 
 /// One part of a row the wall reads.
@@ -209,13 +211,20 @@ pub(crate) fn admit_seeded_parts(
             break;
         }
     }
-    let Some(refusal) = refusal else {
-        return Ok(false);
+    // A value custody already holds keeps its own handle in a row whose
+    // writer holds a custody door, shape or none (OF-560 C).
+    let known = match dbs.side_custody() {
+        Some(custody) => KnownValues::load_in_txn(custody.store, &*wtxn)?.map(Arc::new),
+        None => None,
     };
+    if refusal.is_none() && known.is_none() {
+        return Ok(false);
+    }
     let mut planned = parts.to_vec();
     let mut plan = Masker {
         handles: seed.0.clone(),
         mints: true,
+        known: known.clone(),
         ..Masker::default()
     };
     let mut placed = false;
@@ -226,18 +235,18 @@ pub(crate) fn admit_seeded_parts(
     // Nothing placed, not even a value the seed holds: the hit is the
     // door's.
     if !placed {
-        return Err(refusal);
+        return refusal.map_or(Ok(false), Err);
     }
     // A hit no span places is still in the copy, and refuses as before.
     for part in &planned {
         let _secrets_nulled = scan_payload(&part.scanned()?)?;
     }
     if !accepts(&planned) {
-        return Err(refusal);
+        return refusal.map_or(Ok(false), Err);
     }
     drop(planned);
     let Some(custody) = dbs.side_custody() else {
-        return Err(refusal);
+        return refusal.map_or(Ok(false), Err);
     };
     let at = crate::ports::recorded_at_in_txn(custody.store, wtxn)?;
     seed.0.extend(
@@ -248,6 +257,7 @@ pub(crate) fn admit_seeded_parts(
     let mut minted = Masker {
         handles: seed.0.clone(),
         minted: true,
+        known,
         ..Masker::default()
     };
     for part in parts.iter_mut() {

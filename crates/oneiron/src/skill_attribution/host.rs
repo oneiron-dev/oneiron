@@ -15,8 +15,9 @@
 //!
 //! Neither pattern context is a loaded skill, so neither earns pack credit: a
 //! pattern skill's payoff comes from its team receipt alone. The use lists
-//! start empty and only grow from witnessed use; credit follows canon's
-//! default, the full used chain with no per-hop check.
+//! start empty and only grow from witnessed use; credit follows the
+//! lineage-credit settings where the run's project and type apply, by
+//! default the full used chain with no per-hop check.
 
 use crate::Vault;
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
@@ -25,6 +26,9 @@ use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::{EntityId, derived_domains};
 use crate::error::Result;
 use crate::learning::TypeRef;
+use crate::learning_setting::{
+    CREDIT_CHECK_EVERY_HOP, CREDIT_DEPTH_CAP, CREDIT_ENABLED, SettingSpec, setting_value_scoped,
+};
 use crate::llm::decision::{DecisionProvider, HeldLadder, ProviderPin};
 use crate::receipt::{CreditOptions, PackAttributionFields};
 
@@ -84,8 +88,10 @@ pub fn bind_agent_run_attribution(
             input.target.agent_definition_ref()?,
         ),
     };
+    let type_ref = TypeRef::from(&input.type_ref);
+    let credit = credit_options(vault, input.project_ref, &type_ref)?;
     let fields = PackAttributionFields {
-        type_ref: TypeRef::from(&input.type_ref),
+        type_ref,
         executor,
         judge: ladder_judge(judges),
         pattern,
@@ -95,11 +101,7 @@ pub fn bind_agent_run_attribution(
         output: None,
         contributions: Vec::new(),
         used_edges: Vec::new(),
-        credit: CreditOptions {
-            enabled: true,
-            depth_cap: None,
-            check_every_hop: false,
-        },
+        credit,
     };
     AttemptQueue::new(vault).set_pack_attribution(
         attempt,
@@ -108,6 +110,28 @@ pub fn bind_agent_run_attribution(
         &fields,
     )?;
     Ok(true)
+}
+
+/// The lineage-credit controls in force where `project` and `type_ref`
+/// apply, frozen on the run as it binds.
+fn credit_options(
+    vault: &Vault,
+    project: Option<EntityId>,
+    type_ref: &TypeRef,
+) -> Result<CreditOptions> {
+    let value = |spec: &SettingSpec| setting_value_scoped(vault, spec, project, Some(type_ref));
+    let cap = value(&CREDIT_DEPTH_CAP)?;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the catalog bounds the cap to 0..=1024 hops"
+    )]
+    let depth_cap = (cap < CREDIT_DEPTH_CAP.max).then(|| cap.floor() as u32);
+    Ok(CreditOptions {
+        enabled: value(&CREDIT_ENABLED)? >= 0.5,
+        depth_cap,
+        check_every_hop: value(&CREDIT_CHECK_EVERY_HOP)? >= 0.5,
+    })
 }
 
 /// The id of a coordination pattern's context: `solo`, or a team pattern's
