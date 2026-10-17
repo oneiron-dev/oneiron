@@ -10,14 +10,16 @@
 //! unit text off the host where it forbids that. A dial up to the person
 //! asks the question's responsible role, its principal, and the ask climbs
 //! to the vault's owners (OF-516); each pass also climbs every open ask no
-//! live actor holds. It sleeps until the next question falls due and wakes
-//! early on a committed change.
+//! live actor holds, runs each scheduled backfill that fell due and closes
+//! each bound answer's lapsed outcome window. It sleeps until the next
+//! question or window falls due and wakes early on a committed change.
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::llm::decision::questions::{
     GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionCriteria,
-    refresh_due_artifact_questions, refresh_due_questions_by_role,
+    close_due_outcome_windows, next_outcome_window_close_at, refresh_due_artifact_questions,
+    refresh_due_questions_by_role,
 };
 use oneiron::llm::decision::{
     AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
@@ -439,7 +441,10 @@ pub(crate) fn spawn(
                         pump_due(&server, oneiron_vault_contract::now_ts())?;
                         let question = server.vault().next_question_refresh_at()?;
                         let wake = server.vault().next_answer_wake_at()?;
-                        Ok::<_, oneiron::Error>(question.into_iter().chain(wake).min())
+                        let window = next_outcome_window_close_at(server.vault())?;
+                        Ok::<_, oneiron::Error>(
+                            question.into_iter().chain(wake).chain(window).min(),
+                        )
                     })
                     .await
                 }
@@ -475,9 +480,11 @@ pub(crate) fn spawn(
 /// One pass on the vault's home node: every due standing question, each
 /// asked for its principal on the ladder under its own dial, criteria and
 /// call clock, run by the first live holder of its responsible-role chain;
-/// then every open ask no live actor holds climbs to the next role that has
-/// one. Off home it does nothing. The engine holds a failed question before
-/// it is due again; its error logs by kind, as its text can quote the vault.
+/// a due scheduled backfill runs the same way over the units its version
+/// has not answered; each lapsed outcome window closes; then every open ask
+/// no live actor holds climbs to the next role that has one. Off home it
+/// does nothing. The engine holds a failed question before it is due again;
+/// its error logs by kind, as its text can quote the vault.
 pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
     if !at_home(server.vault(), now)? {
         return Ok(());
@@ -516,6 +523,11 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             kind = ?failure.error.kind(),
             "a standing artifact question was not asked; it is held, then runs again"
         );
+    }
+    // A window closes once, with no model: an observed fact, the binding's
+    // silence label, or unknown.
+    if let Err(error) = close_due_outcome_windows(server.vault(), now) {
+        tracing::warn!(kind = ?error.kind(), "lapsed outcome windows were not closed");
     }
     match server.vault().climb_unheld_decision_asks() {
         Ok(climbed) => {

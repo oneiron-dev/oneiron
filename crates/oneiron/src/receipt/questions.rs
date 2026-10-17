@@ -292,6 +292,21 @@ pub struct QuestionPaused {
     pub paused: bool,
 }
 
+/// `vault.questions.backfill`'s input: schedule the caller's standing
+/// question's backfill. From `at` (now when absent) the question pump
+/// answers, once, each covered unit with no answer at `expected_version`.
+/// A later schedule replaces it and an edit retires it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionBackfillRequest {
+    pub id: EntityId,
+    /// The version to backfill; a stale one is refused.
+    pub expected_version: u32,
+    /// When the backfill falls due, in unix seconds.
+    #[serde(default)]
+    pub at: Option<u64>,
+}
+
 /// `vault.questions.read`'s input: one of the caller's standing questions,
 /// at its current version or a past one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

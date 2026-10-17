@@ -1,6 +1,7 @@
 //! Host-driven answer work: observe under principal, invoke provider outside a write transaction,
 //! then atomically recheck source, authority, version and pause before settling claims.
 
+use super::backfill::{BackfillAtKey, QUESTION_BACKFILL_AT};
 use super::graph_ask::{self, GraphAnswerer, GraphDecision, GraphUnitContext};
 use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -91,7 +92,7 @@ fn refresh_with(
     now: u64,
     answerer: &mut UnitAnswer<'_>,
 ) -> Result<Vec<AnswerRecord>> {
-    let (record, head, units, arrival_marker) = {
+    let (record, head, units, arrival_marker, backfill_marker) = {
         let txn = vault.store.env.read_txn()?;
         let head = owned_head(vault, &txn, principal, question)?;
         let record = QUESTION_VERSION
@@ -109,8 +110,30 @@ fn refresh_with(
             return Ok(Vec::new());
         }
         let mut arrival_marker = None;
+        let mut backfill_marker = None;
         let units = match trigger {
             RefreshTrigger::Manual => record.definition.units.clone(),
+            RefreshTrigger::Backfill => {
+                let key = BackfillAtKey(question);
+                match QUESTION_BACKFILL_AT.get(&vault.store, &txn, &key)? {
+                    Some(backfill) if backfill.version == head.version => {}
+                    _ => return Ok(Vec::new()),
+                }
+                backfill_marker = QUESTION_BACKFILL_AT.get_bytes(&vault.store, &txn, &key)?;
+                let answered: std::collections::BTreeSet<EntityId> = QUESTION_ANSWER
+                    .scan_from(&vault.store, &txn, &family_prefix(question, b"answer"))?
+                    .into_iter()
+                    .filter(|(_, answer)| answer.decision.receipt.question_version == head.version)
+                    .map(|(_, answer)| answer.unit)
+                    .collect();
+                record
+                    .definition
+                    .units
+                    .iter()
+                    .copied()
+                    .filter(|unit| !answered.contains(unit))
+                    .collect()
+            }
             RefreshTrigger::Schedule => {
                 let Some(interval) = record.definition.refresh.every_seconds else {
                     return Ok(Vec::new());
@@ -138,7 +161,7 @@ fn refresh_with(
                 vec![unit]
             }
         };
-        (record, head, units, arrival_marker)
+        (record, head, units, arrival_marker, backfill_marker)
     };
     let mut prepared = Vec::new();
     for unit in units {
@@ -302,15 +325,19 @@ fn refresh_with(
             let mut updated = current;
             updated.last_refresh = Some(now);
             updated.retry_at = None;
-            for p in &prepared {
-                let pending = (question, p.unit);
-                if p.arrival_marker.is_some()
-                    && arrival::PENDING.get_bytes(&vault.store, txn, &pending)? == p.arrival_marker
-                {
-                    arrival::PENDING.delete(&vault.store, txn, &pending)?;
-                }
-            }
+            consume_arrivals(vault, txn, question, &prepared)?;
             QUESTION_HEAD.put(&vault.store, txn, &HeadKey(question), &updated)?;
+        }
+        // A backfill runs once: its schedule is consumed unless it was set
+        // again during the work. It leaves the refresh clock alone.
+        if matches!(trigger, RefreshTrigger::Backfill) {
+            consume_arrivals(vault, txn, question, &prepared)?;
+            let key = BackfillAtKey(question);
+            if backfill_marker.is_some()
+                && QUESTION_BACKFILL_AT.get_bytes(&vault.store, txn, &key)? == backfill_marker
+            {
+                QUESTION_BACKFILL_AT.delete(&vault.store, txn, &key)?;
+            }
         }
         // A held unit keeps its marker, so the pump answers it once its
         // owner has answered.
@@ -326,6 +353,25 @@ fn refresh_with(
         }
         Ok(answers)
     })
+}
+
+/// Clears each answered unit's arrival marker that is still the one read
+/// before its answer: an arrival during the work keeps its own.
+fn consume_arrivals(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    question: EntityId,
+    prepared: &[Prepared],
+) -> Result<()> {
+    for p in prepared {
+        let pending = (question, p.unit);
+        if p.arrival_marker.is_some()
+            && arrival::PENDING.get_bytes(&vault.store, txn, &pending)? == p.arrival_marker
+        {
+            arrival::PENDING.delete(&vault.store, txn, &pending)?;
+        }
+    }
+    Ok(())
 }
 
 /// One failed activation, available to the host for a later retry or report.
@@ -558,6 +604,12 @@ impl Vault {
                     .saturating_add(interval);
                 arm(due.max(head.retry_at.unwrap_or(0)));
             }
+            if let Some(backfill) =
+                QUESTION_BACKFILL_AT.get(&self.store, &txn, &BackfillAtKey(id))?
+                && backfill.version == head.version
+            {
+                arm(backfill.due_at.max(head.retry_at.unwrap_or(0)));
+            }
         }
         for row in arrival::PENDING.iter_from(&self.store, &txn, &[])? {
             let ((question, unit), _) = row?;
@@ -684,8 +736,9 @@ pub(crate) fn principal_actor(vault: &Vault, principal: EntityId) -> Result<Writ
     Ok(WriteActor::new(principal, class))
 }
 
-/// The scheduled and materialized-arrival work due at `now`, with each
-/// question's principal.
+/// The scheduled, backfill and materialized-arrival work due at `now`, with
+/// each question's principal. A question's arrivals wait while its scheduled
+/// refresh or backfill runs.
 fn due_work(vault: &Vault, now: u64) -> Result<Vec<(EntityId, EntityId, RefreshTrigger)>> {
     let work = {
         let txn = vault.store.env.read_txn()?;
@@ -722,7 +775,15 @@ fn due_work(vault: &Vault, now: u64) -> Result<Vec<(EntityId, EntityId, RefreshT
                         .unwrap_or(record.created_at)
                         .saturating_add(interval)
             {
+                // A scheduled refresh answers every unit, so a due backfill
+                // waits a pass and then finds nothing left to answer.
                 work.push((record.principal, id, RefreshTrigger::Schedule));
+            } else if let Some(backfill) =
+                QUESTION_BACKFILL_AT.get(&vault.store, &txn, &BackfillAtKey(id))?
+                && backfill.version == head.version
+                && backfill.due_at <= now
+            {
+                work.push((record.principal, id, RefreshTrigger::Backfill));
             }
         }
         for row in arrival::PENDING.iter_from(&vault.store, &txn, &[])? {
@@ -745,7 +806,8 @@ fn due_work(vault: &Vault, now: u64) -> Result<Vec<(EntityId, EntityId, RefreshT
                 continue;
             };
             if !work.iter().any(|(_, id, trigger)| {
-                *id == question && matches!(trigger, RefreshTrigger::Schedule)
+                *id == question
+                    && matches!(trigger, RefreshTrigger::Schedule | RefreshTrigger::Backfill)
             }) {
                 work.push((record.principal, question, RefreshTrigger::Arrival(unit)));
             }

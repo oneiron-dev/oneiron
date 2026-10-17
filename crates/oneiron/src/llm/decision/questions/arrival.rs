@@ -232,14 +232,29 @@ pub(super) fn project_question_in_txn(
     ids: &std::collections::BTreeSet<EntityId>,
     question: EntityId,
 ) -> Result<usize> {
-    project(store, txn, ids, Some(question))
+    project(
+        store,
+        txn,
+        ids,
+        Some(&std::collections::BTreeSet::from([question])),
+    )
+}
+
+/// [`project_question_in_txn`] for several questions over one pass of `ids`.
+pub(super) fn project_questions_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    ids: &std::collections::BTreeSet<EntityId>,
+    questions: &std::collections::BTreeSet<EntityId>,
+) -> Result<usize> {
+    project(store, txn, ids, Some(questions))
 }
 
 fn project(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
-    only: Option<EntityId>,
+    only: Option<&std::collections::BTreeSet<EntityId>>,
 ) -> Result<usize> {
     if QUESTION_WATCH.iter_from(store, txn, &[])?.next().is_none() {
         return Ok(0);
@@ -278,7 +293,7 @@ fn project(
             .map(|(_, id)| id)
             .collect();
         for question in watchers {
-            if only.is_some_and(|id| id != question) {
+            if only.is_some_and(|only| !only.contains(&question)) {
                 continue;
             }
             count += project_fact(
@@ -431,39 +446,7 @@ pub(super) fn evaluate_fact(
             return Ok(None);
         }
     }
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &answer.claim)?
-    else {
-        return Ok(None);
-    };
-    let header =
-        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("outcome answer header"))?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-        || raw.len() == ENTITY_METADATA_HEADER_LEN
-    {
-        return Ok(None);
-    }
-    let prediction = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-    let encoded = encode(answer)?;
-    let expected = rmpv::decode::read_value(&mut encoded.as_slice())
-        .map_err(|_| Error::CorruptedIndex("outcome answer value"))?;
-    let facets = crate::claim::facet_refs_in_port(store, txn, &answer.claim)?;
-    if crate::vault_cleanup::is_archived_in_txn(store, txn, &answer.claim)?
-        || !crate::gate::scoped_read_claim_allowed(policy, &actor, &prediction, &facets)
-        || prediction.stale
-        || prediction.lifecycle != crate::claim::ClaimLifecycleStatus::Active
-        || prediction.approval == crate::claim::ClaimApprovalStatus::Rejected
-        || prediction.predicate != "judgment.answer"
-        || prediction.subject != ClaimSubject::Entity(answer.unit)
-        || prediction.value != expected
-        // The answer is a claim input too: matching its recorded value is not
-        // its owner's Clear.
-        || !crate::gate::claim_consolidation_eligible_in_txn(
-            store,
-            txn,
-            &answer.claim,
-            crate::gate::ConsolidationReader::AnswerPrediction,
-        )?
-    {
+    if !answer_live(store, txn, policy, &actor, answer)? {
         return Ok(None);
     }
     let value = match &binding.source {
@@ -504,6 +487,53 @@ pub(super) fn evaluate_fact(
         noise_weight: binding.noise_weight,
         occurred_at: fact.occurred_at,
     }))
+}
+
+/// Whether `answer`'s claim still stands as the prediction it recorded: live,
+/// unarchived, unrejected, readable by `actor` and an eligible claim input.
+pub(super) fn answer_live(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    policy: &PolicyManifestResolution,
+    actor: &ScopedReadActorKey,
+    answer: &AnswerRecord,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &answer.claim)?
+    else {
+        return Ok(false);
+    };
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("outcome answer header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+        || raw.len() == ENTITY_METADATA_HEADER_LEN
+    {
+        return Ok(false);
+    }
+    let prediction = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    let encoded = encode(answer)?;
+    let expected = rmpv::decode::read_value(&mut encoded.as_slice())
+        .map_err(|_| Error::CorruptedIndex("outcome answer value"))?;
+    let facets = crate::claim::facet_refs_in_port(store, txn, &answer.claim)?;
+    if crate::vault_cleanup::is_archived_in_txn(store, txn, &answer.claim)?
+        || !crate::gate::scoped_read_claim_allowed(policy, actor, &prediction, &facets)
+        || prediction.stale
+        || prediction.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+        || prediction.approval == crate::claim::ClaimApprovalStatus::Rejected
+        || prediction.predicate != "judgment.answer"
+        || prediction.subject != ClaimSubject::Entity(answer.unit)
+        || prediction.value != expected
+        // The answer is a claim input too: matching its recorded value is not
+        // its owner's Clear.
+        || !crate::gate::claim_consolidation_eligible_in_txn(
+            store,
+            txn,
+            &answer.claim,
+            crate::gate::ConsolidationReader::AnswerPrediction,
+        )?
+    {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 fn linked(

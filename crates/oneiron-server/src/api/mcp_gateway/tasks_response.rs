@@ -934,6 +934,7 @@ fn mcp_agent_verb_input(
         "vault.questions.create" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.edit" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.pause" => a.spec.clone().ok_or_else(invalid),
+        "vault.questions.backfill" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.read" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.answers" => a.spec.clone().ok_or_else(invalid),
         "vault.decisions.asks.answer" => a.spec.clone().ok_or_else(invalid),
@@ -1651,6 +1652,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.questions.pause" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.questions.backfill" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.questions.read" => {
@@ -4123,6 +4127,19 @@ async fn execute_agent_verb_row(
             let output = crate::api::facade::host_doors::vault_questions_pause(server, auth, input)
                 .await
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.questions.backfill" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.questions.backfill", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::QuestionBackfillRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_questions_backfill(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
