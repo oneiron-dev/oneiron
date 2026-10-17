@@ -295,7 +295,7 @@ fn home_topology(node: u64, url: &str) -> oneiron::sync::HomeNodeTopology {
 #[cfg(feature = "mesh")]
 fn residence_selector(token: &str) -> anyhow::Result<Option<oneiron::sync::SyncSelector>> {
     let slip = oneiron::authority::CapabilitySlip::from_token(token)?;
-    let claims = slip.claims();
+    let claims = &slip.claims;
     let Some(grant) = claims.grant_ref.as_deref() else {
         return Ok(None);
     };
