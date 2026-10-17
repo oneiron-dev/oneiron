@@ -8341,7 +8341,7 @@
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)",
      "surface": {
       "crate-vis": 7,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -8365,7 +8365,9 @@
      "path": "src/channel_identity/sender.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3,
+      "fn": 1,
+      "type": 1
      }
     },
     {

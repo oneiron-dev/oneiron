@@ -691,9 +691,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity/facts.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | ChannelIdentityFacts | Channel facts as claims (OF-272): every write of a ChannelIdentity row moves its `channel_identity.*` heads… |
 | `src/channel_identity/keys.rs` | src | s | 22 const · 17 crate-vis | — | Pinned ChannelIdentity schema versions, body key sets, claim predicates, and byte bounds |
 | `src/channel_identity/lifecycle.rs` | src | m | 4 enum · 8 fn · 8 crate-vis | ChannelIdentityState, ChannelIdentityStep, DelegatedLifecycle, SelfHeldLifecycle | ChannelIdentity lifecycle: the wire projection, the two machines, and their proof-carrying edge tables |
-| `src/channel_identity/mod.rs` | src | s | 13 re-export · 7 crate-vis | — | ChannelIdentity record substrate (OF-347 CID-1) |
+| `src/channel_identity/mod.rs` | src | s | 14 re-export · 7 crate-vis | — | ChannelIdentity record substrate (OF-347 CID-1) |
 | `src/channel_identity/record.rs` | src | m | 1 struct · 24 fn · 8 crate-vis | ChannelIdentity | Vault-resident ChannelIdentity record: private fields, one custody value, accessors, and the one stepping door |
-| `src/channel_identity/sender.rs` | src | s | 2 crate-vis | — | — |
+| `src/channel_identity/sender.rs` | src | s | 1 fn · 1 type · 3 crate-vis | — | — |
 | `src/channel_identity/shape.rs` | src | s | 2 enum · 5 fn | ChannelIdentityShape, SelfHeldShape | ChannelIdentity addressability shapes with wire serde |
 | `src/channel_identity/tests.rs` | test | L | — | — | — |
 | `src/channel_identity/tests/actors.rs` | test | s | — | — | Channel actor, scoped key and provider prior compose in one registration |
