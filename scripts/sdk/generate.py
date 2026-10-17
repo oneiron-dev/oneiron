@@ -7,6 +7,7 @@ import keyword
 import re
 import subprocess
 from facade_types import Inventory
+from catalog_fragment import catalog_fragment
 from uniffi_types import UniffiTypes
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
@@ -124,6 +125,10 @@ ARGUMENTS = {
         'napi_convert': 'let {name} = {name}.map(|value| oneiron_remote::check_unix_seconds("as_of", value)).transpose().map_err(facade_error)?;', 'field': '{name}'},
     'deadline_ms': {'rust': 'Option<u64>', 'napi': 'Option<f64>', 'native_ts': 'number | undefined', 'py': 'int | None', 'stub': 'int | None', 'native_py': 'Option<u64>',
         'napi_convert': 'let {name} = {name}.map(oneiron_remote::check_deadline_ms_number).transpose().map_err(facade_error)?;', 'field': '{name}'},
+    # OF-370: a recall's media query, lowered from each boundary's own record
+    # (napi object, UniFFI record, Python JSON) onto the engine's wire type.
+    'media': {'rust': 'Option<oneiron::code_run::vault_read::ContextPackMediaQuery>', 'napi': 'Option<NapiRecallMedia>', 'native_ts': 'RecallMedia | undefined', 'py': 'dict[str, Any] | None', 'stub': 'RecallMedia | None', 'native_py': 'Option<&str>', 'json': True,
+        'napi_convert': 'let {name} = {name}.map(recall_media_to_engine).transpose().map_err(facade_error)?;', 'py_convert': 'let {name}: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = {name}.map(|value| decode(value, "recall media")).transpose()?;', 'field': '{name}'},
     'ref': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'str | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
     'json': {'napi': 'String', 'native_ts': 'string', 'py': 'dict[str, Any]', 'native_py': '&str', 'json': True},
 }
@@ -1284,6 +1289,10 @@ def outputs():
     files['packages/oneiron/src/facade-types.ts'] = facade_types
     files['packages/oneiron-client/src/facade-types.ts'] = facade_types
     files['crates/oneiron-py/python/oneiron/facade_types.pyi'] = INVENTORY.python(census)
+    # ONE-2510 S2: the code-mode catalog fragment over every row code mode
+    # serves, with its revision; its own inventory leaves the facade types above
+    # as they are.
+    files.update(catalog_fragment(ROOT, ROWS + RUN_ROWS, HEADER))
     for path, text in list(files.items()):
         if path.endswith('.rs'):
             result = subprocess.run(['rustfmt', '--edition', '2024', '--emit', 'stdout'], input=text, text=True, capture_output=True, cwd=ROOT, check=True)
