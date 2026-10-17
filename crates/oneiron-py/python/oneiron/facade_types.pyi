@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 165 facade rows, 615 declarations.
-Inputs: 143 of 165 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 139 of 165 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 166 facade rows, 627 declarations.
+Inputs: 144 of 166 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 140 of 166 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
 """
 
@@ -113,6 +113,37 @@ AgentHealthConfidence = Literal["high", "low"]
 AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs"]
 AgentHealthMove = Literal["note", "steer", "budget", "reassign", "ask_coach", "hold"]
 AgentHealthOutcome = Literal["open", "confirmed", "dismissed", "unresolved"]
+class AgentHealthPadReadRead(TypedDict):
+    state: Literal["read"]
+    read: NotRequired[EntityId | None]
+    pads: int
+class AgentHealthPadReadPendingReview(TypedDict):
+    state: Literal["pending_review"]
+    request: EntityId
+class AgentHealthPadReadDeclined(TypedDict):
+    state: Literal["declined"]
+    request: EntityId
+class AgentHealthPadReadNotCovered(TypedDict):
+    state: Literal["not_covered"]
+class AgentHealthPadReadRefused(TypedDict):
+    state: Literal["refused"]
+    code: str
+AgentHealthPadRead = AgentHealthPadReadRead | AgentHealthPadReadPendingReview | AgentHealthPadReadDeclined | AgentHealthPadReadNotCovered | AgentHealthPadReadRefused
+AgentHealthCoachRoute = Literal["skill_edit", "prompt_inject", "neither"]
+class AgentHealthCoachDraft(TypedDict):
+    route: AgentHealthCoachRoute
+    diagnosis: str
+    proposal: str
+class AgentHealthCoachAnswer(TypedDict):
+    at: int
+    pads: AgentHealthPadRead
+    draft: NotRequired[AgentHealthCoachDraft | None]
+class AgentHealthCoachAsk(TypedDict):
+    asked_by: EntityId
+    asked_at: int
+    diagnostic: NotRequired[EntityId | None]
+    attempt: str
+    answer: NotRequired[AgentHealthCoachAnswer | None]
 class AgentHealthCard(TypedDict):
     subject: EntityId
     signal: AgentHealthSignal
@@ -139,6 +170,7 @@ class AgentHealthCard(TypedDict):
     watermark: int
     opened_at: int
     updated_at: int
+    coach: NotRequired[AgentHealthCoachAsk | None]
 RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
 class RunTreeTimestamps(TypedDict):
     created_at: int
@@ -196,6 +228,13 @@ class ConcernCardSummary(TypedDict):
     tone: str
     outcome: str
     evidence: int
+ConcernMove = Literal["ask_coach"]
+class ConcernMoveRequest(TypedDict):
+    card: str
+    move: ConcernMove
+class ConcernMoveOutcome(TypedDict):
+    card: str
+    ask: AgentHealthCoachAsk
 class PeopleListRequest(TypedDict):
     vault: NotRequired[str | None]
     page: NotRequired[int | None]
@@ -2833,6 +2872,14 @@ QuestionActivation = Literal["one_off", "standing"]
 class RefreshPolicy(TypedDict):
     on_arrival: bool
     every_seconds: NotRequired[int | None]
+class QuestionCriteria(TypedDict):
+    yes_if_all: list[str]
+    no_if_any: list[str]
+    not_a_reason_to_say_no: list[str]
+QuestionAudience = Literal["asker"]
+HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
+class QuestionMedia(TypedDict):
+    images: bool
 class QuestionDefinition(TypedDict):
     question: DecisionQuestion
     adapter: str
@@ -2845,6 +2892,11 @@ class QuestionDefinition(TypedDict):
     delivery: str
     learning: bool
     binding: NotRequired[OutcomeBinding | None]
+    criteria: NotRequired[QuestionCriteria]
+    audience: NotRequired[QuestionAudience]
+    posture: NotRequired[HostingPrivacyPosture | None]
+    media: NotRequired[QuestionMedia]
+    deadline_ms: NotRequired[int | None]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinition
 class QuestionRecord(TypedDict):

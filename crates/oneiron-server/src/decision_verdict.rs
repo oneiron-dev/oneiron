@@ -8,7 +8,8 @@
 //! offers NONE, reobserve and "too complicated, ask up", and the answer comes
 //! back as the outcome the program acts on. A screenshot rides as an image
 //! evidence ref, read at the Local-vision rung on the caller's own run; a
-//! `locate` question finds its target there as a Box. The subgoal's steps
+//! `locate` question finds its target there as a Box, once the host's
+//! presence question says it is there. The subgoal's steps
 //! share one clock through `until_ms`.
 //!
 //! A screenshot the calling code run's browser holds is named by its
@@ -69,6 +70,7 @@ impl HeldImage {
                     bytes: png,
                     media_type: "image/png".to_owned(),
                 },
+                frame: None,
             },
         }
     }
@@ -237,6 +239,30 @@ pub(crate) fn run_verdict(
             ..routine.decision.into()
         });
     }
+    // A locate question asks the host's presence question first: the answer is on the
+    // Box contract, the receipt the step's that stands.
+    if question.contract.locates() {
+        let located = ladder
+            .run_located(
+                &question,
+                principal,
+                &evidence,
+                &images,
+                &state,
+                dial,
+                &host.bands(),
+                reversibility,
+                &deadline,
+            )
+            .map_err(failed)?;
+        let answer = located.answer.clone();
+        let (decision, _) = located.split();
+        return Ok(AiVerdict {
+            answer,
+            until_ms: Some(until_ms),
+            ..decision.into()
+        });
+    }
     let decision = ladder
         .run_images(
             &question,
@@ -334,6 +360,7 @@ fn pull(lane: Option<&ScopedRead<'_>>, handle: &str) -> MemoryResult<DecisionIma
             body_hash: *blake3::hash(&image.bytes).as_bytes(),
         },
         image,
+        frame: None,
     })
 }
 

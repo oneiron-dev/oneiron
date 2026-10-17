@@ -30,6 +30,7 @@ use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind
 
 use super::catalog::{catalog_entry, engine_model_id};
 use super::cooldown::{FallbackRung, OfferCooldowns, ProbePermit};
+use super::gemini_media::gemini_backend;
 use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
 use super::http::{KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
@@ -645,6 +646,12 @@ impl super::ModelRuntime {
                 {
                     caps.inputs.insert(Modality::Image);
                 }
+                if seat
+                    .ladder
+                    .supports(&seat.model, &oneiron::LlmCapability::AudioInput)
+                {
+                    caps.inputs.insert(Modality::Audio);
+                }
                 if !inputs.is_subset(&caps.inputs) {
                     continue;
                 }
@@ -738,6 +745,7 @@ fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBacken
                     })
                 }
             }
+            ProviderKind::Gemini => gemini_backend(provider, wire_models),
             _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
                 Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models))
                     as Arc<dyn MediaBackend>
