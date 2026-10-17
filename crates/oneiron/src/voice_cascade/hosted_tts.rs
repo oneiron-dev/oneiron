@@ -11,6 +11,8 @@ use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSe
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
+    llm::ModelLocality,
+    voice_identity::ref_bank::VoiceRenderGrant,
 };
 
 pub const PCM_RATE: u32 = 24_000;
@@ -39,6 +41,9 @@ pub struct HostedBinding {
     pub provider: HostedProvider,
     pub vendor_voice_id: String,
     pub revision: [u8; 16],
+    /// The render consent the clone is used under. Every hosted target is a
+    /// third party's, so the voice's consent must reach that far.
+    pub grant: VoiceRenderGrant,
 }
 
 /// A single complete HTTP request; host adds its own secret auth header and
@@ -107,8 +112,13 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
         include_generated: bool,
         transport: T,
     ) -> Result<Self> {
-        let record = vault
-            .voice_target_clone(voice_id, provider.target(), include_generated)?
+        let (record, grant) = vault
+            .voice_target_clone(
+                voice_id,
+                provider.target(),
+                include_generated,
+                ModelLocality::ThirdParty,
+            )?
             .ok_or_else(|| invalid("voice target not provisioned, evicted or stale"))?;
         // The ID is interpolated into a URL path: no separators, whitespace or
         // credentials. The bank's policy limit already bounds its length.
@@ -136,6 +146,7 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
                 provider,
                 vendor_voice_id: record.vendor_voice_id,
                 revision: record.revision,
+                grant,
             },
             generation: None,
             phase: Phase::Fresh,
@@ -198,6 +209,7 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
             self.binding.provider.target(),
             self.include_generated,
             self.binding.revision,
+            self.binding.grant,
             |txn| {
                 crate::gate::resolve_hosted_tts_limits(
                     self.vault,
@@ -236,6 +248,7 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
             self.binding.provider.target(),
             self.include_generated,
             self.binding.revision,
+            self.binding.grant,
             |txn| {
                 let limits = crate::gate::resolve_hosted_tts_limits(
                     self.vault,

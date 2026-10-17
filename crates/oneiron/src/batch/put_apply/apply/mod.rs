@@ -72,6 +72,11 @@ pub(in crate::batch) fn apply_put(
     } = options.replication;
     let hub_sync_imported = options.hub.sync_imported;
     let claim_gate_prechecked = options.decision.prechecked;
+    // A record kept only for a refused privacy erasure takes no change, and
+    // the refusal names no hold, which could reveal a secret order (OF-470 C6).
+    if crate::store::legal_hold::use_limit_in_txn(store, wtxn, &id)?.is_some() {
+        return Err(crate::error::Error::EntityNotFound);
+    }
     crate::dreamer_runner::authority::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
     super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so

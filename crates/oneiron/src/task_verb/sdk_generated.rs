@@ -255,6 +255,32 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.legal_holds.place",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LegalHoldPlaceRequest,
+                >(),
+            ),
+            (
+                "vault.legal_holds.widen",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LegalHoldWidenRequest,
+                >(),
+            ),
+            (
+                "vault.legal_holds.list",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.legal_holds.log",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.legal_holds.lift_and_erase",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+                >(),
+            ),
+            (
                 "vault.lenses.propose",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensProposeRequest>(),
             ),
@@ -472,6 +498,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.rooms.offer",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::OfferDraft>(
+                ),
+            ),
+            (
+                "vault.rooms.offer.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::OfferAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.offers",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::OffersRequest>(
+                ),
+            ),
+            (
                 "vault.projects.goal.revisions",
                 crate::code_run::vault_read::request_schema::<ProjectRefRequest>(),
             ),
@@ -496,6 +538,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.rooms.host",
                 crate::code_run::vault_read::request_schema::<RoomHostRequest>(),
+            ),
+            (
+                "vault.rooms.host.pin",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::RoomHostPin>(
+                ),
+            ),
+            (
+                "vault.rooms.host.hand",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::RoomHostHand>(
+                ),
             ),
             (
                 "vault.rooms.sharing",
@@ -592,6 +644,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.browser.click",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::ClickInput>(),
+            ),
+            (
+                "self.browser.click_at",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::PointInput>(),
             ),
             (
                 "self.browser.type",
@@ -1158,6 +1214,29 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.legal_holds.place" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.legal_holds.widen" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.legal_holds.list" => &[],
+        "vault.legal_holds.log" => &[],
+        "vault.legal_holds.lift_and_erase" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.lenses.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1485,6 +1564,35 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.rooms.offer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
+        "vault.rooms.offer.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.offers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
         "vault.projects.goal.revisions" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1521,6 +1629,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.rooms.host" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.host.pin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.host.hand" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2008,6 +2130,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.authority.handoff_alarms.acknowledge" => {
             let _input: crate::task_verb::sdk::HandoffAlarmRequest = decode(value.clone())?;
         }
+        "vault.legal_holds.place" => {
+            let _input: crate::task_verb::sdk::LegalHoldPlaceRequest = decode(value.clone())?;
+        }
+        "vault.legal_holds.widen" => {
+            let _input: crate::task_verb::sdk::LegalHoldWidenRequest = decode(value.clone())?;
+        }
+        "vault.legal_holds.list" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.legal_holds.log" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.legal_holds.lift_and_erase" => {
+            let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
+                decode(value.clone())?;
+        }
         "vault.lenses.propose" => {
             let _input: crate::lens::LensProposeRequest = decode(value.clone())?;
         }
@@ -2138,6 +2276,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.consent" => {
             let _input: crate::workspace_roster::ConsentAnswer = decode(value.clone())?;
         }
+        "vault.rooms.offer" => {
+            let _input: crate::workspace_roster::OfferDraft = decode(value.clone())?;
+        }
+        "vault.rooms.offer.answer" => {
+            let _input: crate::workspace_roster::OfferAnswerRequest = decode(value.clone())?;
+        }
+        "vault.rooms.offers" => {
+            let _input: crate::workspace_roster::OffersRequest = decode(value.clone())?;
+        }
         "vault.projects.goal.revisions" => {
             let _input: ProjectRefRequest = decode(value.clone())?;
         }
@@ -2155,6 +2302,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.rooms.host" => {
             let _input: RoomHostRequest = decode(value.clone())?;
+        }
+        "vault.rooms.host.pin" => {
+            let _input: crate::workspace_roster::RoomHostPin = decode(value.clone())?;
+        }
+        "vault.rooms.host.hand" => {
+            let _input: crate::workspace_roster::RoomHostHand = decode(value.clone())?;
         }
         "vault.rooms.sharing" => {
             let _input: RoomRefRequest = decode(value.clone())?;
@@ -2226,6 +2379,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.browser.click" => {
             let _input: oneiron_browser::ClickInput = decode(value.clone())?;
+        }
+        "self.browser.click_at" => {
+            let _input: oneiron_browser::PointInput = decode(value.clone())?;
         }
         "self.browser.type" => {
             let _input: oneiron_browser::TypeInput = decode(value.clone())?;
@@ -2425,6 +2581,13 @@ pub fn invoke(
         "vault.authority.handoff_alarms.acknowledge" => encode(
             vault_authority_handoff_alarms_acknowledge(memory, decode(value)?)?,
         ),
+        "vault.legal_holds.place" => encode(vault_legal_holds_place(memory, decode(value)?)?),
+        "vault.legal_holds.widen" => encode(vault_legal_holds_widen(memory, decode(value)?)?),
+        "vault.legal_holds.list" => encode(vault_legal_holds_list(memory, decode(value)?)?),
+        "vault.legal_holds.log" => encode(vault_legal_holds_log(memory, decode(value)?)?),
+        "vault.legal_holds.lift_and_erase" => {
+            encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
+        }
         "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
@@ -2478,6 +2641,9 @@ pub fn invoke(
         "vault.projects.goal.intake" => encode(vault_projects_goal_intake(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
+        "vault.rooms.offer" => encode(vault_rooms_offer(memory, decode(value)?)?),
+        "vault.rooms.offer.answer" => encode(vault_rooms_offer_answer(memory, decode(value)?)?),
+        "vault.rooms.offers" => encode(vault_rooms_offers(memory, decode(value)?)?),
         "vault.projects.goal.revisions" => {
             encode(vault_projects_goal_revisions(memory, decode(value)?)?)
         }
@@ -2494,6 +2660,8 @@ pub fn invoke(
             encode(vault_conversations_turn_retry(memory, decode(value)?)?)
         }
         "vault.rooms.host" => encode(vault_rooms_host(memory, decode(value)?)?),
+        "vault.rooms.host.pin" => encode(vault_rooms_host_pin(memory, decode(value)?)?),
+        "vault.rooms.host.hand" => encode(vault_rooms_host_hand(memory, decode(value)?)?),
         "vault.rooms.sharing" => encode(vault_rooms_sharing(memory, decode(value)?)?),
         "vault.companions.sharing.get" => {
             encode(vault_companions_sharing_get(memory, decode(value)?)?)
@@ -2571,6 +2739,10 @@ pub fn invoke_browser(
             serde_json::from_value(value).map_err(invalid)?,
         )?),
         "self.browser.click" => serde_json::to_value(self_browser_click(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.click_at" => serde_json::to_value(self_browser_click_at(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
@@ -3075,6 +3247,54 @@ pub fn vault_authority_handoff_alarms_acknowledge(
         input,
     )
 }
+pub fn vault_legal_holds_place(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LegalHoldPlaceRequest,
+) -> MemoryResult<crate::deletion::LegalHold> {
+    crate::task_verb::sdk::place_legal_hold_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.place")?,
+        input,
+    )
+}
+pub fn vault_legal_holds_widen(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LegalHoldWidenRequest,
+) -> MemoryResult<crate::deletion::LegalHold> {
+    crate::task_verb::sdk::widen_legal_hold_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.widen")?,
+        input,
+    )
+}
+pub fn vault_legal_holds_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::deletion::LegalHold>> {
+    crate::task_verb::sdk::read_legal_holds(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.list")?,
+    )
+}
+pub fn vault_legal_holds_log(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::deletion::LegalHoldEvent>> {
+    crate::task_verb::sdk::read_legal_hold_log(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.log")?,
+    )
+}
+pub fn vault_legal_holds_lift_and_erase(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+) -> MemoryResult<crate::task_verb::sdk::LegalHoldLiftAndErased> {
+    crate::task_verb::sdk::lift_legal_hold_and_erase_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.lift_and_erase")?,
+        input,
+    )
+}
 pub fn vault_lenses_propose(
     memory: &Memory<'_>,
     input: crate::lens::LensProposeRequest,
@@ -3419,6 +3639,24 @@ pub fn vault_rooms_consent(
 ) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
     memory.rooms_consent(&input)
 }
+pub fn vault_rooms_offer(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::OfferDraft,
+) -> MemoryResult<crate::workspace_roster::OfferCard> {
+    memory.rooms_offer(&input)
+}
+pub fn vault_rooms_offer_answer(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::OfferAnswerRequest,
+) -> MemoryResult<crate::workspace_roster::OfferSettlement> {
+    memory.rooms_offer_answer(&input)
+}
+pub fn vault_rooms_offers(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::OffersRequest,
+) -> MemoryResult<crate::workspace_roster::OffersPage> {
+    memory.rooms_offers(&input)
+}
 pub fn vault_projects_goal_revisions(
     memory: &Memory<'_>,
     input: ProjectRefRequest,
@@ -3470,6 +3708,18 @@ pub fn vault_rooms_host(
             .map(crate::EntityId::from_hex)
             .transpose()?,
     )
+}
+pub fn vault_rooms_host_pin(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::RoomHostPin,
+) -> MemoryResult<crate::workspace_roster::RoomStanding> {
+    memory.rooms_host_pin(&input)
+}
+pub fn vault_rooms_host_hand(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::RoomHostHand,
+) -> MemoryResult<crate::workspace_roster::RoomStanding> {
+    memory.rooms_host_hand(&input)
 }
 pub fn vault_rooms_sharing(
     memory: &Memory<'_>,
@@ -3625,6 +3875,12 @@ pub fn self_browser_click(
     input: oneiron_browser::ClickInput,
 ) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
     driver.click(input)
+}
+pub fn self_browser_click_at(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::PointInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.click_at(input)
 }
 pub fn self_browser_type(
     driver: &mut dyn oneiron_browser::BrowserDriver,
