@@ -9800,7 +9800,7 @@
      "purpose": "The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, its hand-rolled…",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -12866,6 +12866,8 @@
      "kind": "src",
      "notable": [
       "ClaimClassDescriptor",
+      "ClaimSubjectKind",
+      "ClaimValidatorKind",
       "ClaimWriteClass",
       "EnforcementStamp"
      ],
@@ -12873,9 +12875,9 @@
      "purpose": "ARCH-0057 claim-class descriptors as synced maintenance entities (OF-272)",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
-      "enum": 1,
-      "fn": 10,
+      "crate-vis": 4,
+      "enum": 3,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -16981,7 +16983,7 @@
      "path": "src/deletion/erase/active_store.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -17110,7 +17112,7 @@
      "path": "src/deletion/publish.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -30067,6 +30069,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/note_tombstone.rs",
+     "purpose": "The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/notes.rs",
      "purpose": "Agent-facing NOTE verbs; actor identity is bound to the memory facade",
      "surface": {
@@ -31171,10 +31183,10 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 31,
+      "crate-vis": 32,
       "enum": 3,
       "fn": 4,
-      "re-export": 10,
+      "re-export": 11,
       "struct": 2
      }
     },
@@ -31185,6 +31197,16 @@
      "path": "src/note/adapter_tests.rs",
      "purpose": "Canonical program adapter laws; no native snapshot grants authority",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/archive_read.rs",
+     "purpose": "Whether an archived NOTE was read since its archive (OF-073, FIX 2419; CALLS \"FIX 2419 NOTE read since…",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "s",
@@ -31614,6 +31636,19 @@
      "purpose": "Atomic title-reservation replacement for authoritative NOTE document sets",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NoteTombstoneProposal"
+     ],
+     "path": "src/note/tombstone_review.rs",
+     "purpose": "The NOTE tombstone review (ARCH-0032 stage 3, OF-073; CALLS \"FIX 2419 NOTE tombstone review\")",
+     "surface": {
+      "crate-vis": 5,
+      "struct": 1
      }
     },
     {
@@ -35306,7 +35341,7 @@
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -45922,7 +45957,7 @@
      "path": "src/sync/window/tombstones.rs",
      "purpose": "Tombstone apply/export/replay plus window rebuild from updates",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -51349,9 +51384,9 @@
       "WorldKeyDestruction"
      ],
      "path": "src/world_keys/pads.rs",
-     "purpose": "A world key's erasable half, and the world delete that destroys it (world privacy fix 7)",
+     "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -53254,7 +53289,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 131,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53275,7 +53310,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 40,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -53928,7 +53963,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3273,
+   "source_files": 3276,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71537,7 +71572,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -71548,6 +71583,16 @@
      "purpose": "A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/note_tombstones.rs",
+     "purpose": "NOTE tombstone review (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed for archived NOTEs…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -73190,7 +73235,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73304,7 +73349,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 611,
+   "source_files": 612,
    "test_files": 182
   },
   "oneiron-spawn": {
