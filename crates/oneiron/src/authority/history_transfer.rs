@@ -324,3 +324,132 @@ pub fn recover_vaults_independently(
         .map(|request| request.vault.apply_signed_re_root(&request.entry))
         .collect()
 }
+
+/// [`history_root`] for a page added to a history held in part: one genesis
+/// and one vault, as there, but only the rows not yet `resident` must find
+/// their parents. The store door never needs a row's parents stored, so a
+/// machine that syncs what it opened holds the authority rows its windows
+/// carry, some above a gap a later page closes.
+fn page_root(
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    resident: &BTreeSet<AuthorityEntryHash>,
+) -> Result<Option<AuthorityVaultId>> {
+    let roots: BTreeSet<_> = history
+        .iter()
+        .filter_map(|(hash, (_, entry))| {
+            matches!(entry.op, AuthorityOp::Genesis { .. }).then_some(*hash)
+        })
+        .collect();
+    if roots.len() > 1 {
+        return Err(invalid_authority());
+    }
+    let root = roots.first().copied();
+    for (hash, (_, entry)) in history {
+        if !matches!(entry.op, AuthorityOp::Genesis { .. }) && entry.vault_id != root {
+            return Err(invalid_authority());
+        }
+        if !resident.contains(hash)
+            && entry
+                .parent_hashes
+                .iter()
+                .any(|parent| !history.contains_key(parent))
+        {
+            return Err(invalid_authority());
+        }
+    }
+    Ok(root)
+}
+
+impl Vault {
+    /// [`Self::import_signed_authority_history`] for one delivery page of a
+    /// history this vault holds in part (OF-469): each new entry's parents
+    /// are held here or earlier in `blobs`, while a row already held may
+    /// stand above a gap ([`page_root`]). Every other check of that door
+    /// stands: one genesis and vault, retired standing, the store door's
+    /// order and judgement, and the refold before commit. One refused entry
+    /// writes nothing.
+    pub fn import_signed_authority_page(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
+        let mut decoded = Vec::with_capacity(blobs.len());
+        for bytes in blobs {
+            let entry = decode_authority_log_entry_body(bytes)?;
+            decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
+        }
+        let watch = crate::federation::StaleSweepWatch::begin(self);
+        let mut txn = self.store.env.write_txn()?;
+        let mut merged = history_in_txn(self, &txn)?;
+        let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
+        for (hash, bytes, entry) in &decoded {
+            merged
+                .entry(*hash)
+                .or_insert_with(|| (bytes.clone(), entry.clone()));
+        }
+        // A key a handoff here retired signs nothing new into this history,
+        // and nothing new stands on a row one signed.
+        let local = self.authority_fold_readonly_in_txn(&txn)?;
+        for (hash, _, entry) in &decoded {
+            if !resident.contains(hash)
+                && super::door_refuses_retired_standing(
+                    &self.store,
+                    &local,
+                    hash,
+                    entry,
+                    &mut |parent| Ok(merged.get(parent).map(|(_, row)| row.clone())),
+                )?
+            {
+                return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
+                    "authority history standing on a key a handoff retired",
+                )));
+            }
+        }
+        page_root(&merged, &resident)?.ok_or_else(invalid_authority)?;
+        let now = crate::unix_seconds_now();
+        let mut ids = Vec::new();
+        let mut ops = Vec::new();
+        // The store door judges each row against the rows already staged
+        // (H72), so stage each after its parents, its consent and its
+        // signer's lower sequences, whatever order the caller gave.
+        let stored = merged
+            .iter()
+            .filter(|(hash, _)| resident.contains(*hash))
+            .map(|(_, (_, entry))| entry);
+        let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
+        for (hash, bytes, _) in
+            super::import_order::import_order(stored, &resident, own_roots, decoded)
+        {
+            let id = authority_log_entity_id_from_hash(&hash)?;
+            ids.push(id);
+            ops.push(BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                data: bytes,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            });
+        }
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut txn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        // Read-side fold checks local sidecars as well as the signed chain.
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        if fold.vault_root_is_conflicted() {
+            return Err(invalid_authority());
+        }
+        txn.commit()?;
+        watch.finish()?;
+        Ok(ids)
+    }
+}
