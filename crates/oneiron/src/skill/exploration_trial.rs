@@ -57,7 +57,7 @@ const MAX_LINEAGE: usize = 1024;
 /// Hours an unanswered overrun ask waits on the role it went to before it
 /// climbs to the next role up its chain: the ask's reminder. At the chain's
 /// top it waits on.
-pub const EXPLORATION_ASK_CLIMB_HOURS: crate::learning_setting::SettingSpec =
+pub(crate) const EXPLORATION_ASK_CLIMB_HOURS: crate::learning_setting::SettingSpec =
     crate::learning_setting::SettingSpec {
         key: "exploration.ask.climb_hours",
         min: 1.0,
