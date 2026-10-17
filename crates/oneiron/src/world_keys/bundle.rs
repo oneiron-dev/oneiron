@@ -525,7 +525,8 @@ impl OpenedKeyPads {
     }
 
     /// Erase's rewrite of one object: the same generation, capsules, outer key and
-    /// length, sealed afresh without `world`'s pads.
+    /// length, sealed afresh without `world`'s pads. It replaces the old object,
+    /// which the holder deletes.
     pub fn without_world(&self, world: EntityId) -> Result<SealedKeyPads> {
         let body = encode_pads_body(&self.vault_id, self.generation, &self.entries, Some(world))?;
         let bytes = seal_outer(
@@ -764,11 +765,18 @@ impl Vault {
         pads.open_with(&self.bundle_vault_id()?, &secret.secret)
     }
 
-    /// Erase's rewrite: every kept pad object, the current one included, without
-    /// `world`'s pads, each opened with this machine's capsule or else the kit's.
-    /// The world's section in every kept bundle stops opening; every other
-    /// world's pads stay. Each object is rewritten at its own length, held the
-    /// world or not. Refused when one opens with neither.
+    /// Erase's rewrite, in one call: every kept pad object, the current one and
+    /// every older one, without `world`'s pads, each opened with this machine's
+    /// capsule or else the kit's. A pad object holds pads only. The root wraps of
+    /// the world's keys stay in each kept bundle's base section, and with the pads
+    /// gone from every kept object they open to nothing, for the kit too, so the
+    /// world's section in every kept bundle stops opening. Every other world's
+    /// pads stay, so every kept bundle still restores them. Each object is
+    /// rewritten at its own length, held the world or not.
+    ///
+    /// The holder keeps no prior object versions: a rewrite replaces the old
+    /// object and deletes it (no versioning or object lock is assumed). Refused
+    /// when one object opens with neither key, before anything is rewritten.
     pub fn drop_world_from_key_pads(
         &self,
         world: EntityId,
@@ -784,16 +792,18 @@ impl Vault {
         if let Some(seed) = kit {
             secrets.push(seed.recovery_secret()?);
         }
-        kept.iter()
+        let opened = kept
+            .iter()
             .map(|pads| {
                 secrets
                     .iter()
                     .find_map(|secret| pads.open_with(&vault_id, secret).ok())
-                    .ok_or_else(|| {
-                        refused("a kept pad object opens neither here nor with the kit")
-                    })?
-                    .without_world(world)
+                    .ok_or_else(|| refused("a kept pad object opens neither here nor with the kit"))
             })
+            .collect::<Result<Vec<_>>>()?;
+        opened
+            .iter()
+            .map(|pads| pads.without_world(world))
             .collect()
     }
 
