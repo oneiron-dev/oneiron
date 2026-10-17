@@ -16674,7 +16674,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConsolidationExecutor"
@@ -17074,7 +17074,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/sieve_attempt.rs",
@@ -17090,7 +17090,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -17669,7 +17669,7 @@
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
       "const": 24,
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -18129,6 +18129,7 @@
       "DreamerHomeNodeDesignation",
       "DreamerMilestoneClaim",
       "DreamerMilestoneKind",
+      "DreamerParkCause",
       "DreamerParkedAttemptRecord",
       "DreamerReservedBudget",
       "DreamerRunTreeRecord",
@@ -18148,9 +18149,9 @@
      "path": "src/dreamer_runner/types.rs",
      "purpose": "Dreamer runner request/outcome vocabulary and its pure impls",
      "surface": {
-      "crate-vis": 3,
-      "enum": 12,
-      "fn": 15,
+      "crate-vis": 4,
+      "enum": 13,
+      "fn": 18,
       "struct": 26
      }
     },
@@ -38875,7 +38876,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/bootstrap.rs",
@@ -45041,6 +45042,7 @@
      "purpose": "Coordination patterns as skills (ARCH-0079 #coordination-patterns)",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 7,
       "struct": 1
@@ -50472,7 +50474,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 127,
+   "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3048,
    "test_files": 903
@@ -57912,7 +57914,7 @@
      "purpose": "Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail",
      "surface": {
       "enum": 6,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -67300,7 +67302,7 @@
      "path": "src/voice_host/connection.rs",
      "purpose": "One private, pre-admitted UDS connection on the existing Tokio runtime",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -67344,7 +67346,7 @@
      "surface": {
       "enum": 1,
       "fn": 7,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -67358,7 +67360,7 @@
      "path": "src/voice_host/serve_bindings.rs",
      "purpose": "One-shot bindings supplied by the existing private-connection owner",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -67402,6 +67404,19 @@
      "path": "src/voice_host/tests/wire.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceWireBindings"
+     ],
+     "path": "src/voice_host/wire.rs",
+     "purpose": "The voice wire's media ops (OF-410)",
+     "surface": {
+      "crate-vis": 11,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -68099,7 +68114,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68136,7 +68151,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 497,
+   "source_files": 498,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -68193,23 +68208,34 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/codec.rs",
+     "purpose": "Lift and lower codecs between this crate's UniFFI records and the engine types the shared…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/contract.rs",
-     "purpose": "Head-contract pins and the crate-private verb export macro",
+     "purpose": "The crate-private verb export macro",
      "surface": {
       "const": 2,
       "fn": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
       "BlobVersionView",
+      "CitedMessage",
       "ClaimInput",
       "ClaimListFilter",
       "ClaimView",
@@ -68232,13 +68258,16 @@
       "MemoryItem",
       "MemoryPack",
       "MemoryProvenance",
+      "MentionProvenance",
       "NeighborHit",
       "NeighborHits",
       "NeighborOpts",
       "OpenOptions",
       "OutboundDraftInput",
       "OutboundIntentReceipt",
+      "Paired",
       "PendingWrite",
+      "QuoteSpan",
       "ReadReceipt",
       "ReadScope",
       "RecallScope",
@@ -68260,10 +68289,10 @@
       "WitnessTurn"
      ],
      "path": "src/dto.rs",
-     "purpose": "The complete DTO inventory for the WIRE head contract",
+     "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
       "enum": 7,
-      "struct": 44
+      "struct": 48
      }
     },
     {
@@ -68279,7 +68308,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/facade_generated.rs",
@@ -68293,29 +68322,36 @@
       "Oneiron"
      ],
      "path": "src/lib.rs",
-     "purpose": "Definition-only UniFFI interface surface for the WIRE head contract",
+     "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
      "surface": {
       "const": 1,
-      "fn": 3,
+      "fn": 6,
       "re-export": 2,
       "struct": 1
      }
     }
    ],
    "modules": {
+    "codec": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "file",
+     "purpose": "Lift and lower codecs between this crate's UniFFI records and the engine types the shared…"
+    },
     "contract": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Head-contract pins and the crate-private verb export macro"
+     "purpose": "The crate-private verb export macro"
     },
     "dto": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
-     "purpose": "The complete DTO inventory for the WIRE head contract"
+     "purpose": "The typed UniFFI records of the SDK surface"
     },
     "error": {
      "files": 1,
@@ -68327,14 +68363,14 @@
     "facade_generated": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "—"
     }
    },
-   "over_bar": 0,
-   "purpose": "Definition-only UniFFI interface surface for the WIRE head contract",
-   "source_files": 6,
+   "over_bar": 3,
+   "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
+   "source_files": 7,
    "test_files": 0
   },
   "oneiron-vault-contract": {
