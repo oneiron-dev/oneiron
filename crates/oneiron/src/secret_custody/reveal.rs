@@ -25,6 +25,7 @@
 //! value.
 
 mod agent;
+mod file;
 mod owner;
 
 use std::fmt;
@@ -79,7 +80,13 @@ const SECRET_REVEAL_CONTENT_KIND: &str = "secret_reveal";
 
 /// The version of the engine's disclosure line, bound into the once digest:
 /// a change of wording is a different ask.
-const DISCLOSURE_VERSION: &str = "secret_reveal.disclosure.v1";
+const DISCLOSURE_VERSION: &str = "secret_reveal.disclosure.v2";
+
+/// What the disclosure line names when no host named the agent's model
+/// provider (an external HTTP or MCP agent, or a model no ladder served).
+/// One constant, so a ruling changes one line.
+pub const UNKNOWN_PROVIDER_DISCLOSURE: &str =
+    "this agent's model provider, which this host does not know";
 
 /// Domain of the digest an owner's answer authorizes.
 const ONCE_DIGEST_DOMAIN: &[u8] = b"oneiron.secret_reveal.once.v1";
@@ -188,6 +195,9 @@ pub struct SecretRevealReceipt {
     pub asked_at: u64,
     /// When its value went out.
     pub delivered_at: Option<u64>,
+    /// The file an agent's read of a marked file named: its keys are the
+    /// handles above, and each went out under its own T1 lease.
+    pub file: Option<EntityId>,
 }
 
 /// One reveal as the owner reads it, with the in-moment card while it waits
@@ -328,8 +338,9 @@ pub enum HandleReveal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RevealAsker {
     agent: EntityId,
-    /// No host names the model provider to the engine yet; the disclosure
-    /// line then names "the model provider this agent runs on".
+    /// The model provider the host's ladder served the agent's turn from;
+    /// `None` when no host named one, and the disclosure line then says the
+    /// provider is unknown ([`UNKNOWN_PROVIDER_DISCLOSURE`]).
     provider: Option<String>,
     project: Option<EntityId>,
     run: Option<String>,
@@ -343,6 +354,12 @@ impl RevealAsker {
             project,
             run,
         }
+    }
+
+    /// This asker with the model provider its host named, if any.
+    pub(crate) fn with_provider(mut self, provider: Option<&str>) -> Self {
+        self.provider = provider.map(str::to_owned);
+        self
     }
 
     fn connection(&self) -> String {
@@ -454,6 +471,22 @@ struct RevealRow {
     decision: Option<GateDecisionId>,
     lease: Option<EntityId>,
     delivered_at: Option<u64>,
+    /// An agent's read of a file stored with keys in it, where this reveal is
+    /// one; `None` for a handle's reveal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    file: Option<FileSight>,
+}
+
+/// The file an agent's read names: the artifact, its stored bytes' hash, and
+/// each key with its handle, in the file's order. Delivery adds each key's
+/// lease.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FileSight {
+    artifact: EntityId,
+    hash: [u8; 32],
+    keys: Vec<(EntityId, String)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    leases: Vec<EntityId>,
 }
 
 impl RevealRow {
@@ -503,9 +536,21 @@ impl RevealRow {
         ];
         let mut hasher = blake3::Hasher::new();
         hasher.update(ONCE_DIGEST_DOMAIN);
-        for field in fields {
+        let mut part = |field: &[u8]| {
             hasher.update(&(field.len() as u64).to_be_bytes());
             hasher.update(field);
+        };
+        for field in fields {
+            part(field);
+        }
+        // A file's read binds the file, its bytes and each key it opens.
+        if let Some(file) = &self.file {
+            part(file.artifact.as_bytes());
+            part(&file.hash);
+            for (secret, handle) in &file.keys {
+                part(secret.as_bytes());
+                part(handle.as_bytes());
+            }
         }
         EffectDigest::from_bytes(*hasher.finalize().as_bytes())
     }
@@ -518,11 +563,15 @@ impl RevealRow {
 
     fn disclosure(&self) -> Option<String> {
         let connection = self.connection.as_deref()?;
-        Some(disclosure_line(
-            &self.handle,
-            connection,
-            self.provider.as_deref(),
-        ))
+        let what = match &self.file {
+            Some(file) => format!(
+                "Reading file {} unmasked sends its keys {}",
+                file.artifact.to_hex(),
+                self.handle
+            ),
+            None => format!("Revealing {} sends its value", self.handle),
+        };
+        Some(disclosure_line(&what, connection, self.provider.as_deref()))
     }
 
     fn receipt(&self, reveal: EntityId) -> Result<SecretRevealReceipt> {
@@ -541,13 +590,14 @@ impl RevealRow {
             lease: self.lease,
             asked_at: self.created_at,
             delivered_at: self.delivered_at,
+            file: self.file.as_ref().map(|file| file.artifact),
         })
     }
 }
 
 /// What "this connection" is: the asking agent's own actor. The engine holds
 /// no connection entity; one agent identity is one paired client.
-fn reveal_connection(agent: &EntityId) -> String {
+pub(super) fn reveal_connection(agent: &EntityId) -> String {
     format!("agent:{}", agent.to_hex())
 }
 
@@ -567,7 +617,7 @@ fn project_selector(project: Option<&EntityId>) -> String {
 
 /// The bound a reveal asks for. "Approve and stop asking" mints exactly this
 /// bound, so its reach is this connection × this class × this project.
-fn reveal_bound(
+pub(super) fn reveal_bound(
     connection: &str,
     class: CustodyClass,
     project: Option<&EntityId>,
@@ -606,16 +656,16 @@ fn covering_grant(
 }
 
 /// The engine's own line on where a revealed value goes, in words no agent
-/// wrote. It names no value.
-fn disclosure_line(handle: &str, connection: &str, provider: Option<&str>) -> String {
+/// wrote: `what` (such as "Revealing sc12 sends its value") goes on to name
+/// the connection and the provider. It names no value.
+fn disclosure_line(what: &str, connection: &str, provider: Option<&str>) -> String {
     match provider {
         Some(provider) => format!(
-            "Revealing {handle} sends its value through {connection} to {provider}; \
-             {provider} and its logs then hold it."
+            "{what} through {connection} to {provider}; {provider} and its logs then hold it."
         ),
         None => format!(
-            "Revealing {handle} sends its value through {connection} to the model provider \
-             this agent runs on; that provider and its logs then hold it."
+            "{what} through {connection} to {UNKNOWN_PROVIDER_DISCLOSURE}; that provider and \
+             its logs then hold it."
         ),
     }
 }
@@ -665,7 +715,7 @@ pub(crate) fn parse_secret_handle(text: &str) -> Result<(&str, Option<u8>)> {
 
 /// Resolves a handle to the custody record it names, inside `txn`. Returns
 /// the bare handle and the record. Only a live custody short id resolves.
-fn resolve_handle_in_txn(
+pub(super) fn resolve_handle_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     handle: &str,
@@ -759,13 +809,13 @@ fn append_reveal_decision_in_txn(
     Ok(decision_id)
 }
 
-fn unknown(handle: &str) -> Error {
+pub(super) fn unknown(handle: &str) -> Error {
     Error::Secret(SecretError::SecretRefNotFound {
         name: handle.to_owned(),
     })
 }
 
-fn not_active(handle: &str) -> Error {
+pub(super) fn not_active(handle: &str) -> Error {
     Error::Secret(SecretError::SecretCustodyNotActive {
         name: handle.to_owned(),
     })

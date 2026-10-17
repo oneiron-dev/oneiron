@@ -36,17 +36,19 @@ mod weave_digest;
 pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;
 pub use weave_digest::{
     StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER, WeaveDigestCadence, WeaveDigestReader,
-    WeaveDigestSchedule,
+    WeaveDigestSchedule, WeaveScheduleHold,
 };
 mod weave_correction;
 mod weave_lens;
 pub use weave_lens::{
     WEAVE_LENS_CORRECTIONS_AXIS, WEAVE_LENS_READ_RATE_AXIS, WEAVE_REPORT_SKILL_NAME, WeaveLensPlan,
-    WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRender, WeaveLiveLens, weave_report_skill_id,
+    WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRefusal, WeaveLensRender, WeaveLiveLens,
+    weave_report_skill_id,
 };
 pub(crate) use weave_lens::{
-    weave_lens_attempt_input, weave_lens_attempt_period, weave_lens_model_input,
-    weave_lens_plan_schema,
+    WEAVE_LENS_PLAN_REPAIRS, weave_lens_answer_plan, weave_lens_attempt_input,
+    weave_lens_attempt_period, weave_lens_model_input, weave_lens_plan_schema,
+    weave_lens_repair_text,
 };
 mod weave_report;
 mod weave_serve;

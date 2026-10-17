@@ -50,6 +50,9 @@ pub struct BodyConflict {
 pub struct OfficeBodyDiff {
     pub base: Vec<u8>,
     pub head: Vec<u8>,
+    /// The fork's own frontier: a merge names it with the live head, so work
+    /// the opener adds after the review never lands on an earlier answer.
+    pub fork_head: Vec<u8>,
     pub proposal: Vec<BlockChange>,
     pub current: Vec<BlockChange>,
     pub conflicts: Vec<BodyConflict>,
@@ -70,7 +73,7 @@ pub(super) fn diff(
     base: &DocxBody,
     current: &DocxBody,
     proposal: &DocxBody,
-    frontiers: (Vec<u8>, Vec<u8>),
+    frontiers: (Vec<u8>, Vec<u8>, Vec<u8>),
 ) -> OfficeBodyDiff {
     let theirs = side(base, current);
     let ours = side(base, proposal);
@@ -123,6 +126,7 @@ pub(super) fn diff(
     OfficeBodyDiff {
         base: frontiers.0,
         head: frontiers.1,
+        fork_head: frontiers.2,
         proposal: ours,
         current: theirs,
         conflicts,
@@ -158,7 +162,8 @@ fn side(base: &DocxBody, side: &DocxBody) -> Vec<BlockChange> {
         if !staying.contains(&position) {
             changes.push(change(block, ChangeKind::Moved));
         }
-        if block.text != old.text {
+        // A mark change is a text change: both edit the paragraph's runs.
+        if block.text != old.text || block.runs != old.runs {
             changes.push(change(block, ChangeKind::Text));
         }
         if block.cells != old.cells {

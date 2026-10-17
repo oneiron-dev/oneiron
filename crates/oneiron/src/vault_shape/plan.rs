@@ -4,7 +4,7 @@
 //! whose frontier has moved, so what the owner approved is what they saw.
 use super::live::LiveShape;
 use super::seed::{hex, seed_digest};
-use super::{ShapeCeiling, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget, invalid};
+use super::{ShapeCeiling, ShapeMemberRole, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget, invalid};
 use crate::error::Result;
 use crate::{EntityId, Vault};
 use schemars::JsonSchema;
@@ -35,7 +35,8 @@ pub enum ShapeItemClass {
     /// rides autonomy, whatever the rung.
     Widening,
     /// A key binding, an ownership transfer or a co-sign change: goes to the
-    /// AUTHORITY_LOG ceremony unchanged. No v1 row compiles to one.
+    /// AUTHORITY_LOG ceremony unchanged. A member row moving a role to or
+    /// from Owner compiles to one.
     Authority,
 }
 
@@ -91,11 +92,20 @@ fn classify(
     before: Option<&ShapeRow>,
     after: Option<&ShapeRow>,
 ) -> ShapeItemClass {
-    use ShapeItemClass::{Receipted, Widening};
+    use ShapeItemClass::{Authority, Receipted, Widening};
     if change == ShapeChange::Retire {
         return Widening;
     }
     match (before, after) {
+        (Some(ShapeRow::Member { role: was, .. }), Some(ShapeRow::Member { role: now, .. })) => {
+            if *was == ShapeMemberRole::Owner || *now == ShapeMemberRole::Owner {
+                Authority
+            } else if now.reach() > was.reach() {
+                Widening
+            } else {
+                Receipted
+            }
+        }
         (_, Some(ShapeRow::World { .. })) => Receipted,
         (None, Some(ShapeRow::Actor { ceiling, .. })) => match ceiling {
             ShapeCeiling::Auto => Widening,
@@ -126,13 +136,18 @@ fn classify(
 }
 
 /// The named door an item lands through, where the vault has one. A grant
-/// row mints only from the bound it carries.
+/// row mints only from the bound it carries, a skill row imports only from
+/// its source, and a channel row provisions only from its provision.
 fn door(
     change: ShapeChange,
     target: &ShapeTarget,
     after: Option<&ShapeRow>,
 ) -> Option<&'static str> {
     match (change, target) {
+        (ShapeChange::Create, ShapeTarget::Shared) => Some("initialize_shared_vault"),
+        (ShapeChange::Create, ShapeTarget::Member { .. }) => Some("add_shared_member"),
+        (ShapeChange::Update, ShapeTarget::Member { .. }) => Some("change_shared_member_role"),
+        (ShapeChange::Retire, ShapeTarget::Member { .. }) => Some("remove_shared_member"),
         (ShapeChange::Create, ShapeTarget::World { .. }) => Some("create_world"),
         (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("define_agent"),
         (ShapeChange::Update | ShapeChange::Retire, ShapeTarget::Actor { .. }) => {
@@ -140,6 +155,24 @@ fn door(
         }
         (ShapeChange::Create | ShapeChange::Update, ShapeTarget::Pack { .. }) => Some("put_pack"),
         (ShapeChange::Retire, ShapeTarget::Pack { .. }) => Some("remove_pack"),
+        (ShapeChange::Create, ShapeTarget::Skill { .. }) => match after {
+            Some(ShapeRow::Skill {
+                source: Some(source),
+                ..
+            }) => Some(source.door()),
+            _ => None,
+        },
+        (ShapeChange::Retire, ShapeTarget::Skill { .. }) => Some("update_skill_record"),
+        (ShapeChange::Create, ShapeTarget::Channel { .. }) => match after {
+            Some(ShapeRow::Channel {
+                provision: Some(provision),
+                ..
+            }) => Some(provision.door()),
+            _ => None,
+        },
+        (ShapeChange::Retire, ShapeTarget::Channel { .. }) => {
+            Some("apply_channel_identity_lifecycle_intent")
+        }
         (ShapeChange::Create, ShapeTarget::Grant { .. })
             if matches!(after, Some(ShapeRow::Grant { bound: Some(_), .. })) =>
         {
