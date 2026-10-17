@@ -5,7 +5,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 
 - [Your vault: where it lives, backups, restore, export, one-act approvals](owner-actions.md) —
   `oneiron doctor`, `backup`, `restore --rehearse`, `restore`, `export`, `secret-scan`,
-  `import`, `runs`, and the `/v1/owner` routes.
+  `import`, `runs`, `learning-settings`, and the `/v1/owner` routes.
 - [Run the server, with or without models](run-with-models.md) — `[models]` config keys
   (HIGH, MID, DETAILED), provider kinds and env vars, what the Dreamer needs to start, chat
   streaming, the saved-workflow pump, and swapping a model in one edit.

@@ -301,6 +301,12 @@ declare const vault: {
   search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
     bm25(input: { limit: number; query: string }): Promise<unknown>;
   };
+  settings: {
+    learning: ((input: { key?: string | null }) => Promise<unknown>) & {
+      clear(input: { key: string; mode: "seed" | "pin"; project?: string | null; task_type?: string | null }): Promise<unknown>;
+      put(input: { key: string; mode: "seed" | "pin"; value: number; weight_runs?: number | null; why: string; project?: string | null; task_type?: string | null }): Promise<unknown>;
+    };
+  };
   shared: {
     deletion(input: object): Promise<unknown>;
     execute(input: { act_id: string }): Promise<unknown>;

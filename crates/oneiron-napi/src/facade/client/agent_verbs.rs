@@ -638,6 +638,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_settings_learning(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.learning", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_learning_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.learning.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_learning_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.learning.clear", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_lenses_propose(
         &self,
         input: serde_json::Value,

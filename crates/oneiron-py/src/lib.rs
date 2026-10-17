@@ -743,6 +743,30 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_settings_learning(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.learning")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.settings.learning", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_learning_put(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.learning.put")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.settings.learning.put", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_learning_clear(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.learning.clear")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.learning.clear", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_lenses_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.lenses.propose")?;
         let output = py

@@ -28,6 +28,7 @@ mod graph_ask_doors;
 mod guest_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
+mod setting_doors;
 pub(super) mod role_picks;
 mod share_doors;
 mod shared_act_doors;

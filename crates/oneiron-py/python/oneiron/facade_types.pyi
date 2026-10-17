@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 171 facade rows, 635 declarations.
-Inputs: 149 of 171 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 145 of 171 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 174 facade rows, 643 declarations.
+Inputs: 152 of 174 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 148 of 174 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
 """
 
@@ -1549,6 +1549,43 @@ class LegalHoldErasedRecord(TypedDict):
 class LegalHoldLiftAndErased(TypedDict):
     holds: list[EntityId]
     records: list[LegalHoldErasedRecord]
+class LearningSettingsRequest(TypedDict):
+    key: NotRequired[str | None]
+class LearningSettingSpecView(TypedDict):
+    key: str
+    min: float
+    max: float
+    seed: float
+    value: float
+LearningSettingMode = Literal["seed", "pin"]
+LearningSettingScope = Literal["vault", "project", "task_type"]
+class LearningSettingRowView(TypedDict):
+    key: str
+    mode: LearningSettingMode
+    scope: LearningSettingScope
+    project: NotRequired[str | None]
+    task_type: NotRequired[str | None]
+    value: float
+    weight_runs: NotRequired[float | None]
+    by: str
+    at: int
+    why: str
+class LearningSettingsView(TypedDict):
+    catalog: list[LearningSettingSpecView]
+    rows: list[LearningSettingRowView]
+class LearningSettingPut(TypedDict):
+    key: str
+    mode: LearningSettingMode
+    value: float
+    weight_runs: NotRequired[float | None]
+    why: str
+    project: NotRequired[str | None]
+    task_type: NotRequired[str | None]
+class LearningSettingClear(TypedDict):
+    key: str
+    mode: LearningSettingMode
+    project: NotRequired[str | None]
+    task_type: NotRequired[str | None]
 class LensSlot(TypedDict):
     pack_name: str
     skill_id: str

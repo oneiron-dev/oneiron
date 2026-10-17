@@ -98,6 +98,15 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.legal_holds.lift_and_erase",
             post(vault_legal_holds_lift_and_erase),
         )
+        .route("/vault.settings.learning", post(vault_settings_learning))
+        .route(
+            "/vault.settings.learning.put",
+            post(vault_settings_learning_put),
+        )
+        .route(
+            "/vault.settings.learning.clear",
+            post(vault_settings_learning_clear),
+        )
         .route("/vault.lenses.propose", post(vault_lenses_propose))
         .route("/vault.lenses.activate", post(vault_lenses_activate))
         .route("/vault.lenses.deactivate", post(vault_lenses_deactivate))
@@ -1694,6 +1703,87 @@ async fn vault_legal_holds_lift_and_erase(
     .await?;
     let output = facade_output(
         super::host_doors::vault_legal_holds_lift_and_erase(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_settings_learning(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.settings.learning")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.learning", &value)?;
+    let hooks =
+        facade_hooks_pre(&server, &headers, &auth, "vault.settings.learning", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_learning(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_settings_learning_put(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.settings.learning.put")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.learning.put", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.settings.learning.put",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_learning_put(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_settings_learning_clear(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.settings.learning.clear")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.learning.clear", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.settings.learning.clear",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_learning_clear(
             &server,
             &auth,
             facade_input(hooks.args.clone())?,

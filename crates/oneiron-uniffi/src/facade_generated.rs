@@ -329,6 +329,21 @@ export_facade! {
     let output = client.vault_legal_holds_lift_and_erase(&input)?;
     crate::codec::encode("vault.legal_holds.lift_and_erase", &output)
 };
+"vault.settings.learning" => fn vault_settings_learning(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::learning_setting_doors::LearningSettingsRequest = crate::codec::decode("vault.settings.learning", &input)?;
+    let output = client.vault_settings_learning(&input)?;
+    crate::codec::encode("vault.settings.learning", &output)
+};
+"vault.settings.learning.put" => fn vault_settings_learning_put(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::learning_setting_doors::LearningSettingPut = crate::codec::decode("vault.settings.learning.put", &input)?;
+    let output = client.vault_settings_learning_put(&input)?;
+    crate::codec::encode("vault.settings.learning.put", &output)
+};
+"vault.settings.learning.clear" => fn vault_settings_learning_clear(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::learning_setting_doors::LearningSettingClear = crate::codec::decode("vault.settings.learning.clear", &input)?;
+    let output = client.vault_settings_learning_clear(&input)?;
+    crate::codec::encode("vault.settings.learning.clear", &output)
+};
 "vault.lenses.propose" => fn vault_lenses_propose(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::lens::LensProposeRequest = crate::codec::decode("vault.lenses.propose", &input)?;
     let output = client.vault_lenses_propose(&input)?;
