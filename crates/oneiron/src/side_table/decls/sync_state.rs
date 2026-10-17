@@ -221,6 +221,9 @@ side_tables! {
     /// which keeps none. Key: hex64 (blake3 of the offer's adapter, origin, key binding and wire
     /// model).
     MODEL_OFFER_COOLDOWN: SyncState b"models:offer-cooldown:v1:" Named;
+    /// One paired-machine mesh connection's path receipt (OF-535): direct or relayed, admitted,
+    /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
+    SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named;
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
