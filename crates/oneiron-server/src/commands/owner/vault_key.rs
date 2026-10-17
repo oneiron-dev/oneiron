@@ -112,8 +112,10 @@ fn prf_input(args: &VaultKeyNamedArgs) -> anyhow::Result<()> {
 /// opens with the unlock the flags name: a sealed vault's pages unlock with
 /// it before the open, a plain vault's key after it. A recovery box files an
 /// escrow seed under the vault's id: a sealed vault's mirror names it, and a
-/// plain vault opens first to read its own.
+/// plain vault opens first to read its own. The world kit opens the
+/// `world-kit` escrow wrap, bound to the vault id `--vault-id` names.
 fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
+    refuse_unused_unlock_args(&args)?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = if args.unlock == UnlockMethod::Device {
         open_held(&args.serve)?
@@ -139,6 +141,28 @@ fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
     };
     let owner = local_owner(&vault)?;
     emit(&vault.add_vault_key_wrap_as(&owner, NewVaultKeyWrap::Device)?)
+}
+
+/// Refuses an add-device flag its `--unlock` does not read: the kit's pieces
+/// and vault id with any other unlock, and a credential, a label or a
+/// recovery box with the kit.
+fn refuse_unused_unlock_args(args: &VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
+    let kit = args.unlock == UnlockMethod::Kit;
+    let unused = [
+        ("--piece", !kit && !args.pieces.is_empty()),
+        ("--vault-id", !kit && args.vault_id.is_some()),
+        ("--credential", kit && args.credential.is_some()),
+        ("--label", kit && args.label.is_some()),
+        ("--box-dir", kit && args.secret.box_dir.is_some()),
+        ("--box-command", kit && args.secret.box_command.is_some()),
+    ];
+    match unused.iter().find(|(_, given)| *given) {
+        Some((flag, _)) if kit => anyhow::bail!(
+            "--unlock kit reads its pieces and the kit passphrase; {flag} is not one of them"
+        ),
+        Some((flag, _)) => anyhow::bail!("{flag} is read only with --unlock kit"),
+        None => Ok(()),
+    }
 }
 
 /// The page seal the configured vault opens with (OF-570 maximum tier):
@@ -512,6 +536,15 @@ impl HostUnlock {
         args: &VaultKeyAddDeviceArgs,
         vault_id: impl FnOnce() -> anyhow::Result<[u8; 32]>,
     ) -> anyhow::Result<Self> {
+        // The kit is bound to the vault id the owner names, never the one a
+        // mirror or the store carries.
+        if args.unlock == UnlockMethod::Kit {
+            return super::recovery_kit::kit_unlock_with(
+                args.vault_id.as_deref(),
+                &args.pieces,
+                args.secret.secret_file.as_deref(),
+            );
+        }
         Self::read_with(
             args.unlock,
             args.credential.as_deref(),
@@ -558,8 +591,8 @@ impl HostUnlock {
                 Self::Escrow { label, secret }
             }
             UnlockMethod::Kit => anyhow::bail!(
-                "--unlock kit opens a backup (`oneiron restore --unlock kit`); a vault on this \
-                 host unlocks with device, password, passkey or escrow"
+                "--unlock kit opens with the kit's pieces (--piece) and the vault id it is bound \
+                 to (--vault-id)"
             ),
         })
     }

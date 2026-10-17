@@ -76,6 +76,12 @@ impl VaultDataKey {
         Ok(Self(bytes))
     }
 
+    /// The key a managed node's supervisor delivered, copied into a handle
+    /// that wipes it on drop.
+    pub(super) fn delivered(bytes: &[u8; 32]) -> Self {
+        Self(Zeroizing::new(*bytes))
+    }
+
     /// `BLAKE3-derive_key("oneiron/vault-key-commitment/v1", vault id ‖ key)`: it
     /// pins which bytes are this vault's key and reveals nothing about them.
     pub(super) fn commitment(&self, vault_id: &[u8; 32]) -> [u8; 32] {
@@ -263,6 +269,15 @@ pub(crate) struct CarriedVaultKey {
 }
 
 impl CarriedVaultKey {
+    /// The vault key named by `commitment` with no wrap yet: what the mirror
+    /// of a vault under a delivered key holds before its first wrap.
+    pub(super) fn unwrapped(commitment: [u8; 32]) -> Self {
+        Self {
+            commitment,
+            wraps: Vec::new(),
+        }
+    }
+
     /// The commitment naming the vault key.
     pub(crate) fn commitment(&self) -> &[u8; 32] {
         &self.commitment
