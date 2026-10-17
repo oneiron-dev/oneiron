@@ -26,9 +26,6 @@ const TEAM_RECEIPT: SideTable<String, TeamReceipt, Named> =
 /// Longest reference or model id kept.
 const MAX_REF_BYTES: usize = 256;
 
-/// Most model ids or roles one receipt names.
-const MAX_LIST: usize = 256;
-
 /// The pattern skill revision a team ran.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatternSkillRef {
@@ -154,18 +151,18 @@ impl TeamReceipt {
             "a team reference is 1..=256 bytes without NUL",
         )?;
         self.type_ref.validate()?;
-        if self.models.is_empty() || self.models.len() > MAX_LIST {
+        // No count cap on models or roles (ARCH-0079: width has no count
+        // cap), so a very wide team still records its receipt.
+        if self.models.is_empty() {
             return Err(Error::InvalidClaimBody(
-                "a team receipt names 1..=256 model ids",
+                "a team receipt names at least one model id",
             ));
         }
         for model in &self.models {
             bounded(model, "a model id is 1..=256 bytes without NUL")?;
         }
-        if self.shape.width == 0 || self.shape.roles.len() > MAX_LIST {
-            return Err(Error::InvalidClaimBody(
-                "a team has at least one agent and at most 256 roles",
-            ));
+        if self.shape.width == 0 {
+            return Err(Error::InvalidClaimBody("a team has at least one agent"));
         }
         if self.decided_by.kind() != self.pattern.decider_kind() {
             return Err(Error::InvalidClaimBody(

@@ -11,8 +11,10 @@ use serde::Deserialize;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-/// MEMORIES per-slot row caps.
+/// MEMORIES per-slot row caps. An unknown slot (such as the retired
+/// `companions`) is refused, not ignored.
 #[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ContextBoardMemoriesSlotControls {
     /// Claim row cap.
     #[serde(default)]

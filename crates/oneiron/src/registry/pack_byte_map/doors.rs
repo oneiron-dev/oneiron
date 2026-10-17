@@ -277,6 +277,30 @@ impl Store {
         }
     }
 
+    /// [`Self::validate_pack_handle_in_txn`] for rows a checkpoint image
+    /// already holds: any registration that keeps `handle`, active or not,
+    /// since an uninstalled kind keeps its handle while rows still name it.
+    /// Writes keep the active-only check.
+    pub(crate) fn validate_registered_pack_handle_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        handle: u8,
+    ) -> Result<()> {
+        if zone_of(handle) != TypeByteZone::PackHandle {
+            return Err(Error::InvalidEntityType(handle));
+        }
+        let map = read(self, txn)?.ok_or(Error::InvalidEntityType(handle))?;
+        if map
+            .registrations
+            .values()
+            .any(|row| row.handle == Some(handle))
+        {
+            Ok(())
+        } else {
+            Err(Error::InvalidEntityType(handle))
+        }
+    }
+
     /// Mandatory final body check for public, raw, replay and rematerialization.
     /// Non-pack kinds are untouched. `kind_reg:` rows never participate.
     pub(crate) fn validate_pack_instance_in_txn(

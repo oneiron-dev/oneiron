@@ -119,9 +119,9 @@ impl Store {
     /// The rule is [`Self::validate_entity_type`]'s, against the IMAGE's own
     /// dynamic registry: its `kind_reg:` rows, already copied into `txn`,
     /// decoded under the loader's rules. This store's in-memory registry is
-    /// the pre-restore one and is never consulted. Pack-handle rows are left
-    /// to the pack map, which keeps an uninstalled kind's handle while rows
-    /// still name it.
+    /// the pre-restore one and is never consulted. A pack-handle row needs a
+    /// registration in the image's own pack map that keeps its handle, active
+    /// or not: an uninstalled kind keeps its handle while rows still name it.
     pub(crate) fn validate_checkpoint_entity_kinds_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -138,7 +138,9 @@ impl Store {
             kinds.insert(header.entity_type);
         }
         for kind in kinds {
-            if zone_of(kind) != TypeByteZone::PackHandle {
+            if zone_of(kind) == TypeByteZone::PackHandle {
+                self.validate_registered_pack_handle_in_txn(txn, kind)?;
+            } else {
                 validate_registered_entity_type(kind, &registry)?;
             }
         }

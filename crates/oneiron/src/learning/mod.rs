@@ -35,9 +35,9 @@ pub mod retest;
 
 pub use cell::{LearningCell, LearningPredicate, ROOT_TYPE_NODE, TypeRef};
 pub use coordination::{
-    CoordinationCost, DuplicateWork, ReuseDelay, TeamEvent, coordination_cost, coordination_runs,
-    derive_coordination_cost, label_duplicate_work, project_all_coordination,
-    project_run_coordination, team_events_from_attempts,
+    CoordinationCost, DuplicateLabeller, DuplicateWork, DuplicateWorkKind, ReuseDelay, TeamEvent,
+    coordination_cost, coordination_runs, derive_coordination_cost, label_duplicate_work,
+    project_all_coordination, project_run_coordination, team_events_from_attempts,
 };
 pub use estimate::{
     BetaView, ESTIMATOR_VERSION, Estimate, EstimateForm, EstimateLabels, EstimateValue, Prior,
