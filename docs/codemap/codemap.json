@@ -27468,7 +27468,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -27487,6 +27487,17 @@
       "enum": 1,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/backfill.rs",
+     "purpose": "Scheduled backfill (OF-516): the question's principal sets a time, and from then the question pump answers…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -27544,7 +27555,7 @@
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
       "crate-vis": 5,
-      "re-export": 10
+      "re-export": 12
      }
     },
     {
@@ -27583,6 +27594,7 @@
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
+      "OutcomeWindowClose",
       "QuestionActivation",
       "QuestionAudience",
       "QuestionCriteria",
@@ -27590,16 +27602,18 @@
       "QuestionMedia",
       "QuestionRecord",
       "RefreshPolicy",
-      "RefreshTrigger"
+      "RefreshTrigger",
+      "ScheduledBackfill",
+      "WindowOutcome"
      ],
      "path": "src/llm/decision/questions/records.rs",
      "purpose": "Immutable definitions and typed outcome bindings",
      "surface": {
       "const": 4,
       "crate-vis": 1,
-      "enum": 4,
+      "enum": 5,
       "fn": 11,
-      "struct": 11
+      "struct": 13
      }
     },
     {
@@ -27666,6 +27680,18 @@
      "purpose": "Transactional tasks.ask adapter to the shared versioned question substrate",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/windows.rs",
+     "purpose": "Outcome windows the question pump closes (OF-516)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 3
      }
     },
     {
@@ -35835,6 +35861,7 @@
       "GraphAskSelection",
       "QuestionAnswer",
       "QuestionAnswersRequest",
+      "QuestionBackfillRequest",
       "QuestionCreateRequest",
       "QuestionEditRequest",
       "QuestionPauseRequest",
@@ -35847,7 +35874,7 @@
       "const": 2,
       "enum": 2,
       "fn": 3,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -45939,7 +45966,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 294
+      "fn": 295
      }
     },
     {
@@ -51516,7 +51543,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 94,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -52211,7 +52238,7 @@
    },
    "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3157,
+   "source_files": 3159,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60121,7 +60148,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 248
+      "fn": 249
      }
     },
     {
@@ -61137,7 +61164,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 249
+      "fn": 250
      }
     },
     {
@@ -63818,13 +63845,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/graph_ask_doors.rs",
      "purpose": "OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -71446,6 +71473,7 @@
       "QuestionAnswer",
       "QuestionAnswersRequest",
       "QuestionAudience",
+      "QuestionBackfillRequest",
       "QuestionCreateRequest",
       "QuestionCriteria",
       "QuestionDefinition",
@@ -71527,6 +71555,7 @@
       "RunTree",
       "RunTreeRepair",
       "RunTreeStatus",
+      "ScheduledBackfill",
       "Scope",
       "ScopeAxisScopeId",
       "ScopeAxisString",
@@ -71721,7 +71750,7 @@
      "purpose": "—",
      "surface": {
       "enum": 204,
-      "struct": 520
+      "struct": 522
      }
     },
     {
