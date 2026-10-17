@@ -11,8 +11,8 @@ use oneiron::llm::decision::questions::{
     GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, refresh_due_questions_with,
 };
 use oneiron::llm::decision::{
-    DecisionAnswer, DecisionDial, DecisionImage, DecisionProvider, DecisionQuestion, DecisionRung,
-    Reversibility,
+    DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionImage, DecisionProvider,
+    DecisionQuestion, DecisionRung, Reversibility, TypedDecision,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::AI_VERDICT_DEADLINE_MS;
@@ -115,37 +115,81 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
         context: &GraphUnitContext,
         images: &[DecisionImage],
     ) -> Result<Option<GraphDecision>> {
-        let host = self.server.decision_host();
         let state = context.state(images);
         let evidence: Vec<EntityId> = context.sources.iter().map(|source| source.id).collect();
         let deadline = RetrievalDeadline::hard(Instant::now(), self.budget);
-        let mut dial = self.dial;
-        let local = if images.is_empty() {
-            None
-        } else {
-            dial.first = DecisionRung::Local;
-            Some(
-                vision_rung(self.server, self.principal, self.class, images, "graph.ask")
-                    .map_err(|error| Error::InvalidConfig(error.to_string()))?,
-            )
-        };
-        let mut ladder = host.ladder().ladder();
-        if let Some(rung) = &local {
-            ladder.local = Some(rung as &dyn DecisionProvider);
-        }
-        let decision = ladder.run_images(
-            question,
-            self.principal,
-            &evidence,
-            images,
-            &state,
-            dial,
-            &host.bands(),
-            Reversibility::ReversibleRead,
-            &deadline,
+        let decision = ladder_decide(
+            self.server,
+            LadderCall {
+                principal: self.principal,
+                class: self.class,
+                question,
+                evidence: &evidence,
+                images,
+                state: &state,
+                dial: self.dial,
+                policy: &self.server.decision_host().bands(),
+                reversibility: Reversibility::ReversibleRead,
+                deadline: &deadline,
+                label: "graph.ask",
+            },
         )?;
         Ok(Some(GraphDecision::Decision(Box::new(decision))))
     }
+}
+
+/// One call on the host's ladder, for a graph or an artifact unit.
+pub(crate) struct LadderCall<'a> {
+    pub(crate) principal: EntityId,
+    pub(crate) class: EdgeActorClass,
+    pub(crate) question: &'a DecisionQuestion,
+    pub(crate) evidence: &'a [EntityId],
+    pub(crate) images: &'a [DecisionImage],
+    pub(crate) state: &'a serde_json::Value,
+    pub(crate) dial: DecisionDial,
+    pub(crate) policy: &'a DecisionBandPolicy,
+    pub(crate) reversibility: Reversibility,
+    pub(crate) deadline: &'a RetrievalDeadline,
+    /// The run label a vision seat's read is recorded under.
+    pub(crate) label: &'a str,
+}
+
+/// The call through the host's ladder. A call with images starts at the
+/// Local-vision rung, seated on a run of the asker's own, when the dial
+/// spans it; a rung above it that reads no image is skipped. Without that
+/// rung the call reads its state alone.
+pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result<TypedDecision> {
+    let host = server.decision_host();
+    let mut dial = call.dial;
+    let sees = !call.images.is_empty()
+        && LocalVisionModel::bound(&server.ai)
+        && dial.first <= DecisionRung::Local
+        && DecisionRung::Local <= dial.ceiling;
+    let local = if sees {
+        dial.first = DecisionRung::Local;
+        Some(
+            vision_rung(server, call.principal, call.class, call.images, call.label)
+                .map_err(|error| Error::InvalidConfig(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let images = if sees { call.images } else { &[] };
+    let mut ladder = host.ladder().ladder();
+    if let Some(rung) = &local {
+        ladder.local = Some(rung as &dyn DecisionProvider);
+    }
+    ladder.run_images(
+        call.question,
+        call.principal,
+        call.evidence,
+        images,
+        call.state,
+        dial,
+        call.policy,
+        call.reversibility,
+        call.deadline,
+    )
 }
 
 /// Starts the standing pump. Each pass runs on a blocking thread: the
