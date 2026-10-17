@@ -234,6 +234,30 @@ class Oneiron:
             _translate(lambda: self._client.retry(json.dumps(refusal), verb, json.dumps(input)))
         )
 
+    def lens_frame_event(self, card_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """Sends one event on a lens card the connected server rendered (OF-181).
+
+        ``request`` is the route's body, ``{"event": ..., "idempotencyKey":
+        ...}``, with the event as the rendered card names it; its keys keep
+        the wire's camelCase (``cardId``, ``occurredAt``). The reply is the
+        wire JSON: ``{"$state": ...}`` for a local action, or ``{"outcome":
+        ..., "readReceipt": ...}`` for a deterministic tool. A card the server
+        no longer holds raises ``NOT_FOUND``: render the lens again. An
+        embedded handle raises ``BAD_REQUEST``: lens frames live on the
+        server that rendered the card.
+        """
+        return json.loads(
+            _translate(lambda: self._client.lens_frame_event(card_id, json.dumps(request)))
+        )
+
+    def close_lens_frame(self, card_id: str) -> dict[str, Any]:
+        """Closes a lens card the connected server rendered and frees its frame (OF-181).
+
+        Answers ``{"closed": bool}``; a card the server does not hold answers
+        ``False``. An embedded handle raises ``BAD_REQUEST``.
+        """
+        return json.loads(_translate(lambda: self._client.close_lens_frame(card_id)))
+
     # BEGIN GENERATED FACADE VERBS
     def report(self, spec):
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
@@ -608,11 +632,14 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def launch(self, spec):
-            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."""
+            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."""
             return json.loads(_translate(lambda: self._client.vault_fanout_launch(json.dumps(spec))))
         def resume(self, spec):
             """The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."""
             return json.loads(_translate(lambda: self._client.vault_fanout_resume(json.dumps(spec))))
+        def resume_as(self, spec):
+            """A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_resume_as(json.dumps(spec))))
         def ack(self, spec):
             """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
             return json.loads(_translate(lambda: self._client.vault_fanout_ack(json.dumps(spec))))
@@ -1115,7 +1142,7 @@ class Oneiron:
             """Reads a live body, at its head or an earlier frontier."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_read(json.dumps(request, allow_nan=False))))
         def commits(self, request: dict[str, Any]) -> list[dict[str, Any]]:
-            """Every commit receipt of a live body, in commit order."""
+            """Every commit receipt of a live body, in commit order, or one actor's."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_commits(json.dumps(request, allow_nan=False))))
         def edit(self, request: dict[str, Any]) -> dict[str, Any]:
             """A person's typed operations on the live body."""

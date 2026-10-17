@@ -17,9 +17,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/clock.rs` | src | s | 1 struct · 5 fn | RecalcClock | What one recalculation reads from its caller: the instant NOW() and TODAY() observe, the local UTC offset… |
 | `src/context.rs` | src | m | 8 crate-vis | — | Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names… |
 | `src/contract_port.rs` | src | s | — | — | The document contract's recalculation port (ARCH-0075 section 2): a host serving `oneiron_docedit::contract`… |
+| `src/display.rs` | src | s | 1 fn | — | A cell as a person sees it in Excel: its stored value (a formula's cached result) under its number format… |
 | `src/engine.rs` | src | m | 1 struct · 1 fn · 8 const · 1 re-export · 1 crate-vis | FormualizerEngine | The owned formualizer engine behind the [`RecalcEngine`] seam |
 | `src/error.rs` | src | s | 1 enum · 1 fn · 1 type | FormulaError | Typed failures for the formula crate |
-| `src/lib.rs` | src | s | 6 mod · 8 re-export | — | In-process XLSX formula recalculation, the default of the edit round trip |
+| `src/lib.rs` | src | s | 7 mod · 9 re-export | — | In-process XLSX formula recalculation, the default of the edit round trip |
 | `src/links.rs` | src | L | 8 crate-vis | — | Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the… |
 | `src/location.rs` | src | s | 1 struct · 4 fn | DocumentLocation | Where the workbook one recalculation reads was opened from: the folder and file name CELL("filename")… |
 | `src/measure.rs` | src | m | 4 struct · 3 fn · 1 const | CaseResult, CorpusCase, CorpusReport, MeasureOptions | Step-19 corpus runner: honest per-case results over the pinned 834 cases |

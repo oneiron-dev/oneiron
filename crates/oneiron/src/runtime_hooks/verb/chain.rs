@@ -37,6 +37,8 @@ const RECEIPT_TAIL: usize = 8;
 /// The host verb a pre-hook may never skip: a skipped compaction overflows
 /// the next turn (ARCH-0080 §5).
 const COMPACT: &str = "host.compact";
+/// Why a resumed chain in a build without the sandbox runs no hook.
+const NO_SANDBOX: &str = "this build runs no hook sandbox";
 
 /// One hook a call matched: its binding id and row.
 type Hook<'b> = (EntityId, &'b PackHookBinding);
@@ -47,6 +49,8 @@ type Stopped<T> = std::result::Result<T, VerbHookStop>;
 /// suppressed, at hook depth 1, or when no binding's verb glob takes it. The
 /// cached binding list answers; one that does not read answers yes, so the
 /// chain reports the error. Scope is not read here: a scoped binding may run.
+/// A call an earlier try of its invocation left saved reaches the chain
+/// whatever this says ([`super::ask::saved`]).
 pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
     let state = &vault.verb_hook_state;
     if state.suppressed() || depth() > 0 {
@@ -64,13 +68,18 @@ pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
     }
 }
 
-/// The pre chain of `call`. It passes through with hooks off or suppressed,
-/// at hook depth 1, inside the same actor's call of this invocation, without
-/// the sandbox, and when no binding matches; the cached binding list keeps
-/// that last case free of reads. A retry while the drain runs the call again
-/// gets the ask's Pending, and the retry after it what the call returned.
-/// `resume` is how settlement could run the call again without its caller:
-/// an ask saves it.
+/// The pre chain of `call`. At hook depth 1, and inside the same actor's
+/// call of this invocation, it passes through. Otherwise what an earlier try
+/// of the invocation left comes first: a retry while the drain runs the call
+/// again gets the ask's Pending, one after it what the call returned, and a
+/// call still parked on its ask its Pending. A settled proceed resumes after
+/// the asking hook under current authority, even when no hook matches now:
+/// its commit still uses the answer up. With hooks off or suppressed a
+/// parked call stays parked, and resumes once they are back on. Only a call
+/// with nothing saved passes through with hooks off, without the sandbox,
+/// or when no binding matches; the cached binding list keeps that last case
+/// free of reads. `resume` is how settlement could run the call again
+/// without its caller: an ask saves it.
 pub(super) fn pre(
     vault: &Vault,
     call: VerbCall,
@@ -78,44 +87,53 @@ pub(super) fn pre(
     check: VerbArgsCheck<'_>,
     resume: Option<&VerbResume>,
 ) -> Result<Stopped<VerbHookPre>> {
+    if depth() > 0 {
+        return through(call, args);
+    }
     let state = &vault.verb_hook_state;
-    if state.suppressed() || depth() > 0 {
-        return through(call, args);
-    }
-    let bindings = state.bindings(vault)?;
-    let hooks = matching(vault, &bindings.verb, HookPhase::Pre, &call)?;
-    if hooks.is_empty() && matching(vault, &bindings.verb, HookPhase::Post, &call)?.is_empty() {
-        return through(call, args);
-    }
-    let Some(runtime) = state.runtime() else {
-        return through(call, args);
-    };
     let mark = match state.enter(call.invocation, call.actor) {
         Entered::Nested => return through(call, args),
         Entered::Draining(group) => return Ok(Err(ask::pending(call.invocation, group))),
         Entered::Fresh(mark) => mark,
     };
-    let carry = Carry {
-        mark,
-        now: vault.store.clock.now_recorded_at().saturating_mul(1_000),
+    let saved = {
+        let _depth = HookDepth::enter();
+        ask::retry(vault, &call, resume)?
     };
-    if hooks.is_empty() {
-        return Ok(Ok(VerbHookPre {
-            call,
-            args,
-            carry: Some(carry),
-        }));
-    }
-    let _depth = HookDepth::enter();
-    let (start, args, token) = match ask::retry(vault, &call, resume)? {
-        ask::Retry::Fresh => (0, args, None),
+    let resumed = match saved {
+        ask::Retry::Fresh => None,
         ask::Retry::Stop(stop) => return Ok(Err(stop)),
         ask::Retry::Resume {
             binding,
             position,
             args,
             token,
-        } => (
+        } => Some((binding, position, args, token)),
+    };
+    let bindings = if state.suppressed() {
+        None
+    } else {
+        Some(state.bindings(vault)?)
+    };
+    let Some(bindings) = bindings.filter(|bindings| bindings.enabled) else {
+        return match resumed {
+            Some((.., token)) => Ok(Err(token.parked(call.invocation))),
+            None => through(call, args),
+        };
+    };
+    let hooks = matching(vault, &bindings.verb, HookPhase::Pre, &call)?;
+    let runtime = state.runtime();
+    let (start, args, token) = match resumed {
+        None => {
+            if runtime.is_none()
+                || (hooks.is_empty()
+                    && matching(vault, &bindings.verb, HookPhase::Post, &call)?.is_empty())
+            {
+                return through(call, args);
+            }
+            (0, args, None)
+        }
+        Some((binding, position, args, token)) => (
             hooks
                 .iter()
                 .position(|(id, _)| *id == binding)
@@ -125,6 +143,24 @@ pub(super) fn pre(
             Some(token),
         ),
     };
+    let carry = Carry {
+        mark,
+        now: vault.store.clock.now_recorded_at().saturating_mul(1_000),
+    };
+    if token.is_none() && hooks.is_empty() {
+        return Ok(Ok(VerbHookPre {
+            call,
+            args,
+            carry: Some(carry),
+        }));
+    }
+    // A resumed call with no sandbox runs no hook after the asking one, as a
+    // new call would run none.
+    let (runtime, hooks) = match runtime {
+        Some(runtime) => (runtime, hooks),
+        None => (Err(NO_SANDBOX), Vec::new()),
+    };
+    let _depth = HookDepth::enter();
     let ended = Chain::new(vault, &call, HookPhase::Pre, runtime, carry.now)
         .pre(&hooks, start, args, check, token, resume)?;
     Ok(ended.map(|args| VerbHookPre {

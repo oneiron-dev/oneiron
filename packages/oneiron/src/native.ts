@@ -56,6 +56,7 @@ tasksCreate(input: unknown): unknown
 tasksWave(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
+vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
@@ -304,6 +305,8 @@ vaultNotesLifecycle(requestJson: string): string
   inRoomTurn(roomRef: string): NativeClient
   lastReceiptRef(): string | null
   retry(pending: unknown, verb: string, input: unknown): unknown
+  lensFrameEvent(cardId: string, request: unknown): unknown
+  closeLensFrame(cardId: string): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

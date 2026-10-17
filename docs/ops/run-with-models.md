@@ -202,8 +202,15 @@ carries `max_tokens`, 4096 when nothing else names it.
 An `openai-compat` provider at `https://api.openai.com` or `https://api.x.ai`
 runs each call as one Responses turn on a held WebSocket at its
 `/v1/responses`. A call whose conversation extends the last response that
-socket finished sends only the new items, with `previous_response_id` and
-`store = false`; any other call sends the whole conversation. A socket is
+socket finished sends only the new items, with `previous_response_id`; any
+other call sends the whole conversation. Each turn goes with `store = false`,
+so the provider keeps nothing and a replaced or reconnected socket starts the
+conversation again in full. The owner can turn storing on with
+`POST /v1/owner/settings/models` and `{"responses_store": true}` (`GET` reads
+it): each turn then goes with `store = true`, the provider keeps the response,
+and a new socket resumes a conversation from its last stored response, sending
+only the new items. The server remembers the last stored response of the 32
+most recent conversations per provider, until restart. A socket is
 replaced 5 minutes before its age limit (60 minutes at OpenAI, 59 at xAI).
 Idle sockets wait 10 minutes for a next turn, at most 8 per provider. A
 call whose socket will not open, or that carries audio, goes out over
@@ -228,6 +235,18 @@ broker compresses instead, after its checks and just before its one send: gzip
 level 1 on `/v1/messages` at `https://api.anthropic.com`, under the same
 16 KiB and smaller rules, with no plain resend. A `key_secret` entry takes no
 `request_compression`.
+
+Our own model servers decode compressed bodies once built or started for it
+(OF-604): the house model's `exl3_server.py`, a `llama-server` built by
+`deploy/house-model/build-llama.sh` (cpp-httplib's zstd and zlib support on),
+a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
+(deploy/house-model/README.md, "Compressed requests"), and the VoxCPM2 worker.
+Each opts in on its own entry with `request_compression = "zstd"`; an entry
+whose server does not decode stays plain. A `voxcpm2` entry compresses its
+`/render` uploads, and an opted-in provider's media JSON bodies compress by
+the same rules. A tagger endpoint opts in on its section, `[oneironer]
+request_compression = "zstd"`, for its `/v1/extract` posts, with the same
+plain resend; a `kind = "oneironer"` provider entry takes none.
 
 A reply may name its model differently from the request (a proxy that strips a
 login prefix, say). The answer is kept, and the receipt records both names under
@@ -559,10 +578,12 @@ the secret as the call's credential, in place of the connector's own. Its
 `connector:<connector>`, the connector the name routes to, and the call itself
 still runs under the run's own standing grant and gate. The tool's reply comes
 back as `result`, marked foreign, with the value replaced. A call the gate
-holds answers with its `call_ref`, and the run does not wait on it. The
+holds parks the run on its `call_ref`, as a held `connector.call` does. The
 settler sends it once the hold clears, with the same secret, and the door
-checks the binding again at that send. An embedded vault refuses
-`connector.call`.
+checks the binding again at that send. The run then resumes with the call's
+settled reply, the `connector.call` reply cleared of the value, bound as
+`wait<n>`. An embedded vault refuses `connector.call`.
+
 When the host's model ladder served the turn, each verb call the turn's
 program makes carries the provider that answered it, and a reveal's ask names
 that provider. An agent no host model drives, such as an external HTTP or MCP
@@ -1564,6 +1585,11 @@ budget_units = 50000           # its own meter; models.raw_budget_units when uns
 [models.decisions.booking_parse]
 role = "checker"        # the cheap seat a booking page's free text is parsed on
 max_input_bytes = 4096  # the longest text one parse reads (the default and the most)
+
+[models.decisions.connector_slate]
+# A connector's register and refresh doors ask, for each tool on its grant slate:
+wording = "What should this connector tool's setting be?"
+budget_ms = 30000       # the whole draft's budget (the default)
 ```
 
 The Big rung asks each question as one model call on that seat. The call is
@@ -1586,6 +1612,15 @@ authenticated caller's parse is paid on its principal's line. An anonymous
 visitor's parse is paid on the owner's line, since the owner publishes the
 page. Without the row, free text is refused, and a constraint object still
 works.
+
+A connector's grant slate (`POST /v1/owner/connectors/register` and
+`/refresh`) is drafted one tool at a time, up to the Big rung, when
+`[models.decisions.connector_slate]` words the question. The question reads
+the tool, the owner's past rulings on tools like it and the rule draft, and
+picks auto, always ask or never allow; only the owner picks always allow. An abstain, an answer
+outside the options, a failed call or a row past `budget_ms` keeps the rule
+draft. Without the row, the rule draft alone fills the slate. The owner
+stamps the slate either way.
 
 The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The
