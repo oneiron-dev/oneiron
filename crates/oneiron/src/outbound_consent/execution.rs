@@ -6,9 +6,11 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::outbound_chokepoint::OutboundEffectResult;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::outbound_intent_ledger::{
-    FrozenOutboundCall, IntentDispatchResult, IntentLedgerError, IntentState, OutboundSendOutcome,
+    FrozenOutboundCall, IntentDispatchResult, IntentEscalationReason, IntentLedgerError,
+    IntentState, OutboundSendOutcome,
 };
 
 use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
@@ -155,6 +157,40 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     )?;
     let decision =
         scoped_decision_after_effect(vault, grant_id, principal_ref, &prepared_call, &effect)?;
+    let freeze_events = observed_freeze_events_since(freeze_event_baseline);
+    Ok(dispatch_result(effect, decision, transport, freeze_events))
+}
+
+/// Resumes one admitted scoped intent from its frozen ledger row, by id: the
+/// ledger's own bytes, grant binding and endpoint, never a fresh
+/// preparation. The frozen binding, key, manifest and charter checks still
+/// run before transport and refuse or hold a call whose authority changed.
+pub(super) fn resume_scoped_mcp_outbound_intent<S: OutboundResultSender>(
+    vault: &Vault,
+    authority: &OutboundBindingAuthority,
+    intent_id: [u8; 32],
+    now_ms: u64,
+    sender: &mut S,
+) -> std::result::Result<ScopedMcpDispatchResult, IntentLedgerError> {
+    let mut transport = ScopedResultTransport::new(sender);
+    let effect = crate::outbound_chokepoint::execute_outbound_effect(
+        vault,
+        authority,
+        crate::outbound_chokepoint::OutboundEffectCommand::Resume(intent_id),
+        now_ms,
+        &mut transport,
+    )?;
+    let decision = resumed_decision(&effect);
+    Ok(dispatch_result(effect, decision, transport, 0))
+}
+
+/// Packs one effect and its transport's counters into the dispatch result.
+fn dispatch_result<S>(
+    effect: OutboundEffectResult,
+    decision: ScopedMcpConsentDecision,
+    transport: ScopedResultTransport<'_, S>,
+    freeze_events: usize,
+) -> ScopedMcpDispatchResult {
     let authorization_rejections = usize::from(
         effect.dispatch.state == Some(IntentState::Abandoned)
             || (effect.dispatch.state == Some(IntentState::Pending)
@@ -170,10 +206,10 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         .into_iter()
         .chain(effect.gate_reason_codes)
         .collect();
-    Ok(ScopedMcpDispatchResult {
+    ScopedMcpDispatchResult {
         decision,
         dispatch,
-        freeze_events: observed_freeze_events_since(freeze_event_baseline),
+        freeze_events,
         effectful_sends: transport.effectful_sends,
         authorization_rejections,
         scrubbable_result_fields: transport.scrubbable_result_fields,
@@ -182,6 +218,44 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         gate_decision_ref: effect.gate_decision_id,
         gate_outcome: effect.gate_outcome,
         gate_reasons,
+    }
+}
+
+/// A frozen resume's consent decision. It has no live preparation to judge
+/// against a grant's scope, so only what the replay itself met escalates:
+/// connector governance in the receipt, a revoked connector, or a binding
+/// the frozen check rejected.
+fn resumed_decision(effect: &OutboundEffectResult) -> ScopedMcpConsentDecision {
+    if let Some(reason) = connector_gate_reason(&effect.gate_receipt_reasons) {
+        return ScopedMcpConsentDecision::Escalate(reason);
+    }
+    match effect
+        .dispatch
+        .escalation
+        .map(|escalation| escalation.reason)
+    {
+        Some(IntentEscalationReason::ConnectorRevoked) => {
+            ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeyRevoked)
+        }
+        Some(IntentEscalationReason::BindingInvalid) => {
+            ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant)
+        }
+        _ => ScopedMcpConsentDecision::AutoFire,
+    }
+}
+
+/// The connector governance a gate receipt reason names, if any.
+fn connector_gate_reason(reasons: &[String]) -> Option<ScopedMcpEscalationReason> {
+    reasons.iter().find_map(|reason| match reason.as_str() {
+        "connector_key_unregistered" => Some(ScopedMcpEscalationReason::ConnectorKeyUnregistered),
+        "connector_key_pending" => Some(ScopedMcpEscalationReason::ConnectorKeyPending),
+        "connector_key_suspended" => Some(ScopedMcpEscalationReason::ConnectorKeySuspended),
+        "connector_key_revoked" => Some(ScopedMcpEscalationReason::ConnectorKeyRevoked),
+        "charter_drift" => Some(ScopedMcpEscalationReason::ConnectorKeyCharterDrift),
+        "connector_manifest_drift" => Some(ScopedMcpEscalationReason::ConnectorManifestDrift),
+        "charter_never_list" => Some(ScopedMcpEscalationReason::ConnectorKeyCharterNeverList),
+        "effector_budget_exhausted" => Some(ScopedMcpEscalationReason::ConnectorKeyBudgetExhausted),
+        _ => None,
     })
 }
 
@@ -190,31 +264,9 @@ fn scoped_decision_after_effect(
     grant_id: EntityId,
     principal_ref: &str,
     prepared: &PreparedToolCall,
-    effect: &crate::outbound_chokepoint::OutboundEffectResult,
+    effect: &OutboundEffectResult,
 ) -> std::result::Result<ScopedMcpConsentDecision, IntentLedgerError> {
-    let connector_reason =
-        effect
-            .gate_receipt_reasons
-            .iter()
-            .find_map(|reason| match reason.as_str() {
-                "connector_key_unregistered" => {
-                    Some(ScopedMcpEscalationReason::ConnectorKeyUnregistered)
-                }
-                "connector_key_pending" => Some(ScopedMcpEscalationReason::ConnectorKeyPending),
-                "connector_key_suspended" => Some(ScopedMcpEscalationReason::ConnectorKeySuspended),
-                "connector_key_revoked" => Some(ScopedMcpEscalationReason::ConnectorKeyRevoked),
-                "charter_drift" => Some(ScopedMcpEscalationReason::ConnectorKeyCharterDrift),
-                "connector_manifest_drift" => {
-                    Some(ScopedMcpEscalationReason::ConnectorManifestDrift)
-                }
-                "charter_never_list" => {
-                    Some(ScopedMcpEscalationReason::ConnectorKeyCharterNeverList)
-                }
-                "effector_budget_exhausted" => {
-                    Some(ScopedMcpEscalationReason::ConnectorKeyBudgetExhausted)
-                }
-                _ => None,
-            });
+    let connector_reason = connector_gate_reason(&effect.gate_receipt_reasons);
     if effect
         .gate_receipt_reasons
         .iter()

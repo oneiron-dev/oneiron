@@ -105,6 +105,14 @@ fn settle_connector_calls(
     backoffs: &mut Backoffs,
 ) -> Result<usize, IntentLedgerError> {
     let vault = server.vault();
+    // Expiry first, so a call past its deadline settles in this same pass;
+    // then the owner asks a hold tried and failed to queue.
+    if let Err(error) = vault.expire_connector_calls(now_ms()) {
+        tracing::warn!(%error, "connector call expiry failed");
+    }
+    if let Err(error) = vault.repair_connector_call_owner_asks() {
+        tracing::warn!(%error, "connector call owner ask repair failed");
+    }
     let pending = vault.pending_connector_calls()?;
     backoffs
         .0

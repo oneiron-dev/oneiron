@@ -18,6 +18,12 @@
 //! acknowledges it ([`Vault::ack_connector_call_delivery`]).
 //! [`Vault::connector_tool_schema`] reads a tool's approved schema through
 //! the same resolution a call takes.
+//!
+//! A hold asks the owner once (`connector_call_asks`); the answer grants
+//! nothing, the consent and key doors still do. A call nobody settles
+//! expires a fixed time after it was first held (`connector_call_pending`).
+//! A held call the ledger already admitted resumes from that frozen row by
+//! its intent id (`connector_call_resume`), never from bytes prepared again.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,7 +57,7 @@ use super::tool_call::{MutationIntent, ToolCallDescriptor};
 pub const CONNECTOR_REPLY_MAX_BYTES: usize = 1024 * 1024;
 
 /// The held and pending-delivery calls, by call ref.
-const PENDING_CALLS: SideTable<EntityId, PendingConnectorCall, Named> =
+pub(super) const PENDING_CALLS: SideTable<EntityId, PendingConnectorCall, Named> =
     SideTable::new(&side_table::OUTBOUND_CONNECTOR_CALL_PENDING);
 
 /// The derivation domain of the call ref a host's own identity fixes, so the
@@ -158,23 +164,32 @@ pub trait ConnectorCallHost: OutboundResultSender {
 /// The exact request a held call re-enters with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PendingConnectorCall {
-    name: String,
-    tool: String,
+pub(super) struct PendingConnectorCall {
+    pub(super) name: String,
+    pub(super) tool: String,
     /// The guest's arguments as JSON text, exactly as first given.
-    arguments: String,
-    mutation: MutationIntent,
+    pub(super) arguments: String,
+    pub(super) mutation: MutationIntent,
     /// The standing grant the last attempt ran under (hex), if one matched.
-    grant_id: Option<String>,
-    attempt_id: AttemptId,
-    call_seq: u64,
-    principal_ref: String,
-    held_at_ms: u64,
+    pub(super) grant_id: Option<String>,
+    pub(super) attempt_id: AttemptId,
+    pub(super) call_seq: u64,
+    pub(super) principal_ref: String,
+    /// When the call was first held. Its expiry deadline counts from here,
+    /// and no retry moves it.
+    pub(super) held_at_ms: u64,
     /// What the call came to once a resume settled it. The row outlives its
     /// terminal outcome until the settler acknowledges the wait reply that
     /// carries it, so a crash before that reply commits strands no waiter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    settled: Option<SettledConnectorCall>,
+    pub(super) settled: Option<SettledConnectorCall>,
+    /// The hold reasons the owner's ask carried, kept once an ask was tried.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) held_reasons: Vec<String>,
+    /// The arrival number of the owner's ask about this hold, once queued:
+    /// the call asks once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) owner_ask_seq: Option<u64>,
 }
 
 impl PendingConnectorCall {
@@ -195,7 +210,7 @@ impl PendingConnectorCall {
 /// never keeps a reply's bytes, so a recovery from this row is receipt-only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum SettledConnectorCall {
+pub(super) enum SettledConnectorCall {
     Delivered {
         intent: Option<[u8; 32]>,
     },
@@ -210,7 +225,7 @@ enum SettledConnectorCall {
 }
 
 impl SettledConnectorCall {
-    fn outcome(&self) -> ConnectorCallOutcome {
+    pub(super) fn outcome(&self) -> ConnectorCallOutcome {
         match self.clone() {
             Self::Delivered { intent } => ConnectorCallOutcome::Delivered {
                 intent,
@@ -263,7 +278,7 @@ struct GoverningTool {
 }
 
 /// What one pass came to, before the pending row is settled.
-enum Step {
+pub(super) enum Step {
     Delivered {
         intent: Option<[u8; 32]>,
         result: Option<UntrustedToolResult>,
@@ -364,6 +379,8 @@ impl Vault {
             principal_ref: memory.actor().to_hex(),
             held_at_ms: now_ms(),
             settled: None,
+            held_reasons: Vec::new(),
+            owner_ask_seq: None,
         };
         let Some(named) = named else {
             return self.drive_connector_call(None, None, pending, host);
@@ -385,18 +402,25 @@ impl Vault {
                 if let Some(settled) = &held.settled {
                     return Ok(settled.outcome());
                 }
+                if let Some(expired) =
+                    self.expire_connector_call_if_due(&call_ref, &held, now_ms())?
+                {
+                    return Ok(expired);
+                }
                 self.drive_connector_call(Some(call_ref), None, held, host)
             }
         }
     }
 
     /// Re-enters one held or pending-delivery call from its durable row:
-    /// the same request, principal, attempt id and call seq, rechecked
-    /// against live authority through prepare and execute. It takes no new
-    /// arguments. Once the call is delivered or refused its row keeps that
-    /// outcome, without the tool's reply, until
-    /// [`Self::ack_connector_call_delivery`]; a resume of a settled row
-    /// answers that receipt again and sends nothing.
+    /// the same request, principal, attempt id and call seq. A call the
+    /// ledger already admitted resumes from that frozen row by intent id;
+    /// one it never admitted is rechecked against live authority through
+    /// prepare and execute. It takes no new arguments. A call past its
+    /// expiry deadline settles as expired instead. Once the call is
+    /// delivered or refused its row keeps that outcome, without the tool's
+    /// reply, until [`Self::ack_connector_call_delivery`]; a resume of a
+    /// settled row answers that receipt again and sends nothing.
     pub fn resume_connector_call<H: ConnectorCallHost>(
         &self,
         call_ref: &EntityId,
@@ -414,6 +438,9 @@ impl Vault {
         };
         if let Some(settled) = &pending.settled {
             return Ok(settled.outcome());
+        }
+        if let Some(expired) = self.expire_connector_call_if_due(call_ref, &pending, now_ms())? {
+            return Ok(expired);
         }
         self.drive_connector_call(Some(*call_ref), None, pending, host)
     }
@@ -499,7 +526,16 @@ impl Vault {
         mut pending: PendingConnectorCall,
         host: &mut H,
     ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
-        let step = self.connector_call_step(&mut pending, host)?;
+        // A call its row already holds resumes through the ledger row it
+        // admitted, if any; only a call with none resolves and prepares live.
+        let resumed = match call_ref {
+            Some(_) => self.resume_connector_call_intent(&pending, host)?,
+            None => None,
+        };
+        let step = match resumed {
+            Some(step) => step,
+            None => self.connector_call_step(&mut pending, host)?,
+        };
         let keep = |call_ref: Option<EntityId>, pending: &PendingConnectorCall| {
             let call_ref = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
             self.with_write_txn(|txn| PENDING_CALLS.put(&self.store, txn, &call_ref, pending))?;
@@ -553,11 +589,23 @@ impl Vault {
             Step::Held {
                 decision_ref,
                 reasons,
-            } => ConnectorCallOutcome::Held {
-                call_ref: keep(call_ref, &pending)?,
-                decision_ref,
-                reasons,
-            },
+            } => {
+                let call_ref = keep(call_ref, &pending)?;
+                // The hold is durable: ask the owner about it, once. The
+                // settler's pass repairs an ask that did not queue here.
+                if let Err(error) = self.queue_connector_call_owner_ask(&call_ref, &reasons) {
+                    tracing::warn!(
+                        call_ref = %call_ref.to_hex(),
+                        %error,
+                        "connector call owner ask not queued"
+                    );
+                }
+                ConnectorCallOutcome::Held {
+                    call_ref,
+                    decision_ref,
+                    reasons,
+                }
+            }
             Step::Retryable { intent, reasons } => ConnectorCallOutcome::PendingDelivery {
                 intent,
                 call_ref: Some(keep(call_ref, &pending)?),
@@ -801,7 +849,7 @@ impl Vault {
 /// Maps one execute onto a step. AutoFire alone proves nothing: only a Done
 /// ledger row is delivery, and the gate's own outcome tells a hold from a
 /// denial.
-fn step_from_dispatch(
+pub(super) fn step_from_dispatch(
     dispatch: &ScopedMcpDispatchResult,
     reply: Option<UntrustedToolResult>,
 ) -> Step {
@@ -908,7 +956,7 @@ fn escalation_code(reason: ScopedMcpEscalationReason) -> &'static str {
     }
 }
 
-fn intent_escalation_code(reason: IntentEscalationReason) -> &'static str {
+pub(super) fn intent_escalation_code(reason: IntentEscalationReason) -> &'static str {
     match reason {
         IntentEscalationReason::NonIdempotentAmbiguous => "non_idempotent_ambiguous",
         IntentEscalationReason::NonIdempotentPending => "non_idempotent_pending",
@@ -921,7 +969,7 @@ fn intent_escalation_code(reason: IntentEscalationReason) -> &'static str {
     }
 }
 
-fn now_ms() -> u64 {
+pub(super) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| {
@@ -930,7 +978,8 @@ fn now_ms() -> u64 {
 }
 
 /// One held call's principal, connector name and tool, so the owner's
-/// connector consent binds exactly the actor that will resume it.
+/// connector consent binds exactly the actor that will resume it. A row a
+/// resume or an expiry already settled holds nothing, so it answers `None`.
 pub(crate) fn held_connector_call_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -938,5 +987,6 @@ pub(crate) fn held_connector_call_in_txn(
 ) -> crate::Result<Option<(String, String, String)>> {
     Ok(PENDING_CALLS
         .get(store, txn, call_ref)?
+        .filter(|row| row.settled.is_none())
         .map(|row| (row.principal_ref, row.name, row.tool)))
 }
