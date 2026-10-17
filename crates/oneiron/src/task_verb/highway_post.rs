@@ -25,6 +25,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
+use crate::task_type::TaskTypeRef;
 use crate::write_envelope::WriteActor;
 
 use super::brief::{QueueTaskBrief, StoredBrief, brief_digest, hex32};
@@ -135,8 +136,30 @@ fn request_digest(actor: EntityId, key: &str, post: &TaskPost) -> MemoryResult<[
     Ok(*hasher.finalize().as_bytes())
 }
 
-/// The create spec one post validates and mints as: a standard task.
-fn create_spec_of(post: &TaskPost, owner: EntityId, now: u64) -> TaskCreateSpec {
+/// The brief's type stamp in the create spec's spelling (OF-541): the
+/// node its `type_ref` names, resolved through the live tree of the brief's
+/// project (the team-shape skill's data) to the node whose id it is, at the
+/// version the brief read. A node that tree does not hold leaves the stamp
+/// unset, and the create places it.
+fn brief_type_ref_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    brief: &QueueTaskBrief,
+) -> MemoryResult<Option<TaskTypeRef>> {
+    let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, txn, brief.project_ref)?;
+    Ok(tree
+        .node_by_entity(brief.type_ref.node_id)
+        .map(|node| TaskTypeRef::new(node.node_id.clone(), brief.type_ref.tree_version)))
+}
+
+/// The create spec one post validates and mints as: a standard task, with
+/// the brief's resolved stamp and its project's tree to place against.
+fn create_spec_of(
+    post: &TaskPost,
+    owner: EntityId,
+    type_ref: Option<TaskTypeRef>,
+    now: u64,
+) -> TaskCreateSpec {
     let mut spec = TaskCreateSpec::new(
         post.spec.clone().unwrap_or(Value::Nil),
         post.label.clone(),
@@ -148,6 +171,10 @@ fn create_spec_of(post: &TaskPost, owner: EntityId, now: u64) -> TaskCreateSpec 
     if let Some(ttl) = post.ttl {
         spec = spec.with_ttl(ttl);
     }
+    if let Some(type_ref) = type_ref {
+        spec = spec.with_type_ref(type_ref);
+    }
+    spec.brief = Some(post.brief.clone());
     spec
 }
 
@@ -289,12 +316,13 @@ impl Memory<'_> {
     ) -> MemoryResult<TaskCallReceipt> {
         let key = qualified_key(via, &post.intent_key, "intent key")?;
         let now = self.vault().now_recorded_at();
-        {
+        let type_ref = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             post.brief.validate_in(self.vault(), &txn)?;
-        }
+            brief_type_ref_in(self.vault(), &txn, &post.brief)?
+        };
         let digest = request_digest(self.actor(), &key, &post)?;
-        let spec = create_spec_of(&post, self.actor(), now);
+        let spec = create_spec_of(&post, self.actor(), type_ref, now);
         let validated = validate_task_create(self.vault(), &spec, now)?;
         let stored = StoredBrief::first(post.brief.clone());
         let task_ref = EntityId::derive(
@@ -750,7 +778,8 @@ impl Memory<'_> {
         origin: Option<&TaskCreateOrigin>,
         now: u64,
     ) -> MemoryResult<TaskRouteOutcome> {
-        let spec = create_spec_of(post, self.actor(), now);
+        let type_ref = brief_type_ref_in(self.vault(), &*wtxn, &post.brief)?;
+        let spec = create_spec_of(post, self.actor(), type_ref, now);
         let validated = validate_task_create_in(self.vault(), &*wtxn, &spec, now)?;
         post.brief.validate_in(self.vault(), &*wtxn)?;
         self.mint_task_with_brief_at_in_txn(

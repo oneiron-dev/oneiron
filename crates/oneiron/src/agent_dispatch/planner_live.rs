@@ -22,7 +22,7 @@ use crate::learning::{LearningCell, LearningPredicate, LearningRead, TypeRef, re
 use crate::llm::ModelId;
 use crate::llm::seat::DescriptionSource;
 use crate::skill::{LoadedSkillPack, skill_loadable};
-use crate::task_type::{TaskTypeRef, TypeTree};
+use crate::task_type::{PlacementDecisions, TaskTypeRef, TypeTree};
 use crate::team::{PAYOFF_AXIS, PatternSkill, PatternSkillRef, pattern_skills, planner_card};
 
 use super::planner::{
@@ -96,8 +96,10 @@ pub struct LivePlanRequest<'a> {
 impl AgentDispatcher<'_> {
     /// Places a spawn's type once, against the tree in force for the leased
     /// parent's project: a requested stamp that tree accepts is kept,
-    /// anything else is placed, and unsure is the root. The planner and the
-    /// dispatch then read this stamp; neither places again.
+    /// anything else is placed through the placement skill's ladder (the
+    /// host's `decisions` route it past the rule rung), and unsure is the
+    /// root. The planner and the dispatch then read this stamp; neither
+    /// places again.
     ///
     /// # Errors
     ///
@@ -107,6 +109,7 @@ impl AgentDispatcher<'_> {
         leased: &AttemptRecord,
         need: &str,
         requested: Option<&TaskTypeRef>,
+        decisions: Option<&PlacementDecisions<'_>>,
     ) -> Result<TaskTypeRef> {
         let live = self.live_planner_lease(leased)?;
         let project = attempt_project(&live);
@@ -117,6 +120,7 @@ impl AgentDispatcher<'_> {
             None,
             Some(need.to_owned()),
             project,
+            decisions,
         ))
     }
 
