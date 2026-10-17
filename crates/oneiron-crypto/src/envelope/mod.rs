@@ -76,6 +76,11 @@ pub enum Purpose {
     /// A slice of one private world's content, sealed under a key derived from the
     /// world's key so a machine that may not read the world can still hold it.
     SealedWorldContent = 12,
+    /// The vault's one sealed cloud bundle: its reader capsules, its outer body and
+    /// the world sections inside it. Its binding names a generation, never a world.
+    SealedVaultBundle = 13,
+    /// The sealed copy of the vault's world key pads beside each bundle generation.
+    SealedKeyPads = 14,
 }
 
 impl Purpose {
@@ -93,6 +98,8 @@ impl Purpose {
             10 => Self::EscrowRecipient,
             11 => Self::WorldDek,
             12 => Self::SealedWorldContent,
+            13 => Self::SealedVaultBundle,
+            14 => Self::SealedKeyPads,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }
