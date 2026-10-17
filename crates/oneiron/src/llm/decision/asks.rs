@@ -24,8 +24,11 @@ use super::ladder::{
     AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest,
     PairedAnswer, ProviderDecision, ResolvedRole, RoleHolder, RoleRank,
 };
+use super::rules::rule_reason;
 use super::types::invalid;
-use super::{DecisionAnswer, DecisionQuestion, HumanAskReason, PairedReading, ProviderPin};
+use super::{
+    DecisionAnswer, DecisionQuestion, HostRuleRef, HumanAskReason, PairedReading, ProviderPin,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
@@ -102,6 +105,13 @@ pub struct AskAnswer {
     pub kind: HolderKind,
     /// Whether the answer changed the ladder's prior (kept for the Coach).
     pub changed: bool,
+    /// The reason the owner typed with the answer, trimmed; none when none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The rule row that reason landed as, for the host's notice and its undo; none when
+    /// it wrote none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<HostRuleRef>,
 }
 
 impl DecisionAsk {
@@ -328,12 +338,28 @@ impl Vault {
         seq: u64,
         answer: DecisionAnswer,
     ) -> Result<DecisionAsk> {
+        self.answer_decision_ask_with_reason(owner, seq, answer, None)
+    }
+
+    /// [`Self::answer_decision_ask`] with the reason the owner typed on the card. A reason
+    /// is the owner's act: it lands as a rule row (`rules`) in the transaction that keeps
+    /// the answer, and the Rule rung answers the next ask of the same question about the
+    /// same evidence from it. The answer names the row, for the host's notice and its undo
+    /// ([`Self::revoke_host_rule`]). A blank reason is none; one past
+    /// [`super::MAX_RULE_REASON_BYTES`] is refused.
+    pub fn answer_decision_ask_with_reason(
+        &self,
+        owner: &AuthenticatedOwner,
+        seq: u64,
+        answer: DecisionAnswer,
+        reason: Option<&str>,
+    ) -> Result<DecisionAsk> {
         self.recheck_owner(owner)?;
-        let by = owner.actor_for_read(self)?;
-        self.settle_decision_ask(seq, answer, |_, ask| {
+        self.settle_decision_ask(seq, answer, rule_reason(reason)?, |txn, ask| {
             if ask.to.ceiling != RoleRank::Owner {
                 return Err(invalid("the decision ask does not reach the owners"));
             }
+            let by = owner.revalidate_in_txn(self, txn)?;
             Ok((by, AskRole::Owner, HolderKind::Person))
         })
     }
@@ -353,7 +379,7 @@ impl Vault {
     ) -> Result<DecisionAsk> {
         let kind = holder_kind(holder)?;
         let actor = holder.entity_ref();
-        self.settle_decision_ask(seq, answer, |txn, ask| {
+        self.settle_decision_ask(seq, answer, None, |txn, ask| {
             self.verify_write_actor_in_txn(txn, holder)?;
             let role = ask
                 .role
@@ -387,11 +413,12 @@ impl Vault {
 
     /// One answer to ask `seq`, authorised by `answerer` (the actor, the role it answers as
     /// and its kind) in the snapshot the ask is read in and again in the one it is written
-    /// in.
+    /// in. An owner's `reason` lands as a rule row in that write.
     fn settle_decision_ask(
         &self,
         seq: u64,
         answer: DecisionAnswer,
+        reason: Option<&str>,
         answerer: impl Fn(&heed::RoTxn<'_>, &DecisionAsk) -> Result<(EntityId, AskRole, HolderKind)>,
     ) -> Result<DecisionAsk> {
         let ask = {
@@ -428,6 +455,12 @@ impl Vault {
             }
             let read: &heed::RoTxn<'_> = txn;
             let (by, role, kind) = answerer(read, &held)?;
+            let rule = match reason {
+                Some(reason) if role == AskRole::Owner => {
+                    self.write_host_rule_in_txn(txn, &held, &answer, reason, by, answered_at)?
+                }
+                _ => None,
+            };
             held.answer = Some(AskAnswer {
                 answer,
                 answered_at,
@@ -435,6 +468,8 @@ impl Vault {
                 role,
                 kind,
                 changed: changed.is_some(),
+                reason: reason.map(str::to_owned),
+                rule,
             });
             ASKS.put(&self.store, txn, &seq, &held)?;
             Ok(held)
@@ -749,7 +784,21 @@ impl DecisionAsks {
         seq: u64,
         answer: DecisionAnswer,
     ) -> Result<DecisionAsk> {
-        let ask = self.vault.answer_decision_ask(owner, seq, answer)?;
+        self.answer_with_reason(owner, seq, answer, None)
+    }
+
+    /// Answers one ask with the owner's reason (see
+    /// [`Vault::answer_decision_ask_with_reason`]) and wakes its waiters.
+    pub fn answer_with_reason(
+        &self,
+        owner: &AuthenticatedOwner,
+        seq: u64,
+        answer: DecisionAnswer,
+        reason: Option<&str>,
+    ) -> Result<DecisionAsk> {
+        let ask = self
+            .vault
+            .answer_decision_ask_with_reason(owner, seq, answer, reason)?;
         self.answered.send_replace(seq);
         Ok(ask)
     }

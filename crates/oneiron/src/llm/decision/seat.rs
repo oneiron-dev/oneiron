@@ -312,6 +312,7 @@ pub async fn decide_at_remote_seat(
             images,
             think_row: None,
             person_row: None,
+            rule: None,
         },
         human_ask,
     })

@@ -307,6 +307,10 @@ pub struct DecisionReceipt {
     /// when the dial reached the person under a PersonThreshold row, else none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub person_row: Option<u32>,
+    /// The rule row whose answer stands, as id@revision: set when the Rule rung answered
+    /// from a host rule row (ARCH-0040, "a rule row as id@version"), else none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<super::HostRuleRef>,
 }
 
 /// What one measurement read of one image: the pixels as handed in, where they sit in

@@ -6,8 +6,9 @@ use super::policy::{
 use super::types::{invalid, paired_valid};
 use super::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
-    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, ImagePin, PairedReading,
-    PersonChangedAnswer, ProviderPin, Reasoning, ReasoningCause, StopCause, TypedDecision,
+    DecisionReceipt, DecisionRung, DecisionTime, HostRuleRef, HumanAskReason, ImagePin,
+    PairedReading, PersonChangedAnswer, ProviderPin, Reasoning, ReasoningCause, StopCause,
+    TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
@@ -212,6 +213,16 @@ pub trait DecisionProvider: Send + Sync {
             .filter_map(|index| pack.call(index))
             .map(|call| self.decide(&call))
             .collect()
+    }
+    /// The stored rule row that gave `decision` for `call`, for a provider that answers
+    /// from rule rows: the receipt names it as id@revision (ARCH-0040, "a rule row as
+    /// id@version"). None for every other provider.
+    fn rule_row(
+        &self,
+        _call: &DecisionCall<'_>,
+        _decision: &ProviderDecision,
+    ) -> Option<HostRuleRef> {
+        None
     }
 }
 
@@ -1105,6 +1116,9 @@ impl DecisionLadder<'_> {
                 images: readings.images,
                 think_row: think_row.map(|row| row.version),
                 person_row: person_row.map(|row| row.version),
+                rule: readings
+                    .rule
+                    .filter(|_| answered == Some(DecisionRung::Rule)),
             },
         })
     }
@@ -1261,6 +1275,16 @@ impl DecisionLadder<'_> {
                 .collect());
         }
         let reads = take(&pin, pack, ask(provider, pack, person), readings)?;
+        // A rule row that answered is named on its question's receipt.
+        if rung == DecisionRung::Rule {
+            for (index, (read, readings)) in reads.iter().zip(readings.iter_mut()).enumerate() {
+                if let (Read::Answer(answer), Some(call)) = (read, pack.call(index))
+                    && answer.answer != DecisionAnswer::Abstain
+                {
+                    readings.rule = provider.rule_row(&call, answer);
+                }
+            }
+        }
         // Each measurement that answered pins what it was sent of every image.
         if !pack.images.is_empty() {
             let edge = provider.image_edge();
@@ -1484,6 +1508,8 @@ pub(super) struct Readings {
     paired: Vec<PairedReading>,
     person: Vec<PairedReading>,
     images: Vec<ImagePin>,
+    /// The rule row the Rule rung answered from, when it did.
+    rule: Option<HostRuleRef>,
 }
 
 /// A missing person reading never asks; it is not P(yes) = 0, it is no reading.
