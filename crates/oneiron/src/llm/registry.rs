@@ -211,6 +211,27 @@ impl Vault {
         }
         Ok(None)
     }
+    /// [`Self::model_registry_row`] in the caller's snapshot, for a reader
+    /// that already holds a transaction (a launch statement's USD quote).
+    pub fn model_registry_row_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        model: &ModelId,
+    ) -> Result<Option<ModelRegistryRow>> {
+        if let Some(row) = read_model_registry_row(&self.store, txn, model)? {
+            return Ok(Some(row));
+        }
+        if self
+            .installed_pack_in_txn(txn, crate::skill_hub::MODEL_PACK_NAME)?
+            .is_some()
+        {
+            return Ok(CatalogSeed::from_installed_pack_in_txn(self, txn)?
+                .rows
+                .into_iter()
+                .find(|row| &row.catalog.model == model));
+        }
+        Ok(None)
+    }
     pub fn model_registry_rows(&self) -> Result<Vec<ModelRegistryRow>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();

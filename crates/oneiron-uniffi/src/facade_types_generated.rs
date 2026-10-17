@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 270 facade rows, 859 generated types.
+// UniFFI census: 270 facade rows, 860 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 226.
 // WireJson rows: vault.weave.digest (result), vault.weave.lens (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.packs.setup.answer (input), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -2136,6 +2136,19 @@ pub enum SpendBasis {
     Prior,
 }
 
+/// `oneiron::agent_dispatch::spend_calibration::DollarBasis`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DollarBasis {
+    #[serde(rename = "unknown_price")]
+    UnknownPrice,
+    #[serde(rename = "upper_bound_rate")]
+    UpperBoundRate,
+    #[serde(rename = "sum")]
+    Sum,
+    #[serde(rename = "incomplete_or_overflow")]
+    IncompleteOrOverflow,
+}
+
 /// `oneiron::agent_dispatch::spend_calibration::ExpectedSpend`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ExpectedSpend {
@@ -2145,6 +2158,14 @@ pub struct ExpectedSpend {
     pub samples: u64,
     #[serde(rename = "basis")]
     pub basis: SpendBasis,
+    #[serde(
+        rename = "expected_usd_micros",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_usd_micros: Option<u64>,
+    #[serde(rename = "dollar_basis")]
+    pub dollar_basis: DollarBasis,
 }
 
 /// `oneiron::agent_dispatch::launch::SpendCapView`.

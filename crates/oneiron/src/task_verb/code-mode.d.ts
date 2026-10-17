@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 329 code-mode rows (310 host rows, 19 run rows), 1126 declarations.
+// Census: 329 code-mode rows (310 host rows, 19 run rows), 1127 declarations.
 // Replies: 268 fully typed, 46 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
@@ -161,7 +161,8 @@ declare namespace Sdk {
   type FanoutLaunchRequest = { launch_ref: EntityId };
   type PeerCount = { peer: EntityId; count: number };
   type SpendBasis = "calibrated" | "prior";
-  type ExpectedSpend = { units: number; samples: number; basis: SpendBasis };
+  type DollarBasis = "unknown_price" | "upper_bound_rate" | "sum" | "incomplete_or_overflow";
+  type ExpectedSpend = { units: number; samples: number; basis: SpendBasis; expected_usd_micros?: number | null; dollar_basis: DollarBasis };
   type LeaseUnit = string;
   type SpendScopeId = string;
   type SpendCapView = { scope?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; available_units: number; hard: boolean };
