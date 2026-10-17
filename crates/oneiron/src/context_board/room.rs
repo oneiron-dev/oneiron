@@ -163,6 +163,9 @@ pub struct RoomSection {
     pub scope: Scope,
     pub posture: RoomPosture,
     pub claims: Vec<crate::memory::ClaimView>,
+    /// The room's own open offer cards (OF-530 ruling A), read fresh: each
+    /// stays listed while it is open.
+    pub offers: Vec<crate::workspace_roster::OfferCard>,
     /// The caller's read of the room's rules. Rules the caller could read but
     /// a present peer could not are counted as withheld rows.
     pub receipt: crate::claim::ScopedReadReceipt,
@@ -173,11 +176,12 @@ pub struct RoomSection {
 }
 
 impl RoomSection {
-    /// Roster, invitees, scope, posture, host and rules only. Values are
-    /// escaped again by the board frame; flattening here only prevents
-    /// row/control-character tricks. An undecided host renders as no host
-    /// with its candidates. Persons are named by handle (PEOPLE, ARCH-0067),
-    /// with their name inline when the reader's cached roster lacks them.
+    /// Roster, invitees, scope, posture, host, rules and open offers only.
+    /// Values are escaped again by the board frame; flattening here only
+    /// prevents row/control-character tricks. An undecided host renders as
+    /// no host with its candidates. Persons are named by handle (PEOPLE,
+    /// ARCH-0067), with their name inline when the reader's cached roster
+    /// lacks them.
     pub fn board_section(
         &self,
         people: &PeopleView<'_>,
@@ -278,6 +282,27 @@ impl RoomSection {
                 claim.claim_ref,
                 one_line_token(&claim.predicate),
                 one_line_token(&claim.value.to_string())
+            )
+        }));
+        // Each open room-wide card, with the moment it ends unless engaged
+        // again and the verbs that vote on and answer it.
+        rows.extend(self.offers.iter().map(|card| {
+            let cost = card.lease_cap.as_ref().map_or_else(
+                || "none".to_owned(),
+                |cap| format!("{} {}", cap.units, cap.unit.as_str()),
+            );
+            let ends = card.until.unwrap_or_else(|| {
+                card.last_engaged_at
+                    .saturating_add(crate::workspace_roster::ROOM_OFFER_IDLE_SECS)
+            });
+            format!(
+                "offer: {} agent={} what={} artifact={} cost={} until={} vote=vault.rooms.offer.vote answer=vault.rooms.offer.answer",
+                card.offer_id,
+                people.label(card.agent),
+                one_line_token(&card.what),
+                one_line_token(card.artifact_ref.as_deref().unwrap_or("-")),
+                one_line_token(&cost),
+                ends,
             )
         }));
         BoardSection::new(

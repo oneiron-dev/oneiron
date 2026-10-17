@@ -339,8 +339,10 @@ declare const vault: {
     join(input: { branch?: string | null; intent_key: string; paid: boolean; room: string; spend_scope?: string | null; subject: object | object }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
-    offer: ((input: { agent: string; artifact_ref?: string | null; branch?: string | null; intent_key: string; room: string; spend_scope?: string | null; what: string }) => Promise<unknown>) & {
+    offer: ((input: { agent: string; artifact_ref?: string | null; branch?: string | null; intent_key: string; room: string; spend_scope?: string | null; until?: number | null; what: string }) => Promise<unknown>) & {
       answer(input: { action: "join" | "not_now"; intent_key: string; offer_id: string }): Promise<unknown>;
+      reopen(input: { expected_last_engaged_at: number; offer_id: string; until?: number | null }): Promise<unknown>;
+      vote(input: { action: "join" | "not_now"; offer_id: string }): Promise<unknown>;
     };
     offers(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
     participants(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;

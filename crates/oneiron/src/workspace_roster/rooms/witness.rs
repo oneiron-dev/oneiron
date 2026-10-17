@@ -31,10 +31,15 @@ pub(crate) fn admit_witness(
     input: &WitnessTurn,
     messages: &[EntityId],
 ) -> Result<Option<QuotedReply>> {
+    // OF-530 ruling A: a room-wide offer card a new message names, or a
+    // reply answers, is engaged in this write: here in an ordinary room, and
+    // in a project room once its writer is admitted below.
+    let writer = crate::WriteActor::new(actor, class);
     if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
         if input.quote.is_some() {
             return Err(quote_outside_project());
         }
+        super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
         return Ok(None);
     }
     // OF-529: an agent needs no seat: it stands on a Ready receipt, checked
@@ -127,7 +132,7 @@ pub(crate) fn admit_witness(
         txn,
         room,
         branch,
-        crate::WriteActor::new(actor, class),
+        writer,
         JoinCause::Wrote { turn: turn_id },
         reply_to,
         None,
@@ -264,6 +269,7 @@ pub(crate) fn admit_witness(
         &turn.addressed_agents,
         now,
     )?;
+    super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
     Ok(quoted)
 }
 

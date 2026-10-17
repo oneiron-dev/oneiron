@@ -2440,7 +2440,7 @@
     },
     {
       "name": "vault.rooms.offer",
-      "description": "Publishes an agent's offer card to join a room or one of its threads.",
+      "description": "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card.",
       "input": "crate::workspace_roster::OfferDraft",
       "output": "crate::workspace_roster::OfferCard",
       "call": "memory.rooms_offer(&input)?",
@@ -2460,6 +2460,32 @@
       "call": "memory.rooms_offer_answer(&input)?",
       "scope": "Write",
       "lands_turn": true,
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.offer.vote",
+      "description": "Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits.",
+      "input": "crate::workspace_roster::OfferVoteRequest",
+      "output": "crate::workspace_roster::OfferCard",
+      "call": "memory.rooms_offer_vote(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.offer.reopen",
+      "description": "The room's owner or delegated host reopens its aged-out room-wide offer card.",
+      "input": "crate::workspace_roster::OfferReopenRequest",
+      "output": "crate::workspace_roster::OfferCard",
+      "call": "memory.rooms_offer_reopen(&input)?",
+      "scope": "Write",
       "mcp_fields": {
         "spec": "$"
       },

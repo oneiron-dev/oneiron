@@ -9,12 +9,16 @@
 //! published only once its payer's consent sits on the scope's root
 //! (ARCH-0068:308); the host's admission is then what it asks for, and the
 //! vault's membership is read live. One card is current per agent per room
-//! or thread: a new one replaces it, which is never a count cap. An open card
-//! ages out with its thread, read from the room's own liveness fold
-//! ([`super::offer_liveness`]); there is no TTL and no close flag. Answering a
-//! card is [`super::offer_settle`].
+//! or thread: a new one replaces it, which is never a count cap. An open
+//! thread card ages out with its thread, read from the room's own liveness
+//! fold ([`super::offer_liveness`]); there is no close flag. A card for the
+//! room itself (OF-530 ruling A) stays open while people engage with it, a
+//! reply, a vote or a mention, and ages out after a day with none, or at the
+//! fixed deadline its poster set ([`super::offer_activity`]); its host may
+//! reopen it ([`super::offer_reopen`]). Answering a card is
+//! [`super::offer_settle`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
@@ -41,7 +45,7 @@ pub(super) const OFFERS: SideTable<String, StoredOffer, LegacyJson> =
 
 /// The card current for one agent in one room or thread. Key:
 /// [`current_key`]; value: the offer id.
-const OFFER_CURRENT: SideTable<String, String, LegacyJson> =
+pub(super) const OFFER_CURRENT: SideTable<String, String, LegacyJson> =
     SideTable::new(&side_table::ROOMS_OFFER_CURRENT);
 
 const OFFER_ID_DOMAIN: &str = "oneiron.rooms.offer.v1";
@@ -67,6 +71,12 @@ pub struct OfferDraft {
     /// work. The draft names no payer, cap or paid flag of its own.
     #[serde(default)]
     pub spend_scope: Option<SpendScopeId>,
+    /// A room-wide card's fixed deadline, in Unix seconds, in place of its
+    /// day without engagement: the poster's "until Friday", resolved by the
+    /// caller in the poster's own timezone. A thread card ends with its
+    /// thread and takes none.
+    #[serde(default)]
+    pub until: Option<u64>,
     /// The caller's idempotency key: the same key replays this card.
     pub intent_key: String,
 }
@@ -89,7 +99,8 @@ pub enum OfferState {
     /// A newer card from the same agent for the same room or thread
     /// replaced this one.
     Superseded { by: String },
-    /// The card's thread ended before anyone answered it.
+    /// No one answered in time: the card's thread ended, or a room-wide card
+    /// went a day without engagement or passed its fixed deadline.
     AgedOut,
 }
 
@@ -117,6 +128,12 @@ pub struct OfferCard {
     pub state: OfferState,
     /// Unix seconds.
     pub created_at: u64,
+    /// A room-wide card's fixed deadline, in Unix seconds; `None` ends it
+    /// after a day without engagement.
+    pub until: Option<u64>,
+    /// Unix seconds: the card's publication or reopening, or the last reply,
+    /// vote, mention or answer that engaged it since.
+    pub last_engaged_at: u64,
 }
 
 /// A card as stored: the card, what it was minted from and by whom, and the
@@ -131,6 +148,9 @@ pub(super) struct StoredOffer {
     /// The actor that minted it: the agent or its principal.
     pub(super) minted_by: EntityId,
     pub(super) answer: Option<super::offer_settle::RecordedOfferAnswer>,
+    /// The room's advisory ballots on a room-wide card, one per voter: they
+    /// keep it open and decide nothing; only the host's answer admits.
+    pub(super) votes: BTreeMap<EntityId, super::offer_settle::OfferAnswer>,
 }
 
 /// A page of the current cards in a room, or in one of its threads.
@@ -156,13 +176,19 @@ pub struct OffersPage {
 }
 
 /// The current-card key: the room, the thread or `-`, and the agent.
-fn current_key(room: EntityId, branch: Option<EntityId>, agent: EntityId) -> String {
+pub(super) fn current_key(room: EntityId, branch: Option<EntityId>, agent: EntityId) -> String {
     format!(
         "{}/{}/{}",
         room.to_hex(),
         branch.map_or_else(|| "-".to_owned(), |branch| branch.to_hex()),
         agent.to_hex()
     )
+}
+
+/// The current-card key prefix of `room`'s own cards, for the room and no
+/// thread.
+pub(super) fn room_wide_prefix(room: EntityId) -> String {
+    format!("{}/-/", room.to_hex())
 }
 
 fn digest<T: Serialize>(value: &T) -> Result<String> {
@@ -324,13 +350,26 @@ fn mint_in_txn(
         &draft.intent_key,
     ))?;
     let draft_digest = digest(&(OFFER_ID_DOMAIN, draft))?;
-    if let Some(stored) = OFFERS.get(&vault.store, txn, &offer_id)? {
+    if let Some(mut stored) = OFFERS.get(&vault.store, txn, &offer_id)? {
         if stored.draft_digest != draft_digest {
             return Err(MemoryError::bad_request(
                 "this intent_key already names a different offer",
             ));
         }
+        // A replay renews nothing: a room-wide card past its time reads as
+        // aged out.
+        if super::offer_activity::room_offer_expired(&stored.card, now) {
+            stored.card.state = OfferState::AgedOut;
+        }
         return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));
+    }
+    if draft
+        .until
+        .is_some_and(|until| draft.branch.is_some() || until <= now)
+    {
+        return Err(MemoryError::bad_request(
+            "until is a future Unix second, on a room-wide offer only",
+        ));
     }
     if vault.get_entity_type_in_txn(txn, &draft.agent)? != Some(ENTITY_TYPE_AGENT_DEF) {
         return Err(MemoryError::bad_request(
@@ -403,6 +442,8 @@ fn mint_in_txn(
         join_ref: join.join_ref.clone(),
         state: OfferState::Open { needs },
         created_at: now,
+        until: draft.until,
+        last_engaged_at: now,
     };
     OFFERS.put(
         &vault.store,
@@ -413,6 +454,7 @@ fn mint_in_txn(
             draft_digest,
             minted_by: caller.entity_ref(),
             answer: None,
+            votes: BTreeMap::new(),
         },
     )?;
     if matches!(join.decision.state, JoinDecision::Ready) {
@@ -487,7 +529,8 @@ impl Memory<'_> {
 
     /// The current offer cards in a room, or in one of its threads, a page at
     /// a time, each one the caller's own reads admit. An open card whose
-    /// thread has ended reads as aged out; the read writes nothing.
+    /// thread has ended, or a room-wide one past its time, reads as aged out;
+    /// the read writes nothing.
     pub fn rooms_offers(&self, request: &OffersRequest) -> MemoryResult<OffersPage> {
         let page_limit = super::history::PAGE_LIMIT;
         let limit = request.limit.map_or(page_limit, |limit| {
@@ -539,9 +582,11 @@ impl Memory<'_> {
             .filter_map(|card| card.branch)
             .collect();
         let ended = self.ended_offer_threads(request.room, &open)?;
+        let now = vault.store.clock.now_recorded_at();
         for card in &mut rows {
             if matches!(card.state, OfferState::Open { .. })
-                && card.branch.is_some_and(|branch| ended.contains(&branch))
+                && (super::offer_activity::room_offer_expired(card, now)
+                    || card.branch.is_some_and(|branch| ended.contains(&branch)))
             {
                 card.state = OfferState::AgedOut;
             }
@@ -550,6 +595,31 @@ impl Memory<'_> {
             rows,
             next_after: if more { last } else { None },
         })
+    }
+
+    /// The room's own open cards, every one, for its board's ROOM section
+    /// (OF-530 ruling A): each room-wide card current for an agent there
+    /// that has not aged out. Thread cards stay with their threads.
+    pub fn rooms_open_offers(&self, room: EntityId) -> MemoryResult<Vec<OfferCard>> {
+        self.require_offer_audience(room, None)?;
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        let now = vault.store.clock.now_recorded_at();
+        let prefix = room_wide_prefix(room);
+        let mut cards = Vec::new();
+        for row in OFFER_CURRENT.iter_from(&vault.store, &txn, prefix.as_bytes())? {
+            let (_, offer) = row?;
+            let card = OFFERS
+                .get(&vault.store, &txn, &offer)?
+                .ok_or(Error::CorruptedIndex("current offer has no card"))?
+                .card;
+            if matches!(card.state, OfferState::Open { .. })
+                && !super::offer_activity::room_offer_expired(&card, now)
+            {
+                cards.push(card);
+            }
+        }
+        Ok(cards)
     }
 
     /// Whether the caller's own reads admit `id`'s record: a thread root a
@@ -564,7 +634,11 @@ impl Memory<'_> {
     /// Refuses a caller outside a card's audience: one whose own reads do not
     /// admit the room's record or the thread's root. A room turn asks and
     /// reads in its own room only.
-    fn require_offer_audience(&self, room: EntityId, branch: Option<EntityId>) -> MemoryResult<()> {
+    pub(super) fn require_offer_audience(
+        &self,
+        room: EntityId,
+        branch: Option<EntityId>,
+    ) -> MemoryResult<()> {
         if let Some(turn) = self.room_turn()
             && turn.room != room
         {

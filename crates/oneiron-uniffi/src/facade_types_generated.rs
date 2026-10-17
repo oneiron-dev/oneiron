@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 220 facade rows, 632 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 180.
+// UniFFI census: 222 facade rows, 634 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 182.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -8054,6 +8054,8 @@ pub struct OfferDraft {
         skip_serializing_if = "Option::is_none"
     )]
     pub spend_scope: Option<String>,
+    #[serde(rename = "until", default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
     #[serde(rename = "intent_key")]
     pub intent_key: String,
 }
@@ -8133,6 +8135,10 @@ pub struct OfferCard {
     pub state: OfferState,
     #[serde(rename = "created_at")]
     pub created_at: u64,
+    #[serde(rename = "until", default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
+    #[serde(rename = "last_engaged_at")]
+    pub last_engaged_at: u64,
 }
 
 /// `oneiron::workspace_roster::rooms::offer_settle::OfferAnswer`.
@@ -8169,6 +8175,28 @@ pub struct OfferSettlement {
     pub turn_ref: Option<String>,
     #[serde(rename = "diary_ref", default, skip_serializing_if = "Option::is_none")]
     pub diary_ref: Option<String>,
+}
+
+/// `oneiron::workspace_roster::rooms::offer_activity::OfferVoteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferVoteRequest {
+    #[serde(rename = "offer_id")]
+    pub offer_id: String,
+    #[serde(rename = "action")]
+    pub action: OfferAnswer,
+}
+
+/// `oneiron::workspace_roster::rooms::offer_reopen::OfferReopenRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferReopenRequest {
+    #[serde(rename = "offer_id")]
+    pub offer_id: String,
+    #[serde(rename = "expected_last_engaged_at")]
+    pub expected_last_engaged_at: u64,
+    #[serde(rename = "until", default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
 }
 
 /// `oneiron::workspace_roster::rooms::offers::OffersRequest`.

@@ -409,6 +409,7 @@ impl Memory<'_> {
             scope,
             posture,
             claims,
+            offers: self.rooms_open_offers(room)?,
             receipt,
             host: None,
         })

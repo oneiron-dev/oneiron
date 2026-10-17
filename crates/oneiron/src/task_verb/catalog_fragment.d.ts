@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 277 code-mode rows (259 host rows, 18 run rows), 863 declarations.
-// Replies: 224 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 279 code-mode rows (261 host rows, 18 run rows), 865 declarations.
+// Replies: 226 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Opaque serde_json::Value leaves: 55; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
@@ -610,13 +610,15 @@ declare namespace Sdk {
   type JoinDecisionView = { state: JoinDecision; consents: ConsentSet; participation?: JoinParticipation | null };
   type JoinOutcome = { join_ref: string; decision: JoinDecisionView; receipt_ref?: string | null };
   type ConsentAnswer = { join_ref: string; part: ConsentPart; grant: boolean; spend_scope?: SpendScopeId | null };
-  type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; intent_key: string };
+  type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; until?: number | null; intent_key: string };
   type DeclaredMaximum = { units: number; unit: LeaseUnit };
   type OfferState = { kind: "open"; needs: ConsentNeed[] } | { kind: "joined"; turn: EntityId; receipt_ref: string } | { kind: "not_now"; diary_ref?: EntityId | null } | { kind: "superseded"; by: string } | { kind: "aged_out" };
-  type OfferCard = { offer_id: string; room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; lease_cap?: DeclaredMaximum | null; payer?: EntityId | null; spend_scope?: SpendScopeId | null; join_ref: string; state: OfferState; created_at: number };
+  type OfferCard = { offer_id: string; room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; lease_cap?: DeclaredMaximum | null; payer?: EntityId | null; spend_scope?: SpendScopeId | null; join_ref: string; state: OfferState; created_at: number; until?: number | null; last_engaged_at: number };
   type OfferAnswer = "join" | "not_now";
   type OfferAnswerRequest = { offer_id: string; action: OfferAnswer; intent_key: string };
   type OfferSettlement = { offer_id: string; state: OfferState; join?: JoinOutcome | null; turn_ref?: string | null; diary_ref?: string | null };
+  type OfferVoteRequest = { offer_id: string; action: OfferAnswer };
+  type OfferReopenRequest = { offer_id: string; expected_last_engaged_at: number; until?: number | null };
   type OffersRequest = { room: EntityId; branch?: EntityId | null; after?: string | null; limit?: number | null };
   type OffersPage = { rows: OfferCard[]; next_after?: string | null };
   type ProjectGoalDismissRequest = { project_ref: string; expected_goal_ref: string; question_digest: string };
@@ -1412,10 +1414,14 @@ declare const vault: {
     list(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.RoomEntry[]>>;
     /** One page of the turns in a room this reader may read. */
     messages(input: Sdk.RoomRequest): Promise<Sdk.Reply<Sdk.RoomPage>>;
-    /** Publishes an agent's offer card to join a room or one of its threads. */
+    /** Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card. */
     offer: ((input: Sdk.OfferDraft) => Promise<Sdk.Reply<Sdk.OfferCard>>) & {
       /** The room's host answers an offer card: join, or not now. */
       answer(input: Sdk.OfferAnswerRequest): Promise<Sdk.Reply<Sdk.OfferSettlement>>;
+      /** The room's owner or delegated host reopens its aged-out room-wide offer card. */
+      reopen(input: Sdk.OfferReopenRequest): Promise<Sdk.Reply<Sdk.OfferCard>>;
+      /** Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits. */
+      vote(input: Sdk.OfferVoteRequest): Promise<Sdk.Reply<Sdk.OfferCard>>;
     };
     /** One page of the current offer cards in a room or one of its threads. */
     offers(input: Sdk.OffersRequest): Promise<Sdk.Reply<Sdk.OffersPage>>;
