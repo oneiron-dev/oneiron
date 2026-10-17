@@ -1,5 +1,6 @@
 //! One durable proactivity digest per vault cadence, with intent-bound urgent wakes.
-//! A regular digest also carries the cleanup cron's after-notice (OF-449).
+//! A regular digest also carries the cleanup cron's after-notice (OF-449)
+//! and the NOTE tombstone review's open proposals (OF-073).
 use super::applied::{MaintenanceInverse, MaintenanceRevert};
 use super::invalid;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -38,6 +39,12 @@ pub const CLEANUP_GROUP: &str = "dreamer.cleanup";
 /// The cleanup line's view: the owner cleanup surface, where every archive
 /// restores.
 pub const CLEANUP_VIEW: &str = "/v1/owner/cleanup";
+/// The derived group the NOTE tombstone line (OF-073, FIX 2419) renders
+/// under.
+pub const NOTE_TOMBSTONE_GROUP: &str = "note.tombstone";
+/// The NOTE tombstone line's view: the owner's tombstone review, where each
+/// proposal is accepted or declined.
+pub const NOTE_TOMBSTONE_VIEW: &str = "/v1/owner/notes/tombstones";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityCadence {
@@ -167,6 +174,24 @@ impl DigestCleanup {
         out
     }
 }
+/// The NOTE tombstone review's open proposals no digest carried yet. The
+/// line only points at them; the owner accepts or declines each at the view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DigestNoteTombstones {
+    /// The proposals this line reports, as `<note>:<proposed_at>`: a NOTE
+    /// archived again is a new proposal.
+    pub proposals: Vec<String>,
+    pub view: String,
+}
+impl DigestNoteTombstones {
+    fn summary(&self) -> String {
+        format!(
+            "{NOTE_TOMBSTONE_GROUP}: {} archived NOTEs wait for a tombstone review",
+            self.proposals.len()
+        )
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityDigest {
@@ -187,6 +212,9 @@ pub struct ProactivityDigest {
     /// The cleanup line, on a regular digest with cleanup news.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup: Option<DigestCleanup>,
+    /// The NOTE tombstone line, on a regular digest with open proposals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_tombstones: Option<DigestNoteTombstones>,
     /// The Coach's agent-health cards opened, updated or settled since the
     /// last regular digest (OF-568), concern first and newest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -207,6 +235,9 @@ struct DigestState {
     /// Cleanup decisions and proposals a digest already carried.
     #[serde(default)]
     cleanup_seen: std::collections::BTreeSet<String>,
+    /// NOTE tombstone proposals a digest already carried.
+    #[serde(default)]
+    note_tombstones_seen: std::collections::BTreeSet<String>,
 }
 impl Vault {
     pub fn set_proactivity_cadence(
@@ -346,6 +377,7 @@ impl Vault {
         if pending_proposals(self, &txn, authority, &state, &cadence)?.is_empty()
             && unseen_offers(&offers, &state).is_empty()
             && unseen_cleanup(self, &txn, &state)?.is_none()
+            && unseen_note_tombstones(self, &txn, &state)?.is_none()
         {
             return Ok(None);
         }
@@ -479,9 +511,15 @@ impl Vault {
             } else {
                 Vec::new()
             };
-            // So does the cleanup after-notice: it is never urgent.
+            // So do the cleanup after-notice and the NOTE tombstone line:
+            // neither is urgent.
             let cleanup = if due {
                 unseen_cleanup(self, &*txn, &state)?
+            } else {
+                None
+            };
+            let note_tombstones = if due {
+                unseen_note_tombstones(self, &*txn, &state)?
             } else {
                 None
             };
@@ -505,6 +543,7 @@ impl Vault {
                 && eval_label_asks.is_empty()
                 && offers.is_empty()
                 && cleanup.is_none()
+                && note_tombstones.is_none()
             {
                 return Ok(None);
             }
@@ -557,6 +596,22 @@ impl Vault {
                 state.cleanup_seen.extend(line.decisions.iter().cloned());
                 state.cleanup_seen.extend(line.proposals.iter().cloned());
             }
+            if let Some(line) = &note_tombstones {
+                let group = presentation
+                    .group_aliases
+                    .get(NOTE_TOMBSTONE_GROUP)
+                    .map_or(NOTE_TOMBSTONE_GROUP, String::as_str);
+                rendered.push_str(&presentation.group_template.replace("{group}", group));
+                rendered.push_str(
+                    &presentation
+                        .item_template
+                        .replace("{summary}", &line.summary())
+                        .replace("{ref}", &line.view),
+                );
+                state
+                    .note_tombstones_seen
+                    .extend(line.proposals.iter().cloned());
+            }
             if !health_cards.is_empty() {
                 let facet = super::agent_health::COACH_AGENT_HEALTH_FACET;
                 let group = presentation
@@ -588,6 +643,7 @@ impl Vault {
                 eval_label_asks,
                 offers,
                 cleanup,
+                note_tombstones,
                 health_cards,
                 rendered,
                 voice_style: presentation.voice_style,
@@ -627,7 +683,11 @@ impl Vault {
             }
             // The vault state and board pointer follow the shared proposals;
             // an asks-only digest is the recipient's and moves only its mark.
-            if !digest.groups.is_empty() || !digest.offers.is_empty() || digest.cleanup.is_some() {
+            if !digest.groups.is_empty()
+                || !digest.offers.is_empty()
+                || digest.cleanup.is_some()
+                || digest.note_tombstones.is_some()
+            {
                 if due {
                     state.last_regular = Some(now);
                 }
@@ -698,6 +758,7 @@ fn digest_id(digest: &ProactivityDigest) -> Result<[u8; 32]> {
         &digest.eval_label_asks,
         &digest.offers,
         &digest.cleanup,
+        &digest.note_tombstones,
         digest.urgent,
         &digest.rendered,
         &digest.voice_style,
@@ -761,6 +822,23 @@ fn unseen_cleanup(
         line.proposals.push(id);
     }
     Ok((!line.decisions.is_empty() || !line.proposals.is_empty()).then_some(line))
+}
+/// The open NOTE tombstone proposals no digest carried yet, as one line;
+/// `None` when there are none.
+fn unseen_note_tombstones(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    state: &DigestState,
+) -> Result<Option<DigestNoteTombstones>> {
+    let proposals: Vec<String> = crate::note::open_tombstone_proposals_in_txn(vault, txn)?
+        .into_iter()
+        .map(|proposal| format!("{}:{}", proposal.note.to_hex(), proposal.proposed_at))
+        .filter(|id| !state.note_tombstones_seen.contains(id))
+        .collect();
+    Ok((!proposals.is_empty()).then(|| DigestNoteTombstones {
+        proposals,
+        view: NOTE_TOMBSTONE_VIEW.to_owned(),
+    }))
 }
 fn load_cadence(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityCadence> {
     let row: ProactivityCadence = match CADENCE.get(&vault.store, txn, &())? {

@@ -421,5 +421,19 @@ pub(super) fn record_nonce(
     Ok(())
 }
 
+/// Whether a holder proof signed at `timestamp` with `nonce` was admitted for
+/// `binding_key` ([`record_nonce`]) and its row is still kept. A door that
+/// rides an admitted request reads it to know the values it was handed are
+/// that request's own, without spending the nonce a second time (FIX 3377).
+pub(super) fn nonce_admitted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding_key: &[u8; 32],
+    nonce: &[u8],
+    timestamp: u64,
+) -> Result<bool> {
+    REPLAY_NONCE.contains(&vault.store, txn, &nonce_key(binding_key, nonce, timestamp))
+}
+
 #[cfg(test)]
 mod tests;

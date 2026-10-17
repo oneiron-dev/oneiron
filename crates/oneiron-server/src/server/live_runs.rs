@@ -13,15 +13,16 @@
 //! TTL. One credential attaches per lease generation and none rebinds it. A
 //! run leaves at settlement, unless it parks on a durable wait, which keeps
 //! its lease; a parked run whose lease then goes (a cancel) leaves at the
-//! next registration or housekeeping pass. An unattached run has no handle,
-//! and a handle never falls back to an actor's latest run or to plain
-//! dispatch.
+//! next registration or housekeeping pass. A run that leaves closes the live
+//! lens cards it created ([`crate::lens_frames`]); a parked run keeps them.
+//! An unattached run has no handle, and a handle never falls back to an
+//! actor's latest run or to plain dispatch.
 //!
 //! An attach or action waits up to [`LIVE_RUN_GUARD_WAIT`] for the guard
 //! while an entry or another action holds it. Tokio's mutex queues in order,
 //! so a waiting call gets the guard before the runner's next entry.
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use axum::http::StatusCode;
@@ -34,6 +35,7 @@ use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 use tokio::sync::OwnedMutexGuard;
 
 use crate::config::models::PlannerSettings;
+use crate::lens_frames::LensFrameStore;
 
 /// An action on a live-run row named no handle.
 pub(crate) const LIVE_RUN_REQUIRED: &str = "live_run_required";
@@ -120,7 +122,7 @@ impl LiveRunRefusal {
                 "Attach at POST /v1/core/live-runs/{run}/attach and send its liveRun."
             }
             Self::Stale => "Attach again once the run holds its next lease.",
-            Self::Busy => "Retry once the run's current entry or action ends.",
+            Self::Busy => "Retry once the current entry or action of the run ends.",
             Self::Attached => "Act with the credential attached to this lease.",
         }
     }
@@ -137,6 +139,9 @@ pub(crate) struct LiveRunCaller {
 #[derive(Default)]
 pub(crate) struct LiveRuns {
     runs: Mutex<HashMap<EntityId, Arc<LiveRunEntry>>>,
+    /// The lens frames whose cards a run closes when it leaves, set once by
+    /// the server that holds both.
+    lens: OnceLock<Arc<LensFrameStore>>,
 }
 
 /// One registered run: its executor run, the agent it runs as, the leased
@@ -180,6 +185,12 @@ impl LiveRunEntry {
 }
 
 impl LiveRuns {
+    /// Has each run that leaves because it ended close the live lens cards
+    /// it created in `lens`. Set once; a later call is ignored.
+    pub(crate) fn close_cards_with(&self, lens: Arc<LensFrameStore>) {
+        let _ = self.lens.set(lens);
+    }
+
     /// Registers run `run`, which its runner enters as `actor` under the
     /// lease of `leased`, proven by `proof`, planning under `planner` on the
     /// model `executor`. The same lease keeps its entry, attachment and
@@ -224,7 +235,7 @@ impl LiveRuns {
     /// Settles run `run` with `settlement` under its guard, so no action runs
     /// across the settlement, then drops the run unless it `waits` on a
     /// durable wait that settled: a parked run keeps its lease, and so its
-    /// handle. Blocking.
+    /// handle and its cards. Blocking.
     pub(crate) fn settle<T, E>(
         &self,
         run: Option<EntityId>,
@@ -236,17 +247,19 @@ impl LiveRuns {
         };
         let serial = self.get(run).map(|entry| entry.enter());
         let settled = settlement();
-        if !(waits && settled.is_ok()) {
-            self.map().remove(&run);
-        }
+        let left = !(waits && settled.is_ok()) && self.map().remove(&run).is_some();
         drop(serial);
+        if left {
+            self.retired(run);
+        }
         settled
     }
 
     /// Drops every run whose lease no longer holds, read live: a parked run
     /// cancelled, which no entry or call touches again, leaves here. The map
     /// is locked only to list the runs and to drop them; the lease reads run
-    /// between. A run whose lease cannot be read stays. Blocking.
+    /// between, and the dropped runs' cards close after. A run whose lease
+    /// cannot be read stays. Blocking.
     pub(crate) fn prune(&self, vault: &Vault) {
         let mut gone: Vec<_> = self.map().values().cloned().collect();
         gone.retain(
@@ -263,10 +276,13 @@ impl LiveRuns {
             },
         );
         let mut runs = self.map();
+        gone.retain(|entry| is_current(&runs, entry));
         for entry in &gone {
-            if is_current(&runs, entry) {
-                runs.remove(&entry.run);
-            }
+            runs.remove(&entry.run);
+        }
+        drop(runs);
+        for entry in &gone {
+            self.retired(entry.run);
         }
     }
 
@@ -362,10 +378,21 @@ impl LiveRuns {
             return Ok(true);
         }
         let mut runs = self.map();
-        if is_current(&runs, entry) {
-            runs.remove(&entry.run);
+        let left = is_current(&runs, entry) && runs.remove(&entry.run).is_some();
+        drop(runs);
+        if left {
+            self.retired(entry.run);
         }
         Ok(false)
+    }
+
+    /// Run `run` ended and left the map: closes the live lens cards it
+    /// created, once the map's lock is released. A card names its creating
+    /// run by the run's `EntityId::to_hex()`.
+    fn retired(&self, run: EntityId) {
+        if let Some(lens) = self.lens.get() {
+            lens.close_run(&run.to_hex());
+        }
     }
 
     fn map(&self) -> MutexGuard<'_, HashMap<EntityId, Arc<LiveRunEntry>>> {

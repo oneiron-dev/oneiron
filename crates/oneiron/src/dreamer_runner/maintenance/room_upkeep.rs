@@ -120,6 +120,7 @@ fn upkeep(
         .iter()
         .filter(|thread| {
             !thread.open_tasks.is_empty()
+                && !thread.waiting_for_person(now)
                 && now.saturating_sub(thread.last_message_at) >= ROOM_NUDGE_IDLE_SECS
         })
         .collect();
