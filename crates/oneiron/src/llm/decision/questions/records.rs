@@ -2,8 +2,8 @@
 
 use super::super::types::invalid;
 use super::super::{
-    AnswerContract, DecisionAnswer, DecisionCall, DecisionDial, DecisionQuestion, PairedReading,
-    ProviderPin, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionCall, DecisionDial, DecisionQuestion, DecisionRung,
+    PairedReading, ProviderPin, TypedDecision,
 };
 use crate::learning_setting::SettingSpec;
 use crate::{EntityId, Result, Vault};
@@ -68,6 +68,20 @@ impl OutcomeBinding {
     }
 }
 
+/// The adapter of a standing question over artifact units, asked on each artifact's head
+/// as it changes ([`QuestionDefinition::artifacts`]).
+pub const ARTIFACT_ADAPTER: &str = "artifact";
+
+/// One artifact a standing artifact question asks: the artifact its answers land in, and
+/// which of its units are asked, as a `vault.artifacts.ask` names them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactUnits {
+    #[serde(with = "super::super::codec::entity")]
+    pub artifact: EntityId,
+    pub selection: crate::blob_artifact::ArtifactAskUnits,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionDefinition {
@@ -102,6 +116,10 @@ pub struct QuestionDefinition {
     /// offer and retry in it. `None` reads the vault's question call budget.
     #[serde(default)]
     pub deadline_ms: Option<u64>,
+    /// The artifacts an [`ARTIFACT_ADAPTER`] question asks, each named once, in place of
+    /// `units`. Each read rechecks authority.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<ArtifactUnits>,
 }
 impl QuestionDefinition {
     pub fn validate(&self) -> Result<()> {
@@ -122,6 +140,34 @@ impl QuestionDefinition {
         self.criteria.validate()?;
         if let Some(binding) = &self.binding {
             binding.validate()?;
+        }
+        self.validate_artifacts()
+    }
+
+    /// An artifact question asks artifacts alone, standing, below the person, with no
+    /// outcome learning (its answers are proposals, not claims), and names each artifact
+    /// once over a selection it can ask.
+    fn validate_artifacts(&self) -> Result<()> {
+        let artifact = self.adapter == ARTIFACT_ADAPTER;
+        if artifact == self.artifacts.is_empty()
+            || (artifact
+                && (!self.units.is_empty()
+                    || self.activation != QuestionActivation::Standing
+                    || self.learning
+                    || self.binding.is_some()
+                    || self.dial.first == DecisionRung::Human
+                    || self.question.contract.locates()))
+        {
+            return Err(invalid("invalid standing artifact question"));
+        }
+        let mut named = std::collections::BTreeSet::new();
+        for units in &self.artifacts {
+            if !named.insert(units.artifact) {
+                return Err(invalid(
+                    "a standing artifact question names an artifact twice",
+                ));
+            }
+            super::artifact_refresh::validate_artifact_units(units)?;
         }
         Ok(())
     }
