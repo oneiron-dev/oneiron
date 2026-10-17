@@ -32051,6 +32051,7 @@
       "MemberVerdict",
       "OfficeBodyProposal",
       "ProposalAsk",
+      "ProposalAskRefusal",
       "ProposalHeader",
       "ProposalMember",
       "ProposalSettleRequest",
@@ -32062,10 +32063,10 @@
      "purpose": "Office proposals (DEC-0006, \"A content proposal is a set of forks that share its id\"; ARCH-0035's embedded…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 4,
       "fn": 2,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -59431,24 +59432,26 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "XlsxAlignment",
       "XlsxBorder",
       "XlsxColor",
       "XlsxEdge",
       "XlsxFill",
       "XlsxFont",
       "XlsxFormat",
-      "XlsxNumberFormat"
+      "XlsxNumberFormat",
+      "XlsxProtection"
      ],
      "path": "src/xlsx_styles.rs",
-     "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its font, fill, border or…",
+     "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…",
      "surface": {
       "crate-vis": 1,
       "enum": 2,
       "fn": 1,
-      "struct": 5
+      "struct": 7
      }
     },
     {
@@ -59609,12 +59612,12 @@
     "xlsx_styles": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
-     "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its font, fill, border or…"
+     "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…"
     }
    },
-   "over_bar": 8,
+   "over_bar": 9,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
    "source_files": 67,
    "test_files": 14
@@ -74708,6 +74711,7 @@
       "PromotionBasis",
       "PromotionDisposition",
       "ProposalAsk",
+      "ProposalAskRefusal",
       "ProposalHeader",
       "ProposalMember",
       "ProposalSettleRequest",
@@ -75126,6 +75130,7 @@
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
       "WorkspaceRefRequest",
+      "XlsxAlignment",
       "XlsxArea",
       "XlsxBodyOp",
       "XlsxBodyView",
@@ -75141,6 +75146,7 @@
       "XlsxName",
       "XlsxNumberFormat",
       "XlsxPreview",
+      "XlsxProtection",
       "XlsxSheet",
       "XlsxSheetView",
       "XlsxStyle",
@@ -75151,7 +75157,7 @@
      "purpose": "—",
      "surface": {
       "enum": 306,
-      "struct": 809
+      "struct": 812
      }
     },
     {
