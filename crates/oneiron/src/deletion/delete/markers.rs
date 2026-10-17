@@ -3,6 +3,7 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::registry::{
     ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
 };
@@ -170,8 +171,9 @@ impl Vault {
                 window: window_label.to_owned(),
                 id: *id,
             };
-            if PENDING_TOMBSTONE
-                .get_bytes(&self.store, wtxn, &key)?
+            if self
+                .store
+                .port_pending_tombstone(wtxn, WindowAddress::new(window_label), id)?
                 .is_some_and(|raw| raw == value.encode())
             {
                 PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;

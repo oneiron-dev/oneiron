@@ -67,6 +67,8 @@
 mod codec;
 mod doors;
 mod floor;
+mod found_keys;
+mod known_values;
 mod masked_files;
 mod owner_door;
 mod reveal;
@@ -95,6 +97,16 @@ pub(crate) use self::doors::{
     restore_secret_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
+pub use self::found_keys::{
+    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled,
+    NOTIFICATION_PRODUCER_FOUND_KEY,
+};
+pub(crate) use self::found_keys::{
+    FoundNote, KeptValues, note_found_keys_in_txn, raise_found_key_notices_in_txn,
+    settle_found_key_in_txn,
+};
+pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
+pub(crate) use self::known_values::{KnownSweep, KnownValues};
 pub use self::masked_files::SecretSight;
 pub(crate) use self::masked_files::{
     KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberKeys, MemberStep, filled,
@@ -108,7 +120,7 @@ pub use self::reveal::{
     REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RevealTarget, SECRET_REVEAL_REASON_ASKED,
     SECRET_REVEAL_REASON_OWNER, SecretHandleCard, SecretProvenance, SecretRevealAnswer,
     SecretRevealAnswered, SecretRevealAsk, SecretRevealDecision, SecretRevealReceipt,
-    SecretRevealState,
+    SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
 };
 pub(crate) use self::reveal::{
     RevealAsker, RevealAuthority, parse_secret_handle, reveal_value_in_txn,

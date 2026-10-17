@@ -10,7 +10,8 @@
 //! the host serves from its own seats are served as the host serves them for
 //! an agent's credential: `ai.verdict`, `vault.graph.ask` and the standing
 //! questions on the host's ladder, `vault.recall` and `report` with the
-//! host's embedder, a slide review through the host's decider, and
+//! host's embedder, a slide review through the host's decider, a deck
+//! preview through its review renderer, and
 //! `ai.options` from its model runtime. Its `tasks.wave` is its own wave,
 //! queued under its lease, where a credential's is the owner's root one. Its
 //! `connector.call` goes through the host's connector transports under the
@@ -55,7 +56,9 @@ use oneiron::{EntityId, WriteActor};
 use serde_json::Value;
 
 use super::{SyncServer, wave_plan, wave_receipt};
-use crate::api::{RunGuests, VerdictAsker, drop_run_board, execute_run_board_verb};
+use crate::api::{
+    RunGuests, VerdictAsker, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
+};
 use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;
 use crate::decision_verdict::{HELD_IMAGE, HeldImage, run_verdict};
@@ -192,7 +195,8 @@ fn is_board_row(verb: AgentVerb, input: &Value) -> bool {
 
 /// Answers one board row for `actor` over the run's own board connection,
 /// with its verb hooks once around it; the rows it answers with are every
-/// row the board was derived from. Blocking: call it on a blocking thread of
+/// row the board was derived from. The hook rows it shows are delivered once
+/// the answer clears those hooks. Blocking: call it on a blocking thread of
 /// the server's runtime.
 fn board_as_agent(
     server: &Arc<SyncServer>,
@@ -206,6 +210,7 @@ fn board_as_agent(
     let memory = agent_memory(server, actor, origin, invocation);
     let name = verb.as_str();
     let mut rows = Vec::new();
+    let mut hooks = None;
     let output = verb_hook_boundary::row(&memory, name, input, |input| {
         sdk::validate_input(name, &input)?;
         let call = match verb {
@@ -228,11 +233,15 @@ fn board_as_agent(
                 }
             }
         };
-        let (output, served) = tokio::runtime::Handle::current()
-            .block_on(execute_run_board_verb(server, actor, board, call))?;
+        let (output, served) = tokio::runtime::Handle::current().block_on(
+            execute_run_board_verb(server, actor, board, call, &mut hooks),
+        )?;
         rows = served;
         Ok(output)
     })?;
+    if let Some(hooks) = hooks {
+        tokio::runtime::Handle::current().block_on(deliver_run_board_hooks(server, hooks))?;
+    }
     Ok((output, rows))
 }
 
@@ -295,6 +304,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::VaultRecall
             | AgentVerb::VaultHooksReplay
             | AgentVerb::VaultArtifactsReviewSlides
+            | AgentVerb::VaultArtifactsBodyDeckPreview
             | AgentVerb::AiOptions
             | AgentVerb::AiImage
             | AgentVerb::AiSpeech
@@ -453,6 +463,12 @@ fn host_row(
                 &host.bands(),
             )?)
         }
+        AgentVerb::VaultArtifactsBodyDeckPreview => encode(memory.artifacts_body_deck_preview(
+            &decode(input)?,
+            crate::slide_render::host_renderer().map(|renderer| {
+                renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
+            }),
+        )?),
         AgentVerb::AiOptions => encode(ai_options(server, decode(input)?)?),
         // The run's own wave: planned for its agent and queued on its own
         // surface, whose bound lease is the wave's creator (OF-532).

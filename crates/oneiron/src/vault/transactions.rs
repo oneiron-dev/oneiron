@@ -10,6 +10,7 @@ use crate::hnsw;
 use crate::maintain::MaintenanceBuilder;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
+use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::store::{
     Callback, EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows, validate_embedding_model_id,
 };
@@ -297,19 +298,17 @@ impl Vault {
         refill: bool,
     ) -> Result<Option<String>> {
         validate_embedding_model_id(new_model)?;
-        let stored_utf8 = |key: &[u8], what: &'static str| -> Result<Option<String>> {
-            self.store
-                .hnsw_meta
-                .get(&*wtxn, key)?
-                .map(|raw| {
-                    std::str::from_utf8(&raw)
-                        .map(str::to_owned)
-                        .map_err(|_| Error::CorruptedIndex(what))
-                })
-                .transpose()
+        let stored_utf8 = |key: IndexMetaKey, what: &'static str| -> Result<Option<String>> {
+            self.store.port_index_meta_with_raw(&*wtxn, key, |raw| {
+                std::str::from_utf8(raw)
+                    .map(str::to_owned)
+                    .map_err(|_| Error::CorruptedIndex(what))
+            })
         };
-        let same_model = stored_utf8(MODEL_ID_KEY, "model id")?.as_deref() == Some(new_model);
-        let stored_transform = stored_utf8(EMBEDDING_TRANSFORM_KEY, "embedding transform")?;
+        let same_model =
+            stored_utf8(IndexMetaKey::ModelId, "model id")?.as_deref() == Some(new_model);
+        let stored_transform =
+            stored_utf8(IndexMetaKey::EmbeddingTransform, "embedding transform")?;
         let same_transform = transform.is_none() || stored_transform.as_deref() == transform;
         if same_model && same_transform && !refill {
             return Ok(stored_transform);
@@ -450,7 +449,12 @@ impl Vault {
                 let (result, postcommit) = {
                     let _active_write_txn = crate::store::active_write_txn_guard();
                     let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
-                    match f(wtxn) {
+                    // A key this write's mask found raises its notice here.
+                    match f(wtxn).and_then(|result| {
+                        crate::secret_custody::raise_found_key_notices_in_txn(self, wtxn)
+                            .map_err(E::from)?;
+                        Ok(result)
+                    }) {
                         Ok(result) => (result, vad_scope.finish()),
                         Err(err) => return Rows::Discard(Err(err)),
                     }

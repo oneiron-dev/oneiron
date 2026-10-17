@@ -144,6 +144,7 @@ fn run_embedded(
             verb_door: None,
             owner,
             live_run: None,
+            planner: None,
         },
     )?;
     Ok(PolicyActionOutcome::from_dispatch(&dispatch)?)

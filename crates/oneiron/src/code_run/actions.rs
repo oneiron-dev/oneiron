@@ -116,6 +116,10 @@ pub struct ActionHostBinding<'a> {
     /// its lease (`HostSelfDispatcher::task_host_binding`). Read live again
     /// at every call, and before any replay answers.
     pub live_run: Option<crate::task_verb::HostBinding>,
+    /// The host's planner that run reads, lent beside its lease: the
+    /// leader's rows (`self.leader.advice`, `self.leader.pattern`) ask it.
+    /// Unset, they answer `planner_unbound`.
+    pub planner: Option<super::HostPlannerBinding<'a>>,
 }
 #[derive(Debug, Clone, Copy)]
 pub struct ActionBuildContext {
@@ -224,8 +228,9 @@ impl ActionRegistry {
     }
     /// Offers the run rows that act on their caller's live agent run
     /// (`tasks.refuse`, `self.agents.spawn`, `self.team.start`,
-    /// `self.team.record`) under their own names, as the memory rows are
-    /// offered. Each runs only when the host binds the run's lease
+    /// `self.team.record`, and the leader's `self.leader.advice` and
+    /// `self.leader.pattern` on the planner the host lends beside it) under
+    /// their own names, as the memory rows are offered. Each runs only when the host binds the run's lease
     /// ([`ActionHostBinding::live_run`]), read live, so the call is the run's
     /// own: its parent, actor and lease are the run's, never the body's.
     pub fn register_live_run_verbs(&mut self) -> Result<()> {
@@ -359,6 +364,7 @@ impl ActionRegistry {
             verb_door: None,
             owner: Some(owner),
             live_run: None,
+            planner: None,
         };
         self.execute(vault, actor, principal, call, binding)
     }
@@ -374,6 +380,7 @@ impl ActionRegistry {
             verb_door,
             owner,
             live_run,
+            planner,
         } = binding;
         let registered = self.registered(request.verb_id.as_str())?;
         // Unbound, a run row would read past the caller's own read key.
@@ -456,6 +463,14 @@ impl ActionRegistry {
                 .map_err(|_| invalid("action encoding"))?,
         )
         .as_bytes();
+        // A live run's lease, read live again before a replayed answer
+        // returns and before any effect: one that moved on meanwhile does
+        // neither.
+        let lease_holds = || {
+            live_run
+                .as_ref()
+                .map_or(Ok(()), |run| run.leased_record(vault).map(drop))
+        };
         let previous = vault.get_code_run_replay_record(&run_id)?;
         let frozen = previous.as_ref().map_or_else(
             || crate::unix_seconds_now().saturating_mul(1000),
@@ -490,6 +505,7 @@ impl ActionRegistry {
                     "shared action is in flight or needs reconciliation",
                 ));
             }
+            lease_holds()?;
             return record
                 .replay_cursor()
                 .dispatch(call)
@@ -498,6 +514,7 @@ impl ActionRegistry {
                     read_receipt,
                 });
         }
+        lease_holds()?;
         // Reserve the EXISTING replay record before effects. A crash or racing
         // caller sees an incomplete record and fails closed, never re-dispatches.
         let mut record = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(frozen, seed));
@@ -514,6 +531,10 @@ impl ActionRegistry {
         };
         let dispatcher = match verb_door {
             Some(door) => dispatcher.with_agent_verb_door(door),
+            None => dispatcher,
+        };
+        let dispatcher = match planner {
+            Some(planner) => dispatcher.with_planner(planner),
             None => dispatcher,
         };
         let result = dispatcher.dispatch_for_executor_run(
