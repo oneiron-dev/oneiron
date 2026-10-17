@@ -39,9 +39,11 @@ pub struct PayoffRow {
     pub losses: u64,
     pub mean_spend: Option<f64>,
     pub mean_elapsed_secs: f64,
-    pub mean_calls: f64,
+    /// Mean calls, over teams whose calls the host counted.
+    pub mean_calls: Option<f64>,
     /// Mean share of cells covered, over teams that report coverage.
     pub mean_coverage: Option<f64>,
+    /// Confessions, summed over teams whose confessions the host counted.
     pub confessions: u64,
     /// Agent-seconds waiting, by reason, summed over the row's teams.
     pub wait_by_reason: BTreeMap<String, u64>,
@@ -58,6 +60,7 @@ struct Acc {
     spend_n: u64,
     elapsed_sum: f64,
     calls_sum: f64,
+    calls_n: u64,
     coverage_sum: f64,
     coverage_n: u64,
     confessions: u64,
@@ -107,16 +110,21 @@ pub fn payoff_table(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<Pay
             acc.spend_n += 1;
         }
         #[allow(clippy::cast_precision_loss)]
-        let (elapsed, calls) = (receipt.elapsed_secs as f64, receipt.calls as f64);
+        let elapsed = receipt.elapsed_secs as f64;
         acc.elapsed_sum += elapsed;
-        acc.calls_sum += calls;
+        if let Some(calls) = receipt.calls {
+            #[allow(clippy::cast_precision_loss)]
+            let calls = calls as f64;
+            acc.calls_sum += calls;
+            acc.calls_n += 1;
+        }
         if let Some(coverage) = receipt.coverage
             && coverage.cells_total > 0
         {
             acc.coverage_sum += f64::from(coverage.cells_filled) / f64::from(coverage.cells_total);
             acc.coverage_n += 1;
         }
-        acc.confessions += u64::from(receipt.confessions);
+        acc.confessions += receipt.confessions.map_or(0, u64::from);
         if let Some(cost) = coordination_cost(vault, &receipt.team_ref)? {
             for (reason, secs) in cost.wait_by_reason {
                 *acc.wait.entry(reason).or_insert(0) += secs;
@@ -150,7 +158,7 @@ pub fn payoff_table(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<Pay
                     losses: acc.losses,
                     mean_spend: mean(acc.spend_sum, acc.spend_n),
                     mean_elapsed_secs: acc.elapsed_sum / teams,
-                    mean_calls: acc.calls_sum / teams,
+                    mean_calls: mean(acc.calls_sum, acc.calls_n),
                     mean_coverage: mean(acc.coverage_sum, acc.coverage_n),
                     confessions: acc.confessions,
                     wait_by_reason: acc.wait,

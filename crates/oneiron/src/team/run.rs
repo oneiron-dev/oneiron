@@ -12,13 +12,17 @@
 //!
 //! `self.team.record` writes the team's one receipt once its work is done.
 //! The host fills every identity: the type and project the leader was placed
-//! with, the models the leader and members ran on, the pattern skill the
-//! leader loaded, the leader as the deciding actor. The guest names only what
-//! the host cannot observe: the axis, a vote's tally or a referee's rule, the
-//! roles, coverage, confessions, spend and calls. A tournament's receipt is
-//! its finalizer's, never the leader's. Settlement stays with the anchored
-//! outcome ([`settle_team_outcome`](super::settle_team_outcome)): a run's own
-//! word is no anchor.
+//! with, the members its start spawned ([`super::run_binding`]), the models
+//! the leader and members ran on, the pattern skill the leader loaded, the
+//! leader as the deciding actor, a market's signed referee. It counts the
+//! members' confessions, calls and spend itself ([`super::observations`]),
+//! and leaves unknown what it cannot count. The guest names only what the
+//! host cannot observe: the axis, a vote's tally or an unsigned referee's
+//! rule, the roles and coverage. A tournament's receipt is its finalizer's,
+//! never the leader's. Settlement stays with the anchored outcome
+//! ([`settle_team_outcome`](super::settle_team_outcome)), such as the
+//! owner's verdict on the team's deliverable ([`super::owner_outcome`]): a
+//! run's own word is no anchor.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -36,10 +40,13 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::learning::TypeRef;
 
+use super::market::market;
+use super::observations::team_run_observations;
 use super::pattern::{TeamAxis, TeamPattern, pattern_skills};
 use super::receipt::{
     Coverage, DecidedBy, PatternSkillRef, TeamReceipt, TeamShape, record_team_receipt, team_receipt,
 };
+use super::run_binding::team_run_binding;
 
 /// Most members one start spawns or one receipt covers.
 const MAX_MEMBERS: usize = 64;
@@ -81,25 +88,20 @@ pub struct TeamMemberInput {
 pub struct TeamRecordInput {
     /// The team's reference, as its start returned it.
     pub team_ref: String,
-    /// The members whose work the receipt covers: their attempt refs, hex,
-    /// as the start returned them. Each must carry the team's stamp.
+    /// Members the receipt covers beyond those the host saw its start spawn,
+    /// such as an approved widening's: their attempt refs, hex. Each must
+    /// carry the team's stamp. A start the host did not record needs them all.
     pub members: Vec<String>,
     /// Whether the team converged on one answer or diverged into many.
     pub axis: TeamAxis,
-    /// Who decided the team's result. The pattern fixes its kind.
+    /// Who decided the team's result. The pattern fixes its kind. A market's
+    /// signed referee replaces the rule named here.
     pub decided_by: TeamDecisionInput,
     /// Role name to head count, summing to the leader plus its members.
     /// Absent, the leader leads and the rest are members.
     pub roles: Option<BTreeMap<String, u32>>,
     /// How much of the campaign's cell grid the outputs covered.
     pub coverage: Option<TeamCoverageInput>,
-    /// Confessions on the team's attempts; none when absent.
-    pub confessions: Option<u32>,
-    /// Spend against the cap stated before launch, in the cap's unit.
-    pub spend: Option<f64>,
-    pub spend_cap: Option<f64>,
-    /// The team's calls; one per member when absent.
-    pub calls: Option<u64>,
 }
 
 /// Who decided. A leader or a chair is the calling agent.
@@ -222,7 +224,8 @@ pub(crate) fn record_led_team(
     if !input.team_ref.starts_with(&prefix) || input.team_ref.len() == prefix.len() {
         return Ok(Err("team_record_not_led"));
     }
-    if input.members.is_empty() || input.members.len() > MAX_MEMBERS {
+    let bound = team_run_binding(vault, leader, &input.team_ref)?;
+    if input.members.len() > MAX_MEMBERS || (input.members.is_empty() && bound.is_none()) {
         return Ok(Err("team_record_invalid_input"));
     }
     let mut models = BTreeSet::new();
@@ -230,13 +233,27 @@ pub(crate) fn record_led_team(
         vault,
         &lead.attempt,
     )?);
-    let mut pattern = None;
-    let mut started = now;
+    let mut pattern = bound.as_ref().map(|run| run.stamp.pattern);
+    let mut started = bound.as_ref().map_or(now, |run| run.started_at.min(now));
+    let mut members = bound.map(|run| run.members).unwrap_or_default();
+    // The start's own spawns are members on the host's word.
+    for id in &members {
+        if let Some(row) = store.status(*id)? {
+            models.extend(crate::skill_attribution::run_executor_model(
+                vault,
+                &row.attempt,
+            )?);
+            started = started.min(row.attempt.created_at);
+        }
+    }
     let mut seen = HashSet::new();
     for member in &input.members {
         let Some(id) = parse_attempt(member).filter(|id| seen.insert(*id)) else {
             return Ok(Err("team_record_invalid_input"));
         };
+        if members.contains(&id) {
+            continue;
+        }
         let Some(row) = store.status(id)? else {
             return Ok(Err("team_record_unknown_member"));
         };
@@ -249,6 +266,7 @@ pub(crate) fn record_led_team(
             &row.attempt,
         )?);
         started = started.min(row.attempt.created_at);
+        members.push(id);
     }
     let Some(pattern) = pattern else {
         return Ok(Err("team_record_invalid_input"));
@@ -256,7 +274,7 @@ pub(crate) fn record_led_team(
     if models.is_empty() {
         return Ok(Err("team_record_no_models"));
     }
-    let Ok(width) = u32::try_from(input.members.len() + 1) else {
+    let Ok(width) = u32::try_from(members.len() + 1) else {
         return Ok(Err("team_record_invalid_input"));
     };
     let roles = match &input.roles {
@@ -273,9 +291,15 @@ pub(crate) fn record_led_team(
         TeamDecisionInput::Vote { tally } => DecidedBy::Vote {
             tally: tally.clone(),
         },
-        TeamDecisionInput::Referee { rule, signed_at } => DecidedBy::Referee {
-            rule: rule.clone(),
-            signed_at: *signed_at,
+        TeamDecisionInput::Referee { rule, signed_at } => match market(vault, &input.team_ref)? {
+            Some(market) => DecidedBy::Referee {
+                rule: market.referee.rule_ref,
+                signed_at: market.referee.signed_at,
+            },
+            None => DecidedBy::Referee {
+                rule: rule.clone(),
+                signed_at: *signed_at,
+            },
         },
     };
     if decided_by.kind() != pattern.decider_kind() {
@@ -284,6 +308,7 @@ pub(crate) fn record_led_team(
     if let Some(existing) = team_receipt(vault, &input.team_ref)? {
         return Ok(Ok(recorded(&existing, true)));
     }
+    let observed = team_run_observations(vault, leader, &members)?;
     let receipt = TeamReceipt {
         team_ref: input.team_ref.clone(),
         project: lead_input.project_ref,
@@ -298,11 +323,11 @@ pub(crate) fn record_led_team(
             cells_filled: c.cells_filled,
             cells_total: c.cells_total,
         }),
-        confessions: input.confessions.unwrap_or(0),
-        spend: input.spend,
-        spend_cap: input.spend_cap,
+        confessions: observed.confessions,
+        spend: observed.spend,
+        spend_cap: observed.spend_cap,
         elapsed_secs: now.saturating_sub(started),
-        calls: input.calls.unwrap_or(u64::from(width - 1)),
+        calls: observed.calls,
         outcome: None,
         at: now,
     };
@@ -355,7 +380,7 @@ fn loaded_pattern_skill(
     Ok(None)
 }
 
-fn led_team_ref(leader: AttemptId, key: &str) -> String {
+pub(super) fn led_team_ref(leader: AttemptId, key: &str) -> String {
     format!("team:{}:{key}", bytes_to_hex_lower(leader.as_bytes()))
 }
 
