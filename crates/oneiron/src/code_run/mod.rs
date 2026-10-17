@@ -126,7 +126,7 @@ pub use run_verbs::{
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
-    AgentVerbRefusal, RunCall, SelfAgentVerbCall,
+    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, SelfAgentVerbCall,
 };
 
 // The flat code_run.rs module used to provide these names to the test module
