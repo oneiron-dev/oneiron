@@ -28,9 +28,9 @@ mod retrieval_policy;
 mod room_upkeep;
 pub mod seal_checks;
 pub mod stewardship;
-pub mod type_tree_upkeep;
 #[cfg(test)]
 mod tests;
+pub mod type_tree_upkeep;
 use super::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload,
     DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
