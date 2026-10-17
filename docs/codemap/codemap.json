@@ -848,7 +848,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 20
      }
     },
@@ -1109,7 +1109,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContextWidenProposal"
@@ -1117,7 +1117,7 @@
      "path": "src/agent_dispatch/widen_record.rs",
      "purpose": "Exact, durable widen intents",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "struct": 1
      }
     },
@@ -44983,7 +44983,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
