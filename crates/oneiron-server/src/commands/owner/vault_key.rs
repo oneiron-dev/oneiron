@@ -46,7 +46,7 @@ use zeroize::Zeroizing;
 use super::{emit, open_stopped_vault, open_stopped_vault_with, raw_stdin, vault_config};
 use crate::cli::{
     RestoreArgs, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,
-    VaultKeyCommand, VaultKeyNamedArgs,
+    VaultKeyCommand, VaultKeyNamedArgs, VaultKeyResealArgs,
 };
 use crate::commands::credential_file;
 use crate::config::{ServeConfig, resolve_serve_config};
@@ -86,7 +86,85 @@ pub fn vault_key(command: VaultKeyCommand) -> anyhow::Result<()> {
             vault.remove_vault_key_wrap_as(&owner, &args.name)?;
             emit(&serde_json::json!({ "removed": args.name }))
         }
+        VaultKeyCommand::RetireEscrow(args) => {
+            let vault = open(&args.serve)?;
+            let owner = local_owner(&vault)?;
+            emit(&vault.retire_vault_key_escrow_as(&owner, &args.name)?)
+        }
+        VaultKeyCommand::ResealCapsule(args) => reseal_capsule(*args),
     }
+}
+
+/// Reseals a registry's escrow capsule to a fresh recipient and prints the
+/// new capsule's report, for the registry to keep in place of the released
+/// one's (CROSS-ARCH-0022 #ov-custody-backend, the one-pass re-escrow). No
+/// vault opens: the capsule opens with the released recipient's secret, read
+/// as `restore --capsule` reads it, and the key it holds is sealed at once to
+/// the fresh recipient. The new wrap's label is `<role>.<16 hex of the
+/// recipient key's BLAKE3>`, as a managed node names its own.
+fn reseal_capsule(args: VaultKeyResealArgs) -> anyhow::Result<()> {
+    let report = read_capsule_report(&args.report)?;
+    let bytes = std::fs::read(&args.recipient_file)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", args.recipient_file.display()))?;
+    let recipient = world_keys::HybridPublicKey::from_bytes(&bytes).map_err(|_| {
+        anyhow::anyhow!(
+            "{} is not a hybrid public key",
+            args.recipient_file.display()
+        )
+    })?;
+    let label = format!("{}.{}", report.role, &blake3::hash(&bytes).to_hex()[..16]);
+    let secret = capsule_secret(&report, &args.secret)?;
+    let resealed = world_keys::reseal_escrow_capsule(
+        &report.vault_id,
+        &report.commitment,
+        &report.label,
+        &report.capsule,
+        &secret,
+        &label,
+        &recipient,
+    )?;
+    let sealed_at = crate::owner::stamp::now_unix_ms() / 1_000;
+    emit(&view::resealed_report(
+        &report.vault_name,
+        &report.role,
+        &resealed,
+        sealed_at,
+    ))
+}
+
+/// The registry's escrow capsule report at `path`, checked
+/// ([`view::parse_capsule_report`]).
+fn read_capsule_report(path: &Path) -> anyhow::Result<view::CapsuleReport> {
+    let mut text = String::new();
+    std::fs::File::open(path)
+        .and_then(|file| {
+            file.take(CAPSULE_REPORT_LIMIT + 1)
+                .read_to_string(&mut text)
+        })
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    anyhow::ensure!(
+        text.len() as u64 <= CAPSULE_REPORT_LIMIT,
+        "an escrow capsule report is at most 64 KiB"
+    );
+    let report = view::parse_capsule_report(&text)
+        .map_err(|error| anyhow::anyhow!("capsule report {}: {error}", path.display()))?;
+    check_name(&report.label)?;
+    Ok(report)
+}
+
+/// The released secret of `report`'s recipient, read now from the named
+/// recovery box or else as a secret ([`view::escrow_secret`]).
+fn capsule_secret(
+    report: &view::CapsuleReport,
+    source: &SecretSourceArgs,
+) -> anyhow::Result<HybridSecretKey> {
+    Ok(match recovery_box(source) {
+        Some((recovery_box, _)) => {
+            let seed = recovery_box.release(&report.vault_id, &report.label)?;
+            oneiron::world_keys::escrow_recipient(&seed)?
+        }
+        None => view::escrow_secret(&read_secret(source, "the escrow recipient's secret")?)?,
+    })
 }
 
 fn open(serve: &crate::config::ServeArgs) -> anyhow::Result<oneiron::Vault> {
@@ -560,20 +638,7 @@ impl HostUnlock {
     /// secret ([`view::escrow_secret`]). A report of another vault or key is
     /// refused before the secret is read.
     fn read_capsule(path: &Path, source: &SecretSourceArgs, backup: &Path) -> anyhow::Result<Self> {
-        let mut text = String::new();
-        std::fs::File::open(path)
-            .and_then(|file| {
-                file.take(CAPSULE_REPORT_LIMIT + 1)
-                    .read_to_string(&mut text)
-            })
-            .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-        anyhow::ensure!(
-            text.len() as u64 <= CAPSULE_REPORT_LIMIT,
-            "an escrow capsule report is at most 64 KiB"
-        );
-        let report = view::parse_capsule_report(&text)
-            .map_err(|error| anyhow::anyhow!("capsule report {}: {error}", path.display()))?;
-        check_name(&report.label)?;
+        let report = read_capsule_report(path)?;
         let unlocks = CheckpointKey::unlocks(backup)
             .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?;
         anyhow::ensure!(
@@ -594,13 +659,7 @@ impl HostUnlock {
             hex(&report.commitment),
             hex(&unlocks.commitment)
         );
-        let secret = match recovery_box(source) {
-            Some((recovery_box, _)) => {
-                let seed = recovery_box.release(&report.vault_id, &report.label)?;
-                oneiron::world_keys::escrow_recipient(&seed)?
-            }
-            None => view::escrow_secret(&read_secret(source, "the escrow recipient's secret")?)?,
-        };
+        let secret = capsule_secret(&report, source)?;
         Ok(Self::EscrowCapsule {
             role: report.role,
             label: report.label,
@@ -619,10 +678,10 @@ impl HostUnlock {
         };
         Some(format!(
             "escrow recipient {label} ({role}) was released for this restore and is never \
-             reused. Retire it: seal the vault key to a new recipient (`oneiron vault-key \
-             add-escrow NAME --box-dir DIR`, or a managed node's fresh recipient at its next \
-             start), remove `escrow:{label}` if the vault still carries it (`oneiron vault-key \
-             remove escrow:{label}`), and have the registry delete its capsules."
+             reused. Retire it: `oneiron vault-key retire-escrow {label}` drops its wrap and \
+             refuses that label from then on; `oneiron vault-key reseal-capsule REPORT \
+             --recipient-file FILE` reseals the capsule to a fresh recipient for the registry; \
+             and have the registry delete the released recipient's capsules."
         ))
     }
 

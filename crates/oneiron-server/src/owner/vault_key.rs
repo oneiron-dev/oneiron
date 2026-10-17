@@ -6,7 +6,9 @@
 
 use base64::Engine as _;
 use oneiron::recovery::checkpoint::{ArtifactKind, ArtifactUnlocks, CheckpointSigner};
-use oneiron::world_keys::{HybridSecretKey, VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind};
+use oneiron::world_keys::{
+    HybridSecretKey, ResealedEscrowCapsule, VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind,
+};
 use oneiron_vault_contract::escrow::{
     ESCROW_REPORT_SCHEMA_VERSION, ESCROW_REPORT_TYPE, EscrowCapsuleReport,
 };
@@ -213,6 +215,8 @@ const CAPSULE_ROLES: [&str; 2] = ["managed", "break-glass"];
 /// checked and decoded: what `oneiron restore --capsule` opens a backup
 /// with. None of it is secret.
 pub(crate) struct CapsuleReport {
+    /// The vault's name, as the report gave it.
+    pub(crate) vault_name: String,
     pub(crate) vault_id: [u8; 32],
     pub(crate) commitment: [u8; 32],
     pub(crate) role: String,
@@ -272,12 +276,37 @@ pub(crate) fn parse_capsule_report(text: &str) -> anyhow::Result<CapsuleReport> 
         "an escrow capsule report's report_id is not its capsule's BLAKE3"
     );
     Ok(CapsuleReport {
+        vault_name: report.vault_name,
         vault_id,
         commitment,
         role: (*role).to_owned(),
         label: report.label,
         capsule,
     })
+}
+
+/// The report of `resealed`, a capsule of the vault `vault_name` resealed to a
+/// fresh recipient of `role`, sealed at `sealed_at` (seconds): the form a
+/// registry keeps ([`EscrowCapsuleReport`]). None of it is secret.
+pub(crate) fn resealed_report(
+    vault_name: &str,
+    role: &str,
+    resealed: &ResealedEscrowCapsule,
+    sealed_at: u64,
+) -> EscrowCapsuleReport {
+    EscrowCapsuleReport {
+        schema_version: ESCROW_REPORT_SCHEMA_VERSION,
+        report_type: ESCROW_REPORT_TYPE.to_owned(),
+        report_id: blake3::hash(&resealed.capsule).to_hex().to_string(),
+        vault_name: vault_name.to_owned(),
+        vault_id: hex(&resealed.vault_id),
+        role: role.to_owned(),
+        label: resealed.label.clone(),
+        wrap_id: resealed.wrap_id.clone(),
+        key_commitment: hex(&resealed.commitment),
+        capsule: hex(&resealed.capsule),
+        sealed_at,
+    }
 }
 
 /// An escrow recipient's secret half as given, the one door for the forms

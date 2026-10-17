@@ -72,8 +72,9 @@ pub(crate) use self::session::WorldKeySession;
 pub use self::state::{WorldRecoveryState, recovery_state};
 pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::{
-    NewVaultKeyWrap, VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo,
-    VaultKeyWrapKind, escrow_recipient, passkey_prf_input,
+    EscrowRetirement, NewVaultKeyWrap, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
+    VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient,
+    passkey_prf_input, reseal_escrow_capsule,
 };
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;
