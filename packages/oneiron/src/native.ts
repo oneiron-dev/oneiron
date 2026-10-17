@@ -296,6 +296,8 @@ vaultNotesLifecycle(requestJson: string): string
   inRoomTurn(roomRef: string): NativeClient
   lastReceiptRef(): string | null
   retry(pending: unknown, verb: string, input: unknown): unknown
+  lensFrameEvent(cardId: string, request: unknown): unknown
+  closeLensFrame(cardId: string): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

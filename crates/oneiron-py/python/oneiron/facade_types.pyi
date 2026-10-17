@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 261 facade rows, 989 declarations.
+Census: 261 facade rows, 992 declarations.
 Inputs: 217 of 261 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 211 of 261 fully typed, 41 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
@@ -5201,3 +5201,34 @@ NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
 class NoteLifecycleView(TypedDict):
     status: NoteLifecycleStatus
     seal: NotRequired[NoteSeal | None]
+class SelfUiStateValueBool(TypedDict):
+    type: Literal["bool"]
+    value: bool
+class SelfUiStateValueNumber(TypedDict):
+    type: Literal["number"]
+    value: FiniteF64
+class SelfUiStateValueText(TypedDict):
+    type: Literal["text"]
+    value: LensText
+class SelfUiStateValueToken(TypedDict):
+    type: Literal["token"]
+    value: str
+SelfUiStateValue = SelfUiStateValueBool | SelfUiStateValueNumber | SelfUiStateValueText | SelfUiStateValueToken
+class GeneratedUiStatePatchAdd(TypedDict):
+    op: Literal["add"]
+    path: str
+    value: SelfUiStateValue
+class GeneratedUiStatePatchReplace(TypedDict):
+    op: Literal["replace"]
+    path: str
+    value: SelfUiStateValue
+class GeneratedUiStatePatchRemove(TypedDict):
+    op: Literal["remove"]
+    path: str
+GeneratedUiStatePatch = GeneratedUiStatePatchAdd | GeneratedUiStatePatchReplace | GeneratedUiStatePatchRemove
+class GeneratedUiActionEvent(TypedDict):
+    cardId: str
+    elementId: str
+    actionId: str
+    patch: NotRequired[list[GeneratedUiStatePatch]]
+    occurredAt: int

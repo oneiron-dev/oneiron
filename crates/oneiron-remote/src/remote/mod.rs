@@ -41,6 +41,8 @@ use self::response::{
 
 /// Path prefix every facade verb hangs off.
 const FACADE_PREFIX: &str = "v1/core/facade";
+/// Path prefix a host-rendered lens card's routes hang off (OF-181).
+const LENS_FRAMES_PREFIX: &str = "v1/core/lens-frames";
 
 /// The header a slip holder's per-request proof crosses in.
 const BINDING_HEADER: &str = "x-oneiron-binding";
@@ -189,6 +191,19 @@ impl RemoteClient {
         Ok(headers)
     }
 
+    /// [`Self::credential_headers`], and the room turn this handle runs in.
+    fn turn_headers(&self) -> Result<HeaderMap, MemoryError> {
+        let mut headers = self.credential_headers()?;
+        if let Some(room) = self.room_turn {
+            headers.insert(
+                ROOM_TURN_HEADER,
+                HeaderValue::from_str(&room.to_hex())
+                    .map_err(|_| transport_error("could not name the room turn"))?,
+            );
+        }
+        Ok(headers)
+    }
+
     /// The origin this client talks to, for diagnostics.
     pub(crate) fn base_url(&self) -> &str {
         self.base_url.as_str()
@@ -233,14 +248,7 @@ impl RemoteClient {
         self.note_receipt_ref(None);
         let url = self.verb_url(verb)?;
         let body = serialize_request(request)?;
-        let mut credential = self.credential_headers()?;
-        if let Some(room) = self.room_turn {
-            credential.insert(
-                ROOM_TURN_HEADER,
-                HeaderValue::from_str(&room.to_hex())
-                    .map_err(|_| transport_error("could not name the room turn"))?,
-            );
-        }
+        let mut credential = self.turn_headers()?;
         credential.insert(
             INVOCATION_HEADER,
             HeaderValue::from_str(&invocation.to_hex())
@@ -283,22 +291,84 @@ impl RemoteClient {
         if verb == "vault.export" {
             read_export(response, status, self.export_limit)
         } else {
-            let bytes = read_capped(response, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| {
-                match failure {
-                    ReadFailure::TooLarge => transport_error(format!(
-                        "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
-                    )),
-                    ReadFailure::Io(message) => {
-                        transport_error(format!("the server's response was truncated: {message}"))
-                    }
-                }
-            })?;
-            serde_json::from_slice(&bytes).map_err(|error| {
-                transport_error(format!(
-                    "the server answered {status} for {verb} with a body this verb could not decode: {error}"
-                ))
-            })
+            read_json(response, status, verb)
         }
+    }
+
+    /// `POST /v1/core/lens-frames/{card_id}/events` (OF-181): one event on a
+    /// card this server rendered, under this handle's credential and room
+    /// turn. A deterministic tool the event validates to dispatches its verb
+    /// under the same headers.
+    pub(crate) fn lens_frame_event(
+        &self,
+        card_id: &str,
+        request: &crate::LensFrameEventRequest,
+    ) -> Result<crate::LensFrameEventReply, MemoryError> {
+        let url = self.lens_frame_url(card_id, true)?;
+        let body = serialize_request(request)?;
+        let response = self
+            .agent
+            .post(url)
+            .headers(self.turn_headers()?)
+            .header(ACCEPT, HeaderValue::from_static("application/json"))
+            .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+            .body(body)
+            .send()
+            .map_err(|error| transport_error(describe_send_failure(&error)))?;
+        let status = response.status();
+        // A 202 is a refusal here as on a verb: a verb hook the dispatched
+        // tool met asked first, and the body names the ask.
+        if !status.is_success() || status == reqwest::StatusCode::ACCEPTED {
+            return Err(read_error_envelope(response, status));
+        }
+        read_json(response, status, "a lens frame event")
+    }
+
+    /// `DELETE /v1/core/lens-frames/{card_id}` (OF-181): closes a card this
+    /// server rendered and frees its frame. It sends no body.
+    pub(crate) fn close_lens_frame(
+        &self,
+        card_id: &str,
+    ) -> Result<crate::CloseLensFrameReply, MemoryError> {
+        let url = self.lens_frame_url(card_id, false)?;
+        let response = self
+            .agent
+            .delete(url)
+            .headers(self.turn_headers()?)
+            .header(ACCEPT, HeaderValue::from_static("application/json"))
+            .send()
+            .map_err(|error| transport_error(describe_send_failure(&error)))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(read_error_envelope(response, status));
+        }
+        read_json(response, status, "a lens frame close")
+    }
+
+    /// A card's route: the lens-frames prefix, the card id as ONE
+    /// percent-encoded path segment, then `events` for an event. An id that
+    /// cannot cross as one segment (empty, `.` or `..`, which a URL resolves
+    /// away) is refused before any request.
+    fn lens_frame_url(&self, card_id: &str, events: bool) -> Result<Url, MemoryError> {
+        if matches!(card_id, "" | "." | "..") {
+            return Err(bad_request(
+                "the card id cannot cross as one path segment",
+                &["Pass the cardId the rendered card carries."],
+            ));
+        }
+        let unbuilt = || transport_error("could not build the lens frame URL");
+        let mut url = self
+            .base_url
+            .join(LENS_FRAMES_PREFIX)
+            .map_err(|_| unbuilt())?;
+        {
+            let mut segments = url.path_segments_mut().map_err(|()| unbuilt())?;
+            segments.pop_if_empty().push(card_id);
+            if events {
+                segments.push("events");
+            }
+        }
+        Ok(url)
     }
 
     pub(crate) async fn llm_post(
@@ -385,6 +455,29 @@ impl RemoteClient {
 /// (OF-370).
 fn long_running(verb: &str) -> bool {
     matches!(verb, "vault.export" | "vault.embedding_spaces.move_check")
+}
+
+/// Decodes a success body read under the ordinary response ceiling; `what`
+/// names the call in a refusal.
+fn read_json<R: DeserializeOwned>(
+    response: reqwest::blocking::Response,
+    status: reqwest::StatusCode,
+    what: &str,
+) -> Result<R, MemoryError> {
+    let bytes =
+        read_capped(response, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| match failure {
+            ReadFailure::TooLarge => transport_error(format!(
+                "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
+            )),
+            ReadFailure::Io(message) => {
+                transport_error(format!("the server's response was truncated: {message}"))
+            }
+        })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        transport_error(format!(
+            "the server answered {status} for {what} with a body this call could not decode: {error}"
+        ))
+    })
 }
 
 /// The blocking client every facade verb and `pair` share.
