@@ -972,6 +972,7 @@ async fn sync_model_catalog(
 ) -> OwnerReply<ModelCatalogSynced> {
     use oneiron::skill_hub::pack_catalog::PackInstallDisposition;
     let owner = owner(&auth, &server)?;
+    let host = Arc::clone(&server);
     let synced = blocking(move || {
         let vault = server.vault();
         let (outcome, reason) = match vault.sync_model_catalog(&owner)? {
@@ -986,5 +987,17 @@ async fn sync_model_catalog(
         })
     })
     .await?;
+    // Each row the catalog brought in or changed is counted on the fixed
+    // passage, in the background (OF-577).
+    if synced.outcome == "installed"
+        && let Some(ratios) = host.ai.model_runtime().token_ratios()
+    {
+        let vault = Arc::clone(host.vault());
+        tokio::task::spawn_blocking(move || {
+            if let Err(error) = ratios.measure_missing_blocking(&vault) {
+                tracing::warn!(%error, "catalog token ratios were not measured");
+            }
+        });
+    }
     Ok(Json(synced))
 }

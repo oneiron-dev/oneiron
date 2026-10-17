@@ -186,6 +186,7 @@ impl ModelSession {
                 catalog: entry,
                 scores: BTreeMap::new(),
                 fetched_at: BTreeMap::new(),
+                tokens_per_o200k: None,
             })?;
         }
         let backend = OpenAiCompatBackend::new(
