@@ -415,14 +415,26 @@ fn bound_ask_in_txn(
 /// An unreadable verdict, goal, ask or policy row, or storage errors.
 pub fn skill_tradeoff_ask(vault: &Vault, proposal: &EntityId) -> Result<Option<SkillTradeoffAsk>> {
     let txn = vault.store.env.read_txn()?;
-    let Some(pending) = standing_verdict_in_txn(vault, &txn, proposal)? else {
+    skill_tradeoff_ask_in_txn(vault, &txn, proposal)
+}
+
+/// [`skill_tradeoff_ask`] in the caller's snapshot, so a host that settles
+/// the ask reads it in the transaction it settles in.
+/// # Errors
+/// As [`skill_tradeoff_ask`].
+pub(crate) fn skill_tradeoff_ask_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+) -> Result<Option<SkillTradeoffAsk>> {
+    let Some(pending) = standing_verdict_in_txn(vault, txn, proposal)? else {
         return Ok(None);
     };
-    let Some((ask, preferences)) = bound_ask_in_txn(vault, &txn, &pending)? else {
+    let Some((ask, preferences)) = bound_ask_in_txn(vault, txn, &pending)? else {
         return Ok(None);
     };
     let holder = limits_holder(preferences.as_ref(), &ask.question)?;
-    let limits = skill_tradeoff_limits_in_txn(&vault.store, &txn, &holder)?;
+    let limits = skill_tradeoff_limits_in_txn(&vault.store, txn, &holder)?;
     Ok((!learning_full(preferences.as_ref(), limits)).then_some(ask))
 }
 
@@ -778,21 +790,112 @@ pub fn settle_skill_tradeoff_ask(
     at: u64,
 ) -> Result<HeldOutVerdict> {
     vault.with_write_txn_grouped(|txn| {
-        // The role check below is the authorization: a board member who is
-        // not a vault owner answers on their own behalf.
-        let actor = owner.revalidate_person_in_txn(vault, txn)?;
-        settle_ask_in_txn(
+        settle_skill_tradeoff_ask_in_txn(
             vault,
             txn,
-            actor,
-            format!("{:?}", owner.decision_id()),
-            TradeoffRung::Person,
+            owner,
             proposal,
             expected_question_digest,
             choice,
             at,
         )
     })
+}
+
+/// [`settle_skill_tradeoff_ask`] in the caller's write transaction, so a
+/// host commits the pick with its own writes (a project ask's answer and its
+/// route) or not at all.
+/// # Errors
+/// As [`settle_skill_tradeoff_ask`].
+pub(crate) fn settle_skill_tradeoff_ask_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    proposal: &EntityId,
+    expected_question_digest: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    let actor = owner.revalidate_person_in_txn(vault, txn)?;
+    settle_ask_in_txn(
+        vault,
+        txn,
+        actor,
+        format!("{:?}", owner.decision_id()),
+        TradeoffRung::Person,
+        proposal,
+        expected_question_digest,
+        choice,
+        at,
+    )
+}
+
+/// [`settle_skill_tradeoff_ask`] for a live person or a bound agent, owner
+/// or not, that holds a responsible role the ask has reached
+/// (ROLES-EVERYWHERE): a board member answers on their own behalf. The role
+/// check is the authorization; a person's pick is learned at the person
+/// rung, an agent's at the role rung.
+/// # Errors
+/// A writer that is no live person or bound agent, plus every error of
+/// [`settle_skill_tradeoff_ask`]. An error writes nothing.
+pub fn settle_skill_tradeoff_ask_as(
+    vault: &Vault,
+    by: &crate::write_envelope::WriteActor,
+    proposal: &EntityId,
+    expected_question_digest: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    vault.with_write_txn_grouped(|txn| {
+        settle_skill_tradeoff_ask_as_in_txn(
+            vault,
+            txn,
+            by,
+            proposal,
+            expected_question_digest,
+            choice,
+            at,
+        )
+    })
+}
+
+/// [`settle_skill_tradeoff_ask_as`] in the caller's write transaction.
+/// # Errors
+/// As [`settle_skill_tradeoff_ask_as`].
+pub(crate) fn settle_skill_tradeoff_ask_as_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    by: &crate::write_envelope::WriteActor,
+    proposal: &EntityId,
+    expected_question_digest: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    vault.verify_write_actor_in_txn(txn, by)?;
+    let actor = by.entity_ref();
+    let (authentication, rung) = match by.actor_class() {
+        crate::edge::EdgeActorClass::Human => {
+            if !crate::consent::person_is_live_in_txn(vault, txn, &actor)? {
+                return Err(invalid("a person's tradeoff pick requires a live person"));
+            }
+            (format!("person:{}", actor.to_hex()), TradeoffRung::Person)
+        }
+        crate::edge::EdgeActorClass::Agent => {
+            (format!("agent:{}", actor.to_hex()), TradeoffRung::Role)
+        }
+        _ => return Err(invalid("a tradeoff pick comes from a person or an agent")),
+    };
+    settle_ask_in_txn(
+        vault,
+        txn,
+        actor,
+        authentication,
+        rung,
+        proposal,
+        expected_question_digest,
+        choice,
+        at,
+    )
 }
 
 /// [`settle_skill_tradeoff_ask`] for an agent that holds a responsible role
@@ -810,24 +913,10 @@ pub fn settle_skill_tradeoff_ask_as_agent(
     choice: TradeoffChoice,
     at: u64,
 ) -> Result<HeldOutVerdict> {
-    vault.with_write_txn_grouped(|txn| {
-        if agent.actor_class() != crate::edge::EdgeActorClass::Agent {
-            return Err(invalid("an agent tradeoff pick requires an agent actor"));
-        }
-        vault.verify_write_actor_in_txn(txn, agent)?;
-        let actor = agent.entity_ref();
-        settle_ask_in_txn(
-            vault,
-            txn,
-            actor,
-            format!("agent:{}", actor.to_hex()),
-            TradeoffRung::Role,
-            proposal,
-            expected_question_digest,
-            choice,
-            at,
-        )
-    })
+    if agent.actor_class() != crate::edge::EdgeActorClass::Agent {
+        return Err(invalid("an agent tradeoff pick requires an agent actor"));
+    }
+    settle_skill_tradeoff_ask_as(vault, agent, proposal, expected_question_digest, choice, at)
 }
 
 #[allow(clippy::too_many_arguments)]

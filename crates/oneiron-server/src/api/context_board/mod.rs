@@ -61,7 +61,8 @@ pub(crate) struct ContextBoardRequest {
     /// MEMORIES section controls: whether to project it and the per-slot row caps.
     #[serde(default)]
     memories: Option<ContextBoardMemoriesControls>,
-    /// Session controls: the session id that carries the cursor across calls.
+    /// Session controls: the session id that carries the cursor across calls,
+    /// and the branch the board renders for.
     #[serde(default)]
     session: Option<ContextBoardSessionControls>,
     /// Companion scope that influences MEMORIES assembly.
@@ -158,6 +159,11 @@ pub(crate) struct ContextBoardResponse {
     /// session, or a session with no live pad.
     #[serde(skip_serializing_if = "Option::is_none")]
     scratchpad: Option<Vec<String>>,
+    /// The full-view rows of the frame's READERS section: who may read an
+    /// agent's diary and sealed scratchpads, and who did and why. Absent for
+    /// any caller but an agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    readers: Option<Vec<String>>,
     /// What recording the named TURN's board wrote; absent without `turn`.
     #[serde(skip_serializing_if = "Option::is_none")]
     board_turn: Option<ContextBoardTurnRecord>,
@@ -322,8 +328,12 @@ pub(crate) async fn context_board_hydrate(
         .as_ref()
         .map(CoreContextPackRequest::named_refs)
         .unwrap_or_default();
-    // The hook blocks that reach this board's session: timed pins on its
-    // MEMORIES and TASKS rows (ARCH-0080 §11, OI-1 = A).
+    // The hook blocks that reach this board's session and branch: timed pins
+    // on its MEMORIES and TASKS rows (ARCH-0080 §11, OI-1 = A).
+    let branch = req.session.as_ref().and_then(|s| s.branch.as_deref());
+    if let Some(branch) = branch {
+        validate_session_id(branch, "session.branch")?;
+    }
     let hook_pins = server
         .vault
         .board_hook_pins(
@@ -331,7 +341,7 @@ pub(crate) async fn context_board_hydrate(
                 .as_ref()
                 .and_then(|s| s.session_id.as_deref())
                 .unwrap_or_default(),
-            None,
+            branch,
         )
         .map_err(|error| super::core_engine_error("board hook blocks failed", error))?;
     let (pack, memories, advanced) = match req.retrieval {
@@ -445,6 +455,11 @@ pub(crate) async fn context_board_hydrate(
         parts.sections.push(served.section);
         served.rows
     });
+    // An agent's reader list joins it as its READERS section.
+    let readers = served_readers(&server, &auth).map(|(section, rows)| {
+        parts.sections.push(section);
+        rows
+    });
     let board_render = oneiron::context_board::render_board_block(
         &oneiron::context_board::BoardFrame {
             header: &oneiron::context_board::BoardBlockHeader {
@@ -529,6 +544,7 @@ pub(crate) async fn context_board_hydrate(
         changed,
         skills: parts.skills,
         scratchpad,
+        readers,
         self_brief,
         board_turn: None,
     };
