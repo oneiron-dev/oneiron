@@ -12,6 +12,13 @@
 //! It meets the scope, admission, room turn, gate and call receipt that a
 //! direct `/v1/core/facade/<row>` call meets, so neither caller holds through
 //! an action any authority the row's own call lacks.
+//!
+//! A memory run row (`vault.search`, `vault.claims.put`,
+//! `vault.claims.supersede`, `vault.edges.put`) has no facade route; the
+//! registry runs it as the typed call a code run makes. It meets the scope
+//! and record bounds `execute_code` and `vault.recall` meet, and the door
+//! hands the run the credential's read key: a search reads, and an edge's
+//! target is checked, as the credential reads.
 use std::sync::Arc;
 
 use axum::Router;
@@ -24,11 +31,11 @@ use axum::routing::{get, post};
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::actions::{ActionArgument, ActionHostBinding, AgentActionCall};
 use oneiron::code_run::{
-    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall,
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::lens::{LensPrincipalBinding, SelfUiActionId};
 use oneiron::memory::{HostWriteOrigin, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL};
-use oneiron::task_verb::sdk::AgentVerb;
+use oneiron::task_verb::sdk::{AgentVerb, RunVerb};
 use oneiron::{EdgeActorClass, WriteActor};
 use serde::Deserialize;
 use tower::ServiceExt;
@@ -67,14 +74,26 @@ async fn invoke(
     extensions: Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
-    // A verb-table row that only reads needs only read; any other action is
-    // an effect. The row's own route re-checks its scope in any case.
-    let writes = AgentVerb::from_name(&verb).is_none_or(AgentVerb::writes);
+    // A verb-table or run row that only reads needs only read; any other
+    // action is an effect. The row's own route re-checks its scope in any
+    // case. A run row has no route, so its record bounds are checked here:
+    // a search reads on the credential's lane, as `vault.recall` does, and
+    // a write commits at once, as `execute_code` does.
+    let run_row = RunVerb::from_name(&verb);
+    let writes = AgentVerb::from_name(&verb)
+        .map(AgentVerb::writes)
+        .or(run_row.map(RunVerb::writes))
+        .unwrap_or(true);
     auth.require(if writes {
         CoreScope::Write
     } else {
         CoreScope::Read
     })?;
+    match run_row {
+        Some(row) if row.writes() => auth.require_unrestricted_record_scope()?,
+        Some(_) => auth.require_lane_record_scope()?,
+        None => {}
+    }
     let request: ActionRequest = facade_input(facade_json(payload)?)?;
     let verb_id = SelfUiActionId::new(verb).map_err(|_| {
         FacadeApiError::new(
@@ -100,13 +119,14 @@ async fn invoke(
         .at(auth.locality());
     let principal = match class {
         EdgeActorClass::Agent => {
-            LensPrincipalBinding::agent_task(actor.to_hex(), key.clone(), vec![key])
+            LensPrincipalBinding::agent_task(actor.to_hex(), key.clone(), vec![key.clone()])
         }
-        _ => LensPrincipalBinding::human_view(actor.to_hex(), key.clone(), vec![key]),
+        _ => LensPrincipalBinding::human_view(actor.to_hex(), key.clone(), vec![key.clone()]),
     }
     .map_err(engine)?;
     let owner = owner_authorship(&auth, &server)?;
-    let door: Arc<dyn AgentVerbDoor> = Arc::new(FacadeRowDoor::new(&server, headers, extensions));
+    let door: Arc<dyn AgentVerbDoor> =
+        Arc::new(FacadeRowDoor::new(&server, headers, extensions, key));
     let call = AgentActionCall {
         verb_id,
         args: request.args,
@@ -160,20 +180,30 @@ fn internal() -> FacadeApiError {
 /// The row writes as the credential, as its direct call does: an action is
 /// its caller's own call, not a run's generated write, so the run origin the
 /// dispatcher offers is not the row's source.
+///
+/// A memory run row reads with `read_key`, the credential's own read key
+/// at the caller's locality, which this request was admitted on.
 struct FacadeRowDoor {
     rows: Router,
     headers: HeaderMap,
     extensions: Extensions,
     runtime: tokio::runtime::Handle,
+    read_key: ScopedReadActorKey,
 }
 
 impl FacadeRowDoor {
-    fn new(server: &Arc<SyncServer>, headers: HeaderMap, extensions: Extensions) -> Self {
+    fn new(
+        server: &Arc<SyncServer>,
+        headers: HeaderMap,
+        extensions: Extensions,
+        read_key: ScopedReadActorKey,
+    ) -> Self {
         Self {
             rows: super::recorded_facade_routes(Arc::clone(server)).with_state(Arc::clone(server)),
             headers,
             extensions,
             runtime: tokio::runtime::Handle::current(),
+            read_key,
         }
     }
 
@@ -256,11 +286,16 @@ impl AgentVerbDoor for FacadeRowDoor {
     }
 
     /// The typed actions keep their own ceiling and owner proof; this door
-    /// adds nothing to them.
+    /// adds nothing to them. A search reads on the credential's lane, and an
+    /// edge's target is placed only when that lane reads it (DEC-0005).
     fn admit_run_call(
         &self,
-        _call: RunCall,
+        call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        Ok(None)
+        Ok(matches!(
+            call,
+            RunCall::Bridge(SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge)
+        )
+        .then(|| self.read_key.clone()))
     }
 }
