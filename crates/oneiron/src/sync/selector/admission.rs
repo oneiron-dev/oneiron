@@ -50,15 +50,17 @@ impl FederationAdmissionRole {
     }
 }
 
-/// How admission grades a federated CLAIM (FIX 360).
+/// How admission grades a federated CLAIM, TURN or CONVERSATION (FIX 360).
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone, Copy)]
-enum ClaimGrading {
-    /// Imported evidence: restamped `src=imported`, its confidence scaled by
-    /// `scale`.
+enum ImportGrading {
+    /// Imported evidence: a claim is restamped `src=imported` and its
+    /// confidence scaled by `scale`; a transcript takes the federation import
+    /// stamp.
     Imported { scale: f32 },
     /// A verified member's write in this shared vault, first-party to it
-    /// (ARCH-0043): its source and confidence stand.
+    /// (ARCH-0043): a claim keeps its source and confidence, and a transcript
+    /// takes no import stamp.
     FirstParty,
 }
 
@@ -88,7 +90,7 @@ pub fn admit_federated_window_update(
         update,
         role,
         None,
-        ClaimGrading::Imported {
+        ImportGrading::Imported {
             scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
         },
     )?
@@ -116,7 +118,7 @@ pub(in crate::sync) fn admit_peer_window_update(
         update,
         role,
         Some(lane),
-        ClaimGrading::Imported { scale },
+        ImportGrading::Imported { scale },
     )
 }
 
@@ -124,8 +126,8 @@ pub(in crate::sync) fn admit_peer_window_update(
 /// it here (`FederationPeer::membership`, FIX 360). A member's update, sent
 /// as one, is first-party to this shared vault: its claims are neither
 /// restamped `src=imported` nor downweighted, and the claim gate still judges
-/// them. A scoped guest's update, or one sent as a guest's, keeps guest
-/// grading.
+/// them; its TURN and CONVERSATION rows take no federation import stamp. A
+/// scoped guest's update, or one sent as a guest's, keeps guest grading.
 #[cfg(feature = "sync")]
 pub(in crate::sync) fn admit_peer_window_update_as(
     vault: &Vault,
@@ -146,7 +148,7 @@ pub(in crate::sync) fn admit_peer_window_update_as(
         update,
         role,
         Some(lane),
-        ClaimGrading::FirstParty,
+        ImportGrading::FirstParty,
     )
 }
 
@@ -168,7 +170,7 @@ pub(crate) fn admit_staged_window_update(
         update,
         role,
         Some(staged_lane(receipt_id)),
-        ClaimGrading::Imported {
+        ImportGrading::Imported {
             scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
         },
     )
@@ -339,7 +341,7 @@ fn admit_window_update(
     update: &[u8],
     role: FederationAdmissionRole,
     lane: Option<String>,
-    grading: ClaimGrading,
+    grading: ImportGrading,
 ) -> Result<AdmittedUpdate> {
     let remote = create_window_doc("federation-remote", key);
     remote.import(update).map_err(|source| {
@@ -576,7 +578,7 @@ fn copy_admitted_entities(
     policy: &crate::gate::PolicyManifestResolution,
     source: &LoroDoc,
     target: &LoroDoc,
-    grading: ClaimGrading,
+    grading: ImportGrading,
 ) -> Result<()> {
     let source_entities = source.get_map("entities");
     let target_entities = target.get_map("entities");
@@ -606,14 +608,14 @@ pub(crate) fn admit_federated_entity_blob(
         txn,
         key,
         value,
-        ClaimGrading::Imported {
+        ImportGrading::Imported {
             scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
         },
     )
 }
 
 /// [`admit_federated_entity_blob`] with the sending peer's `grading` for a
-/// CLAIM.
+/// CLAIM, TURN or CONVERSATION.
 #[cfg(feature = "sync")]
 fn admit_federated_entity_blob_graded(
     vault: &Vault,
@@ -621,7 +623,7 @@ fn admit_federated_entity_blob_graded(
     txn: &heed::RoTxn<'_>,
     key: &str,
     value: Option<&[u8]>,
-    grading: ClaimGrading,
+    grading: ImportGrading,
 ) -> Result<Vec<u8>> {
     let blob = value.ok_or(Error::InvalidKey)?;
     let id = EntityId::from_hex(key).map_err(|_| Error::InvalidKey)?;
@@ -658,10 +660,12 @@ fn admit_federated_entity_blob_graded(
             &blob[ENTITY_METADATA_HEADER_LEN..],
         )?;
         refuse_peer_agent_definition_widening(&vault.store, txn, &id, blob)?;
-        if matches!(
-            header.entity_type,
-            ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
-        ) {
+        if matches!(grading, ImportGrading::Imported { .. })
+            && matches!(
+                header.entity_type,
+                ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
+            )
+        {
             return restamp_federated_transcript(blob);
         }
         return Ok(blob.to_vec());
@@ -669,10 +673,10 @@ fn admit_federated_entity_blob_graded(
 
     let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
     let body = match grading {
-        ClaimGrading::Imported { scale } => {
+        ImportGrading::Imported { scale } => {
             downweight_federated_claim(restamp_federated_claim_source(body), scale)?
         }
-        ClaimGrading::FirstParty => body,
+        ImportGrading::FirstParty => body,
     };
     crate::gate::check_federated_claim_admission(&vault.store, &body, policy)?;
     let encoded = crate::claim::encode_claim_body(&body)?;
@@ -716,8 +720,9 @@ fn refuse_peer_agent_definition_widening(
 pub(crate) const FEDERATION_IMPORT_SOURCE: &str = "federation";
 
 /// A peer's TURN or CONVERSATION is imported evidence, never the owner's live
-/// words: its body is stamped with the federation import source unless the
-/// peer already named one. The stamp is a birth fact, so a peer row landing
+/// words, unless the peer is a verified member ([`ImportGrading::FirstParty`]):
+/// its body is stamped with the federation import source unless the peer
+/// already named one. The stamp is a birth fact, so a peer row landing
 /// on an unstamped local one is refused by the put door, never relabelled.
 /// An empty body (a deleted shell) carries no words and passes unchanged.
 #[cfg(feature = "sync")]
@@ -759,7 +764,7 @@ fn restamp_federated_transcript(blob: &[u8]) -> Result<Vec<u8>> {
 /// ARCH-0043 requires a down-weight but does not prescribe a factor. The
 /// sending peer's owner-set scale applies, by default
 /// [`super::DEFAULT_FEDERATED_CONFIDENCE_SCALE`] for every federated role. A
-/// verified member's claims take none ([`ClaimGrading::FirstParty`]).
+/// verified member's claims take none ([`ImportGrading::FirstParty`]).
 fn downweight_federated_claim(
     mut body: crate::claim::ClaimBody,
     scale: f32,

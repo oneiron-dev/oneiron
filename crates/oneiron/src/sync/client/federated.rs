@@ -131,8 +131,8 @@ impl SyncClient {
     /// Selector/federation callers that can identify member/guest bytes should
     /// enter through this seam so claim entities are graded and admitted
     /// exactly once before the shared observed-doc import/materialization path.
-    /// Only a member's update, by the peer's own grant, keeps its claims
-    /// first-party; a peer with no standing is refused (FIX 360).
+    /// Only a member's update, by the peer's own grant, keeps its claims and
+    /// transcripts first-party; a peer with no standing is refused (FIX 360).
     pub fn import_federated_window_update(
         &mut self,
         window_key: &str,
