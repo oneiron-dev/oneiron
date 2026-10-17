@@ -3068,7 +3068,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill/call/tests.rs` | test | m | — | — | — |
 | `src/skill/codec.rs` | src | m | 2 fn · 3 crate-vis | — | MessagePack encode and decode for SKILL bodies and dependencies |
 | `src/skill/doors.rs` | src | m | 6 fn · 9 crate-vis | — | Typed Vault doors for SKILL records |
-| `src/skill/exploration_trial.rs` | src | m | 9 crate-vis | — | Exploration trials: an open optimizer proposal runs on live work as a version choice for the active skill it… |
+| `src/skill/exploration_trial.rs` | src | L | 9 crate-vis | — | Exploration trials: an open optimizer proposal runs on live work as a version choice for the active skill it… |
 | `src/skill/graph.rs` | src | s | 6 struct · 1 fn | GraphSkillAnswerRef, GraphSkillFailure, GraphSkillInput, GraphSkillProgram, GraphSkillResult, GraphSkillStage | Run resident-authored graph workflows from the admitted skill source tree |
 | `src/skill/helper.rs` | src | m | 8 struct · 1 enum · 1 trait · 10 fn · 1 const | CallableCard, CallableCardView, CallableCase, CallableGateVerdict, CallableHarness, CaseSplit, HarnessScore, SkillForkRequest +2 | Agent-authored executable helpers (OF-353): a callable SKILL an agent writes for itself, found, promoted and… |
 | `src/skill/identity.rs` | src | s | 1 struct · 6 fn · 3 const | SkillContentHash | Canonical skill identity: content hash, tree hash, and hub cross-check |
@@ -3333,7 +3333,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/bridge/companion_identity.rs` | src | m | 4 fn · 4 crate-vis | — | Identity topology ingest, endpoint hydration, and edge key/value helpers |
 | `src/sync/bridge/companion_identity_tests.rs` | test | L | — | — | H161 (W2-T5): a type-74 admission seal counts only when this vault sealed it, or a live machine the owner… |
 | `src/sync/bridge/diagnostic_tests.rs` | test | s | — | — | Account-local diagnostic isolation at both replay paths and outbound packing |
-| `src/sync/bridge/edges.rs` | src | m | 5 crate-vis | — | Edge-delta materialization and per-op quarantine bookkeeping |
+| `src/sync/bridge/edges.rs` | src | L | 5 crate-vis | — | Edge-delta materialization and per-op quarantine bookkeeping |
 | `src/sync/bridge/entities.rs` | src | m | 6 crate-vis | — | Observer B's entity driver: one batch transaction per delta, each entity through the shared ingest entry… |
 | `src/sync/bridge/mod.rs` | src | s | 4 re-export · 9 crate-vis | — | Entity bridge: CRDT ↔ LMDB materialization observers |
 | `src/sync/bridge/observers.rs` | src | m | 5 struct · 1 trait · 13 fn · 1 const · 11 crate-vis | LiveQueryTee, MaterializedDiffSummary, Materializer, ObserverAState, OriginMark, OutboundSink | Observer A/B registration and the shared Materializer/OutboundSink state |
