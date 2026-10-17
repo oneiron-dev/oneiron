@@ -476,11 +476,24 @@ fn is_resolved_schema(value: &serde_json::Value) -> bool {
     let Some(schema) = value.as_object() else {
         return false;
     };
+    // Unions stay in a resolved schema, each variant resolved; the call
+    // validator reads them (outbound_consent/tool_schema.rs).
     if schema
         .keys()
-        .any(|key| matches!(key.as_str(), "$ref" | "allOf" | "anyOf" | "oneOf"))
+        .any(|key| matches!(key.as_str(), "$ref" | "allOf"))
     {
         return false;
+    }
+    for key in ["anyOf", "oneOf", "prefixItems"] {
+        if let Some(value) = schema.get(key)
+            && !value.as_array().is_some_and(|variants| {
+                variants
+                    .iter()
+                    .all(|variant| variant.is_boolean() || is_resolved_schema(variant))
+            })
+        {
+            return false;
+        }
     }
     // Names under `properties` are caller-chosen parameter names, not schema
     // operators. Values in defaults/const/enums are instance data; never

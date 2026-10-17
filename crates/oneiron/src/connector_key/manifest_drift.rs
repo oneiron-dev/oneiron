@@ -151,10 +151,30 @@ fn resolve_schema(
                 }
                 all_of = Some(out);
             }
-            // The current call validator does not implement union validation.
-            // Keeping these keywords would make a resolved schema unusable;
-            // dropping them would broaden it, so refuse them at admission.
-            "anyOf" | "oneOf" => return Err(invalid()),
+            // Schema lists and single schemas the call validator reads
+            // (outbound_consent/tool_schema.rs); each is resolved in place.
+            "anyOf" | "oneOf" | "prefixItems" => {
+                let variants = value
+                    .as_array()
+                    .filter(|a| !a.is_empty() && a.len() <= 64)
+                    .ok_or_else(invalid)?;
+                let mut out = Vec::with_capacity(variants.len());
+                for variant in variants {
+                    out.push(resolve_schema(variant, root, stack, depth + 1)?);
+                }
+                result.insert(key.clone(), Value::Array(out));
+            }
+            "not" | "if" | "then" | "else" | "contains" | "propertyNames" => {
+                result.insert(key.clone(), resolve_schema(value, root, stack, depth + 1)?);
+            }
+            "patternProperties" | "dependentSchemas" => {
+                let schemas = value.as_object().ok_or_else(invalid)?;
+                let mut out = serde_json::Map::new();
+                for (name, child) in schemas {
+                    out.insert(name.clone(), resolve_schema(child, root, stack, depth + 1)?);
+                }
+                result.insert(key.clone(), Value::Object(out));
+            }
             "type" | "required" | "enum" | "const" | "title" | "description" | "default"
             | "examples" | "$schema" | "$id" | "deprecated" | "readOnly" | "writeOnly"
             | "x-mcp-header" => {
@@ -164,7 +184,8 @@ fn resolve_schema(
             // can hide a ref; the call validator enforces each assertion.
             "minimum" | "maximum" | "exclusiveMinimum" | "exclusiveMaximum" | "multipleOf"
             | "minLength" | "maxLength" | "pattern" | "format" | "minItems" | "maxItems"
-            | "uniqueItems" | "minProperties" | "maxProperties" => {
+            | "uniqueItems" | "minProperties" | "maxProperties" | "dependentRequired"
+            | "minContains" | "maxContains" => {
                 result.insert(key.clone(), value.clone());
             }
             // Unknown schema-bearing keywords (for example `if` or
@@ -309,6 +330,20 @@ fn merge_all_of(schemas: &[Value]) -> Result<Value> {
                 }
                 merged.insert(key, first.clone());
             }
+            // Independent assertions: one conjunct's, or several that agree,
+            // hold as they stand. Differing ones have no single keyword.
+            "anyOf" | "oneOf" | "not" | "if" | "then" | "else" | "contains" | "propertyNames"
+            | "patternProperties" | "dependentSchemas" | "dependentRequired" | "minContains"
+            | "maxContains" => {
+                let first = values[0];
+                if values.iter().any(|value| *value != first) {
+                    return Err(invalid());
+                }
+                merged.insert(key, first.clone());
+            }
+            // `prefixItems` changes what another conjunct's `items` covers,
+            // so a merge would broaden it.
+            "prefixItems" => return Err(invalid()),
             // This also guards future keyword additions from silently being
             // copied through a composition path with unknown semantics.
             _ => return Err(invalid()),
