@@ -98,7 +98,7 @@ pub struct MembershipEvent {
     pub campaign_ref: EntityId,
     /// Entity whose membership changed.
     pub entity_ref: EntityId,
-    /// Monotonic per-(query, entity) epoch.
+    /// Monotonic per-(query, campaign, entity) epoch.
     pub epoch: u64,
     /// When the transition became true.
     pub valid_at: u64,
@@ -139,7 +139,8 @@ pub enum MembershipCommitOutcome {
     },
 }
 
-/// The next epoch a transition on this `(query, entity)` pair may claim.
+/// The next epoch a transition on this `(query, entity)` pair may claim in
+/// `campaign_ref`. Each campaign a query feeds holds its own sequence.
 ///
 /// Re-entry after exit is a NEW epoch, never a resurrection of the old one, and
 /// this is the only door that mints one. The floor is
@@ -153,10 +154,11 @@ pub enum MembershipCommitOutcome {
 pub fn next_membership_epoch(
     vault: &Vault,
     query_ref: EntityId,
+    campaign_ref: EntityId,
     entity_ref: EntityId,
 ) -> Result<u64> {
     let rtxn = vault.store.env.read_txn()?;
-    let current = current_watermark(vault, &rtxn, query_ref, entity_ref)?;
+    let current = current_watermark(vault, &rtxn, query_ref, campaign_ref, entity_ref)?;
     current.map_or(Ok(1), |(epoch, _)| {
         epoch
             .checked_add(1)
@@ -194,7 +196,13 @@ pub fn commit_membership_plan(
         ClaimLifecycleStatus::Active,
     )?;
     vault.with_write_txn_grouped(|wtxn| {
-        let watermark = current_watermark(vault, wtxn, event.query_ref, event.entity_ref)?;
+        let watermark = current_watermark(
+            vault,
+            wtxn,
+            event.query_ref,
+            event.campaign_ref,
+            event.entity_ref,
+        )?;
         if let Some(outcome) = watermark_verdict(watermark, event.epoch, &content) {
             return Ok(outcome);
         }
@@ -210,7 +218,7 @@ pub fn commit_membership_plan(
         WATERMARK.put(
             &vault.store,
             wtxn,
-            &(event.query_ref, event.entity_ref),
+            &(event.query_ref, event.entity_ref, event.campaign_ref),
             &Watermark {
                 epoch: event.epoch,
                 content,
@@ -219,7 +227,11 @@ pub fn commit_membership_plan(
         MEMBERSHIP_EVENTS.put(
             &vault.store,
             wtxn,
-            &(event.query_ref, event.entity_ref, event.epoch),
+            &(
+                event.query_ref,
+                event.entity_ref,
+                (event.campaign_ref, event.epoch),
+            ),
             event,
         )?;
         let claim_id = vault.store.clock.entity_id()?;
@@ -388,8 +400,10 @@ pub fn derived_member_value(
     }
 }
 
-/// Reads the entered/exited history for one `(query, entity)` pair, oldest
-/// epoch first. History is preserved: a re-entry appends, it never rewrites.
+/// Reads the entered/exited history for one `(query, entity)` pair across
+/// every campaign the query feeds, grouped by campaign and oldest epoch first
+/// within each; a reader takes a campaign's own rows by `campaign_ref`.
+/// History is preserved: a re-entry appends, it never rewrites.
 ///
 /// # Errors
 ///
@@ -408,7 +422,8 @@ pub fn membership_events(
         .collect())
 }
 
-/// The epoch floor this `(query, entity)` pair may not write at or below.
+/// The epoch floor this `(query, entity)` pair may not write at or below in
+/// `campaign_ref`.
 ///
 /// `vault_meta` does not replicate, so the local watermark row alone is a
 /// node-local opinion: a peer promoted to home after a failover would read
@@ -420,10 +435,11 @@ fn current_watermark(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     query_ref: EntityId,
+    campaign_ref: EntityId,
     entity_ref: EntityId,
 ) -> Result<Option<(u64, Option<[u8; EVIDENCE_HASH_LEN]>)>> {
-    let local = read_watermark(vault, txn, query_ref, entity_ref)?;
-    let replicated = replicated_epoch_floor(vault, txn, query_ref, entity_ref)?;
+    let local = read_watermark(vault, txn, query_ref, entity_ref, campaign_ref)?;
+    let replicated = replicated_epoch_floor(vault, txn, query_ref, campaign_ref, entity_ref)?;
     Ok(match (local, replicated) {
         (None, None) => None,
         (Some((epoch, content)), None) => Some((epoch, Some(content))),
@@ -439,12 +455,13 @@ fn current_watermark(
 }
 
 /// Highest epoch any replicated `campaign.member` claim on `entity_ref` carries
-/// for `query_ref`. Every lifecycle counts: a superseded head still proves its
-/// epoch was spent.
+/// for `query_ref` in `campaign_ref`. Every lifecycle counts: a superseded
+/// head still proves its epoch was spent.
 fn replicated_epoch_floor(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     query_ref: EntityId,
+    campaign_ref: EntityId,
     entity_ref: EntityId,
 ) -> Result<Option<u64>> {
     let mut floor = None;
@@ -454,6 +471,7 @@ fn replicated_epoch_floor(
         };
         if let Some(derivation) = value.derivation
             && derivation.source_query == query_ref
+            && value.campaign == campaign_ref
         {
             floor = floor.max(Some(derivation.epoch));
         }
