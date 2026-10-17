@@ -3,7 +3,7 @@
 use crate::error::Result;
 
 use super::AttemptQueue;
-use super::encoding::{decode_record, encode_record};
+use super::encoding::decode_record;
 use super::telemetry::invalid_transition;
 use super::types::{AbandonAttempt, AbandonOutcome, AttemptRecord, AttemptState, SetAttemptResult};
 use super::validate::{
@@ -82,7 +82,7 @@ impl AttemptQueue<'_> {
                 if record.state != AttemptState::Landing {
                     record.updated_at = input.now;
                 }
-                let encoded = encode_record(&record)?;
+                let encoded = self.encode_in_txn(wtxn, &mut record)?;
                 self.store
                     .attempt_records
                     .put(wtxn, record.id.as_bytes(), &encoded)?;
@@ -163,7 +163,7 @@ impl AttemptQueue<'_> {
                 // dispatch under the same key must mint a fresh try rather
                 // than be handed this stopped one.
                 self.delete_dedupe_entry_for_record(wtxn, &record)?;
-                let encoded = encode_record(&record)?;
+                let encoded = self.encode_in_txn(wtxn, &mut record)?;
                 self.store
                     .attempt_records
                     .put(wtxn, record.id.as_bytes(), &encoded)?;

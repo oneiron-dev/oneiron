@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 
-use super::encoding::{decode_record, encode_record};
+use super::encoding::decode_record;
 use super::engine::AttemptQueue;
 use super::telemetry::invalid_transition;
 use super::types::{AttemptRecord, AttemptState, CompleteAttempt, CompleteOutcome};
@@ -39,7 +39,7 @@ impl AttemptQueue<'_> {
                 record.last_error = None;
                 record.updated_at = input.now;
                 self.delete_dedupe_entry_for_record(wtxn, &record)?;
-                let encoded = encode_record(&record)?;
+                let encoded = self.encode_in_txn(wtxn, &mut record)?;
                 self.store
                     .attempt_records
                     .put(wtxn, record.id.as_bytes(), &encoded)?;

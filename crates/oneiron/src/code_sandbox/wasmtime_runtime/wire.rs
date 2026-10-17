@@ -39,6 +39,10 @@ struct VerbCall {
 struct Store {
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    sources: Vec<String>,
+    #[serde(default)]
+    receipt: Option<crate::engine_executor::StoreReceiptInput>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -293,9 +297,14 @@ fn result_call(input: &str) -> Result<Option<JsResultCall>> {
         }));
     }
     Ok(match args.verb.as_str() {
-        "store" => Some(JsResultCall::Store {
-            name: decode::<Store>(args.input)?.name,
-        }),
+        "store" => {
+            let store = decode::<Store>(args.input)?;
+            Some(JsResultCall::Store {
+                name: store.name,
+                sources: store.sources,
+                receipt: store.receipt,
+            })
+        }
         "describe" => result_ref(args.input).map(JsResultCall::Describe),
         "can" => {
             can_read(args.input)?.map(|(target, child)| JsResultCall::CanRead { target, child })
@@ -608,6 +617,26 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 bound: None,
             }))
         }
+        RunVerb::Summarize => {
+            let args: crate::code_run::SummarizeInput = decode(input)?;
+            SelfCall::Summarize(Box::new(crate::code_run::SelfSummarizeCall {
+                reference: args.r#ref,
+                effort: args.effort.map(|effort| match effort {
+                    crate::code_run::SummarizeInputEffort::Low => {
+                        crate::code_run::SummarizeEffort::Low
+                    }
+                    crate::code_run::SummarizeInputEffort::Medium => {
+                        crate::code_run::SummarizeEffort::Medium
+                    }
+                    crate::code_run::SummarizeInputEffort::High => {
+                        crate::code_run::SummarizeEffort::High
+                    }
+                }),
+                group: args.group,
+                defer: args.defer.unwrap_or(false),
+                bound: None,
+            }))
+        }
         RunVerb::SelfTeamStart => SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?)),
         RunVerb::SelfTeamRecord => {
             SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
@@ -769,6 +798,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         SelfDispatchOutcome::ReaderSpawn(receipt) => json!({ "output": receipt }),
         SelfDispatchOutcome::ReaderReport(receipt) => json!({ "output": receipt }),
         SelfDispatchOutcome::TaskWaitSet(result) => json!({ "output": result }),
+        SelfDispatchOutcome::Summarize(reply) => json!({ "output": reply.output() }),
         SelfDispatchOutcome::Leader(json) => {
             let output: Value =
                 serde_json::from_str(json).map_err(|_| failure("leader answer is not JSON"))?;
