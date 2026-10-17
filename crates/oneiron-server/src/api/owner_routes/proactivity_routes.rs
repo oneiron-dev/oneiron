@@ -16,6 +16,11 @@
 //! `/v1/owner/coach/code-fixes` (OF-380) is the Coach's code-fix work on each
 //! failure case: the class, the invented example's verdict and each
 //! candidate's fixed or not-fixed result, with no text of the failure.
+//! `/v1/owner/coach/judge-asks` (OF-420) is the judge's calibration asks:
+//! the minutes a person funds for them, and their pick on a delivered one,
+//! which becomes a label in the judged skill's anchor. The asks reach only
+//! the person's own digest, which `/v1/owner/proactivity/digest/assemble`
+//! assembles for them.
 //! Approving a draft approves its exact content, then schedules it through
 //! the ordinary outbound gate as the Dreamer on the owner's behalf; the
 //! gate's grants, consent and windows still decide the send.
@@ -54,6 +59,7 @@ use crate::server::SyncServer;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/proactivity/digest", get(read_digest))
+        .route("/proactivity/digest/assemble", post(assemble_digest))
         .route(
             "/proactivity/action-mode",
             get(action_mode).post(set_action_mode),
@@ -65,6 +71,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/coach/training-offers", get(training_offers))
         .route("/coach/training-offers/answer", post(answer_training_offer))
         .route("/coach/code-fixes", get(code_fixes))
+        .route(
+            "/coach/judge-asks/minutes",
+            get(judge_ask_minutes).post(fund_judge_asks),
+        )
+        .route("/coach/judge-asks/pick", post(pick_judge_ask))
         .route("/identity/asks", get(identity_asks))
         .route("/identity/asks/answer", post(answer_identity_ask))
         .route("/self-heal/findings", get(self_heal_findings))
@@ -74,6 +85,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 
 fn now_secs() -> u64 {
     now_unix_ms() / 1_000
+}
+
+/// A digest or ask id as 64 hex.
+fn hex_id(id: &[u8; 32]) -> String {
+    id.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// A digest id, as 64 hex.
@@ -100,7 +116,24 @@ struct DigestQuery {
 #[derive(Debug, Serialize)]
 struct DigestView {
     id: String,
+    /// Each of the digest's `judge_asks`, by id as 64 hex and in order: a
+    /// pick names one.
+    judge_ask_ids: Vec<String>,
     digest: ProactivityDigest,
+}
+
+impl DigestView {
+    fn new(digest: ProactivityDigest) -> Self {
+        Self {
+            id: hex_id(&digest.id),
+            judge_ask_ids: digest
+                .judge_asks
+                .iter()
+                .map(|ask| hex_id(&ask.id))
+                .collect(),
+            digest,
+        }
+    }
 }
 
 /// `GET /v1/owner/proactivity/digest`: one delivered digest, verified
@@ -122,10 +155,26 @@ async fn read_digest(
                 vault.read_proactivity_digest(id)?
             }
         };
-        Ok(digest.map(|digest| DigestView {
-            id: digest.id.iter().map(|byte| format!("{byte:02x}")).collect(),
-            digest,
-        }))
+        Ok(digest.map(DigestView::new))
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+/// `POST /v1/owner/proactivity/digest/assemble`: the caller's own digest,
+/// assembled now: what a due regular digest carries, and once a cadence
+/// period the judge calibration asks their funded minutes buy, which no
+/// other digest delivers. `null` when nothing is due.
+async fn assemble_digest(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Option<DigestView>> {
+    let owner = owner(&auth, &server)?;
+    let view = blocking(move || -> OwnerResult<Option<DigestView>> {
+        Ok(server
+            .vault()
+            .proactivity_digest(&owner, now_secs(), None)?
+            .map(DigestView::new))
     })
     .await?;
     Ok(Json(view))
@@ -372,6 +421,103 @@ async fn answer_training_offer(
     })
     .await?;
     Ok(Json(record))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JudgeAskMinutes {
+    minutes: u32,
+}
+
+/// `GET /v1/owner/coach/judge-asks/minutes`: the caller's remaining
+/// judge-ask minutes; zero until they fund some.
+async fn judge_ask_minutes(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<JudgeAskMinutes> {
+    let owner = owner(&auth, &server)?;
+    let minutes = blocking(move || {
+        Ok(oneiron::skill_optimize::judge_digest_minutes(
+            server.vault(),
+            &owner,
+        )?)
+    })
+    .await?;
+    Ok(Json(JudgeAskMinutes { minutes }))
+}
+
+/// `POST /v1/owner/coach/judge-asks/minutes`: sets the caller's balance.
+/// Each delivered ask spends the calibration policy's minutes; zero stops
+/// the asks, and nothing refills it.
+async fn fund_judge_asks(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<JudgeAskMinutes>, JsonRejection>,
+) -> OwnerReply<JudgeAskMinutes> {
+    let owner = owner(&auth, &server)?;
+    let JudgeAskMinutes { minutes } = json_payload(payload)?;
+    blocking(move || {
+        Ok(oneiron::skill_optimize::set_judge_digest_minutes(
+            server.vault(),
+            &owner,
+            minutes,
+        )?)
+    })
+    .await?;
+    Ok(Json(JudgeAskMinutes { minutes }))
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum JudgeAskChoice {
+    A,
+    B,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PickJudgeAsk {
+    /// A delivered ask's id, as 64 hex (a digest's `judge_ask_ids`).
+    ask: String,
+    /// `a` or `b`: the ask's `option_a` or its `option_b`.
+    choice: JudgeAskChoice,
+}
+
+#[derive(Debug, Serialize)]
+struct JudgeLabelView {
+    ask: String,
+    chosen: String,
+    picked_at: u64,
+}
+
+/// `POST /v1/owner/coach/judge-asks/pick`: the caller's pick on an ask their
+/// digest delivered, a final label in the judged skill's anchor. The same
+/// pick again returns it; the other one fails.
+async fn pick_judge_ask(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PickJudgeAsk>, JsonRejection>,
+) -> OwnerReply<JudgeLabelView> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let label = blocking(move || -> OwnerResult<JudgeLabelView> {
+        let ask = digest_id(&request.ask)
+            .ok_or_else(|| OwnerError::Invalid("ask must be a 64-hex ask id".into()))?;
+        let label = oneiron::skill_optimize::record_judge_pick(
+            server.vault(),
+            &owner,
+            ask,
+            matches!(request.choice, JudgeAskChoice::B),
+            now_secs(),
+        )?;
+        Ok(JudgeLabelView {
+            ask: hex_id(&label.ask.id),
+            chosen: label.chosen,
+            picked_at: label.picked_at,
+        })
+    })
+    .await?;
+    Ok(Json(label))
 }
 
 /// A choice card's words when the client names none; a client in another

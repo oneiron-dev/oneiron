@@ -1265,6 +1265,25 @@ fn label_option(answer: &JudgeShadowAnswer) -> String {
     format!("{}: {said}", answer.judge)
 }
 
+/// The calibration ask a pick on `case` answers, the question its hand-test
+/// asks: the skill whose anchor the label joins, the pair's label campaign,
+/// and the two judges' answers as options, the incumbent's first. Its
+/// evidence is the case's ref. `None` when the case names no skill.
+pub(crate) fn swap_case_ask(
+    swap: &JudgeSwapReceipt,
+    case: &JudgeSwapDisagreement,
+) -> Option<(EntityId, String, [String; 2])> {
+    let skill = case
+        .skill
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok())?;
+    let [first, second] = case.answers.as_slice() else {
+        return None;
+    };
+    let campaign = label_campaign(&pair_tag(&swap.from_judge, &swap.to_judge));
+    Some((skill, campaign, [label_option(first), label_option(second)]))
+}
+
 /// The same answer, or two scores within [`SCORE_AGREEMENT`].
 fn agree(first: &DecisionAnswer, second: &DecisionAnswer) -> bool {
     match (first, second) {

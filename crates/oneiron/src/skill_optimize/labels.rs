@@ -253,6 +253,49 @@ pub fn set_judge_digest_minutes(
     })
 }
 
+/// This human's remaining judge-ask minutes; zero until they fund some.
+pub fn judge_digest_minutes(vault: &Vault, owner: &AuthenticatedOwner) -> Result<u32> {
+    let txn = vault.store.env.read_txn()?;
+    let actor = crate::dreamer_runner::maintenance::validate_person_in_txn(vault, &txn, owner)?;
+    Ok(MINUTES
+        .get(&vault.store, &txn, &actor)?
+        .map_or(0, |balance| balance.0))
+}
+
+/// What one person's funded minutes leave room for: how many more asks their
+/// digests can carry beyond the ones already waiting, and every question
+/// already put to them, delivered or not, as (skill, campaign, evidence).
+pub(crate) struct JudgeAskRoom {
+    pub(crate) room: usize,
+    pub(crate) asked: std::collections::BTreeSet<(EntityId, String, String)>,
+}
+
+/// [`JudgeAskRoom`] for `person`. A person who funded no minutes has no room.
+pub(crate) fn judge_ask_room(vault: &Vault, person: EntityId) -> Result<JudgeAskRoom> {
+    let txn = vault.store.env.read_txn()?;
+    let minutes = MINUTES
+        .get(&vault.store, &txn, &person)?
+        .map_or(0, |balance| balance.0);
+    let cost = super::policy::resolved_in_txn(vault, &txn)?.ask_minutes;
+    let slots = usize::try_from(minutes / cost).unwrap_or(usize::MAX);
+    let mut waiting = 0_usize;
+    let mut asked = std::collections::BTreeSet::new();
+    for row in ASKS.iter_from(&vault.store, &txn, &[])? {
+        let (key, ask) = row?;
+        if key != ask.id {
+            return Err(Error::CorruptedIndex("judge ask identity"));
+        }
+        if ask.responsible == person {
+            waiting += usize::from(ask.delivered_at.is_none());
+            asked.insert((ask.skill, ask.campaign, ask.evidence));
+        }
+    }
+    Ok(JudgeAskRoom {
+        room: slots.saturating_sub(waiting),
+        asked,
+    })
+}
+
 /// List labels for one skill and campaign. The persisted anchor is only these
 /// rows, never the proposed asks. Order is stable by ask identity.
 pub fn judge_label_anchor(
