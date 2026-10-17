@@ -18,7 +18,7 @@ use crate::lens::{
     FiniteF64, GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedActionArg,
     LensPrincipalBinding, LensText, SelfUiActionId, SelfUiOptionValue,
 };
-use crate::task_verb::sdk::AgentVerb;
+use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -104,8 +104,8 @@ impl ActionDispatch {
 }
 /// What the host binds onto one action call, never the call's own body: the
 /// door its credential opens onto the SDK verb table and, when the host
-/// authenticated the owner on its own, that proof. Unbound, a verb-table
-/// action is refused and an owner action asks for the proof.
+/// authenticated the owner on its own, that proof. Unbound, a verb-table or
+/// run-row action is refused and an owner action asks for the proof.
 #[derive(Clone, Default)]
 pub struct ActionHostBinding<'a> {
     pub verb_door: Option<Arc<dyn AgentVerbDoor>>,
@@ -118,12 +118,14 @@ pub struct ActionBuildContext {
     pub frozen_unix_ms: u64,
 }
 pub type ActionFactory = fn(ActionBuildContext, &[ActionArgument]) -> Result<SelfCall>;
-/// How a registered verb becomes its call: a host factory, or a row of the
-/// SDK verb table at its own name.
+/// How a registered verb becomes its call: a host factory, a row of the
+/// SDK verb table at its own name, or a memory run row as the typed call a
+/// code run makes.
 #[derive(Clone, Copy)]
 enum ActionBuild {
     Factory(ActionFactory),
     Verb(AgentVerb),
+    Run(RunVerb),
 }
 struct RegisteredVerb {
     definition: ActionVerbDefinition,
@@ -165,13 +167,15 @@ impl ActionRegistry {
         Ok(())
     }
     /// The app's whole table: the owner's wake policy, the resident's two
-    /// inference-policy actions and every row of the SDK verb table. A host
-    /// serves its buttons and its agents' calls from this one table.
+    /// inference-policy actions, every row of the SDK verb table and the four
+    /// memory run rows. A host serves its buttons and its agents' calls from
+    /// this one table.
     pub fn app() -> Result<Self> {
         let mut registry = Self::default();
         registry.register_dreamer_wake_policy()?;
         registry.register_inference_defaults()?;
         registry.register_sdk_verbs()?;
+        registry.register_memory_run_verbs()?;
         Ok(registry)
     }
     /// Offers every row of the SDK verb table a host door answers, under the
@@ -197,6 +201,27 @@ impl ActionRegistry {
                     required_ceiling: AgentCeiling::Proposed,
                 },
                 ActionBuild::Verb(verb),
+            )?;
+        }
+        Ok(())
+    }
+    /// Offers the memory run rows (`vault.search`, `vault.claims.put`,
+    /// `vault.claims.supersede`, `vault.edges.put`) under their own names.
+    /// Each takes the row's whole JSON input as one text argument and runs as
+    /// the typed call a code run makes, at the action's frozen clock, under
+    /// the door the host binds: a search reads, and an edge's target is
+    /// checked, with the credential's read key, and claims and edges meet
+    /// their own gates. The other run rows act on their caller's live run,
+    /// which an action has none of; none is offered.
+    pub fn register_memory_run_verbs(&mut self) -> Result<()> {
+        for verb in super::run_verb_call::MEMORY_RUN_VERBS {
+            self.insert(
+                ActionVerbDefinition {
+                    id: SelfUiActionId::new(verb.as_str())?,
+                    args_schema: vec![ActionArgKind::Text],
+                    required_ceiling: AgentCeiling::Proposed,
+                },
+                ActionBuild::Run(verb),
             )?;
         }
         Ok(())
@@ -328,6 +353,10 @@ impl ActionRegistry {
     ) -> Result<ActionDispatch> {
         let ActionHostBinding { verb_door, owner } = binding;
         let registered = self.registered(request.verb_id.as_str())?;
+        // Unbound, a run row would read past the caller's own read key.
+        if matches!(registered.build, ActionBuild::Run(_)) && verb_door.is_none() {
+            return Err(invalid("a run-row action runs only under a host's door"));
+        }
         let expected_kind = if actor.actor_class() == EdgeActorClass::Agent {
             LensActingPrincipalKind::AgentTask
         } else {
@@ -401,6 +430,7 @@ impl ActionRegistry {
                 &request.args,
             )?,
             ActionBuild::Verb(verb) => build_sdk_verb(verb, &request.args)?,
+            ActionBuild::Run(verb) => build_run_verb(verb, &request.args, frozen)?,
         }
         .with_bridge_stamp(0, frozen);
         if matches!(call, SelfCall::WakePolicyWrite(_)) {
@@ -483,6 +513,17 @@ fn build_sdk_verb(verb: AgentVerb, args: &[ActionArgument]) -> Result<SelfCall> 
     let input = serde_json::from_str(input.as_str())
         .map_err(|_| invalid("verb-table action input is not JSON"))?;
     Ok(SelfCall::AgentVerb(SelfAgentVerbCall { verb, input }))
+}
+/// A memory run row's typed call, its defaults on the action's frozen clock
+/// in unix seconds, as a code run's own clock is.
+fn build_run_verb(verb: RunVerb, args: &[ActionArgument], frozen_unix_ms: u64) -> Result<SelfCall> {
+    let [ActionArgument::Text(input)] = args else {
+        return Err(invalid("run-row action takes its JSON input as one text"));
+    };
+    let input = serde_json::from_str(input.as_str())
+        .map_err(|_| invalid("run-row action input is not JSON"))?;
+    super::run_verb_call::memory_run_call(verb, input, frozen_unix_ms / 1000)?
+        .ok_or_else(|| invalid("this run row needs its caller's live run"))
 }
 fn build_inference_defaults_read(
     _: ActionBuildContext,
