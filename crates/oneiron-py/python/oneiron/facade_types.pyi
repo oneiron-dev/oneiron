@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 213 facade rows, 729 declarations.
-Inputs: 182 of 213 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 170 of 213 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 214 facade rows, 736 declarations.
+Inputs: 183 of 214 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 171 of 214 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 49; unread shapes: 1.
 """
 
@@ -43,6 +43,21 @@ class ReportReceipt(TypedDict):
     duplicate_of: NotRequired[str | None]
     route: ReportRoute
     disclosure: ReportDisclosure
+class ScratchpadRecallRequest(TypedDict):
+    session_id: str
+    query: str
+EntityId = str
+ScratchpadRecallMark = Literal["keep", "scratch"]
+class ScratchpadRecallReplyLine(TypedDict):
+    index: int
+    mark: NotRequired[ScratchpadRecallMark | None]
+    pin: bool
+    text: str
+class ScratchpadRecallReply(TypedDict):
+    pad: NotRequired[EntityId | None]
+    sealed: bool
+    matched: int
+    lines: list[ScratchpadRecallReplyLine]
 class DiaryEntryRequest(TypedDict):
     content: str
     kind: NotRequired[str | None]
@@ -58,7 +73,6 @@ class DiaryEntryReceipt(TypedDict):
     record: NotRequired[RecordRef | None]
 class DiaryReadsRequest(TypedDict):
     limit: NotRequired[int | None]
-EntityId = str
 class DiaryReadRecord(TypedDict):
     read: EntityId
     reader: EntityId
@@ -3255,12 +3269,14 @@ DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "te
 class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
+HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class GraphAskRequest(TypedDict):
     question: DecisionQuestion
     units: NotRequired[list[EntityId]]
     select: NotRequired[GraphAskSelection | None]
     ceiling: NotRequired[DecisionRung | None]
     unit_deadline_ms: NotRequired[int | None]
+    posture: NotRequired[HostingPrivacyPosture | None]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
     probability: NotRequired[float | None]
@@ -3304,7 +3320,6 @@ class QuestionCriteria(TypedDict):
     no_if_any: list[str]
     not_a_reason_to_say_no: list[str]
 QuestionAudience = Literal["asker"]
-HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class QuestionMedia(TypedDict):
     images: NotRequired[bool]
     audio: NotRequired[bool]
@@ -3373,6 +3388,28 @@ class QuestionReadRequest(TypedDict):
     version: NotRequired[int | None]
 class QuestionAnswersRequest(TypedDict):
     id: EntityId
+class ArtifactAskStandingUnanswered(TypedDict):
+    state: Literal["unanswered"]
+class ArtifactAskStandingWaiting(TypedDict):
+    state: Literal["waiting"]
+class ArtifactAskStandingKept(TypedDict):
+    state: Literal["kept"]
+    version: int
+class ArtifactAskStandingClosed(TypedDict):
+    state: Literal["closed"]
+ArtifactAskStanding = ArtifactAskStandingUnanswered | ArtifactAskStandingWaiting | ArtifactAskStandingKept | ArtifactAskStandingClosed
+class ArtifactAskRecord(TypedDict):
+    artifact: EntityId
+    question_version: int
+    artifact_version: int
+    asked_at: int
+    proposal_ref: NotRequired[str | None]
+    standing: ArtifactAskStanding
+class QuestionAnswerGraph(AnswerRecord):
+    kind: Literal["graph"]
+class QuestionAnswerArtifact(ArtifactAskRecord):
+    kind: Literal["artifact"]
+QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
 class DecisionAskAnswerRequest(TypedDict):
     seq: int
     answer: DecisionAnswer

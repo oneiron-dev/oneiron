@@ -857,7 +857,8 @@ export function facadeRetry<K extends FacadeReturn, O, V extends FacadeVerb>(inv
     return out
 
 # The task and ask declarations `packages/oneiron/src/agent-verbs.ts` carries.
-AGENT_VERBS_TS = '''export interface OutcomeBinding { source: {kind: "claim" | "event"; predicate: string} | {kind: "edge"; relation: string} | {kind: "stage"; campaign: string}; horizon: number; mapping: Record<string, boolean>; noise_weight: number; linked_by?: string | null }
+AGENT_VERBS_TS = '''import type { RecordRef } from "./facade-types.js";
+export interface OutcomeBinding { source: {kind: "claim" | "event"; predicate: string} | {kind: "edge"; relation: string} | {kind: "stage"; campaign: string}; horizon: number; mapping: Record<string, boolean>; noise_weight: number; linked_by?: string | null }
 export interface CalibrationPair { prediction: unknown; probability: number; outcome: {answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number} }
 export type TaskAssignee = "dreamer" | {agent_def: {agent_def_ref: string}} | {peer: {actor_ref: string}} | {child: {actor_ref: string}} | {human: {actor_ref: string}};
 export type ConsultPayloadRef = {claim: string} | {turn: string};
@@ -880,9 +881,9 @@ export interface TaskAskPreflight { recipients: TaskAskPreflightRecipient[] }
 export type TaskAskPersonKind = "word" | "companion" | "default" | "unknown";
 export interface TaskAskPersonEvidence {who: string; answer: TaskAskWord | null; kind: TaskAskPersonKind; at: number; source: string | null}
 export interface TaskAskHandle { group_ref: string }
-export interface TaskAskReceipt { handle: TaskAskHandle; task_refs: string[]; hold: "NoLiveRoute" | null; idempotent_replay: boolean }
+export interface TaskAskReceipt { handle: TaskAskHandle; task_refs: string[]; hold: "NoLiveRoute" | null; idempotent_replay: boolean; task_records: RecordRef[] }
 export interface TaskAskWord {result_ref: string; option?: TaskAskOptionId | null; inform_for?: string | null; provenance_refs?: ConsultPayloadRef[]}
-export interface TaskAskAnswer { task_ref: string; actor_ref: string; result_ref: string; word_ref: string }
+export interface TaskAskAnswer { task_ref: string; actor_ref: string; result_ref: string; word_ref: string; task_record: RecordRef; actor_record: RecordRef; result_record: RecordRef; word_record: RecordRef }
 export interface TaskAskCoverage {met: boolean; required: number; responded: string[]; unknown: string[]; unmet_people: string[]}
 export type TaskAskDecision = "collected" | {first: TaskAskAnswer} | {answer: TaskAskOptionId} | "no" | "conflict" | "unknown";
 export interface TaskAskFallback {branch: TaskAskDefault; surface: "card" | "none"}
