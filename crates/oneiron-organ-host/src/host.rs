@@ -94,9 +94,46 @@ impl OrganHost {
                 process.stop();
             }
         }
+        self.prune_retired();
+    }
+
+    /// Removes an organ, as the uninstall of the pack that carried it does:
+    /// its process stops, a call starting in it is refused as revoked, and
+    /// later calls find it not installed, so the mesh no longer offers it.
+    /// `false` when no such organ was installed.
+    pub fn uninstall(&self, organ: &str) -> bool {
+        let old = {
+            let mut slots = lock(&self.slots);
+            let old = slots.remove(organ);
+            // In the same breath as the removal, so a revocation always
+            // finds the slot: installed, or retired.
+            if let Some(old) = &old {
+                lock(&self.retired).push(Arc::clone(old));
+            }
+            old
+        };
+        let Some(old) = old else {
+            return false;
+        };
+        for process in old.retire(Unavailable::Revoked) {
+            process.stop();
+        }
+        self.prune_retired();
+        true
+    }
+
+    /// Drops the retired slots no process of which runs any more.
+    fn prune_retired(&self) {
         let retired: Vec<Arc<Slot>> = lock(&self.retired).clone();
         let finished: Vec<Arc<Slot>> = retired.into_iter().filter(|slot| slot.finished()).collect();
         lock(&self.retired).retain(|slot| !finished.iter().any(|done| Arc::ptr_eq(done, slot)));
+    }
+
+    /// The spec an organ is installed under, so a host can tell whether a
+    /// newer one replaces it.
+    #[must_use]
+    pub fn spec(&self, organ: &str) -> Option<OrganSpec> {
+        self.slot(organ).ok().map(|slot| slot.spec.clone())
     }
 
     /// Every slot a revocation must search: the installed and the retired.
