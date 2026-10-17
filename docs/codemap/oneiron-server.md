@@ -429,7 +429,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/control_keys/http.rs` | src | s | 1 fn | — | Optional private control-plane router; tenant bearer auth remains separate |
 | `src/control_keys/tests.rs` | test | s | — | — | — |
 | `src/decision_artifact.rs` | src | s | 4 crate-vis | — | Typed judgments over artifact units (ARCH-0076, OF-506): the host's decide() for a sheet row, a paragraph, a… |
-| `src/decision_graph.rs` | src | m | 11 crate-vis | — | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question |
+| `src/decision_graph.rs` | src | m | 12 crate-vis | — | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question |
 | `src/decision_host.rs` | src | L | 1 struct · 15 fn · 12 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `src/decision_verdict.rs` | src | m | 7 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `src/device_local.rs` | src | s | 6 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
@@ -643,6 +643,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/routes.rs` | src | s | 4 struct · 3 enum · 2 fn | RuntimeHealthStatus, RuntimeRoute, RuntimeRouteProvenance, RuntimeRouteReason, RuntimeRouteSource, RuntimeRouteState, RuntimeStatus | Resolved route decisions and redacted/full status views for health and discovery |
 | `src/runtime/seat_login.rs` | src | m | 8 struct · 6 fn | OfficialCliSeatExecutor, OfficialSeatDreamerExecutor, RunnerSeatDreamerExecutor, RunnerSeatPolicySettings, RunnerSeatSettings, SeatLoginSurface, SeatRouteRow, SeatSettings | Host surface for official subscription seats (OF-375) |
 | `src/runtime/usage.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | VaultUsage | Trusted-host attribution of served run settlements to one vault |
+| `src/saved_query_sweep.rs` | src | s | 1 crate-vis | — | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the… |
 | `src/server/board_publisher.rs` | src | s | 4 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
 | `src/server/connector_events.rs` | src | s | 1 crate-vis | — | The served surface-event drain (OF-218): the one thing that hands each queued inbound event to its actor's… |
 | `src/server/connector_sends.rs` | src | s | 1 crate-vis | — | The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that… |

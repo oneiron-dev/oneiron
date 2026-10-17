@@ -2965,10 +2965,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/saved_query/lifecycle.rs` | src | s | 4 fn · 3 crate-vis | — | — |
 | `src/saved_query/membership.rs` | src | m | 2 struct · 3 enum · 8 fn · 1 const · 1 crate-vis | MembershipCause, MembershipCommitOutcome, MembershipEvent, MembershipTransition, MembershipWritePlan | — |
 | `src/saved_query/memory_watch.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | MemoryWatch | Owner-bound per-claim watches stored as SAVED_QUERY definitions |
-| `src/saved_query/mod.rs` | src | s | 9 re-export · 1 crate-vis | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
+| `src/saved_query/mod.rs` | src | s | 10 re-export · 1 crate-vis | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
 | `src/saved_query/pack_drift.rs` | src | m | 3 struct · 2 enum · 3 fn · 2 crate-vis | PackDrift, PackDriftRepair, PackDriftResolution, PackMigrationMap, PackPredicateRewrite | — |
 | `src/saved_query/storage.rs` | src | m | 25 crate-vis | — | — |
 | `src/saved_query/support.rs` | src | s | 15 crate-vis | — | — |
+| `src/saved_query/sweep.rs` | src | s | 2 fn · 1 const | — | The host's saved-query sweep (ARCH-0059 `eval`): the queries a wake evaluates, the people it pages through… |
 | `src/saved_query/tests.rs` | test | m | — | — | — |
 | `src/scan_check.rs` | src | m | 1 struct · 1 enum · 4 fn · 4 const · 9 crate-vis | EngineScan, ScanCheck | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
 | `src/scan_check/table_tests.rs` | test | m | — | — | The code's own list of engine scans: none refuses for how many rows it reads (rule 5) |

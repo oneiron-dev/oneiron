@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3104 | 903 | 140 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3105 | 903 | 140 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 25 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 18 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 44 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 545 | 182 | 37 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 546 | 182 | 37 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 8 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 20 | 1 | 0 |
@@ -219,7 +219,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `retrieval_quality` | file | 1 | s | — | Retrieval quality report vocabulary |
 | `run_tree` | dir | 9 | m | — | Run tree projection and control adapter over generic AttemptQueue rows |
 | `runtime_hooks` | dir | 25 | L | yes | Runtime hooks (ARCH-0080) |
-| `saved_query` | dir | 13 | m | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
+| `saved_query` | dir | 14 | m | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
 | `scan_check` | file+dir | 2 | m | yes | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
 | `scope_summary` | dir | 10 | m | yes | Retained spawned sub-sessions and Dreamer-composed scope summaries |
 | `secret_custody` | dir | 10 | m | yes | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
@@ -681,6 +681,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `protocol` | file | 1 | m | Custom Oneiron sync protocol — server-side extensions |
 | `replay_judge` | file | 1 | m | The serve host's skill judge (OF-495) |
 | `runtime` | dir | 9 | m | — |
+| `saved_query_sweep` | file | 1 | s | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the… |
 | `server` | dir | 29 | L | Sync server state and maintenance jobs, split by concern |
 | `skills_pack` | file | 1 | s | — |
 | `test_credentials` | file | 1 | m | Request fixtures mint real logged slips before crossing the production router |
