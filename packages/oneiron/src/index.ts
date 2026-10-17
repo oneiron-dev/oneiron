@@ -207,6 +207,7 @@ export class Oneiron {
     weave: {
       report: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveReport(input) as unknown),
       digest: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveDigest(input) as unknown),
+      lens: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveLens(input) as unknown),
       link: {
         wrong: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveLinkWrong(input) as unknown),
       },
@@ -263,6 +264,8 @@ export class Oneiron {
     },
     shares: {
       create: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharesCreate(input) as unknown),
+      revoke: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharesRevoke(input) as unknown),
+      view: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharesView(input) as unknown),
     },
     hooks: {
       replay: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultHooksReplay(input) as unknown),

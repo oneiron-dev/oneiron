@@ -105,12 +105,14 @@ pub use support::*;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
-    live_turn_text_in, projected_turn_text_in, whole_turn_text_as_in,
+    live_turn_text_in, projected_turn_text_in,
 };
 pub(crate) use wake_plan::AttemptPreparation;
 pub use wake_plan::{PreparedConsolidationAttempt, PreparedWake};
 pub use watermark::*;
-pub use weave_lens::{WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, run_weave_lens};
+pub use weave_lens::{
+    WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, live_weave_lens_request, run_weave_lens,
+};
 
 // The flat dreamer_consolidation.rs module used to provide these names to the
 // sibling test module through `use super::*`; after the directory split the
