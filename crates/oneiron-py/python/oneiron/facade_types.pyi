@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 213 facade rows, 729 declarations.
+Census: 213 facade rows, 733 declarations.
 Inputs: 182 of 213 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 170 of 213 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 49; unread shapes: 1.
@@ -1961,14 +1961,32 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
+FactSource = Literal["claim_changelog", "settlement"]
 FactPositionHex = str
 FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled"]
+HookPhase = Literal["pre", "post", "fact"]
+class HookReplayCaseFact(TypedDict):
+    on: Literal["fact"]
+    source: FactSource
+    position: FactPositionHex
+    kind: FactKind
+    entity: str
+class HookReplayCaseVerb(TypedDict):
+    on: Literal["verb"]
+    run_key: str
+    invocation: str
+    verb: str
+    phase: HookPhase
+HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
+HookReplayCompare = Literal["same", "differs", "incomplete"]
 class HookReplayOutcomeRan(TypedDict):
     status: Literal["ran"]
     outcome_json: NotRequired[str | None]
     outcome: str
     reason: NotRequired[str | None]
     recorded: NotRequired[str | None]
+    recorded_outcome_json: NotRequired[str | None]
+    compare: HookReplayCompare
     from_memo: bool
     reads_live: bool
 class HookReplayOutcomeMissingHistory(TypedDict):
@@ -1976,9 +1994,7 @@ class HookReplayOutcomeMissingHistory(TypedDict):
     reason: str
 HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeMissingHistory
 class HookReplayRow(TypedDict):
-    position: FactPositionHex
-    kind: FactKind
-    entity: str
+    case: HookReplayCase
     result: HookReplayOutcome
 class ArtifactRefRequest(TypedDict):
     artifact_ref: str

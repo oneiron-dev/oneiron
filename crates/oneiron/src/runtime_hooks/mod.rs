@@ -42,7 +42,7 @@ pub use regen::{
     HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure,
     HookRegenFailurePhase, HookRegenOutcome, HookRegenRecord, HookRegenRequest, HookRegenerator,
 };
-pub use replay::{HookReplayEntry, HookReplayResult};
+pub use replay::{HookReplayCase, HookReplayCompare, HookReplayEntry, HookReplayResult};
 pub use runner::{FactHookRunner, HOOK_PASS_ENTRIES, HOOK_RUNNER_TICK, HookPassReport};
 pub(crate) use scope::HookScope;
 #[allow(

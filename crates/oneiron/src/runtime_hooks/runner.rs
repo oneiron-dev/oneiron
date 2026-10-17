@@ -1,8 +1,8 @@
 //! The fact-hook runner (ARCH-0080 §4 Delivery). It reads each source after
 //! its bindings' cursors, filters in Rust, runs each matching body once per
-//! run key, and commits the run's memo, local outcomes, receipt, intents and
-//! cursor in one write. Delivery is at least once, in commit order, per hook
-//! and per source.
+//! run key, and commits the run's memo, its run index row, local outcomes,
+//! receipt, intents and cursor in one write. Delivery is at least once, in
+//! commit order, per hook and per source.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,7 +25,8 @@ use super::outcome::{HookOutcome, kind_token};
 use super::read::{self, SeenFact};
 use super::source::{self, FactEntry, FactKind, FactPosition, FactSource};
 use super::store::{
-    self, CursorRow, HookIntent, HookIntentState, HookReadPin, HookRunRecord, HookRunState, RunKey,
+    self, CursorRow, HookIntent, HookIntentState, HookReadPin, HookRunRecord, HookRunRef,
+    HookRunState, HookVerdictPin, RunKey,
 };
 
 /// Entries one pass reads from each source: the in-memory cap. A source with
@@ -35,8 +36,10 @@ pub const HOOK_PASS_ENTRIES: usize = 256;
 /// every claim write notifies.
 pub const HOOK_RUNNER_TICK: Duration = Duration::from_secs(2);
 /// The largest input a memo row pins.
-const MAX_PINNED_INPUT: usize = 256 * 1024;
-const MAX_OUTCOME_BYTES: usize = 64 * 1024;
+pub(super) const MAX_PINNED_INPUT: usize = 256 * 1024;
+pub(super) const MAX_OUTCOME_BYTES: usize = 64 * 1024;
+/// The most bytes of `ai.verdict` requests and replies one memo row pins.
+const MAX_PINNED_VERDICT_BYTES: usize = 256 * 1024;
 /// The longest reason or error a receipt field carries.
 const MAX_FIELD: usize = 512;
 
@@ -435,26 +438,17 @@ impl Pass<'_> {
         let budget_ms = run.binding.selector.budget_ms;
         let deadline = started + Duration::from_millis(u64::from(budget_ms));
         let mut pins = Vec::new();
+        let mut verdicts = VerdictPins::new();
         let result = match body {
             Ok(body) => {
                 let mut answer = |request: &str| read::answer(lane, run.grant, request, &mut pins);
-                // The verdict is asked for the grant's reader, the identity
-                // whose reach the hook reads with.
+                // Each verdict is pinned as it is heard: replay answers from
+                // the pins rather than asking a model again.
                 let host = self.verdict;
-                let mut verdict = |request: &str| match (run.binding.selector.render_class, host) {
-                    (HookRenderClass::Generative, Some(host)) => host.verdict(
-                        run.grant.reader,
-                        filter::edge_class(run.grant.reader_class),
-                        request,
-                        deadline,
-                    ),
-                    (HookRenderClass::Generative, None) => {
-                        Err("no verdict host serves this runner".to_owned())
-                    }
-                    (HookRenderClass::DeterministicEager, _) => Err(
-                        "a deterministic hook calls no model: declare render_class: generative"
-                            .to_owned(),
-                    ),
+                let mut verdict = |request: &str| {
+                    let reply = ask_verdict(run.binding, run.grant, host, request, deadline);
+                    verdicts.push(request, &reply);
+                    reply
                 };
                 self.runtime
                     .run_fact_hook(&body, &input, budget_ms, &mut answer, &mut verdict)
@@ -463,7 +457,8 @@ impl Pass<'_> {
         };
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let verdict = judge(run.binding, result);
-        let queued = self.commit(run, &input, pins, &verdict, duration_ms, now)?;
+        let memo = record(run, &input, pins, verdicts, &verdict, duration_ms, now);
+        let queued = self.commit(run, memo, &verdict)?;
         self.report.count(&verdict);
         if queued {
             apply::drain_one(self.vault, self.all, &run.key, &mut self.report)?;
@@ -472,17 +467,9 @@ impl Pass<'_> {
     }
 
     /// The run's one write: lineage and any owner check, local outcomes,
-    /// saved intents, memo, receipt and the cursor. Returns whether an
-    /// intent waits.
-    fn commit(
-        &mut self,
-        run: &Run<'_>,
-        input: &str,
-        reads: Vec<HookReadPin>,
-        verdict: &Verdict,
-        duration_ms: u64,
-        now: u64,
-    ) -> Result<bool> {
+    /// saved intents, memo and its run index row, receipt and the cursor.
+    /// Returns whether an intent waits.
+    fn commit(&mut self, run: &Run<'_>, memo: HookRunRecord, verdict: &Verdict) -> Result<bool> {
         let vault = self.vault;
         let at = vault.store.clock.now_recorded_at();
         let key = run.key;
@@ -504,14 +491,18 @@ impl Pass<'_> {
             )),
             _ => None,
         };
-        let rows_read = reads.iter().map(|pin| pin.rows.len()).sum::<usize>();
+        let rows_read = memo.reads.iter().map(|pin| pin.rows.len()).sum::<usize>();
+        let (duration_ms, now) = (memo.duration_ms, memo.now);
         let link = LineageLink {
             binding: run.binding_id,
             run_key: hex_lower(&key),
             entity: run.entry.entity,
             position: run.entry.position.hex(),
         };
-        let memo = record(run, input, reads, verdict, duration_ms, now);
+        let memo = HookRunRecord {
+            committed_at: at.saturating_mul(1_000),
+            ..memo
+        };
         let check = vault.with_write_txn_grouped(|txn| {
             let parent = lineage::chain_of(vault, txn, &run.entry.entity)?;
             let (chain, check) = lineage::extend(&parent, link);
@@ -546,7 +537,18 @@ impl Pass<'_> {
                 };
                 store::INTENTS.put(&vault.store, txn, &key, &intent)?;
             }
+            let previous = store::MEMOS
+                .get(&vault.store, txn, &key)?
+                .map(|old| old.committed_at);
             store::MEMOS.put(&vault.store, txn, &key, &memo)?;
+            store::index_run_in_txn(
+                vault,
+                txn,
+                run.binding_id,
+                previous,
+                memo.committed_at,
+                HookRunRef::Fact(key),
+            )?;
             let hook_receipt = receipt(run, verdict, check, rows_read, duration_ms, now);
             store::RECEIPTS.put(&vault.store, txn, &key, &hook_receipt)?;
             store::advance_cursor_in_txn(vault, txn, run.binding_id, run.entry.position, at)?;
@@ -584,6 +586,66 @@ impl Pass<'_> {
         let class = filter::actor_class(self.vault, actor)?;
         self.classes.insert(actor, class);
         Ok(class)
+    }
+}
+
+/// One `ai.verdict` of a fact hook, answered as the live runner answers it:
+/// only a generative hook asks, of `host`, for its grant's reader, the
+/// identity whose reach the hook reads with.
+pub(super) fn ask_verdict(
+    binding: &PackHookBinding,
+    grant: &HookGrant,
+    host: Option<&dyn HookVerdict>,
+    request: &str,
+    deadline: Instant,
+) -> std::result::Result<String, String> {
+    match (binding.selector.render_class, host) {
+        (HookRenderClass::Generative, Some(host)) => host.verdict(
+            grant.reader,
+            filter::edge_class(grant.reader_class),
+            request,
+            deadline,
+        ),
+        (HookRenderClass::Generative, None) => Err("no verdict host serves this run".to_owned()),
+        (HookRenderClass::DeterministicEager, _) => {
+            Err("a deterministic hook calls no model: declare render_class: generative".to_owned())
+        }
+    }
+}
+
+/// The verdicts one run heard, pinned in order while their requests and
+/// replies fit [`MAX_PINNED_VERDICT_BYTES`]; the first that does not ends
+/// the pins.
+struct VerdictPins {
+    pins: Vec<HookVerdictPin>,
+    bytes: usize,
+    complete: bool,
+}
+
+impl VerdictPins {
+    const fn new() -> Self {
+        Self {
+            pins: Vec::new(),
+            bytes: 0,
+            complete: true,
+        }
+    }
+
+    fn push(&mut self, request: &str, reply: &std::result::Result<String, String>) {
+        let (Ok(text) | Err(text)) = reply;
+        let bytes = self
+            .bytes
+            .saturating_add(request.len())
+            .saturating_add(text.len());
+        if !self.complete || bytes > MAX_PINNED_VERDICT_BYTES {
+            self.complete = false;
+            return;
+        }
+        self.bytes = bytes;
+        self.pins.push(HookVerdictPin {
+            request_json: request.to_owned(),
+            reply: reply.clone(),
+        });
     }
 }
 
@@ -706,10 +768,12 @@ pub(super) fn block_id(key: &RunKey) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(b"oneiron.hook-block.v1", &[key.as_slice()])
 }
 
+/// The run's memo row; the commit stamps its write time.
 fn record(
     run: &Run<'_>,
     input: &str,
     reads: Vec<HookReadPin>,
+    verdicts: VerdictPins,
     verdict: &Verdict,
     duration_ms: u64,
     now: u64,
@@ -725,6 +789,8 @@ fn record(
         input_json: (input.len() <= MAX_PINNED_INPUT).then(|| input.to_owned()),
         input_hash: blake3::hash(input.as_bytes()).to_hex().to_string(),
         reads,
+        verdicts: verdicts.pins,
+        verdicts_complete: verdicts.complete,
         outcome_json: verdict.outcome_json.clone(),
         outcome: verdict.token.clone(),
         reason: verdict.reason.clone(),
@@ -732,6 +798,7 @@ fn record(
         receipt_id: store::receipt_id(&run.key),
         duration_ms,
         now,
+        committed_at: 0,
     }
 }
 

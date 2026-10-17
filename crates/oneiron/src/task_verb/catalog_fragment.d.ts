@@ -4,7 +4,7 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 269 code-mode rows (252 host rows, 17 run rows), 805 declarations.
+// Census: 269 code-mode rows (252 host rows, 17 run rows), 809 declarations.
 // Replies: 200 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
 // Opaque serde_json::Value leaves: 54; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -401,10 +401,14 @@ declare namespace Sdk {
   type BornWith = Record<string, string>;
   type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith };
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
+  type FactSource = "claim_changelog" | "settlement";
   type FactPositionHex = string;
   type FactKind = "claim.landed" | "claim.superseded" | "proposal.settled";
-  type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; from_memo: boolean; reads_live: boolean } | { status: "missing_history"; reason: string };
-  type HookReplayRow = { position: FactPositionHex; kind: FactKind; entity: string; result: HookReplayOutcome };
+  type HookPhase = "pre" | "post" | "fact";
+  type HookReplayCase = { on: "fact"; source: FactSource; position: FactPositionHex; kind: FactKind; entity: string } | { on: "verb"; run_key: string; invocation: string; verb: string; phase: HookPhase };
+  type HookReplayCompare = "same" | "differs" | "incomplete";
+  type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "missing_history"; reason: string };
+  type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome };
   type ArtifactRefRequest = { artifact_ref: string };
   type ArtifactKind = "document" | "sheet" | "deck" | "code" | "canvas" | "image" | "file";
   type MadeByInputRole = "input" | "prompt";
