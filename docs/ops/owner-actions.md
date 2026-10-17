@@ -1215,13 +1215,14 @@ durable wait keeps its handle. Once the run ends or takes a new lease, attach ag
 credential attaches per lease: the same credential gets the same handle back, and another
 credential is refused. The run's record keeps the attachment, so a handle still works after a
 restart once the runner holds the same lease again. An action and the run's own step never run
-at once. Refusals carry these codes:
+at once: an attach or action waits up to 5 seconds for the current step or action to end, and
+then runs before the run's next step. Refusals carry these codes:
 - 400 `live_run_required`: a live-run action named no handle.
 - 400 `live_run_invalid`: the handle is malformed.
 - 403 `live_run_unavailable`: an unknown run, a credential or agent that is not the attached
   one, or a run with no attachment. All of these get the same answer.
 - 409 `live_run_stale`: the run's lease moved on.
-- 409 `code_run_busy`: the run is mid-step or mid-action. Retry.
+- 409 `code_run_busy`: the run stayed mid-step or mid-action for those 5 seconds. Retry.
 - 409 `live_run_attached`: another credential is attached to this lease.
 
 A running server holds the frame of each card `vault.lenses.default`, `vault.weave.lens` and
