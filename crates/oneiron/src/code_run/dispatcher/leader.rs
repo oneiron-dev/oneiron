@@ -349,21 +349,19 @@ pub(super) fn narrow_budget(
 /// A loaded pattern as the leader reads it: the entity that loaded (an
 /// exploration trial may route to its proposal), its revision and its files.
 fn pattern_json(loaded: &LoadedSkillPack) -> serde_json::Value {
-    serde_json::json!({
-        "skill": loaded.entity.to_hex(),
-        "skill_id": loaded.record.skill_id,
-        "version": loaded.record.version,
-        "desc": loaded.record.desc,
-        "files": loaded.source_files.as_ref().map(|files| {
+    serde_json::json!(crate::code_run::LeaderPatternOutput {
+        skill: loaded.entity,
+        skill_id: loaded.record.skill_id.clone(),
+        version: loaded.record.version.clone(),
+        desc: loaded.record.desc.clone(),
+        files: loaded.source_files.as_ref().map(|files| {
             files
                 .iter()
-                .map(|file| {
-                    serde_json::json!({
-                        "path": file.path,
-                        "text": String::from_utf8_lossy(&file.content),
-                    })
+                .map(|file| crate::code_run::LeaderPatternFile {
+                    path: file.path.clone(),
+                    text: String::from_utf8_lossy(&file.content).into_owned(),
                 })
-                .collect::<Vec<_>>()
+                .collect()
         }),
     })
 }
