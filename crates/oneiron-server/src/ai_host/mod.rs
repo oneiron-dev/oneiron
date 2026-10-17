@@ -29,9 +29,10 @@ mod code_mode;
 mod compaction;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
+pub(crate) mod coach_heal;
+mod code_fix;
 mod dreamer;
 mod harness;
-pub(crate) mod coach_heal;
 pub(crate) mod identity;
 mod local_vision;
 mod policy;
@@ -47,10 +48,12 @@ mod tests;
 mod turn_actions;
 mod turns;
 pub(crate) mod waves;
+mod weave_lens;
 mod workflows;
 
 pub(crate) use local_vision::LocalVisionModel;
 pub(crate) use policy::route_dreamer_extraction;
+pub(crate) use weave_lens::{WeaveLensCaller, render_live_weave_lens};
 pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
 };

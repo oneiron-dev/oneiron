@@ -1,8 +1,8 @@
 //! Signed host-scheduled T1 runs. Broken/unsigned output is silent, never authority.
 use super::{
     DeterministicDetector, DiagnosticEvent, DiagnosticEventClass, DiagnosticWorkingSet,
-    MAX_EVENTS_PER_RUN,
-    decode_diagnostic_event_body, diagnostic_event_id, encode_diagnostic_event_body,
+    MAX_EVENTS_PER_RUN, decode_diagnostic_event_body, diagnostic_event_id,
+    encode_diagnostic_event_body,
 };
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
