@@ -16575,7 +16575,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "re-export": 9
      }
     },
@@ -16596,7 +16596,17 @@
      "path": "src/deletion/receipt.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/receipt_completion.rs",
+     "purpose": "The linked REDACTION_AUDIT completion row (OF-470, ARCH-0038 step 10)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -51290,7 +51300,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52356,7 +52366,7 @@
    },
    "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3166,
+   "source_files": 3167,
    "test_files": 903
   },
   "oneiron-android": {
