@@ -819,14 +819,15 @@ export interface FacadePending<V extends FacadeVerb = FacadeVerb> {
 
 /**
  * What one call answers, by the kind of transport behind the tree: the HTTP
- * adapter's original `Response`, unread, or a `FacadePending` for a call a verb
- * hook stopped on an ask; an adapter that decodes, the typed result; an
- * in-process synchronous one, the typed result itself.
+ * adapter's original `Response`, unread; an adapter that decodes, the typed
+ * result; an in-process synchronous one, the typed result itself. Every kind
+ * answers a `FacadePending` instead for a call a verb hook stopped on an ask,
+ * which `facadeRetry` resends.
  */
 export interface FacadeReturns<V extends FacadeVerb> {
   response: Promise<Response | FacadePending<V>>;
-  result: Promise<FacadeResult<V>>;
-  sync: FacadeResult<V>;
+  result: Promise<FacadeResult<V> | FacadePending<V>>;
+  sync: FacadeResult<V> | FacadePending<V>;
 }
 export type FacadeReturn = keyof FacadeReturns<FacadeVerb>;
 /**

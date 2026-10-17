@@ -17,10 +17,14 @@
 //! Every line goes to the server as the client wrote it, but for one
 //! addition: a `tools/call` whose `_meta` names no `oneiron/invocation` gains
 //! a fresh one there (ARCH-0080 §3), every other `_meta` key as the client
-//! sent it; a call that names one goes on byte for byte. Who is calling is
-//! the credential's to say, not the agent's: a tool call that names no actor
-//! runs as the credential's own, and one that names another is refused
-//! (ARCH-0028 #surface).
+//! sent it; a call that names one goes on byte for byte. The bridge keeps a
+//! memory of tool calls the server answered pending on an ask: a later call
+//! naming no invocation that is the same call (same tool, same arguments)
+//! goes under the pending call's invocation, so it reaches that ask instead
+//! of opening a second one (OF-580). Who is calling is the credential's to
+//! say, not the agent's: a tool call that names no actor runs as the
+//! credential's own, and one that names another is refused (ARCH-0028
+//! #surface).
 //!
 //! Unless the operator names `--surface`, the bridge asks the server once,
 //! before the first request, which endpoint to use: `/mcp` (`setup_oneiron`
@@ -29,6 +33,7 @@
 //! `execute_code` admits, and `/mcp/tool-first` otherwise. The listing alone
 //! cannot say it: `/mcp` lists `execute_code` to every credential alike.
 
+use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
@@ -77,10 +82,11 @@ pub(crate) fn mint_invocation() -> String {
 }
 
 /// The body for a `tools/call` whose `_meta` names no invocation: the same
-/// message with a fresh one added there. `None` sends the client's line as it
-/// wrote it: any other message, a call that names its own, and a malformed
-/// one, which is the server's to refuse.
-fn with_invocation(message: &mut Value) -> Option<Vec<u8>> {
+/// message with `invocation()` added there (a pending call's id, or a fresh
+/// one). `None` sends the client's line as it wrote it: any other message, a
+/// call that names its own, and a malformed one, which is the server's to
+/// refuse.
+fn with_invocation(message: &mut Value, invocation: impl FnOnce() -> String) -> Option<Vec<u8>> {
     if message.get("method").and_then(Value::as_str) != Some("tools/call") {
         return None;
     }
@@ -93,8 +99,71 @@ fn with_invocation(message: &mut Value) -> Option<Vec<u8>> {
     if meta.contains_key(INVOCATION_META) {
         return None;
     }
-    meta.insert(INVOCATION_META.to_owned(), Value::String(mint_invocation()));
+    meta.insert(INVOCATION_META.to_owned(), Value::String(invocation()));
     serde_json::to_vec(message).ok()
+}
+
+/// What the bridge's pending-call memory keys one tool call by.
+type CallKey = [u8; 32];
+
+/// The bridge's pending-call matching rule (OF-580, canon silent; this fn is
+/// the one place a ruling changes it): a `tools/call` is the same call as an
+/// earlier one when it names the same tool with the same `params.arguments`,
+/// every object's keys sorted at every depth. The JSON-RPC id and every
+/// `params._meta` key are not part of it. `None` for any other message.
+fn pending_call_key(message: &Value) -> Option<CallKey> {
+    if message.get("method").and_then(Value::as_str) != Some("tools/call") {
+        return None;
+    }
+    let params = message.get("params")?;
+    let tool = params.get("name").filter(|name| name.is_string())?;
+    let mut hasher = blake3::Hasher::new();
+    hash_sorted(tool, &mut hasher);
+    hash_sorted(params.get("arguments").unwrap_or(&Value::Null), &mut hasher);
+    Some(*hasher.finalize().as_bytes())
+}
+
+/// Feeds `value` to `hasher` as JSON with every object's keys sorted, at
+/// every depth (the workspace's `serde_json` keeps insertion order).
+fn hash_sorted(value: &Value, hasher: &mut blake3::Hasher) {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_unstable();
+            hasher.update(b"{");
+            for key in keys {
+                hasher.update(&serde_json::to_vec(key).unwrap_or_default());
+                hasher.update(b":");
+                hash_sorted(&map[key], hasher);
+                hasher.update(b",");
+            }
+            hasher.update(b"}");
+        }
+        Value::Array(items) => {
+            hasher.update(b"[");
+            for item in items {
+                hash_sorted(item, hasher);
+                hasher.update(b",");
+            }
+            hasher.update(b"]");
+        }
+        scalar => {
+            hasher.update(&serde_json::to_vec(scalar).unwrap_or_default());
+        }
+    }
+}
+
+/// The invocation a server answer names as pending on an ask: a tool-first
+/// hook stop's `result.structuredContent.hook`, or a gateway refusal's
+/// `error.data.hook`, with `status` `pending`. `None` for any other answer.
+fn pending_answer_invocation(answer: &Value) -> Option<&str> {
+    ["/result/structuredContent/hook", "/error/data/hook"]
+        .into_iter()
+        .filter_map(|path| answer.pointer(path))
+        .find(|hook| hook.get("status").and_then(Value::as_str) == Some("pending"))
+        .and_then(|hook| hook.get("invocation"))
+        .and_then(Value::as_str)
+        .filter(|id| oneiron::runtime_hooks::InvocationId::parse_hex(id).is_some())
 }
 
 /// Poll cadence and request bound for this small handoff, independent of
@@ -312,6 +381,10 @@ struct Bridge {
     /// The two variables the operator named for the credential, which curl
     /// does not inherit (nor any default credential variable).
     named_env: Vec<String>,
+    /// Tool calls the server answered pending on an ask, by
+    /// [`pending_call_key`], to the invocation the ask is on. Locked only
+    /// around a lookup or an update, never across a request.
+    pending_calls: Mutex<HashMap<CallKey, String>>,
 }
 
 impl Bridge {
@@ -351,6 +424,7 @@ impl Bridge {
             // a signed proof on its config stdin, and no variable either may
             // be in.
             named_env: vec![args.secret_env.clone(), args.binding_key_env.clone()],
+            pending_calls: Mutex::new(HashMap::new()),
         })
     }
 
@@ -382,13 +456,66 @@ impl Bridge {
         }
         // One deadline for the whole request, the endpoint probe included.
         let until = Instant::now() + self.deadline;
-        let body = with_invocation(&mut message).unwrap_or_else(|| line.as_bytes().to_vec());
+        let key = pending_call_key(&message);
+        // A call naming its own invocation keeps it; one naming none goes
+        // under a pending same call's, else a fresh one.
+        let body = with_invocation(&mut message, || {
+            key.as_ref()
+                .and_then(|key| self.pending_call(key))
+                .unwrap_or_else(mint_invocation)
+        })
+        .unwrap_or_else(|| line.as_bytes().to_vec());
+        let sent = message
+            .pointer("/params/_meta")
+            .and_then(|meta| meta.get(INVOCATION_META))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let reply = self.post(body, until);
         let id = message.get("id").cloned()?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
-            Ok(answer) => answer.to_string(),
+            Ok(answer) => {
+                if let Some(key) = key {
+                    self.note_answer(key, sent.as_deref(), &answer);
+                }
+                answer.to_string()
+            }
+            // No answer from the server is no proof the call finished, so
+            // the memory keeps what it holds.
             Err(refusal) => refusal.rpc_error(&id),
         })
+    }
+
+    /// The invocation a pending same call ran under, if one is held.
+    fn pending_call(&self, key: &CallKey) -> Option<String> {
+        self.pending_calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key)
+            .cloned()
+    }
+
+    /// Updates the pending-call memory from the server's answer to a tool
+    /// call sent under `sent`: a pending answer holds its invocation for the
+    /// call; any other answer drops the entry if it still holds `sent`, as
+    /// a later answer may have replaced it meanwhile.
+    fn note_answer(&self, key: CallKey, sent: Option<&str>, answer: &Value) {
+        let pending = pending_answer_invocation(answer);
+        let mut calls = self
+            .pending_calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match pending {
+            Some(invocation) => {
+                calls.insert(key, invocation.to_owned());
+            }
+            None => {
+                if let Some(sent) = sent
+                    && calls.get(&key).is_some_and(|held| held == sent)
+                {
+                    calls.remove(&key);
+                }
+            }
+        }
     }
 
     /// The endpoint this bridge forwards to. With no `--surface`, a request

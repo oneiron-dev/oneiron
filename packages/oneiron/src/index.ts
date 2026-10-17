@@ -140,6 +140,28 @@ export class Oneiron {
     return this.#client.lastReceiptRef() ?? null
   }
 
+  /**
+   * Resends the call a `PENDING_ASK` refusal answered, under the invocation
+   * its `hook` names (ARCH-0080 §3): pass the caught `OneironError`, the
+   * verb's SDK name (`vault.claims.upsert`) and the same input. While the ask
+   * is open it throws the same `PENDING_ASK`; once the ask is answered
+   * proceed, the saved call runs once and this returns its result. Any other
+   * refusal is refused before a call is made. Run one retry of a pending call
+   * at a time.
+   *
+   * The reply is the verb's shared wire JSON, not the typed projection the
+   * verb's own method returns.
+   */
+  retry(pending: OneironError, verb: string, input: unknown): unknown {
+    const refusal = {
+      code: pending.code,
+      message: pending.message,
+      suggestions: [...pending.suggestions],
+      ...(pending.hook ? {hook: pending.hook} : {}),
+    }
+    return this.#call(() => this.#client.retry(refusal, verb, input))
+  }
+
   // BEGIN GENERATED FACADE VERBS
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
@@ -754,6 +776,7 @@ export class Oneiron {
 }
 
 export { OneironError }
+export type { HookStop } from "./error.js"
 export type * from "./types.js"
 export type * as Facade from "./facade-types.js"
 
