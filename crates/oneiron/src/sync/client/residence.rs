@@ -803,56 +803,7 @@ impl SyncClient {
     /// Read a previously fetched thin item. This cache has no writable Loro
     /// handle; callers must promote its window before any edit.
     pub fn thin_item(&self, item: EntityId) -> Result<Option<ThinItem>, TransportError> {
-        let txn = self
-            .vault
-            .store
-            .env
-            .read_txn()
-            .map_err(|e| TransportError::Storage(e.to_string()))?;
-        let id = item.to_hex();
-        let Some(raw_window) = self
-            .vault
-            .store
-            .sync_state
-            .get(&txn, &format!("ro:e:{id}"))
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-        else {
-            return Ok(None);
-        };
-        let window = std::str::from_utf8(&raw_window)
-            .ok()
-            .and_then(WindowKey::try_new)
-            .ok_or_else(refused)?;
-        if self
-            .vault
-            .store
-            .sync_state
-            .get(&txn, &format!("rp:w:{window}"))
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-            .is_some()
-        {
-            return Ok(None);
-        }
-        let raw = self
-            .vault
-            .store
-            .sync_state
-            .get(&txn, &format!("ri:b:{id}"))
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-            .ok_or_else(refused)?;
-        let document = self
-            .vault
-            .store
-            .sync_state
-            .get(&txn, &format!("ri:d:{id}"))
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-            .ok_or_else(refused)?;
-        Ok(Some(ThinItem {
-            entity_id: item,
-            window,
-            raw: raw.to_vec(),
-            document: document.to_vec(),
-        }))
+        read_thin_item(&self.vault, item)
     }
 
     /// Open one item: its read cache when this machine opened it before,
@@ -892,131 +843,187 @@ impl SyncClient {
         query: &str,
         limit: usize,
     ) -> Result<ResidenceSearch, TransportError> {
-        if self.config.residence_mode != SyncResidenceMode::Opened {
-            return Err(refused());
-        }
-        let budgets = residence_budgets(&self.vault)?;
-        if query.trim().is_empty()
-            || query.len() > budgets.search_query_max_bytes
-            || limit == 0
-            || limit > budgets.search_limit
-        {
-            return Err(refused());
-        }
-        let selector = self
-            .config
-            .residence_selector
-            .as_ref()
-            .ok_or_else(refused)?;
-        let selector = base64::engine::general_purpose::STANDARD
-            .encode(encode_sync_selector(selector).map_err(|_| refused())?);
-        match ResidenceRpc::connect(&self.vault, &self.config, budgets).await? {
-            Some(mut rpc) => {
-                let reply: SearchReply = serde_json::from_value(
-                    rpc.request(
-                        "residence.search",
-                        json!({
-                            "query": query, "limit": limit, "selector": selector
-                        }),
-                    )
-                    .await?,
+        search_resident(&self.vault, &self.config, query, limit).await
+    }
+}
+
+/// Read a previously fetched thin item on the vault alone.
+fn read_thin_item(
+    vault: &crate::Vault,
+    item: EntityId,
+) -> Result<Option<ThinItem>, TransportError> {
+    let txn = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(|e| TransportError::Storage(e.to_string()))?;
+    let id = item.to_hex();
+    let Some(raw_window) = vault
+        .store
+        .sync_state
+        .get(&txn, &format!("ro:e:{id}"))
+        .map_err(|e| TransportError::Storage(e.to_string()))?
+    else {
+        return Ok(None);
+    };
+    let window = std::str::from_utf8(&raw_window)
+        .ok()
+        .and_then(WindowKey::try_new)
+        .ok_or_else(refused)?;
+    if vault
+        .store
+        .sync_state
+        .get(&txn, &format!("rp:w:{window}"))
+        .map_err(|e| TransportError::Storage(e.to_string()))?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let raw = vault
+        .store
+        .sync_state
+        .get(&txn, &format!("ri:b:{id}"))
+        .map_err(|e| TransportError::Storage(e.to_string()))?
+        .ok_or_else(refused)?;
+    let document = vault
+        .store
+        .sync_state
+        .get(&txn, &format!("ri:d:{id}"))
+        .map_err(|e| TransportError::Storage(e.to_string()))?
+        .ok_or_else(refused)?;
+    Ok(Some(ThinItem {
+        entity_id: item,
+        window,
+        raw: raw.to_vec(),
+        document: document.to_vec(),
+    }))
+}
+
+/// Home results when reachable; offline results are explicitly local-only.
+/// On the vault and a client config alone, like [`relay_sealed_windows`], so
+/// a query door asks the home without a sync client.
+pub(crate) async fn search_resident(
+    vault: &crate::Vault,
+    config: &SyncClientConfig,
+    query: &str,
+    limit: usize,
+) -> Result<ResidenceSearch, TransportError> {
+    if config.residence_mode != SyncResidenceMode::Opened {
+        return Err(refused());
+    }
+    let budgets = residence_budgets(vault)?;
+    if query.trim().is_empty()
+        || query.len() > budgets.search_query_max_bytes
+        || limit == 0
+        || limit > budgets.search_limit
+    {
+        return Err(refused());
+    }
+    let selector = config.residence_selector.as_ref().ok_or_else(refused)?;
+    let selector = base64::engine::general_purpose::STANDARD
+        .encode(encode_sync_selector(selector).map_err(|_| refused())?);
+    match ResidenceRpc::connect(vault, config, budgets).await? {
+        Some(mut rpc) => {
+            let reply: SearchReply = serde_json::from_value(
+                rpc.request(
+                    "residence.search",
+                    json!({
+                        "query": query, "limit": limit, "selector": selector
+                    }),
                 )
-                .map_err(|_| refused())?;
-                if reply.source != "home" || !reply.complete || reply.hits.len() > limit {
-                    return Err(refused());
-                }
-                let hits = reply
-                    .hits
-                    .into_iter()
-                    .map(|hit| {
-                        WindowKey::try_new(&hit.window)
-                            .map(|window| ResidenceHit {
-                                entity_id: hit.entity_id,
-                                score: hit.score,
-                                window,
-                            })
-                            .ok_or_else(refused)
-                    })
-                    .collect::<Result<_, _>>()?;
-                Ok(ResidenceSearch {
-                    hits,
-                    source: SearchSource::Home,
-                    complete: true,
-                })
+                .await?,
+            )
+            .map_err(|_| refused())?;
+            if reply.source != "home" || !reply.complete || reply.hits.len() > limit {
+                return Err(refused());
             }
-            None => {
-                let opened: HashSet<_> = self
-                    .vault
-                    .sync_state_keys_with_prefix("ro:e:")
-                    .map_err(|e| TransportError::Storage(e.to_string()))?
-                    .into_iter()
-                    .filter_map(|key| {
-                        key.strip_prefix("ro:e:")
-                            .and_then(|id| EntityId::from_hex(id).ok())
-                    })
-                    .collect();
-                let promoted: HashSet<_> = self
-                    .vault
-                    .sync_state_keys_with_prefix("rp:w:")
-                    .map_err(|e| TransportError::Storage(e.to_string()))?
-                    .into_iter()
-                    .filter_map(|key| key.strip_prefix("rp:w:").map(str::to_owned))
-                    .collect();
-                let needle = query.to_lowercase();
-                let mut hits = Vec::new();
-                for id in &opened {
-                    let Some(item) = self.thin_item(*id)? else {
-                        continue;
-                    };
-                    let raw = String::from_utf8_lossy(&item.raw).to_lowercase();
-                    let text = String::from_utf8_lossy(&item.document).to_lowercase();
-                    if raw.contains(&needle) || text.contains(&needle) {
-                        hits.push(ResidenceHit {
-                            entity_id: id.to_hex(),
-                            score: 1.0,
-                            window: item.window.clone(),
-                        });
-                    }
-                }
-                for hit in self
-                    .vault
-                    .search_text(
-                        query,
-                        budgets
-                            .search_limit
-                            .saturating_mul(budgets.offline_candidate_multiplier),
-                    )
-                    .map_err(|e| TransportError::Storage(e.to_string()))?
-                {
-                    let Some(raw) = self
-                        .vault
-                        .get_raw(&hit.id)
-                        .map_err(|e| TransportError::Storage(e.to_string()))?
-                    else {
-                        continue;
-                    };
-                    let Ok(window) = crate::sync::residence::residence_window_for_blob(&raw) else {
-                        continue;
-                    };
-                    if promoted.contains(window.as_str())
-                        && !hits
-                            .iter()
-                            .any(|existing| existing.entity_id == hit.id.to_hex())
-                    {
-                        hits.push(ResidenceHit {
-                            entity_id: hit.id.to_hex(),
+            let hits = reply
+                .hits
+                .into_iter()
+                .map(|hit| {
+                    WindowKey::try_new(&hit.window)
+                        .map(|window| ResidenceHit {
+                            entity_id: hit.entity_id,
                             score: hit.score,
                             window,
-                        });
-                    }
-                }
-                hits.truncate(limit);
-                Ok(ResidenceSearch {
-                    hits,
-                    source: SearchSource::LocalOnly,
-                    complete: false,
+                        })
+                        .ok_or_else(refused)
                 })
+                .collect::<Result<_, _>>()?;
+            Ok(ResidenceSearch {
+                hits,
+                source: SearchSource::Home,
+                complete: true,
+            })
+        }
+        None => {
+            let opened: HashSet<_> = vault
+                .sync_state_keys_with_prefix("ro:e:")
+                .map_err(|e| TransportError::Storage(e.to_string()))?
+                .into_iter()
+                .filter_map(|key| {
+                    key.strip_prefix("ro:e:")
+                        .and_then(|id| EntityId::from_hex(id).ok())
+                })
+                .collect();
+            let promoted: HashSet<_> = vault
+                .sync_state_keys_with_prefix("rp:w:")
+                .map_err(|e| TransportError::Storage(e.to_string()))?
+                .into_iter()
+                .filter_map(|key| key.strip_prefix("rp:w:").map(str::to_owned))
+                .collect();
+            let needle = query.to_lowercase();
+            let mut hits = Vec::new();
+            for id in &opened {
+                let Some(item) = read_thin_item(vault, *id)? else {
+                    continue;
+                };
+                let raw = String::from_utf8_lossy(&item.raw).to_lowercase();
+                let text = String::from_utf8_lossy(&item.document).to_lowercase();
+                if raw.contains(&needle) || text.contains(&needle) {
+                    hits.push(ResidenceHit {
+                        entity_id: id.to_hex(),
+                        score: 1.0,
+                        window: item.window.clone(),
+                    });
+                }
             }
+            for hit in vault
+                .search_text(
+                    query,
+                    budgets
+                        .search_limit
+                        .saturating_mul(budgets.offline_candidate_multiplier),
+                )
+                .map_err(|e| TransportError::Storage(e.to_string()))?
+            {
+                let Some(raw) = vault
+                    .get_raw(&hit.id)
+                    .map_err(|e| TransportError::Storage(e.to_string()))?
+                else {
+                    continue;
+                };
+                let Ok(window) = crate::sync::residence::residence_window_for_blob(&raw) else {
+                    continue;
+                };
+                if promoted.contains(window.as_str())
+                    && !hits
+                        .iter()
+                        .any(|existing| existing.entity_id == hit.id.to_hex())
+                {
+                    hits.push(ResidenceHit {
+                        entity_id: hit.id.to_hex(),
+                        score: hit.score,
+                        window,
+                    });
+                }
+            }
+            hits.truncate(limit);
+            Ok(ResidenceSearch {
+                hits,
+                source: SearchSource::LocalOnly,
+                complete: false,
+            })
         }
     }
 }
