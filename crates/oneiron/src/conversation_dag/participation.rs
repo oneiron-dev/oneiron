@@ -16,11 +16,12 @@ use crate::{EntityId, Vault};
 use heed::RoTxn;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The thread a live append lands in: the root of its chain, the first
-/// thread record walked up `Parent`, never the moving tip. A thread append
-/// whose parent is a trunk record is the root itself. `None` for a trunk
-/// append.
-fn thread_root_in_txn(
+/// The thread a live append lands in: the root its parent's thread binding
+/// names (FIX 2951), the stable id its joins and receipts key by, never the
+/// moving tip. A room thread's opaque replies carry the same binding as its
+/// DAG records, so both key by one root. A thread append whose parent names
+/// no thread is the root itself. `None` for a trunk append.
+pub(super) fn thread_root_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     parent: Option<EntityId>,
@@ -30,21 +31,15 @@ fn thread_root_in_txn(
     if !thread {
         return Ok(None);
     }
-    let mut root = record;
-    let mut cursor = parent;
-    let mut steps = 0;
-    while let Some(id) = cursor {
-        if !graph::is_thread_record(store, txn, &id)? {
-            break;
+    if let Some(parent) = parent {
+        let row = store
+            .port_entity_record(txn, &parent)?
+            .ok_or(Error::EntityNotFound)?;
+        if let Some(binding) = crate::workspace_roster::thread_binding(&row.body)? {
+            return Ok(Some(binding.root));
         }
-        steps += 1;
-        if steps > MAX_ANCESTOR_DEPTH {
-            return Err(Error::IndexOverflow("conversation_dag_walk"));
-        }
-        root = id;
-        cursor = graph::parent(store, txn, &id)?;
     }
-    Ok(Some(root))
+    Ok(Some(record))
 }
 
 /// Admits the writer of a live authored append, `record`, answering
