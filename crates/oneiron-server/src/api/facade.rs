@@ -683,13 +683,15 @@ async fn facade_hooks_pre(
     };
     let invocation = call.invocation()?;
     // A credential caller's own call can run again through this door once
-    // its hook's ask settles, on the drain's permit when it does.
+    // its hook's ask settles, on the drain's permit when it does. A context
+    // the row refuses saves none.
     let credential = match bound {
         Some(_) if VerbCall::may_run(&server.vault, verb) => facade_invocation(
             credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
             call,
-        )?
-        .verb_ask_credential(),
+        )
+        .ok()
+        .and_then(|memory| memory.verb_ask_credential()),
         _ => None,
     };
     let resume = RowHookResume {

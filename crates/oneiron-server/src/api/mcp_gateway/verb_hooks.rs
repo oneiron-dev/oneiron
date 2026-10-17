@@ -163,6 +163,14 @@ impl McpCallContext {
     ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal>
     {
         use oneiron::runtime_hooks::verb::VerbAskRefusal;
+        // Only a generated tool-first row is a door a connector's call
+        // comes back by.
+        if !matches!(
+            registered_surface(McpSurfaceMode::ToolFirst).resolve(&call.verb),
+            Some(McpEndpointTool::Verb(_))
+        ) {
+            return Err(VerbAskRefusal::ContextUnavailable);
+        }
         let now = server
             .vault
             .capability_slip_now()
