@@ -1732,6 +1732,9 @@ impl AgentVerb {
                 | Self::VaultClaimsSeed
         )
     }
+    pub const fn is_task_work(self) -> bool {
+        matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
+    }
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
             Self::Report => &["spec"],
