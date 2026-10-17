@@ -25,6 +25,7 @@ use oneiron::{
     LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
     RetryableLlmError,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
@@ -124,7 +125,9 @@ struct ReceiptPrefix {
 }
 
 /// The served receipt of one rung's answer, waiting for that answer's usage.
-/// A job's receipt waits until the job ends.
+/// A job's receipt waits until the job ends, kept on its row so a restart
+/// keeps it too.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct PendingReceipt {
     provider: String,
     requested: String,

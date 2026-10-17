@@ -9,7 +9,8 @@
 //!
 //! Every stream carries one message each way, under the transport's 1 MiB
 //! cap. Bodies over that cross in pieces named by blake3. A stream's events
-//! come back as the asking node pulls them, in batches.
+//! come back as the asking node pulls them, in batches. A message of 16 KiB
+//! or more crosses in the /ws codec frame, zstd, when that is smaller.
 
 mod client;
 mod serve;
@@ -17,6 +18,7 @@ mod serve;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use oneiron::sync::transport::{TAG_CODEC, WireCodecs, decode_codec_frame, encode_codec_frame};
 use oneiron_mesh_transport::{MeshConnection, MeshError};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -33,6 +35,8 @@ const PIECE: usize = (1 << 20) - 4096;
 const INLINE: usize = 256 * 1024;
 /// The most bytes one connection may stage, either way.
 const STAGED_MAX: usize = 64 << 20;
+/// The transport's message cap, which a codec frame also decodes to at most.
+const MESSAGE_MAX: usize = 1 << 20;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -97,6 +101,25 @@ fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, MeshError> {
     rmp_serde::from_slice(bytes).map_err(|err| MeshError::Io(format!("llm mesh decode: {err}")))
 }
 
+/// One message as it crosses (ARCH-0081 §7): its MessagePack bytes, in the
+/// /ws codec frame when that is smaller. MessagePack never starts with the
+/// frame's tag, so a plain message needs no mark.
+fn seal<T: Serialize>(message: &T) -> Result<Vec<u8>, MeshError> {
+    let bytes = encode(message)?;
+    Ok(encode_codec_frame(&bytes, WireCodecs::OURS).unwrap_or(bytes))
+}
+
+/// One message as it arrived, a codec frame decoded to at most
+/// [`MESSAGE_MAX`] first.
+fn unseal<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, MeshError> {
+    if bytes.first() != Some(&TAG_CODEC) {
+        return decode(bytes);
+    }
+    let inner = decode_codec_frame(bytes, MESSAGE_MAX)
+        .map_err(|err| MeshError::Io(format!("llm mesh codec: {err}")))?;
+    decode(&inner)
+}
+
 fn hash(bytes: &[u8]) -> [u8; 32] {
     *blake3::hash(bytes).as_bytes()
 }
@@ -104,8 +127,8 @@ fn hash(bytes: &[u8]) -> [u8; 32] {
 /// One message out on a fresh stream, one back.
 async fn exchange(conn: &dyn MeshConnection, request: &Request) -> Result<Reply, MeshError> {
     let mut stream = conn.open_stream().await?;
-    stream.send(&encode(request)?).await?;
-    decode(&stream.recv().await?)
+    stream.send(&seal(request)?).await?;
+    unseal(&stream.recv().await?)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

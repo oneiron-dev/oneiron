@@ -59,9 +59,9 @@ pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
 pub use weave_serve::{
-    WeaveDigestRequest, WeaveDigestView, WeaveItemView, WeaveLinkCorrectionView, WeaveReaderKind,
-    WeaveReaderRef, WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveSectionInput,
-    WeaveSectionView, WeaveWrongLinkRequest,
+    WeaveDigestFramed, WeaveDigestRequest, WeaveDigestView, WeaveItemView, WeaveLinkCorrectionView,
+    WeaveReaderKind, WeaveReaderRef, WeaveReportRequest, WeaveReportView, WeaveScheduleView,
+    WeaveSectionInput, WeaveSectionView, WeaveWrongLinkRequest,
 };
 
 mod access_gate;

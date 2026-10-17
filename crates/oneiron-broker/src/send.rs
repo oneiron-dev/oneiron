@@ -283,10 +283,40 @@ impl Sender {
         }
         // A bodyless read or removal sends no body, not an empty one.
         if !body.is_empty() {
-            builder = builder.body(body.to_vec());
+            // OF-603: past the plaintext checks and the digest binding.
+            builder = match compressed(call, body) {
+                Some(encoded) => builder.header(CONTENT_ENCODING, "gzip").body(encoded),
+                None => builder.body(body.to_vec()),
+            };
         }
         builder.build().map_err(|_| Refusal::Header)
     }
+}
+
+/// The origin whose Messages API takes a gzip request body (ARCH-0081 §6).
+const GZIP_ORIGIN: &str = "https://api.anthropic.com";
+/// The smallest request body worth compressing.
+const MIN_COMPRESSED_BODY: usize = 16 << 10;
+
+/// `body` as gzip-1, just before send: only for Anthropic's Messages API at
+/// [`GZIP_ORIGIN`], a body of at least [`MIN_COMPRESSED_BODY`], and an
+/// encoding that is smaller. The call is checked and its digest bound to the
+/// plain bytes already; the reply still arrives identity, so the strip reads
+/// plain bytes.
+fn compressed(call: &CallHeader, body: &[u8]) -> Option<Vec<u8>> {
+    if call.shape != crate::Shape::AnthropicMessages
+        || call.origin != GZIP_ORIGIN
+        || body.len() < MIN_COMPRESSED_BODY
+    {
+        return None;
+    }
+    let mut encoder = flate2::write::GzEncoder::new(
+        Vec::with_capacity(body.len() / 2),
+        flate2::Compression::new(1),
+    );
+    io::Write::write_all(&mut encoder, body).ok()?;
+    let encoded = encoder.finish().ok()?;
+    (encoded.len() < body.len()).then_some(encoded)
 }
 
 /// The shape's key header value for `secret`, marked sensitive.
