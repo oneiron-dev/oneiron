@@ -1,10 +1,13 @@
-//! The inputs of the verb-table rows a code run answers itself
+//! The inputs and outputs of the verb-table rows a code run answers itself
 //! (`context: "run"` in `scripts/sdk/agent-verbs.json`).
 //!
-//! Each is the object code mode's `vault.<row>(input)` takes. The guest
+//! Each input is the object code mode's `vault.<row>(input)` takes. The guest
 //! bridge decodes it into the run's own typed `self.*` call, so a row keeps the
 //! effect, gate and replay row it had as a hand-written import. Each input is
 //! closed: a field it does not list is refused, as on every other row.
+//!
+//! Each output is what the row's reply carries under `output`, as its row
+//! names it, so the catalog fragment types the reply.
 //!
 //! The integer bounds are the ones the typed imports enforced: a time is a
 //! JavaScript safe integer, since a guest number above it was already rounded,
@@ -13,7 +16,9 @@
 /// The largest integer a JavaScript number carries exactly.
 pub const JS_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+use crate::entity_id::EntityId;
 
 /// `vault.search`: a bounded text search over the run's storage route.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
@@ -342,4 +347,88 @@ pub struct TaskWaitSetRequest {
     pub until: Option<u64>,
     /// The wait's key in the run: the same key answers as the same wait.
     pub step_key: String,
+}
+
+/// `vault.search`'s output: the hits, best first.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MemorySearchOutput {
+    pub results: Vec<MemorySearchHit>,
+}
+
+/// One `vault.search` hit.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct MemorySearchHit {
+    pub id: EntityId,
+    pub score: f32,
+}
+
+/// `vault.claims.put` and `vault.claims.supersede`'s output: the claim
+/// written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct MemoryWriteOutput {
+    pub id: EntityId,
+}
+
+/// `vault.edges.put`'s output: the edge written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MemoryEdgeOutput {
+    pub src: EntityId,
+    /// The edge kind's name.
+    pub kind: String,
+    pub tgt: EntityId,
+}
+
+/// `tasks.refuse`'s output: what the agent's dial made of her refusal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TaskRefuseOutput {
+    pub task: EntityId,
+    /// Where her dial sat: `none`, `voice`, `veto` or `full`.
+    pub level: String,
+    /// The level's outcome: `proceed`, `object` or `decline`.
+    pub outcome: String,
+    /// A byte-identical retry answered by the first decision.
+    pub replay: bool,
+}
+
+/// `self.agents.spawn`'s output: the queued attempt, or the widening its
+/// spawn proposed instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum AgentSpawnOutput {
+    Queued {
+        kind: AgentSpawnKind,
+        /// The attempt's id, hex.
+        attempt: String,
+    },
+    ProposedWiden {
+        kind: AgentSpawnKind,
+        proposal: String,
+    },
+}
+
+/// The `kind` every `self.agents.spawn` output carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSpawnKind {
+    AgentSpawn,
+}
+
+/// `self.leader.pattern`'s output: the pattern loaded, as the leader reads
+/// it (OF-389).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LeaderPatternOutput {
+    /// The entity that loaded: an exploration trial may route to its
+    /// proposal.
+    pub skill: EntityId,
+    pub skill_id: String,
+    pub version: String,
+    pub desc: String,
+    pub files: Option<Vec<LeaderPatternFile>>,
+}
+
+/// One file of a loaded pattern.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LeaderPatternFile {
+    pub path: String,
+    pub text: String,
 }
