@@ -183,7 +183,7 @@ fn stands_in(
         }
         Some(JoinSubject::Person(person)) => {
             let pen = (person != actor).then_some(actor);
-            person_standing_in_txn(vault, txn, room, person, pen)? == Some(true)
+            person_standing_in_txn(vault, txn, room, None, person, pen)? == Some(true)
         }
         None => false,
     })
