@@ -4682,6 +4682,7 @@ class BodyConflict(TypedDict):
 class OfficeBodyDiff(TypedDict):
     base: list[int]
     head: list[int]
+    fork_head: list[int]
     proposal: list[BlockChange]
     current: list[BlockChange]
     conflicts: list[BodyConflict]
@@ -4689,6 +4690,7 @@ class OfficeBodyForkMergeRequest(TypedDict):
     artifact_ref: str
     fork_ref: str
     reviewed_head: list[int]
+    reviewed_fork: list[int]
 class OfficeBodyExportVerbRequest(TypedDict):
     artifact_ref: str
     run_ref: str

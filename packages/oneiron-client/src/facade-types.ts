@@ -1789,9 +1789,9 @@ export type ConflictKind = "delete_edit" | "competing_move" | "both_edited" | "b
 /** `oneiron::office_body::fork::BodyConflict` */
 export type BodyConflict = { block: string; kind: ConflictKind }
 /** `oneiron::office_body::fork::OfficeBodyDiff` */
-export type OfficeBodyDiff = { base: number[]; head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] }
+export type OfficeBodyDiff = { base: number[]; head: number[]; fork_head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] }
 /** `oneiron::office_body::verbs::OfficeBodyForkMergeRequest` */
-export type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[] }
+export type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] }
 /** `oneiron::office_body::verbs::OfficeBodyExportVerbRequest` */
 export type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null }
 /** `oneiron::office_body::OfficeBodyExportRecord` */

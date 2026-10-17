@@ -160,7 +160,7 @@ declare const vault: {
         diff(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
         discard(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
         edit(input: { artifact_ref: string; fork_ref: string; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] } | { format: "pptx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
-        merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[] }): Promise<unknown>;
+        merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] }): Promise<unknown>;
         open(input: { artifact_ref: string; run_root_ref?: string | null }): Promise<unknown>;
       };
       head(input: { artifact_ref: string }): Promise<unknown>;

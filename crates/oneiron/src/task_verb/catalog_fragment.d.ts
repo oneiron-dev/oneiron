@@ -957,8 +957,8 @@ declare namespace Sdk {
   type BlockChange = { block: string; kind: ChangeKind };
   type ConflictKind = "delete_edit" | "competing_move" | "both_edited" | "both_set";
   type BodyConflict = { block: string; kind: ConflictKind };
-  type OfficeBodyDiff = { base: number[]; head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] };
-  type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[] };
+  type OfficeBodyDiff = { base: number[]; head: number[]; fork_head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] };
+  type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null };
   type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };

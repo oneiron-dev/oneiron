@@ -501,16 +501,16 @@ impl Vault {
         three_way(kind, &live, &proposal, &record.base, &head.frontier)
     }
 
-    /// Land a reviewed fork. The reviewer names the head it read; a moved head,
-    /// a blocking conflict, the opener as merger, or a merged body that no longer
-    /// reads refuses the merge. The fork's actual operations are imported into a
+    /// Land a reviewed fork. The reviewer names the live head and the fork head
+    /// it read; a moved head, a fork edited since, a blocking conflict, the
+    /// opener as merger, or a merged body that no longer reads refuses the merge. The fork's actual operations are imported into a
     /// scratch copy first; nothing is cherry-picked or rewritten. The fork's
     /// receipts join the body's.
     pub fn merge_office_body_fork(
         &self,
         artifact: &EntityId,
         fork: &EntityId,
-        expected_head: &[u8],
+        (expected_head, expected_fork): (&[u8], &[u8]),
         actor: WriteActor,
     ) -> Result<OfficeBodyDiff> {
         self.with_write_txn_grouped(|wtxn| {
@@ -518,6 +518,11 @@ impl Vault {
             let (record, proposal) = open_fork(&self.store, wtxn, artifact, fork)?;
             if record.opener == actor.entity_ref() {
                 return Err(invalid("a fork's opener cannot merge it"));
+            }
+            if proposal.oplog_frontiers().encode() != expected_fork {
+                return Err(invalid(
+                    "the fork changed since the review; read the diff again",
+                ));
             }
             let (head, live) = self.loro_body(wtxn, artifact, kind, None)?;
             if head.frontier != expected_head {
@@ -905,7 +910,11 @@ fn three_way(
     let before = live
         .fork_at(&frontier)
         .map_err(|_| invalid("unknown body frontier"))?;
-    let frontiers = (base.to_vec(), head.to_vec());
+    let frontiers = (
+        base.to_vec(),
+        head.to_vec(),
+        proposal.oplog_frontiers().encode(),
+    );
     Ok(match kind {
         OfficeBodyKind::Docx => fork::diff(
             &docx::read(&before)?,

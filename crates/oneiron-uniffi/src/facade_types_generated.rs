@@ -12376,6 +12376,8 @@ pub struct OfficeBodyDiff {
     pub base: Vec<u8>,
     #[serde(rename = "head")]
     pub head: Vec<u8>,
+    #[serde(rename = "fork_head")]
+    pub fork_head: Vec<u8>,
     #[serde(rename = "proposal")]
     pub proposal: Vec<BlockChange>,
     #[serde(rename = "current")]
@@ -12394,6 +12396,8 @@ pub struct OfficeBodyForkMergeRequest {
     pub fork_ref: String,
     #[serde(rename = "reviewed_head")]
     pub reviewed_head: Vec<u8>,
+    #[serde(rename = "reviewed_fork")]
+    pub reviewed_fork: Vec<u8>,
 }
 
 /// `oneiron::office_body::verbs::OfficeBodyExportVerbRequest`.

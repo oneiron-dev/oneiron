@@ -104,14 +104,16 @@ pub struct OfficeBodyForkEditRequest {
     pub made_by: Option<serde_json::Value>,
 }
 
-/// `vault.artifacts.body.fork.merge`: land a reviewed fork, naming the head
-/// the review read.
+/// `vault.artifacts.body.fork.merge`: land a reviewed fork, naming the live
+/// head and the fork head the review read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyForkMergeRequest {
     pub artifact_ref: String,
     pub fork_ref: String,
     pub reviewed_head: Vec<u8>,
+    /// The diff's `fork_head`.
+    pub reviewed_fork: Vec<u8>,
 }
 
 /// `vault.artifacts.body.export`: project the body onto its imported package
@@ -421,7 +423,12 @@ impl Memory<'_> {
         let fork = self.body_ref(&input.fork_ref)?;
         Ok(self
             .vault()
-            .merge_office_body_fork(&artifact, &fork, &input.reviewed_head, actor)?)
+            .merge_office_body_fork(
+                &artifact,
+                &fork,
+                (&input.reviewed_head, &input.reviewed_fork),
+                actor,
+            )?)
     }
 
     /// `vault.artifacts.body.fork.discard`: the discarded fork's record.
