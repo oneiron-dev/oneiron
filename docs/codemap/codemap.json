@@ -10127,16 +10127,17 @@
       "StoredWeaveDigest",
       "WeaveDigestCadence",
       "WeaveDigestReader",
-      "WeaveDigestSchedule"
+      "WeaveDigestSchedule",
+      "WeaveScheduleHold"
      ],
      "path": "src/claim/scoped_read/weave_digest.rs",
      "purpose": "Per-reader report schedules (OF-499)",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 10,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -10148,12 +10149,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "WeaveLensPlan",
       "WeaveLensPlanLine",
       "WeaveLensPlanSection",
+      "WeaveLensRefusal",
       "WeaveLensRender",
       "WeaveLiveLens"
      ],
@@ -10161,9 +10163,9 @@
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
       "const": 3,
-      "crate-vis": 11,
+      "crate-vis": 14,
       "fn": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -17991,7 +17993,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WeaveLensModel"
@@ -41807,24 +41809,29 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "JudgeIncumbent",
       "JudgeShadowAnswer",
       "JudgeShadowCase",
       "JudgeShadowHost",
+      "JudgeSwapDisagreement",
+      "JudgeSwapPick",
+      "JudgeSwapPolicy",
       "JudgeSwapReceipt",
-      "JudgeSwapReport"
+      "JudgeSwapReport",
+      "JudgeSwapSettledBy",
+      "JudgeTieBreaker"
      ],
      "path": "src/skill_optimize/judge_swap.rs",
-     "purpose": "The judge-swap shadow ladder (ARCH-0053, OF-184)",
+     "purpose": "The judge-swap shadow ladder (ARCH-0053, ARCH-0079 #model-swaps, OF-184)",
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 2,
-      "struct": 4,
+      "enum": 3,
+      "fn": 5,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -52830,7 +52837,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 158,
+   "over_bar": 160,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3198,
    "test_files": 903
@@ -72654,6 +72661,7 @@
       "WeaveDigestRequest",
       "WeaveDigestView",
       "WeaveItemView",
+      "WeaveLensRefusal",
       "WeaveLinkCorrectionView",
       "WeaveReportRequest",
       "WeaveReportView",
@@ -72694,7 +72702,7 @@
      "purpose": "—",
      "surface": {
       "enum": 242,
-      "struct": 591
+      "struct": 592
      }
     },
     {
