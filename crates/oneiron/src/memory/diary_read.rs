@@ -840,7 +840,8 @@ impl Memory<'_> {
             if !ruled {
                 return Ok(DiaryReadOutcome::NotCovered);
             }
-            let review = reader != agent && agent_reviews_diary_reads_in_txn(self.vault, txn, &agent)?;
+            let review =
+                reader != agent && agent_reviews_diary_reads_in_txn(self.vault, txn, &agent)?;
             let mut request = if review {
                 standing_request_in_txn(self.vault, txn, agent, reader, &reason)?
             } else {
@@ -848,7 +849,10 @@ impl Memory<'_> {
             };
             let at = self.vault.store.clock.now_recorded_at();
             let reader_class = actor.actor_class().gate_actor_class();
-            match request.as_ref().map(|request| (request.state, request.request)) {
+            match request
+                .as_ref()
+                .map(|request| (request.state, request.request))
+            {
                 _ if !review => {}
                 Some((DiaryReviewState::Approved, _)) => {}
                 Some((DiaryReviewState::Declined, request)) => {

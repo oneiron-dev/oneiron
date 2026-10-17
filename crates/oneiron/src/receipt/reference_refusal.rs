@@ -1,15 +1,23 @@
 //! Reference-refusal receipts (OF-063): a record ref a write named does not
 //! resolve for its writer. In a typed ref slot the write was refused
 //! (`refused`); in AI-written prose (OF-063 prose links: Engine ruling 10-17)
-//! the text landed as written and the link shows as its plain label
+//! the text is kept as written and the link shows as its plain label
 //! (`unlinked`).
 //!
 //! The refusal is receipted where it happens, on its own write, before the
-//! caller hears it; the refused write never ran. The receipt names the actor,
+//! caller hears it; the refused write never ran. An `unlinked` receipt is
+//! written before the engine call that would land the text, so it records the
+//! AI's attempt: it stands even when that write then fails (a gate refusal, a
+//! cap), and it is no proof the text landed. The receipt names the actor,
 //! the actor's class, the verb row, the field pointer and the time, as its own
 //! RECEIPT_RECORD. It never holds the ref, the rejected value or any other
 //! content of the attempt: the audit family keeps only that a write was
 //! refused, by whom, through which row and at which field.
+//!
+//! The one exception is an anonymous off-record session (Engine ruling 10-17,
+//! matching OF-538's call receipts; ARCH-0052): a call inside one is refused
+//! or unlinked as anywhere else, but no reference-refusal record is written,
+//! since such a session keeps nothing ([`receipt_reference_refusals`]).
 
 use std::collections::BTreeMap;
 
@@ -35,7 +43,12 @@ const MAX_FIELD_BYTES: usize = 256;
 pub(crate) enum ReferenceOutcome {
     /// A typed ref slot: the write was refused and never ran.
     Refused,
-    /// A prose link: the text was kept as written, the link unlinked.
+    /// A prose link: the text is kept as written, the link unlinked.
+    ///
+    /// This records the AI's attempt, not a landed message: the receipt is
+    /// written before the engine call, on its own grouped write, so it stands
+    /// even when that write then fails (a gate refusal, a cap). A reader of
+    /// the audit family must not read it as proof the text landed.
     Unlinked,
 }
 
@@ -143,19 +156,28 @@ pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
             .all(|key| REFUSAL_FIELDS.contains(&key.as_str()))
 }
 
-/// Receipts `facts` as one reference refusal, on its own grouped write. The
-/// refused write staged nothing, so nothing else rides this write, and the
-/// caller hears the refusal only once it commits.
-pub(crate) fn record_reference_refusal(vault: &Vault, facts: &ReferenceRefusalFacts) -> Result<()> {
-    record_reference_refusals(vault, std::slice::from_ref(facts))
+/// Receipts each of `refusals`, `memory`'s writer's, as its own
+/// reference-refusal record, all on one grouped write of their own; the
+/// refused write staged nothing, so nothing else rides it, and the caller
+/// hears the refusal only once it commits. `Ok(false)` when nothing was
+/// written: none to write, or the host bound the call to an anonymous
+/// off-record session ([`crate::memory::Memory::in_off_record_session`]),
+/// which keeps no record (Engine ruling 10-17, the same signal OF-538's call
+/// receipts read). The refusal or the unlinking stands either way.
+pub(crate) fn receipt_reference_refusals(
+    memory: &crate::memory::Memory<'_>,
+    refusals: &[ReferenceRefusalFacts],
+) -> Result<bool> {
+    if refusals.is_empty() || memory.keeps_no_record() {
+        return Ok(false);
+    }
+    record_reference_refusals(memory.vault(), refusals)?;
+    Ok(true)
 }
 
 /// Receipts each of `refusals` as its own reference-refusal record, all on
 /// one grouped write of their own.
-pub(crate) fn record_reference_refusals(
-    vault: &Vault,
-    refusals: &[ReferenceRefusalFacts],
-) -> Result<()> {
+fn record_reference_refusals(vault: &Vault, refusals: &[ReferenceRefusalFacts]) -> Result<()> {
     if refusals.is_empty() {
         return Ok(());
     }
