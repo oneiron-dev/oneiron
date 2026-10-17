@@ -5,9 +5,9 @@
 //! proof reads the owner lens.
 use super::{
     ClaimReadStatus, ScopedRead, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence,
-    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLensPlan, WeaveLensRefusal,
-    WeaveLensRender, WeaveLinkCorrection, WeaveLiveLens, WeaveReader, WeaveReport,
-    WeaveScheduleHold, WeaveSectionKind, WeaveSectionSpec,
+    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLensRefusal, WeaveLensRender,
+    WeaveLinkCorrection, WeaveLiveLens, WeaveReader, WeaveReport, WeaveScheduleHold,
+    WeaveSectionKind, WeaveSectionSpec,
 };
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
@@ -342,8 +342,8 @@ impl Memory<'_> {
     /// step's plan, over it, as a card beside the frame that minted its
     /// backing refs; its host keeps the frame for the card's events. The
     /// plan was written over what the first read admitted, so a report that
-    /// changed meanwhile is refused, as is a plan that does not cite each of
-    /// its items exactly once.
+    /// changed meanwhile answers `None` and the host asks again from a fresh
+    /// read. A plan that does not cite each item exactly once is refused.
     pub fn weave_lens_finish_framed(
         &self,
         owner: Option<&AuthenticatedOwner>,
@@ -351,33 +351,23 @@ impl Memory<'_> {
         live: WeaveLiveLens,
         answer: &str,
         model: &str,
-    ) -> MemoryResult<HostedLensRender> {
+    ) -> MemoryResult<Option<HostedLensRender>> {
         let reader = self.weave_reader(owner)?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let report = read
             .weave_report(reader, &Self::weave_recipe(request)?)?
             .value;
         if report != live.report {
-            return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_INVALID_STATE,
-                "the weave report changed while its lens rendered",
-                &["Ask for the lens again."],
-            ));
+            return Ok(None);
         }
-        let plan: WeaveLensPlan = serde_json::from_str(answer.trim()).map_err(|_| {
-            MemoryError::new(
-                crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
-                "the model's answer is not a weave lens plan",
-                &["Ask for the lens again."],
-            )
-        })?;
-        if plan.validate(&report).is_err() {
-            return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
-                "the model's plan does not cite each report item exactly once",
-                &["Ask for the lens again."],
-            ));
-        }
+        let plan =
+            super::weave_lens::weave_lens_answer_plan(answer, &report).map_err(|reason| {
+                MemoryError::new(
+                    crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                    format!("the model's weave lens plan was refused: {reason}"),
+                    &["Ask for the lens again."],
+                )
+            })?;
         let render = WeaveLensRender {
             plan,
             skill_ref: live.skill_ref,
@@ -391,7 +381,7 @@ impl Memory<'_> {
         if let Err(error) = self.vault().keep_live_weave_lens(reader, &report, &render) {
             tracing::warn!(?error, "the live weave lens render was not kept");
         }
-        Ok(lens)
+        Ok(Some(lens))
     }
 
     /// The live report for `reader` under the bound actor's read.

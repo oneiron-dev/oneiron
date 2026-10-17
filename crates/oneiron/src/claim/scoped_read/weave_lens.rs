@@ -117,7 +117,10 @@ pub struct WeaveLensRefusal {
 
 /// How many repair turns a refused plan gets: the refused answer and why go
 /// back to the model, which answers again.
-pub(crate) const WEAVE_LENS_PLAN_REPAIRS: usize = 1;
+pub const WEAVE_LENS_PLAN_REPAIRS: usize = 1;
+/// How many times a live render is asked again from a fresh read when the
+/// report moved between its two reads.
+pub const WEAVE_LIVE_LENS_REREADS: usize = 1;
 
 fn item_key(section: usize, item: usize) -> String {
     format!("{section}.{item}")
@@ -294,6 +297,19 @@ impl WeaveLiveLens {
             input,
         }))
     }
+
+    /// Why `answer` is not a plan for the report the step was shown; `None`
+    /// for a plan.
+    #[must_use]
+    pub fn plan_refusal(&self, answer: &str) -> Option<String> {
+        weave_lens_answer_plan(answer, &self.report).err()
+    }
+
+    /// A repair turn's text for a plan refused for `reason`.
+    #[must_use]
+    pub fn repair_text(&self, reason: &str) -> String {
+        weave_lens_repair_text(&self.report, reason)
+    }
 }
 
 /// The weave-report skill as a live render loads it. No attempt stamps the
@@ -445,8 +461,9 @@ fn wrong_control(
 }
 
 /// Compose a saved render into the lens under `read`, the opener's own read.
-/// Every row binds the source its read admits now; every link row carries
-/// the wrong control over its exact link.
+/// Every row binds the source its read admits now; every link row a human
+/// opens carries the wrong control over its exact link (an agent files no
+/// link label, so its rows carry none).
 pub(super) fn compose_weave_lens(
     read: &ScopedRead<'_>,
     report: &WeaveReport,
@@ -468,6 +485,7 @@ pub(super) fn compose_weave_lens_framed(
     plan.validate(report)?;
     let items = keyed_items(report);
     let mut frame = opener_frame(read)?;
+    let agent = read.actor_key().actor_class() == Some(EdgeActorClass::Agent.gate_actor_class());
     let sources: Vec<EntityId> = items
         .values()
         .filter_map(|item| item_sources(item))
@@ -537,6 +555,7 @@ pub(super) fn compose_weave_lens_framed(
                 kind,
                 target,
             } = item
+                && !agent
             {
                 let input = serde_json::to_string(&super::WeaveWrongLinkRequest {
                     source_ref: source.to_hex(),
