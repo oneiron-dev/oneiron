@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 215 facade rows, 738 declarations.
-Inputs: 184 of 215 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 172 of 215 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 217 facade rows, 746 declarations.
+Inputs: 186 of 217 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 174 of 217 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 49; unread shapes: 1.
 """
 
@@ -1576,6 +1576,44 @@ class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
+class RecordEraseRequest(TypedDict):
+    record: EntityId
+class EraseShare(TypedDict):
+    grant: str
+    recipient: str
+class EraseHeldBytes(TypedDict):
+    content_hash: str
+    other_holders: list[str]
+class EraseLfsChunk(TypedDict):
+    chunk_hash: str
+    other_owners: list[str]
+class RecordErasePreview(TypedDict):
+    record: str
+    shared_with: list[EraseShare]
+    held_bytes: list[EraseHeldBytes]
+    lfs_chunks: list[EraseLfsChunk]
+    same_bytes: list[str]
+    remote_copies_may_remain: bool
+    preview_digest: str
+class RecordEraseConfirmRequest(TypedDict):
+    record: EntityId
+    preview_digest: str
+    also_same_bytes: NotRequired[bool]
+class DeleteReceipt(TypedDict):
+    existed: bool
+    reason: str
+    receipt_ref: NotRequired[str | None]
+class EraseSameBytesRow(TypedDict):
+    record: str
+    outcome: str
+    receipt: NotRequired[DeleteReceipt | None]
+    reason: NotRequired[str | None]
+    act_id: NotRequired[str | None]
+    error: NotRequired[str | None]
+class RecordEraseOutcome(TypedDict):
+    first: DeleteReceipt
+    first_act: NotRequired[str | None]
+    same_bytes: list[EraseSameBytesRow]
 class AuthorityHandoffAlarmAck(TypedDict):
     by: str
     at: int
@@ -3506,10 +3544,6 @@ SafeDeleteReason = Literal["user_delete", "user_hard_delete", "gdpr_delete", "po
 class SafeDeleteRequest(TypedDict):
     entity_ref: str
     reason: SafeDeleteReason
-class DeleteReceipt(TypedDict):
-    existed: bool
-    reason: str
-    receipt_ref: NotRequired[str | None]
 class ReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 class PendingWrite(TypedDict):

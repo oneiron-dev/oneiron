@@ -260,6 +260,12 @@ impl OneironClient {
                 "vault.guests.mint_slip" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GuestSlipMinted,
                 >(client, verb, &input),
+                "vault.records.erase_preview" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RecordErasePreview,
+                >(client, verb, &input),
+                "vault.records.erase_confirm" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RecordEraseOutcome,
+                >(client, verb, &input),
                 "vault.authority.handoff_alarms" => remote_agent_verb_output::<
                     Vec<oneiron::authority::AuthorityHandoffAlarm>,
                 >(client, verb, &input),
@@ -1643,6 +1649,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.guests.mint_slip", value)
+    }
+    pub fn vault_records_erase_preview(
+        &self,
+        input: &oneiron::task_verb::sdk::RecordEraseRequest,
+    ) -> Result<oneiron::task_verb::sdk::RecordErasePreview, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.records.erase_preview", value)
+    }
+    pub fn vault_records_erase_confirm(
+        &self,
+        input: &oneiron::task_verb::sdk::RecordEraseConfirmRequest,
+    ) -> Result<oneiron::task_verb::sdk::RecordEraseOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.records.erase_confirm", value)
     }
     pub fn vault_authority_handoff_alarms(
         &self,
