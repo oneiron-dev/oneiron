@@ -360,6 +360,16 @@ export_facade! {
     let output = client.vault_guests_mint_slip(&input)?;
     crate::codec::lift_record("vault.guests.mint_slip", &output)
 };
+"vault.records.erase_preview" => fn vault_records_erase_preview(&self, input: RecordEraseRequest) -> RecordErasePreview = |client| {
+    let input: oneiron::task_verb::sdk::RecordEraseRequest = crate::codec::lower_record("vault.records.erase_preview", input)?;
+    let output = client.vault_records_erase_preview(&input)?;
+    crate::codec::lift_record("vault.records.erase_preview", &output)
+};
+"vault.records.erase_confirm" => fn vault_records_erase_confirm(&self, input: RecordEraseConfirmRequest) -> RecordEraseOutcome = |client| {
+    let input: oneiron::task_verb::sdk::RecordEraseConfirmRequest = crate::codec::lower_record("vault.records.erase_confirm", input)?;
+    let output = client.vault_records_erase_confirm(&input)?;
+    crate::codec::lift_record("vault.records.erase_confirm", &output)
+};
 "vault.authority.handoff_alarms" => fn vault_authority_handoff_alarms(&self) -> Vec<AuthorityHandoffAlarm> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.authority.handoff_alarms")?;
     let output = client.vault_authority_handoff_alarms(&input)?;
@@ -569,6 +579,16 @@ export_facade! {
     let input: oneiron::code_document::CodeStateRequest = crate::codec::lower_record("vault.code.blame", input)?;
     let output = client.vault_code_blame(&input)?;
     crate::codec::lift_record("vault.code.blame", &output)
+};
+"vault.code.proposal_view" => fn vault_code_proposal_view(&self, input: CodeProposalViewRequest) -> Option<CodeProposalView> = |client| {
+    let input: oneiron::code_document::CodeProposalViewRequest = crate::codec::lower_record("vault.code.proposal_view", input)?;
+    let output = client.vault_code_proposal_view(&input)?;
+    crate::codec::lift_record("vault.code.proposal_view", &output)
+};
+"vault.code.repo_diff" => fn vault_code_repo_diff(&self, input: CodeRepoDiffRequest) -> Option<CodeRepoDiffView> = |client| {
+    let input: oneiron::code_document::CodeRepoDiffRequest = crate::codec::lower_record("vault.code.repo_diff", input)?;
+    let output = client.vault_code_repo_diff(&input)?;
+    crate::codec::lift_record("vault.code.repo_diff", &output)
 };
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;

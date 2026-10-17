@@ -96,6 +96,13 @@ class MemoryItem(TypedDict):
 class CitedMessage(TypedDict):
     short_id: str
     value_text: str
+    record: NotRequired[RecordRef]
+
+class RecordRef(TypedDict):
+    kind: str
+    id: str
+    short_id: NotRequired[str]
+    label: str
 
 class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
@@ -356,6 +363,8 @@ class Oneiron:
         @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
         @property
+        def records(self) -> "Oneiron._VaultRecordsVerbs": ...
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
@@ -545,6 +554,11 @@ class Oneiron:
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
         def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
+    class _VaultRecordsVerbs:
+        def erase_preview(self, spec: Facade.RecordEraseRequest) -> Facade.RecordErasePreview:
+            """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
+        def erase_confirm(self, spec: Facade.RecordEraseConfirmRequest) -> Facade.RecordEraseOutcome:
+            """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""
@@ -623,7 +637,7 @@ class Oneiron:
         def deactivate(self, spec: Facade.LensDeactivateRequest) -> Facade.LensActivationReceipt:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
         def list(self, spec: Facade.LensListRequest) -> Facade.LensListPage:
-            """One page of the vault's lens proposals, each with its slot state from the owner's current selection."""
+            """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
         def default(self, spec: Facade.LensDefaultRequest) -> Facade.ScopedReadResult[Facade.GeneratedLens]:
             """Composes the default vault lens from the named sources, read under the caller's own scope."""
     class _VaultDisclosureVerbs:
@@ -661,6 +675,8 @@ class Oneiron:
     class _VaultCodeVerbs:
         def diff(self, request: Facade.CodeDiffRequest) -> Facade.CodeDiffView | None: ...
         def blame(self, request: Facade.CodeStateRequest) -> Facade.CodeBlameView | None: ...
+        def proposal_view(self, request: Facade.CodeProposalViewRequest) -> Facade.CodeProposalView | None: ...
+        def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
     class _VaultRoomsVerbs:
         def list(self) -> list[Facade.RoomEntry]:
             """The caller's rooms its own grants admit; inside a room turn, only that room."""

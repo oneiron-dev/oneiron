@@ -711,6 +711,8 @@ fn mcp_agent_verb_input(
         "vault.shared.close_erase_ask" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.mint_slip" => a.spec.clone().ok_or_else(invalid),
+        "vault.records.erase_preview" => a.spec.clone().ok_or_else(invalid),
+        "vault.records.erase_confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.authority.handoff_alarms" => Ok(Value::Object(serde_json::Map::new())),
         "vault.authority.handoff_alarms.acknowledge" => a.spec.clone().ok_or_else(invalid),
         "vault.legal_holds.place" => a.spec.clone().ok_or_else(invalid),
@@ -753,6 +755,8 @@ fn mcp_agent_verb_input(
         "vault.artifacts.view" => a.spec.clone().ok_or_else(invalid),
         "vault.code.diff" => a.spec.clone().ok_or_else(invalid),
         "vault.code.blame" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.proposal_view" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.repo_diff" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.born_from" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.proposals" => a.spec.clone().ok_or_else(invalid),
@@ -1230,6 +1234,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.guests.mint_slip" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.records.erase_preview" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.records.erase_confirm" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.authority.handoff_alarms" => {}
         "vault.authority.handoff_alarms.acknowledge" => {
             arguments.insert("spec".to_owned(), input.clone());
@@ -1342,6 +1352,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.blame" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.proposal_view" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.repo_diff" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.export" => {
@@ -2722,6 +2738,32 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.records.erase_preview" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.records.erase_preview", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::RecordEraseRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_records_erase_preview(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.records.erase_confirm" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.records.erase_confirm", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::RecordEraseConfirmRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_records_erase_confirm(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.authority.handoff_alarms" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.authority.handoff_alarms", &input)
@@ -3237,6 +3279,22 @@ async fn execute_agent_verb_row(
             let input: oneiron::code_document::CodeStateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_code_blame(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.proposal_view" => {
+            let input: oneiron::code_document::CodeProposalViewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_code_proposal_view(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.repo_diff" => {
+            let input: oneiron::code_document::CodeRepoDiffRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_code_repo_diff(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

@@ -121,6 +121,7 @@ declare namespace self {
   const unfold: (input: { fold: string }) => Promise<unknown>;
 }
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
+declare function summarize(input: { ref: string; effort?: "low" | "medium" | "high"; group?: string[]; defer?: true }): Promise<unknown>;
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;
   create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;
@@ -168,6 +169,8 @@ declare const vault: {
   code: {
     blame(input: { path: string; repo: string; revision_ref?: string | null }): Promise<unknown>;
     diff(input: { after: { path: string; repo: string; revision_ref?: string | null }; before: { path: string; repo: string; revision_ref?: string | null } }): Promise<unknown>;
+    proposal_view(input: { proposal_ref: string }): Promise<unknown>;
+    repo_diff(input: { after: { repo?: string | null; revision_ref?: string | null; snapshot_ref?: string | null }; before: { repo?: string | null; revision_ref?: string | null; snapshot_ref?: string | null } }): Promise<unknown>;
   };
   commit(input: { claims: object[] }): Promise<unknown>;
   companions: {
@@ -314,6 +317,10 @@ declare const vault: {
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; media?: { bytes_b64: string; kinds?: ("text" | "image" | "audio")[]; mime: string; space: string } | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;
+  };
+  records: {
+    erase_confirm(input: { also_same_bytes?: boolean; preview_digest: string; record: string }): Promise<unknown>;
+    erase_preview(input: { record: string }): Promise<unknown>;
   };
   refs: {
     links(input: { after?: string | null; limit?: number | null; text?: string | null; turn_ref?: string | null }): Promise<unknown>;

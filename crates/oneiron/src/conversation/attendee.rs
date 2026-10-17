@@ -64,6 +64,9 @@ pub struct ContainerAttendeeEvent {
     pub candidates: Vec<EntityId>,
     /// When a "who is this?" ask lapses unanswered (engine seconds).
     pub until: u64,
+    /// How much of the room's past a first-entering PERSON sees until the
+    /// owner's P5 answer moves it; a speaker sees from its entry.
+    pub history: HistoryChoice,
 }
 
 /// The recorded first entry of one attendee into one container.
@@ -125,9 +128,9 @@ impl Memory<'_> {
     /// Records one attendee's entry into a container, and raises what P5
     /// asks of it, once.
     ///
-    /// A PERSON the room's ledger has never held joins now, with history
-    /// from now; one it has held is rejoining, and nothing is recorded or
-    /// asked. A speaker the vault cannot place gets its entry fact, which is
+    /// A PERSON the room's ledger has never held joins now, with the
+    /// event's history (the room's rule unless the inviter chose); one it
+    /// has held is rejoining, and nothing is recorded or asked. A speaker the vault cannot place gets its entry fact, which is
     /// its history cut, and on its first entry only the owner's "who is
     /// this?" ask on the revision it entered under. A later revision, a
     /// rejoin or another device replays the stored entry and asks nothing;
@@ -166,7 +169,7 @@ impl Memory<'_> {
                     *person,
                     writer,
                     admitted.fact.entered_at,
-                    HistoryChoice::None,
+                    event.history,
                 )?;
             }
             let decided = entry_decided_in(vault, txn, &admitted.entry_ref)?;

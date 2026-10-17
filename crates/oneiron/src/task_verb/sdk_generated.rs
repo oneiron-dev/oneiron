@@ -377,6 +377,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.records.erase_preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RecordEraseRequest,
+                >(),
+            ),
+            (
+                "vault.records.erase_confirm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RecordEraseConfirmRequest,
+                >(),
+            ),
+            (
                 "vault.authority.handoff_alarms",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -603,6 +615,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.blame",
                 crate::code_run::vault_read::request_schema::<crate::code_document::CodeStateRequest>(
                 ),
+            ),
+            (
+                "vault.code.proposal_view",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_document::CodeProposalViewRequest,
+                >(),
+            ),
+            (
+                "vault.code.repo_diff",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_document::CodeRepoDiffRequest,
+                >(),
             ),
             (
                 "vault.artifacts.export",
@@ -1292,6 +1316,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::TaskWaitSetRequest>(
                 ),
             ),
+            (
+                "summarize",
+                crate::code_run::vault_read::request_schema::<crate::code_run::SummarizeInput>(),
+            ),
         ])
     });
     SCHEMAS.get(verb)
@@ -1845,6 +1873,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.records.erase_preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.records.erase_confirm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.authority.handoff_alarms" => &[],
         "vault.authority.handoff_alarms.acknowledge" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -2097,6 +2139,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.blame" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.repo_diff" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3101,6 +3157,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.guests.mint_slip" => {
             let _input: crate::task_verb::sdk::GuestSlipMintRequest = decode(value.clone())?;
         }
+        "vault.records.erase_preview" => {
+            let _input: crate::task_verb::sdk::RecordEraseRequest = decode(value.clone())?;
+        }
+        "vault.records.erase_confirm" => {
+            let _input: crate::task_verb::sdk::RecordEraseConfirmRequest = decode(value.clone())?;
+        }
         "vault.authority.handoff_alarms" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -3241,6 +3303,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.blame" => {
             let _input: crate::code_document::CodeStateRequest = decode(value.clone())?;
+        }
+        "vault.code.proposal_view" => {
+            let _input: crate::code_document::CodeProposalViewRequest = decode(value.clone())?;
+        }
+        "vault.code.repo_diff" => {
+            let _input: crate::code_document::CodeRepoDiffRequest = decode(value.clone())?;
         }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
@@ -3786,6 +3854,12 @@ pub fn invoke(
         }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
+        "vault.records.erase_preview" => {
+            encode(vault_records_erase_preview(memory, decode(value)?)?)
+        }
+        "vault.records.erase_confirm" => {
+            encode(vault_records_erase_confirm(memory, decode(value)?)?)
+        }
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
         }
@@ -3875,6 +3949,8 @@ pub fn invoke(
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.code.diff" => encode(vault_code_diff(memory, decode(value)?)?),
         "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
+        "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
+        "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
         "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
@@ -4805,6 +4881,18 @@ pub fn vault_guests_mint_slip(
 ) -> MemoryResult<crate::task_verb::sdk::GuestSlipMinted> {
     crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)
 }
+pub fn vault_records_erase_preview(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RecordEraseRequest,
+) -> MemoryResult<crate::task_verb::sdk::RecordErasePreview> {
+    crate::task_verb::sdk::preview_record_erase(memory, input)
+}
+pub fn vault_records_erase_confirm(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RecordEraseConfirmRequest,
+) -> MemoryResult<crate::task_verb::sdk::RecordEraseOutcome> {
+    crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)
+}
 pub fn vault_authority_handoff_alarms(
     memory: &Memory<'_>,
     _input: EmptyRequest,
@@ -5158,6 +5246,18 @@ pub fn vault_code_blame(
     input: crate::code_document::CodeStateRequest,
 ) -> MemoryResult<Option<crate::code_document::CodeBlameView>> {
     memory.code_blame(&input)
+}
+pub fn vault_code_proposal_view(
+    memory: &Memory<'_>,
+    input: crate::code_document::CodeProposalViewRequest,
+) -> MemoryResult<Option<crate::code_document::CodeProposalView>> {
+    memory.code_proposal_view(&input)
+}
+pub fn vault_code_repo_diff(
+    memory: &Memory<'_>,
+    input: crate::code_document::CodeRepoDiffRequest,
+) -> MemoryResult<Option<crate::code_document::CodeRepoDiffView>> {
+    memory.code_repo_diff(&input)
 }
 pub fn vault_artifacts_export(
     memory: &Memory<'_>,

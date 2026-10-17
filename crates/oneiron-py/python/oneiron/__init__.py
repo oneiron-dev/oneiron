@@ -413,6 +413,9 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs":
             return Oneiron._VaultGuestsVerbs(self._client)
         @property
+        def records(self) -> "Oneiron._VaultRecordsVerbs":
+            return Oneiron._VaultRecordsVerbs(self._client)
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
@@ -734,6 +737,15 @@ class Oneiron:
         def mint_slip(self, spec):
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
             return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
+    class _VaultRecordsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def erase_preview(self, spec):
+            """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
+            return json.loads(_translate(lambda: self._client.vault_records_erase_preview(json.dumps(spec))))
+        def erase_confirm(self, spec):
+            """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
+            return json.loads(_translate(lambda: self._client.vault_records_erase_confirm(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -864,7 +876,7 @@ class Oneiron:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
             return json.loads(_translate(lambda: self._client.vault_lenses_deactivate(json.dumps(spec))))
         def list(self, spec):
-            """One page of the vault's lens proposals, each with its slot state from the owner's current selection."""
+            """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
         def default(self, spec):
             """Composes the default vault lens from the named sources, read under the caller's own scope."""
@@ -951,6 +963,12 @@ class Oneiron:
         def blame(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """Every unit of one tested code file state, blamed by the operations that wrote it."""
             return json.loads(_translate(lambda: self._client.vault_code_blame(json.dumps(request, allow_nan=False))))
+        def proposal_view(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """One repo proposal's semantic change from its base, under the provenance it was proposed with."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_view(json.dumps(request, allow_nan=False))))
+        def repo_diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."""
+            return json.loads(_translate(lambda: self._client.vault_code_repo_diff(json.dumps(request, allow_nan=False))))
     class _VaultRoomsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -787,6 +787,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_records_erase_preview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.records.erase_preview")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.records.erase_preview", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_records_erase_confirm(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.records.erase_confirm")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.records.erase_confirm", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_authority_handoff_alarms(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.authority.handoff_alarms")?;
         let output = py
@@ -1185,6 +1199,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(request_json, "vault.code.blame")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.blame", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_proposal_view(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.code.proposal_view")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.proposal_view", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_repo_diff(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.code.repo_diff")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.repo_diff", input))
             .map_err(raise)?;
         encode(&output)
     }

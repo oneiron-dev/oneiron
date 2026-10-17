@@ -76,6 +76,8 @@ pub enum AgentVerb {
     VaultSharedCloseEraseAsk,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
+    VaultRecordsErasePreview,
+    VaultRecordsEraseConfirm,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLegalHoldsPlace,
@@ -118,6 +120,8 @@ pub enum AgentVerb {
     VaultArtifactsView,
     VaultCodeDiff,
     VaultCodeBlame,
+    VaultCodeProposalView,
+    VaultCodeRepoDiff,
     VaultArtifactsExport,
     VaultArtifactsBornFrom,
     VaultArtifactsProposals,
@@ -334,6 +338,8 @@ impl AgentVerb {
         Self::VaultSharedCloseEraseAsk,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
+        Self::VaultRecordsErasePreview,
+        Self::VaultRecordsEraseConfirm,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLegalHoldsPlace,
@@ -376,6 +382,8 @@ impl AgentVerb {
         Self::VaultArtifactsView,
         Self::VaultCodeDiff,
         Self::VaultCodeBlame,
+        Self::VaultCodeProposalView,
+        Self::VaultCodeRepoDiff,
         Self::VaultArtifactsExport,
         Self::VaultArtifactsBornFrom,
         Self::VaultArtifactsProposals,
@@ -595,6 +603,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => "vault.shared.close_erase_ask",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
+            Self::VaultRecordsErasePreview => "vault.records.erase_preview",
+            Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
@@ -641,6 +651,8 @@ impl AgentVerb {
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultCodeDiff => "vault.code.diff",
             Self::VaultCodeBlame => "vault.code.blame",
+            Self::VaultCodeProposalView => "vault.code.proposal_view",
+            Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
@@ -856,6 +868,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -898,6 +912,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsView
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
+                | Self::VaultCodeProposalView
+                | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1121,6 +1137,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1163,6 +1181,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsView
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
+                | Self::VaultCodeProposalView
+                | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1411,6 +1431,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1453,6 +1475,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsView
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
+                | Self::VaultCodeProposalView
+                | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1632,6 +1656,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -1831,6 +1857,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultRecordsErasePreview => &["spec"],
+            Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -1873,6 +1901,8 @@ impl AgentVerb {
             Self::VaultArtifactsView => &["spec"],
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
+            Self::VaultCodeProposalView => &["spec"],
+            Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
@@ -2090,6 +2120,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultRecordsErasePreview => &["spec"],
+            Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -2132,6 +2164,8 @@ impl AgentVerb {
             Self::VaultArtifactsView => &["spec"],
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
+            Self::VaultCodeProposalView => &["spec"],
+            Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
@@ -2476,6 +2510,12 @@ impl AgentVerb {
             Self::VaultGuestsMintSlip => {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
             }
+            Self::VaultRecordsErasePreview => {
+                "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."
+            }
+            Self::VaultRecordsEraseConfirm => {
+                "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."
+            }
             Self::VaultAuthorityHandoffAlarms => {
                 "Every saved authority handoff fork alarm, for the owner."
             }
@@ -2567,7 +2607,7 @@ impl AgentVerb {
                 "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."
             }
             Self::VaultLensesList => {
-                "One page of the vault's lens proposals, each with its slot state from the owner's current selection."
+                "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
             }
             Self::VaultLensesDefault => {
                 "Composes the default vault lens from the named sources, read under the caller's own scope."
@@ -2591,6 +2631,12 @@ impl AgentVerb {
             }
             Self::VaultCodeBlame => {
                 "Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why."
+            }
+            Self::VaultCodeProposalView => {
+                "One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied."
+            }
+            Self::VaultCodeRepoDiff => {
+                "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it."
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."

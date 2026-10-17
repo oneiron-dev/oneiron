@@ -476,7 +476,12 @@ impl Vault {
             }
 
             settings.apply_layer_value(value.clone());
+            // The side-row wall reads the profile before it is checked and kept (OF-067): a
+            // secret in a label keeps its handle there, and a token field, which cannot hold
+            // one, fails the check. The event carries the value as kept.
+            CUSTOMIZATION_SETTINGS.admit(self, wtxn, &(), &mut settings)?;
             settings.validate()?;
+            let value = settings.layer_value(value.layer());
             let sequence = next_customization_event_sequence(&self.store, wtxn)?;
             let event = CustomizationSettingsChangeEvent::new(
                 sequence,
@@ -485,8 +490,8 @@ impl Vault {
                 value,
             );
             event.validate()?;
-            CUSTOMIZATION_SETTINGS.put(&self.store, wtxn, &(), &settings)?;
-            CUSTOMIZATION_EVENT.put(&self.store, wtxn, &sequence, &event)?;
+            CUSTOMIZATION_SETTINGS.put(self, wtxn, &(), &settings)?;
+            CUSTOMIZATION_EVENT.put(self, wtxn, &sequence, &event)?;
             Ok(CustomizationSettingsUpdate {
                 settings,
                 event: Some(event),
