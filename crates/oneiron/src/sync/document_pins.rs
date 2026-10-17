@@ -188,7 +188,8 @@ pub(crate) fn admit_document_pin_map(key: Option<&WindowKey>, map: &LoroMap) -> 
 
 /// Writes into `doc` each pin this vault holds on MESSAGE `message` that the
 /// window lacks, in parts when it is larger than one. A pin of a reply this
-/// vault erased stays out. Returns whether it wrote; the caller commits.
+/// vault erased stays out. Each pin and part commits on its own. Returns
+/// whether it wrote.
 pub(crate) fn mirror_document_pins(
     vault: &Vault,
     doc: &LoroDoc,
@@ -229,14 +230,17 @@ pub(crate) fn mirror_document_pins(
         if map_contains_binary(&map, &key) {
             continue;
         }
+        let commit = || doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
         if bytes.len() <= PART_BYTES {
             map_insert_bytes(&map, &key, &bytes)?;
+            commit();
         } else {
             let (parts, pieces) = split_parts(&bytes)?;
             let manifest =
                 rmp_serde::to_vec_named(&parts).map_err(|_| refused("does not encode"))?;
             map_insert_bytes(&map, &key, &manifest)?;
-            write_parts(&map, &pieces)?;
+            commit();
+            write_parts(&map, &pieces, commit)?;
         }
         wrote = true;
     }

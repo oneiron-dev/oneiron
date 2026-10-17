@@ -80,13 +80,18 @@ pub(crate) fn split_parts(bytes: &[u8]) -> Result<(Parts, Vec<(String, &[u8])>)>
     ))
 }
 
-/// Writes each of `pieces` that `map` lacks. The caller writes the manifest
-/// first, so a scrub never finds the parts with no manifest that lists them;
-/// it commits.
-pub(crate) fn write_parts(map: &LoroMap, pieces: &[(String, &[u8])]) -> Result<()> {
+/// Writes each of `pieces` that `map` lacks, calling `commit` after each, so
+/// no one update holds more than a part. The caller writes the manifest
+/// first, so a scrub never finds the parts with no manifest that lists them.
+pub(crate) fn write_parts(
+    map: &LoroMap,
+    pieces: &[(String, &[u8])],
+    commit: impl Fn(),
+) -> Result<()> {
     for (key, part) in pieces {
         if !map_contains_binary(map, key) {
             map_insert_bytes(map, key, part)?;
+            commit();
         }
     }
     Ok(())

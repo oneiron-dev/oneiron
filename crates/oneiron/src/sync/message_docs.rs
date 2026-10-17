@@ -124,8 +124,8 @@ pub(crate) fn admit_message_doc_map(key: Option<&WindowKey>, map: &LoroMap) -> R
 /// more than the window's head: operations the head lacks, or a purge. The
 /// window's head stands where it holds as much, where it holds operations
 /// this machine lacks (they merge here first), where it names another
-/// document, or where another machine purged history this one keeps.
-/// Returns whether it wrote; the caller commits.
+/// document, or where another machine purged history this one keeps. The
+/// head and each part commit on their own. Returns whether it wrote.
 pub(crate) fn mirror_message_document(
     vault: &Vault,
     doc: &LoroDoc,
@@ -166,7 +166,8 @@ pub(crate) fn mirror_message_document(
         super::window::require_history_free_window(vault, window)?;
     }
     map_insert_bytes(&map, &key, &encode(&carried)?)?;
-    write_parts(&map, &pieces)?;
+    commit(doc);
+    write_parts(&map, &pieces, || commit(doc))?;
     if let Some(held) = held {
         let listed: BTreeSet<String> = carried.snapshot.keys().collect();
         for part in held.snapshot.keys() {
@@ -174,8 +175,13 @@ pub(crate) fn mirror_message_document(
                 map_delete(&map, &part)?;
             }
         }
+        commit(doc);
     }
     Ok(true)
+}
+
+fn commit(doc: &LoroDoc) {
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
 }
 
 /// Installs every document window `key`'s document carries, as a window
