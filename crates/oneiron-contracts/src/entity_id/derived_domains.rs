@@ -175,9 +175,13 @@ pub const COORDINATION_PATTERN: &[u8] = b"oneiron/coordination-pattern/v1/";
 /// record's payload and notes, or an intake event. Parts: place, row key.
 pub const SIDE_ROW_MASK: &[u8] = b"oneiron.side_row.mask.v1\0";
 
+/// The one subject a learned setting's vault-wide fit is learned on
+/// (`learning_setting::global_setting_subject`). Parts: the catalog key.
+pub const GLOBAL_SETTING_SUBJECT: &[u8] = b"oneiron.learning.setting.global_subject.v1\0";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 44] = [
+pub(crate) const ALL: [&[u8]; 45] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -222,4 +226,5 @@ pub(crate) const ALL: [&[u8]; 44] = [
     DECISION_QUESTION,
     COORDINATION_PATTERN,
     SIDE_ROW_MASK,
+    GLOBAL_SETTING_SUBJECT,
 ];
