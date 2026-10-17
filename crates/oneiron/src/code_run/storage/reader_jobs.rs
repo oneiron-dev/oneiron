@@ -5,6 +5,8 @@
 //! scopes are base rows, as the parent's own scope is: units and ids, no
 //! content.
 
+use std::collections::BTreeMap;
+
 use heed::{RoTxn, RwTxn};
 
 use super::records::REPLAY_RECORDS;
@@ -15,7 +17,7 @@ use crate::code_run::{
     ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, SpawnHostSeat, SpawnParentBinding,
     TaskWaitSet, TaskWaitSetResult, reduce_task_wait_set,
 };
-use crate::side_table::{self, CodecError, Raw, RawValue, RoutedDbs, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 /// One row per child, keyed by its task.
@@ -144,59 +146,114 @@ impl<'v> SpendBook<'v> {
 
 /// One transaction of a run's reader rows: read through the route's
 /// composed view, written along it, with the base spend scopes beside them.
+///
+/// A session's view composes the overlay snapshot it was opened on, which
+/// the rows this transaction stages do not change, so every row it writes
+/// is kept here too and read back from here: a transaction reads its own
+/// writes on every route.
 pub(crate) struct ReaderTxn<'t, 'e> {
     txn: &'t mut RwTxn<'e>,
     read: RoutedDbs<'t>,
     write: RoutedDbs<'t>,
     spend: SpendBook<'t>,
+    /// Rows written in this transaction by their full key: the encoded
+    /// value, or `None` for a deleted row.
+    staged: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
 }
 
 impl ReaderTxn<'_, '_> {
+    fn get_row<K: SideKey, V, C: SideCodec<V>>(
+        &self,
+        table: &SideTable<K, V, C>,
+        key: &K,
+    ) -> Result<Option<V>> {
+        match self.staged.get(&table.key_bytes(key)) {
+            Some(staged) => staged
+                .as_deref()
+                .map(|bytes| table.decode_value(bytes))
+                .transpose(),
+            None => table.get(&self.read, &*self.txn, key),
+        }
+    }
+
+    fn put_row<K: SideKey, V, C: SideCodec<V>>(
+        &mut self,
+        table: &SideTable<K, V, C>,
+        key: &K,
+        value: &V,
+    ) -> Result<()> {
+        table.put(&self.write, self.txn, key, value)?;
+        self.staged
+            .insert(table.key_bytes(key), Some(table.encode_value(value)?));
+        Ok(())
+    }
+
     fn job(&self, task: EntityId) -> Result<Option<ReaderJob>> {
-        JOBS.get(&self.read, &*self.txn, &task)
+        self.get_row(&JOBS, &task)
     }
 
     fn put_job(&mut self, job: &ReaderJob) -> Result<()> {
-        JOBS.put(&self.write, self.txn, &job.task, job)
+        self.put_row(&JOBS, &job.task, job)
     }
 
     fn parent(&self, run: EntityId) -> Result<Option<ReaderParent>> {
-        PARENTS.get(&self.read, &*self.txn, &run)
+        self.get_row(&PARENTS, &run)
     }
 
     fn put_parent(&mut self, run: EntityId, parent: &ReaderParent) -> Result<()> {
-        PARENTS.put(&self.write, self.txn, &run, parent)
+        self.put_row(&PARENTS, &run, parent)
     }
 
     fn wait(&self, set: EntityId) -> Result<Option<TaskWaitSet>> {
-        WAITS.get(&self.read, &*self.txn, &set)
+        self.get_row(&WAITS, &set)
     }
 
     fn put_wait(&mut self, set: &TaskWaitSet) -> Result<()> {
-        WAITS.put(&self.write, self.txn, &set.id, set)
+        self.put_row(&WAITS, &set.id, set)
     }
 
     fn index(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        INDEX.get(&self.read, &*self.txn, &key.to_vec())
+        self.get_row(&INDEX, &key.to_vec())
     }
 
     fn put_index(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-        INDEX.put(&self.write, self.txn, &key.to_vec(), &value.to_vec())
+        self.put_row(&INDEX, &key.to_vec(), &value.to_vec())
     }
 
     fn delete_index(&mut self, key: &[u8]) -> Result<()> {
-        INDEX.delete(&self.write, self.txn, &key.to_vec()).map(drop)
+        let key = key.to_vec();
+        INDEX.delete(&self.write, self.txn, &key)?;
+        self.staged.insert(INDEX.key_bytes(&key), None);
+        Ok(())
     }
 
+    /// The index rows under `prefix` in key order, this transaction's own
+    /// writes and deletes over what the view held.
     fn scan_index(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
-        INDEX.iter_from(&self.read, &*self.txn, prefix)?.collect()
+        let mut rows: BTreeMap<Vec<u8>, Vec<u8>> = INDEX
+            .iter_from(&self.read, &*self.txn, prefix)?
+            .collect::<Result<_>>()?;
+        let table = INDEX.key_bytes(&Vec::new());
+        for (full, staged) in &self.staged {
+            let Some(key) = full
+                .strip_prefix(table.as_slice())
+                .filter(|key| key.starts_with(prefix))
+            else {
+                continue;
+            };
+            match staged {
+                Some(value) => rows.insert(key.to_vec(), value.clone()),
+                None => rows.remove(key),
+            };
+        }
+        Ok(rows.into_iter().collect())
     }
 
     /// Whether `run`'s committed record holds the output at `path` with
     /// `handle`.
     fn committed(&self, run: EntityId, path: &str, handle: &str) -> Result<bool> {
-        Ok(REPLAY_RECORDS
-            .get(&self.read, &*self.txn, &run)?
+        Ok(self
+            .get_row(&REPLAY_RECORDS, &run)?
             .is_some_and(|record| {
                 record
                     .outputs
@@ -377,6 +434,7 @@ impl ExecutorStorage<'_> {
                     read: RoutedDbs::Base(&vault.store),
                     write: RoutedDbs::Base(&vault.store),
                     spend: SpendBook::new(vault),
+                    staged: BTreeMap::new(),
                 })?;
                 txn.commit()?;
                 Ok(answer)
@@ -392,6 +450,7 @@ impl ExecutorStorage<'_> {
                                 read,
                                 write,
                                 spend,
+                                staged: BTreeMap::new(),
                             })
                         })
                 })
