@@ -41,7 +41,7 @@ use crate::llm::media::{
     AiMediaDoor, AiOperation, MediaFuture, MediaPart, MediaRequest, MediaResponse, MediaVoice,
 };
 use crate::llm::{CallEnvelope, LlmResult, ModelId, ModelLocality, ModelTierRef, VoiceLane};
-use crate::voice_identity::ref_bank::{VoiceRefFence, VoiceRegisterClip};
+use crate::voice_identity::ref_bank::{VoiceRefFence, VoiceRegisterClip, VoiceRenderGrant};
 
 /// The most text one spoken call carries: a flushed sentence, with room.
 pub const MAX_SENTENCE_BYTES: usize = 8 * 1024;
@@ -118,8 +118,9 @@ pub enum VoiceRender {
 }
 
 /// A banked identity bound for one render target, at the bank's revision
-/// of it. A withdrawn and re-recorded clone, or refs that changed, are a
-/// new revision, so they never revive an older binding.
+/// of it and under the voice's render consent. A withdrawn and re-recorded
+/// clone, refs that changed, or a new render decision are a new revision,
+/// so they never revive an older binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BankVoiceBinding {
     pub voice_id: String,
@@ -132,10 +133,11 @@ pub struct BankVoiceBinding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BankBound {
     /// The target's recorded clone: its id for it, at that record's
-    /// revision.
+    /// revision, under the render consent that reaches the target.
     Clone {
         vendor_voice_id: String,
         revision: [u8; 16],
+        grant: VoiceRenderGrant,
     },
     /// The identity's source clip for a target that renders from it on
     /// each call, fenced at the identity's incarnation and refs.
@@ -146,16 +148,18 @@ pub enum BankBound {
 }
 
 impl BankVoiceBinding {
-    /// Binds `voice_id`'s current clone on `target`. An unprovisioned,
-    /// evicted, stale or withdrawn clone refuses.
+    /// Binds `voice_id`'s current clone on `target`, a target at
+    /// `locality`. An unprovisioned, evicted, stale or withdrawn clone
+    /// refuses, as does a voice whose render consent does not reach it.
     pub fn bind(
         vault: &Vault,
         voice_id: &str,
         target: &str,
         include_generated: bool,
+        locality: ModelLocality,
     ) -> Result<Self> {
-        let record = vault
-            .voice_target_clone(voice_id, target, include_generated)?
+        let (record, grant) = vault
+            .voice_target_clone(voice_id, target, include_generated, locality)?
             .ok_or_else(|| invalid("voice target not provisioned, evicted or stale"))?;
         Ok(Self {
             voice_id: record.voice_id,
@@ -164,15 +168,17 @@ impl BankVoiceBinding {
             bound: BankBound::Clone {
                 vendor_voice_id: record.vendor_voice_id,
                 revision: record.revision,
+                grant,
             },
         })
     }
 
     /// Binds `voice_id`'s source clip for a reference target: `register`'s,
     /// or the identity's first. The clip is the person's raw voice, so a
-    /// third-party route refuses, as does an identity with no source refs,
-    /// a clip that is not a WAV with its transcript, or one larger than the
-    /// vault's serving policy allows.
+    /// third-party route refuses, as does an identity with no source refs
+    /// or no render consent reaching `locality`, a clip that is not a WAV
+    /// with its transcript, or one larger than the vault's serving policy
+    /// allows.
     pub fn bind_reference(
         vault: &Vault,
         voice_id: &str,
@@ -184,7 +190,7 @@ impl BankVoiceBinding {
             return Err(invalid("a voice reference never goes to a third party"));
         }
         let limits = vault.voice_serving_limits(None)?;
-        let (clip, fence) = vault.fenced_voice_reference(voice_id, target, register)?;
+        let (clip, fence) = vault.fenced_voice_reference(voice_id, target, register, locality)?;
         if clip.media_type != "audio/wav"
             || clip.audio.len() < 12
             || !clip.audio.starts_with(b"RIFF")
@@ -202,15 +208,22 @@ impl BankVoiceBinding {
         })
     }
 
-    /// Whether what this binding names is still the bank's current one. A
-    /// bank that cannot be read, or a withdrawal waiting to commit, is not
-    /// current.
+    /// Whether what this binding names is still the bank's current one,
+    /// under the same render consent. A bank that cannot be read, or a
+    /// withdrawal waiting to commit, is not current.
     #[must_use]
     pub fn is_current(&self, vault: &Vault) -> bool {
         match &self.bound {
-            BankBound::Clone { revision, .. } => matches!(
-                vault.voice_target_clone(&self.voice_id, &self.target, self.include_generated),
-                Ok(Some(record)) if record.revision == *revision
+            BankBound::Clone {
+                revision, grant, ..
+            } => matches!(
+                vault.voice_target_clone(
+                    &self.voice_id,
+                    &self.target,
+                    self.include_generated,
+                    grant.locality,
+                ),
+                Ok(Some((record, current))) if record.revision == *revision && current == *grant
             ),
             BankBound::Reference { fence, .. } => vault
                 .voice_ref_fence_current_now(&self.voice_id, &self.target, fence)
@@ -659,6 +672,7 @@ impl<Q: VoiceMediaQueue> TtsSeamClient for MediaTtsAdapter<Q> {
                     voice_id,
                     &self.route.target,
                     *include_generated,
+                    self.route.locality,
                 )?),
             };
             self.generation = Some(generation);
