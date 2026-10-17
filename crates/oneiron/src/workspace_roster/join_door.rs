@@ -96,14 +96,18 @@ impl Memory<'_> {
     ) -> MemoryResult<JoinOutcome> {
         let vault = self.vault();
         let caller = WriteActor::new(self.actor(), self.actor_class());
-        vault.try_with_write_txn_grouped(|txn| {
+        let outcome = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let principal = caller_stands_for_in_txn(vault, txn, caller, &request.subject, now)?;
-            Ok(file_join_in_txn(
+            Ok::<_, MemoryError>(file_join_in_txn(
                 vault, txn, request, history, caller, now, principal, true,
             )?)
-        })
+        })?;
+        // FIX 1794: the receipt reaches the live window of its room or thread.
+        #[cfg(feature = "sync")]
+        vault.refresh_room_rows_in_live_windows(&[outcome.join_ref.as_str()], &[]);
+        Ok(outcome)
     }
 
     /// Records one party's answer to a join that waits on it, from that party
@@ -126,7 +130,7 @@ impl Memory<'_> {
         }
         let vault = self.vault();
         let caller = WriteActor::new(self.actor(), self.actor_class());
-        vault.try_with_write_txn_grouped(|txn| {
+        let outcome = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             if !JOINS.contains(&vault.store, txn, &answer.join_ref)? {
                 return Err(MemoryError::new(
@@ -136,7 +140,12 @@ impl Memory<'_> {
                 ));
             }
             Ok(rooms_consent_in_txn(vault, txn, answer, caller, now)?)
-        })
+        })?;
+        // FIX 1794: the answer reaches the live window of the join's room or
+        // thread.
+        #[cfg(feature = "sync")]
+        vault.refresh_room_rows_in_live_windows(&[outcome.join_ref.as_str()], &[]);
+        Ok(outcome)
     }
 }
 
