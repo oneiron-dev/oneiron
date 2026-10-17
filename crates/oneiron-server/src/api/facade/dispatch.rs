@@ -4461,9 +4461,13 @@ async fn vault_projects_confirm(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.projects.confirm", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.projects.confirm", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_projects_confirm(server, auth, facade_input(hooks.args.clone())?)
-            .await;
+    let (output, listed) = super::host_doors::vault_projects_confirm(
+        server,
+        auth,
+        call.session()?,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
