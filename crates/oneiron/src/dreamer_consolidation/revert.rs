@@ -20,6 +20,9 @@
 //!   TASK it completed stays done: a TASK never reopens.
 //! - A PERSON's `about` lines go back to the lines the Dreamer's newest
 //!   landing replaced.
+//! - An applied maintenance finding (a curator rung, a digest policy, a
+//!   retune) reverts through its own inverse, at the Memory door
+//!   (`Vault::revert_dreamer_maintenance`), so its effect goes with it.
 //!
 //! Nothing is deleted: a retracted claim and every closed row stay as
 //! history, and an archived SUMMARY or NOTE comes back through the owner's
@@ -69,6 +72,8 @@ pub enum DreamerChangeKind {
     Note,
     /// A person's `about` lines.
     PersonAbout,
+    /// An applied maintenance finding and its effect.
+    Maintenance,
 }
 
 impl DreamerChangeKind {
@@ -81,6 +86,7 @@ impl DreamerChangeKind {
             Self::Summary => "summary",
             Self::Note => "note",
             Self::PersonAbout => "person_about",
+            Self::Maintenance => "maintenance",
         }
     }
 }
@@ -101,6 +107,9 @@ pub struct DreamerChange {
 pub struct DreamerChanges {
     pub changes: Vec<DreamerChange>,
     pub people: Vec<(EntityId, u64)>,
+    /// The maintenance the Dreamer applied that still stands, newest first,
+    /// each revertible by its finding's id; its label is the kind.
+    pub maintenance: Vec<DreamerChange>,
 }
 
 /// What reverting one Dreamer change did: the claims it retracted, the
@@ -118,10 +127,15 @@ pub struct RevertedDreamerChange {
     pub left_closed: Vec<EntityId>,
     pub archived: Option<EntityId>,
     pub current: Option<EntityId>,
+    /// A maintenance revert's settings rows put back.
+    pub settings: Vec<String>,
+    /// What a later write changed, left as it is: a record's 32-hex id or a
+    /// settings row's name.
+    pub left_alone: Vec<String>,
 }
 
 impl RevertedDreamerChange {
-    const fn of(kind: DreamerChangeKind) -> Self {
+    pub(crate) const fn of(kind: DreamerChangeKind) -> Self {
         Self {
             kind,
             retracted: Vec::new(),
@@ -131,6 +145,8 @@ impl RevertedDreamerChange {
             left_closed: Vec::new(),
             archived: None,
             current: None,
+            settings: Vec::new(),
+            left_alone: Vec::new(),
         }
     }
 }
@@ -144,7 +160,8 @@ pub struct DreamerRevertReceipt {
 }
 
 /// The Dreamer's standing changes, newest first, at most `limit`, from the
-/// newest [`DREAMER_CHANGES_SCAN`] rows, with each revertible `about`.
+/// newest [`DREAMER_CHANGES_SCAN`] rows, with each revertible `about`. A
+/// Proposed claim is no change yet: its run tray holds it.
 pub(crate) fn dreamer_changes_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -173,7 +190,11 @@ pub(crate) fn dreamer_changes_in_txn(
         let change = match record.entity_type {
             ENTITY_TYPE_CLAIM => vault
                 .get_claim_in_txn(txn, &entry.id)?
-                .filter(|body| claim_stands(body) && author(body) == Some(dreamer))
+                .filter(|body| {
+                    claim_stands(body)
+                        && body.approval != ClaimApprovalStatus::Proposed
+                        && author(body) == Some(dreamer)
+                })
                 .map(|body| (claim_kind(&body), body.predicate)),
             ENTITY_TYPE_SUMMARY => (summary_by(&record.body, dreamer)
                 && stands_in_txn(vault, txn, &entry.id)?)
@@ -199,6 +220,7 @@ pub(crate) fn dreamer_changes_in_txn(
     Ok(DreamerChanges {
         changes,
         people: revertible_person_abouts_in_txn(vault, txn)?,
+        maintenance: Vec::new(),
     })
 }
 

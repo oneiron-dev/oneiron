@@ -43,12 +43,15 @@ struct ChangesView {
     /// People whose newest `about` the Dreamer wrote, revertible by the
     /// person's id.
     people_about: Vec<PersonAboutView>,
+    /// Maintenance the Dreamer applied that still stands, revertible by its
+    /// finding's id; `label` is its kind.
+    maintenance: Vec<ChangeView>,
 }
 
 #[derive(Debug, Serialize)]
 struct ChangeView {
     change: String,
-    /// `claim`, `settlement`, `summary` or `note`.
+    /// `claim`, `settlement`, `evidence`, `summary`, `note` or `maintenance`.
     kind: &'static str,
     /// The claim's predicate or the NOTE's kind.
     label: String,
@@ -87,6 +90,10 @@ struct ChangeReverted {
     archived: Option<String>,
     /// The summary current again in a reverted one's place.
     current: Option<String>,
+    /// A maintenance revert's settings rows put back.
+    settings: Vec<String>,
+    /// What a later write changed, left as it is.
+    left_alone: Vec<String>,
     receipt_ref: String,
 }
 
@@ -121,6 +128,8 @@ fn reverted_view(receipt: DreamerRevertReceipt) -> ChangeReverted {
         left_closed: hex(&reverted.left_closed),
         archived: reverted.archived.map(|id| id.to_hex()),
         current: reverted.current.map(|id| id.to_hex()),
+        settings: reverted.settings,
+        left_alone: reverted.left_alone,
         receipt_ref: receipt.receipt_ref,
     }
 }
@@ -153,6 +162,7 @@ async fn changes(
                     at,
                 })
                 .collect(),
+            maintenance: listed.maintenance.into_iter().map(change_view).collect(),
         })
     })
     .await?;
