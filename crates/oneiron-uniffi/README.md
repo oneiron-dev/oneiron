@@ -57,7 +57,7 @@ one, and on a `PENDING_ASK` the whole refusal as `pending`, for `retry`.
 
 ## Which verbs cross typed, and which cross `WireJson`
 
-Every facade row crosses typed, but for the `WireJson` rows named below. A row whose engine type has a hand-written
+Every facade row crosses typed. A row whose engine type has a hand-written
 record in `src/dto.rs` crosses through it; every other row crosses through the
 records and enums `scripts/sdk/generate.py` writes into
 `src/facade_types_generated.rs` from the facade type inventory
@@ -84,20 +84,22 @@ no generic `call(name, json)`.
   `describe(taskRef:)`, `vaultExport(format:)`.
 - **Generated input, hand-written result (2):** `vault.notes.create`,
   `vault.notes.from_entity` (both return `EntityRefReceipt`).
-- **Generated in and out:** every other facade row, host doors included (218
-  of the 259 facade rows on this table). The generated files are the
+- **Generated in and out:** every other facade row, host doors included (254
+  of the 286 facade rows on this table). The generated files are the
   authoritative list; each method is named for its row (`vault.kv.get` is
   `vaultKvGet(input:)` over the `KeyValueAddress` record).
 - **`WireJson`** stays only where UniFFI cannot say the shape, as a field
   inside its record and never as the whole argument: each `serde_json::Value`
   (a claim's value, a task spec, an entity body, `ai.*` params and the
-  others `generate.py` lists), and the two recursive types, `LensNode` at
-  `GeneratedLens.root` and `RunTreeNode` at `RunTree.roots` (a record cannot
-  hold itself). A row whose type the inventory
-  could not read crosses as `WireJson` whole on that side: on this table the
-  eight `vault.embedding_spaces.*` rows that return `EmbeddingSpacesView`
-  (and `declare`'s input), since the inventory cannot read
-  `EmbeddingSpace.evidence`. The generated file's header carries the census.
+  others `generate.py` lists), each tuple (`DeckNodeView.placeholder`,
+  `GeometryProps.extent` and `.offset`, `TaskStatusView.asks`, `XlsxArea.first`
+  and `.last`), and the one type on a by-value cycle, `ProjectWriteProof` at
+  `ProjectRecord.write_proof` (its anchor holds an optional proof, and a record
+  cannot hold itself by value). A tree that reaches itself only through a
+  list is an ordinary record: `LensNode` (`GeneratedLens.root`) and
+  `RunTreeNode` (`RunTree.roots`) cross typed. A row whose type the inventory
+  could not read would cross as `WireJson` whole on that side; on this table
+  no row does. The generated file's header carries the census.
 - Where a generated type would take a hand-written record's name it is
   prefixed `Wire` (`WireClaimView`, `WireEntityView`, ...): the same engine
   type, carried at its wire widths.

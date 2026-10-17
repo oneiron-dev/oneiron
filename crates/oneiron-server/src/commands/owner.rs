@@ -442,6 +442,9 @@ struct Whoami {
     /// The authority vault id its slips carry; `null` until the vault is
     /// rooted (its first `serve` or `token bootstrap` with an issuer key).
     vault_id: Option<String>,
+    /// This install's sync node id: what another machine's
+    /// `[device_sync] home_node_id` names when this one is its home.
+    sync_node_id: u64,
 }
 
 /// Prints who owns the stopped vault: the principal facade credentials name
@@ -464,10 +467,14 @@ pub fn whoami(args: WhoamiArgs) -> anyhow::Result<()> {
         .authority_fold()?
         .vault_id
         .map(|id| id.iter().map(|byte| format!("{byte:02x}")).collect());
+    let sync_node_id = oneiron::DreamerRunnerStore::new(&vault)
+        .local_home_node_candidate(true, true, false)?
+        .node_id;
     emit(&Whoami {
         owner_principal: owner.to_hex(),
         actor_class: "human",
         vault_id,
+        sync_node_id,
     })
 }
 

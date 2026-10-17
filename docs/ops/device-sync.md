@@ -25,6 +25,7 @@ home_machine = "<the home's MACHINE id, 64 hex characters>"
 home_url = "ws://home/ws"
 credential_file = "/absolute/path/to/home.cred"
 worlds = ["<world id>"]
+home_node_id = 1234567890123456789   # the home's sync_node_id, from `oneiron whoami` there
 ```
 
 - `home_machine`: the home's MACHINE id. The mesh dials this machine.
@@ -38,6 +39,13 @@ worlds = ["<world id>"]
   enrolment delivers it, redeem an owner pairing link from the home (`oneiron token pair`
   without `--scope`) and store the slip and its key's seed in this form.
 - `worlds`: the worlds this machine follows, by id. Absent, it follows none until some are named.
+- `home_node_id`: the home's sync node id, which `oneiron whoami` prints on the home as
+  `sync_node_id`. This is not its MACHINE id. Named, this machine holds that node as its elected
+  home before anything reads the election. A Dreamer here that claimed this machine at start then
+  yields, and the connection publishes the home, with `home_url` as its endpoint, as its
+  home-node topology. The home stands as an always-on local node. Absent, the machine keeps the
+  home it holds. If its own Dreamer has claimed it, device sync stays off ("this machine is the
+  elected home").
 
 The section is file-only: no environment variable or flag sets it.
 
@@ -55,6 +63,15 @@ The section is file-only: no environment variable or flag sets it.
 - At stop, serve closes the connection before the mesh listener.
 
 Lines carry machine ids, never a slip or a key.
+
+## Residence reads
+
+In the default Opened mode, a machine reads the home's index, fetches an item on first touch, and
+promotes a window on its first edit. The paired credential binds each socket's NOTE session, as
+the actor its holder names; the mesh is the private carrier, so `ws://` is enough. What those
+reads may return is the own-device member grant that the credential names (`grant_ref`): the
+home provisions it at enrolment or pairing. A credential that names no grant leaves residence
+reads off. The log says so once at start, and the home refuses those reads.
 
 ## The owner's other models
 
@@ -75,9 +92,9 @@ start, so serve does not route a discovered model by itself yet.
   server's relay to its own clients, and each local update reaches both. Neither replaces the
   other.
 - Not yet built:
-  - residence reads (index, first touch, promotion), which need a grant selector and a NOTE
-    session that the section cannot name yet;
-  - a home-node topology feed;
+  - the home provisioning the own-device grant into the credential;
+  - enrolment recording the home's MACHINE id, URL and sync node id, so that none is named by
+    hand;
   - moving to a new home when the election changes;
   - managed (Hypnos) serve;
   - the apps.
