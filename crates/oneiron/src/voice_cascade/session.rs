@@ -344,6 +344,10 @@ impl VoiceCascadeSession {
         }
         let admission = guard
             .admit_for_request(request)
+            .inspect_err(|denied| {
+                self.vault
+                    .budget_denied_hooks(denied, &guard, request.model.as_str(), None);
+            })
             .map_err(|_| invalid("voice budget admission denied"))?;
         let lease = admission.lease;
         active.budget = Some(super::budget::GenerationBudget {

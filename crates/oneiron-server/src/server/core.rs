@@ -329,6 +329,7 @@ impl SyncServer {
             config.limits.queue_wait(),
         );
         let decisions = crate::decision_host::DecisionHost::new(&vault);
+        let run_receipts = Arc::new(crate::models::ServerReceipts::hooked(vault.clone()));
         let feedback_flood = crate::api::FloodCap::new(
             config.feedback_inbox.notes_per_sender,
             config.feedback_inbox.notes_per_hour,
@@ -377,7 +378,7 @@ impl SyncServer {
             decision_reads,
             decisions,
             hook_runtime: std::sync::OnceLock::new(),
-            run_receipts: Arc::default(),
+            run_receipts,
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
             extraction_egress: None,
