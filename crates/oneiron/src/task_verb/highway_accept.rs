@@ -30,6 +30,7 @@ use super::highway::{
 use super::highway_types::{
     HostBinding, TaskAccept, TaskCallReceipt, TaskHandle, TaskOutcome, TaskVia,
 };
+use super::lifecycle_receipt;
 use super::terminal_state::TaskExecutionState;
 use super::verb_kind::{TaskAssignee, TaskKind};
 
@@ -136,6 +137,10 @@ struct AcceptStep {
     brief: Option<StoredBrief>,
     node: Option<crate::EntityId>,
     generation: Option<BindingGeneration>,
+    /// When the take this Accept names landed: now for a new take, the
+    /// standing take's time for a replay. Its lifecycle receipt's id
+    /// derives from it, so a replay names the first take's receipt.
+    taken_at: Option<u64>,
 }
 
 impl Memory<'_> {
@@ -187,9 +192,11 @@ impl Memory<'_> {
             ));
         }
         let now = self.vault().now_recorded_at();
-        let step = self
-            .with_verified_actor_write_txn(|wtxn| self.accept_in_txn(wtxn, via, task_ref, now))?;
-        let receipt = self.accept_receipt(via, task_ref, key, step, now)?;
+        let keep = self.keeps_lifecycle();
+        let receipt = self.with_verified_actor_write_txn(|wtxn| {
+            let step = self.accept_in_txn(wtxn, via, task_ref, now)?;
+            self.accept_receipt_in(wtxn, via, task_ref, key, step, now, keep)
+        })?;
         if matches!(receipt.outcome, TaskOutcome::Accepted { .. }) && !receipt.idempotent_replay {
             self.vault().store.notify_attempt_observers();
             self.vault().store.notify_task_updates([task_ref]);
@@ -208,8 +215,9 @@ impl Memory<'_> {
         key: String,
     ) -> MemoryResult<TaskCallReceipt> {
         let now = self.vault().now_recorded_at();
+        let keep = self.keeps_lifecycle();
         let step = self.accept_in_txn(wtxn, via, task_ref, now)?;
-        self.accept_receipt(via, task_ref, key, step, now)
+        self.accept_receipt_in(wtxn, via, task_ref, key, step, now, keep)
     }
 
     /// One Accept's transaction: the lane's proof, the take, and on a new
@@ -366,6 +374,14 @@ impl Memory<'_> {
             }
         };
         let brief = body.brief.clone();
+        let taken_at = match &accepted {
+            Accepted::Taken { replay: false, .. } => Some(now),
+            Accepted::Taken { replay: true, .. } => standing
+                .taker
+                .filter(|taker| taker.actor == self.actor())
+                .map(|taker| taker.at),
+            Accepted::HeldByOther { .. } | Accepted::Stale | Accepted::WrongNode => None,
+        };
         if let Accepted::Taken { replay: false, .. } = &accepted {
             if matches!(body.state, None | Some(TaskExecutionState::Queued)) {
                 body.state = Some(TaskExecutionState::Working { started_at: now });
@@ -391,23 +407,34 @@ impl Memory<'_> {
             brief,
             node,
             generation,
+            taken_at,
         })
     }
 
-    /// The receipt one Accept owes.
-    fn accept_receipt(
+    /// The receipt one Accept owes, in the transaction that took: a new
+    /// take keeps its lifecycle there, unless `keep` is off; a replay names
+    /// the receipt its first take kept. A take another holds, a stale fence
+    /// and a wrong node keep none.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the Accept's transaction, door, TASK, key, step, time and whether it keeps a receipt"
+    )]
+    fn accept_receipt_in(
         &self,
+        wtxn: &mut heed::RwTxn<'_>,
         via: &TaskVia,
         task_ref: crate::EntityId,
         key: String,
         step: AcceptStep,
         now: u64,
+        keep: bool,
     ) -> MemoryResult<TaskCallReceipt> {
         let AcceptStep {
             accepted,
             brief,
             node,
             generation,
+            taken_at,
         } = step;
         let mut lifecycle =
             self.lifecycle_record(via, "accept", "accepted", Some(task_ref), None, now);
@@ -475,13 +502,29 @@ impl Memory<'_> {
                 (task, Vec::new(), TaskOutcome::WrongNode, false)
             }
         };
-        Ok(TaskCallReceipt {
+        let mut receipt = TaskCallReceipt {
             handle,
             related,
             outcome,
             receipt_ref: None,
             lifecycle: Some(lifecycle),
             idempotent_replay: replay,
-        })
+        };
+        if let Some(at) = taken_at {
+            let id = lifecycle_receipt::receipt_id(
+                "accept",
+                &[
+                    task_ref.as_bytes(),
+                    self.actor().as_bytes(),
+                    &at.to_be_bytes(),
+                ],
+            )?;
+            if replay {
+                receipt.receipt_ref = lifecycle_receipt::replayed_in(self.vault(), &*wtxn, id)?;
+            } else if keep {
+                lifecycle_receipt::stamp_in(self.vault(), wtxn, &mut receipt, id, None)?;
+            }
+        }
+        Ok(receipt)
     }
 }

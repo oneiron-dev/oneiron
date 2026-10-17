@@ -260,7 +260,9 @@ impl Vault {
         Ok(id)
     }
     /// Reserve this block before any other context fills. Whole claims are
-    /// evicted least-salient first, then by id. No source claim is deleted.
+    /// evicted least-salient first, then by id, except that an observed claim
+    /// never sits above a stated claim of its question (ARCH-0003), so the
+    /// observed mate goes first. No source claim is deleted.
     pub fn begin_standing_block_session(
         &self,
         handle: &StandingBlockHandle,
@@ -315,9 +317,15 @@ impl Vault {
                 id,
                 body.salience.unwrap_or(0.0),
                 format!("{}: {}", body.predicate, text),
+                body,
             ));
         }
         claims.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        crate::context_pack::source_ranking::clamp_order(
+            &mut claims,
+            &Default::default(),
+            |row| Some(&row.3),
+        )?;
         let mut eviction = StandingBlockEviction {
             block: handle.handle.clone(),
             claims: Vec::new(),
@@ -331,7 +339,7 @@ impl Vault {
             if crate::tokenizer::count_context_pack_tokens(&text) <= block_tokens {
                 break text.into_bytes();
             }
-            let Some((id, _, _)) = claims.pop() else {
+            let Some((id, _, _, _)) = claims.pop() else {
                 return Err(invalid());
             };
             eviction.claims.push(id);

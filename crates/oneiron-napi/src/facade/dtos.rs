@@ -53,9 +53,24 @@ pub struct NapiWitnessTurn {
     pub messages: Vec<NapiWitnessMessage>,
     /// Unix seconds (occurred + learned_at).
     pub occurred_at: i64,
+    /// A quote on a project room's thread reply (OF-460): a span of one
+    /// MESSAGE in the room; omitted ⇒ no quote.
+    pub quote: Option<NapiQuoteSpan>,
     /// A new project room thread root's audience (32-hex PERSON and
     /// AGENT_DEF ids), fixed once set; omitted ⇒ it reads as its room does.
     pub thread_audience: Option<Vec<String>>,
+}
+
+/// The quoted span of one MESSAGE: half-open Unicode scalar indices into
+/// its text, never UTF-16 units or UTF-8 bytes.
+#[napi(object)]
+pub struct NapiQuoteSpan {
+    /// The quoted MESSAGE (not the TURN that holds it), as 32 hex.
+    pub message: String,
+    /// First quoted scalar.
+    pub start: f64,
+    /// One past the last quoted scalar.
+    pub end: f64,
 }
 
 /// Receipt for one witnessed turn.

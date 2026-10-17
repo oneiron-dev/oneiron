@@ -66,7 +66,8 @@ pub struct TranscriptMessage {
     pub message_type: Option<String>,
     /// When it occurred (Unix seconds).
     pub occurred: u64,
-    /// What it says.
+    /// What it says, as plain text; `vault.refs.links` with `texts` reads
+    /// its `oneiron://` links as spans for the reader.
     pub text: String,
     /// The metadata its writer gave it (an imported message's provenance).
     pub metadata: Option<serde_json::Value>,
