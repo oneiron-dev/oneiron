@@ -18811,7 +18811,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 19,
+      "const": 20,
       "crate-vis": 8,
       "fn": 10,
       "trait": 1
@@ -19006,7 +19006,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 13,
+      "mod": 14,
       "re-export": 5
      }
     },
@@ -19182,6 +19182,23 @@
      "path": "src/dreamer_runner/maintenance/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TypeEvidence",
+      "TypeNamer",
+      "TypeTreeUpkeepReport"
+     ],
+     "path": "src/dreamer_runner/maintenance/type_tree_upkeep.rs",
+     "purpose": "Type-tree upkeep (ARCH-0079 #task-type, OF-541, OF-420): \"Splits, merges and names task types from the…",
+     "surface": {
+      "const": 2,
+      "fn": 3,
+      "struct": 2,
+      "trait": 1
+     }
     },
     {
      "bucket": "m",
@@ -42308,7 +42325,7 @@
      "purpose": "One attempt end to end: rank, read, ask the author, re-check the target under the write txn, land one gated…",
      "surface": {
       "const": 8,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 3,
       "struct": 1
      }
@@ -47768,7 +47785,7 @@
      "path": "src/team/run_binding.rs",
      "purpose": "OF-540: what the host saw a team start do, and the team a run works in",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -52514,7 +52531,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53517,7 +53534,7 @@
    },
    "over_bar": 174,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3249,
+   "source_files": 3250,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64023,6 +64040,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_host/type_tree_upkeep.rs",
+     "purpose": "The host side of type-tree upkeep (ARCH-0079 #task-type, OF-541): the engine recounts, splits and merges the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -72306,7 +72333,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72700,7 +72727,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 596,
+   "source_files": 597,
    "test_files": 182
   },
   "oneiron-spawn": {
