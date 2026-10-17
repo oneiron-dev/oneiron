@@ -209,6 +209,7 @@ impl RunInner {
                 route: offer.route.key(),
                 locality: offer.locality,
                 payer: offer.payer,
+                payer_person: offer.payer_person.clone(),
                 catalog_revision: offer.catalog_revision.clone(),
                 lease: lease.id().to_owned(),
                 reserved_units,
@@ -287,6 +288,8 @@ impl RunInner {
                 route: connector.route.key(),
                 locality: connector.locality,
                 payer: connector.payer,
+                // A connector call bills whoever funds its run.
+                payer_person: self.payer.clone(),
                 catalog_revision: connector.catalog_revision.clone(),
                 lease: lease.id().to_owned(),
                 reserved_units: reserve,

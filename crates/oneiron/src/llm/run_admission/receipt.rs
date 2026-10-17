@@ -10,7 +10,7 @@ use super::super::{
 };
 use super::admission::RunDenied;
 use super::declaration::{DeclarationEditor, LeaseUnit};
-use super::host::{AllocationRef, Payer};
+use super::host::{AllocationRef, Payer, PayerPerson};
 use crate::EntityId;
 
 /// One receipt row, with the run and the declaration revision it ran under.
@@ -112,6 +112,10 @@ pub struct PermitFacts {
     pub route: String,
     pub locality: ModelLocality,
     pub payer: Payer,
+    /// The PERSON, root spend scope and billing account a room-paid call
+    /// bills, bound at admission (OF-531); `None` when no room pays.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payer_person: Option<PayerPerson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub catalog_revision: Option<String>,
     pub lease: String,

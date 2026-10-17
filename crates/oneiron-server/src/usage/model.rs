@@ -164,6 +164,14 @@ pub struct UsageRun {
     pub catalog_revision: Option<String>,
     #[schema(value_type = String)]
     pub payer: oneiron::llm::run_admission::Payer,
+    /// The PERSON a room-paid call billed (OF-531), as hex; `None` when no
+    /// room paid.
+    pub payer_person: Option<String>,
+    /// The root spend scope whose payer consent named that PERSON.
+    pub payer_scope: Option<String>,
+    /// The payer-needed ask on which the owners approved billing the vault,
+    /// when the PERSON's own account could not be resolved.
+    pub payer_ask: Option<u64>,
     pub reserved_units: u64,
     pub settled_units: u64,
     pub unit: String,

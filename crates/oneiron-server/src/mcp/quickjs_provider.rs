@@ -10,7 +10,7 @@ use oneiron::engine_executor::{
     RunCompaction,
 };
 use oneiron::llm::SingleRouteBackend;
-use oneiron::llm::run_admission::RunReceiptSink;
+use oneiron::llm::run_admission::{PayerPerson, RunReceiptSink};
 use oneiron::llm::seat::SeatDecisions;
 use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, Vault, WriteActor};
 use oneiron_code_check::ShadowCheck;
@@ -93,16 +93,18 @@ pub struct McpQuickJsProvider {
 }
 
 /// A reader child's backend over the host-injected model: its calls are
-/// runs on the child's own meter, their receipts written to `receipts`.
+/// runs on the child's own meter, billed to its payer when a room's scope
+/// pays (OF-531), their receipts written to `receipts`.
 fn injected_meter(
     backend: Arc<dyn SingleRouteBackend>,
     receipts: Arc<dyn RunReceiptSink>,
 ) -> ReaderMeter {
-    Arc::new(move |meter: BudgetGuard| {
-        Arc::new(InjectedRuns::new(
+    Arc::new(move |meter: BudgetGuard, payer: Option<PayerPerson>| {
+        Arc::new(InjectedRuns::funded(
             Arc::clone(&backend),
             meter,
             Arc::clone(&receipts),
+            payer,
         )) as Arc<dyn LlmBackend>
     })
 }
@@ -296,8 +298,12 @@ impl McpCodeModeProvider for McpQuickJsProvider {
             None => Box::new(UnavailableRuntime),
         }
     }
-    fn reader_backend(&self, meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
-        self.reader_meter.as_ref().map(|build| build(meter))
+    fn reader_backend(
+        &self,
+        meter: BudgetGuard,
+        payer: Option<PayerPerson>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        self.reader_meter.as_ref().map(|build| build(meter, payer))
     }
     fn host_meter(&self) -> Option<BudgetGuard> {
         self.host_meter.clone()

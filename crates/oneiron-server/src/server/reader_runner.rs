@@ -51,6 +51,7 @@ use oneiron::{
 };
 
 use crate::admission::Permit;
+use crate::ai_host::payer_funding::scope_funding;
 use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider, run_seat};
 
 /// The window a run with no decision clock gives its children: one, fixed
@@ -487,7 +488,18 @@ impl Child {
             Ok(meter) => meter,
             Err(end) => return end,
         };
-        let Some(backend) = self.provider.reader_backend(guard.clone()) else {
+        // A child under a room-paid scope bills its root's payer, bound
+        // before its first call (OF-531). One with no payer it can bill ends
+        // with that typed reason before any call, never on the vault owner's
+        // account.
+        let payer = match scope_funding(vault, recorded.as_ref(), false) {
+            Ok(payer) => payer,
+            Err(fault) => {
+                tracing::info!(%fault, task = %job.task.to_hex(), "a reader child has no payer to bill");
+                return ReaderRunEnd::Failed(fault.reason().to_owned());
+            }
+        };
+        let Some(backend) = self.provider.reader_backend(guard.clone(), payer) else {
             return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());
         };
         let end = match &job.kind {

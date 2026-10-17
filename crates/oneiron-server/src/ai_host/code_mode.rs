@@ -11,6 +11,7 @@ use oneiron::engine_executor::{
     ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig, EngineExecutorLimits,
 };
 use oneiron::llm::BudgetDenied;
+use oneiron::llm::run_admission::PayerPerson;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError,
     LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelTierRef, Vault,
@@ -101,18 +102,21 @@ pub(super) async fn bind(
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
         guard: guard.clone(),
+        payer: None,
     });
     // A reader child's calls take the same admission: on its own child
     // scope's guard when its run spends under a scope, else on code mode's
-    // own, lent below as the host's meter.
+    // own, lent below as the host's meter. A room-paid scope's calls bill
+    // the payer its host bound before the run began (OF-531).
     let reader_meter: crate::mcp::ReaderMeter = {
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
-        Arc::new(move |guard: BudgetGuard| {
+        Arc::new(move |guard: BudgetGuard, payer: Option<PayerPerson>| {
             Arc::new(CodeModeBackend {
                 vault: Arc::clone(&vault),
                 models: Arc::clone(&models),
                 guard,
+                payer,
             }) as Arc<dyn LlmBackend>
         })
     };
@@ -234,6 +238,8 @@ struct CodeModeBackend {
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
     guard: BudgetGuard,
+    /// Who funds each call when a room's root spend scope pays for the run.
+    payer: Option<PayerPerson>,
 }
 
 /// The run each code-mode call is admitted under, one run per call so the
@@ -256,7 +262,7 @@ impl LlmBackend for CodeModeBackend {
             })?;
             let run = self
                 .models
-                .undeclared_run(CODE_MODE_RUN, self.guard.clone());
+                .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone());
             if seat_bound {
                 call.ladder.generate_exact(&run, call.request, None).await
             } else {

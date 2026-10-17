@@ -5,15 +5,15 @@ use std::sync::Arc;
 
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{
-    BudgetLine, HostAccount, KeyCustody, LeaseUnit, OfferBinding, OfferRoute, Payer, RunAdmission,
-    RunDeclaration, RunDenied, RunReceiptSink,
+    BudgetLine, HostAccount, KeyCustody, LeaseUnit, OfferBinding, OfferRoute, Payer, PayerPerson,
+    RunAdmission, RunDeclaration, RunDenied, RunReceiptSink,
 };
 use oneiron::{
     BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture,
     LlmRequest, LlmStreamResult, ModelId,
 };
 
-use super::{ModelRouter, OfferLadder, ServedOffer, undeclared_run};
+use super::{ModelRouter, OfferLadder, ServedOffer};
 
 /// The run every raw call is admitted under, one run per call so that a
 /// long-lived server keeps no per-call state.
@@ -24,6 +24,8 @@ pub(crate) struct RawInference {
     models: RawModels,
     meter: BudgetGuard,
     host: Option<Arc<HostAccount>>,
+    /// Who funds each call, when a room's root spend scope pays for them.
+    payer: Option<PayerPerson>,
 }
 
 #[derive(Clone)]
@@ -45,6 +47,7 @@ impl RawInference {
             models: RawModels::Configured(router),
             meter,
             host,
+            payer: None,
         }
     }
 
@@ -53,6 +56,7 @@ impl RawInference {
             models: RawModels::Injected(backend),
             meter,
             host: None,
+            payer: None,
         }
     }
 
@@ -75,10 +79,14 @@ impl RawInference {
                 backend: Arc::clone(backend),
             })),
         };
-        Some((
-            ladder,
-            undeclared_run(RAW_RUN, self.meter.clone(), self.host.clone(), receipts),
-        ))
+        let run = funded_run(
+            RAW_RUN,
+            self.meter.clone(),
+            self.host.clone(),
+            receipts,
+            self.payer.clone(),
+        );
+        Some((ladder, run))
     }
 
     /// Records a raw call refused before admission under the run it would
@@ -120,8 +128,22 @@ impl InjectedRuns {
         meter: BudgetGuard,
         receipts: Arc<dyn RunReceiptSink>,
     ) -> Self {
+        Self::funded(backend, meter, receipts, None)
+    }
+
+    /// [`Self::new`] for a reader child a room's root spend scope pays for
+    /// (OF-531): each call's run binds `payer`.
+    pub(crate) fn funded(
+        backend: Arc<dyn SingleRouteBackend>,
+        meter: BudgetGuard,
+        receipts: Arc<dyn RunReceiptSink>,
+        payer: Option<PayerPerson>,
+    ) -> Self {
         Self {
-            raw: RawInference::injected(Arc::clone(&backend), meter),
+            raw: RawInference {
+                payer,
+                ..RawInference::injected(Arc::clone(&backend), meter)
+            },
             backend,
             receipts,
         }
@@ -166,5 +188,27 @@ fn injected_offer(request: &LlmRequest) -> Option<OfferBinding> {
         catalog_revision: None,
         custody: KeyCustody::T1,
         rates: Vec::new(),
+        payer_person: None,
     })
+}
+
+/// A run that declares nothing, on a meter its host built (see
+/// [`super::undeclared_run`]), funded by `payer` when a room's root spend
+/// scope pays for its calls (OF-531): each permit binds the PERSON and the
+/// account the host resolved before the run began. `None` is the vault
+/// owner's run.
+pub(crate) fn funded_run(
+    run: impl Into<String>,
+    meter: BudgetGuard,
+    host: Option<Arc<HostAccount>>,
+    receipts: Arc<dyn RunReceiptSink>,
+    payer: Option<PayerPerson>,
+) -> RunAdmission {
+    let line = BudgetLine {
+        limit_units: meter.read().limit_units,
+        reserve_units: meter.reserve_units(),
+        unit: LeaseUnit::tokens(),
+    };
+    let declaration = RunDeclaration::undeclared(line);
+    RunAdmission::with_payer(run, declaration, meter, host, receipts, payer)
 }

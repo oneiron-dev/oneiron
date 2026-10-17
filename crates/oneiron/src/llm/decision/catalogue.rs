@@ -340,6 +340,15 @@ pub const CODE_FIX_JUDGMENT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Should the vault pay for a room-paid launch whose payer PERSON has no billing account the
+/// host can resolve (OF-531)? Yes bills the vault for the calls under that launch's root spend
+/// scope; anything else keeps them held. Keyed by the payer and the root scope.
+pub const PAYER_NEEDED: QuestionFamily = QuestionFamily {
+    name: "spend.payer_needed",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -376,4 +385,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     IDENTITY_SETTLE,
     COACH_HEAL_ROUTE,
     CODE_FIX_JUDGMENT,
+    PAYER_NEEDED,
 ];
