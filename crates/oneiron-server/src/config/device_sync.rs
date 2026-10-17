@@ -29,6 +29,12 @@ pub struct DeviceSyncConfig {
     /// The worlds this machine follows, by id; none until named.
     #[serde(default)]
     pub worlds: Vec<String>,
+    /// The home's sync node id, as `oneiron whoami` prints it there
+    /// (`sync_node_id`). Named, this machine holds that node as its elected
+    /// home and routes residence reads to `home_url`. Absent, it keeps the
+    /// home it holds, and a Dreamer here that claimed this machine keeps it.
+    #[serde(default)]
+    pub home_node_id: Option<u64>,
 }
 
 impl DeviceSyncConfig {
@@ -53,6 +59,10 @@ impl DeviceSyncConfig {
     pub(crate) fn validate(&self) -> anyhow::Result<()> {
         self.home()?;
         self.followed_worlds()?;
+        anyhow::ensure!(
+            self.home_node_id != Some(0),
+            "[device_sync] home_node_id is the home's sync node id, never 0"
+        );
         let url: axum::http::Uri = self
             .home_url
             .parse()

@@ -90,7 +90,12 @@ impl SyncClient {
                     .parse::<std::net::IpAddr>()
                     .is_ok_and(|ip| ip.is_loopback())
             });
-            if uri.scheme_str() != Some("wss") && !(uri.scheme_str() == Some("ws") && loopback) {
+            // A mesh dialer is a private carrier to a paired machine: the
+            // bind never crosses an open network.
+            if config.mesh_dialer.is_none()
+                && uri.scheme_str() != Some("wss")
+                && !(uri.scheme_str() == Some("ws") && loopback)
+            {
                 return Err(Error::sync_protocol(
                     SyncProtocolValidation::DocumentAdmissionDenied,
                 ));
