@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 269 facade rows, 851 generated types.
+// UniFFI census: 269 facade rows, 852 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 225.
 // WireJson rows: vault.weave.digest (result), vault.weave.lens (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.packs.setup.answer (input), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -10748,6 +10748,16 @@ pub struct ImagePin {
     pub sent_height: u32,
 }
 
+/// `oneiron::llm::decision::rules::HostRuleRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HostRuleRef {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "revision")]
+    pub revision: u32,
+}
+
 /// `oneiron::llm::decision::types::DecisionReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -10796,6 +10806,8 @@ pub struct DecisionReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub person_row: Option<u32>,
+    #[serde(rename = "rule", default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<HostRuleRef>,
 }
 
 /// `oneiron::llm::decision::types::HumanAskReason`.
@@ -11502,6 +11514,10 @@ pub struct AskAnswer {
     pub kind: HolderKind,
     #[serde(rename = "changed")]
     pub changed: bool,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "rule", default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<HostRuleRef>,
 }
 
 /// `oneiron::llm::decision::asks::DecisionAsk`.

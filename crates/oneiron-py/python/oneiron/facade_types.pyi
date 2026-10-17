@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 269 facade rows, 1014 declarations.
+Census: 269 facade rows, 1015 declarations.
 Inputs: 225 of 269 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 218 of 269 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 67; unread shapes: 2.
@@ -4051,6 +4051,9 @@ class ImagePin(TypedDict):
     edge: NotRequired[int | None]
     sent_width: int
     sent_height: int
+class HostRuleRef(TypedDict):
+    id: str
+    revision: int
 class DecisionReceipt(TypedDict):
     question: str
     question_version: int
@@ -4066,6 +4069,7 @@ class DecisionReceipt(TypedDict):
     images: NotRequired[list[ImagePin]]
     think_row: NotRequired[int | None]
     person_row: NotRequired[int | None]
+    rule: NotRequired[HostRuleRef | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
@@ -4299,6 +4303,8 @@ class AskAnswer(TypedDict):
     role: AskRole
     kind: HolderKind
     changed: bool
+    reason: NotRequired[str | None]
+    rule: NotRequired[HostRuleRef | None]
 class DecisionAsk(TypedDict):
     seq: int
     id: str
