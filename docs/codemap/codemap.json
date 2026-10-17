@@ -4864,6 +4864,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ArtifactCreateRequest"
+     ],
+     "path": "src/blob_artifact/create.rs",
+     "purpose": "`vault.artifacts.create` (OF-181): one artifact with its first version, the composite `POST…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/artifact_actor.rs",
      "purpose": "Vault-local machine identity for capability uploads and verified seal output",
@@ -5408,7 +5421,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -34861,7 +34874,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)",
      "surface": {
       "crate-vis": 7,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -34991,6 +35004,21 @@
       "const": 2,
       "crate-vis": 10,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MessageReactionExternal",
+      "MessageReactionReceipt",
+      "MessageReactionRequest"
+     ],
+     "path": "src/reaction/verbs.rs",
+     "purpose": "`vault.messages.react` (OF-181): the one typed door that a reaction button, an agent's call and `POST…",
+     "surface": {
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -45285,7 +45313,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 253
+      "fn": 255
      }
     },
     {
@@ -49886,7 +49914,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50824,7 +50852,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "reaction": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51295,7 +51323,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3100,
+   "source_files": 3102,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59166,7 +59194,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 208
+      "fn": 210
      }
     },
     {
@@ -60181,7 +60209,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 209
+      "fn": 211
      }
     },
     {
@@ -62728,7 +62756,7 @@
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -62818,7 +62846,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -62839,6 +62867,16 @@
      "purpose": "The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/reaction_doors.rs",
+     "purpose": "The host door of `vault.messages.react` (OF-181)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69256,7 +69294,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 275,
+     "files": 276,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69580,7 +69618,7 @@
    },
    "over_bar": 35,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 540,
+   "source_files": 541,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -69781,6 +69819,7 @@
       "AiVideoTicket",
       "AnswerContract",
       "AnswerRecord",
+      "ArtifactCreateRequest",
       "ArtifactExportFile",
       "ArtifactExportRequest",
       "ArtifactKind",
@@ -70010,6 +70049,9 @@
       "MemoryExport",
       "MessagePersonReceipt",
       "MessagePersonRequest",
+      "MessageReactionExternal",
+      "MessageReactionReceipt",
+      "MessageReactionRequest",
       "NativeOutputRequest",
       "NotWorse",
       "NoteAnchor",
@@ -70331,7 +70373,7 @@
      "purpose": "—",
      "surface": {
       "enum": 170,
-      "struct": 407
+      "struct": 411
      }
     },
     {
