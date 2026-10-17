@@ -465,8 +465,10 @@ pub fn place_task(
         human: decisions.ladder.human,
         human_pin: decisions.ladder.human_pin.clone(),
         ask_to: decisions.ladder.ask_to,
+        paired: decisions.ladder.paired,
         person: decisions.ladder.person,
         presence: decisions.ladder.presence,
+        correlation: decisions.ladder.correlation,
     };
     // Unsure is the root, so a placement never queues a person.
     let dial = DecisionDial {
