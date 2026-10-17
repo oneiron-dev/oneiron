@@ -95,6 +95,10 @@ pub(super) struct WidenIntent {
     /// approval like the rest of the spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<super::SpawnPlanReceipt>,
+    /// The objectives the spawn's caller assigned (OF-544), frozen at
+    /// approval like the rest of the spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objectives: Option<Vec<String>>,
 }
 
 impl WidenIntent {
@@ -121,6 +125,7 @@ impl WidenIntent {
             room: spawn.room,
             team: spawn.team.clone(),
             plan: spawn.plan.clone(),
+            objectives: spawn.objectives.clone(),
         })
     }
 
@@ -170,6 +175,7 @@ impl WidenIntent {
                 room: self.room,
                 team: self.team.clone(),
                 plan: self.plan.clone(),
+                objectives: self.objectives.clone(),
             },
         ))
     }

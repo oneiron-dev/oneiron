@@ -24,6 +24,7 @@ use super::microvm::{
     GuestImage, MicroVmBackend, MicroVmExit, MicroVmHandle, prepare_overlay_handle,
 };
 use super::{SandboxBoundaryContract, SandboxMountTable, SandboxProposalWrite};
+use crate::engine_executor::StepCancellation;
 use crate::error::CodeError;
 use crate::{Error, Result};
 use std::{
@@ -104,13 +105,18 @@ impl FirecrackerBackend {
         Self::configured(config).ok()
     }
 
+    /// Boots one armed VM under its step's token (FIX 600): a step cancelled
+    /// before its boot stages nothing, and one cancelled while it runs ends
+    /// with its own guest killed and the run failed.
     fn boot(
         &self,
         vm: &MicroVmHandle,
         image: &GuestImage,
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
+        cancel: &StepCancellation,
     ) -> Result<MicroVmExit> {
+        cancel.check()?;
         #[cfg(target_os = "linux")]
         let resolved;
         #[cfg(target_os = "linux")]
@@ -141,7 +147,15 @@ impl FirecrackerBackend {
             state.phase = Phase::Running;
         }
         #[cfg(target_os = "linux")]
-        let result = launch::run(config, vm, image, budget, proxy, self.transport.as_deref());
+        let result = launch::run(
+            config,
+            vm,
+            image,
+            budget,
+            proxy,
+            self.transport.as_deref(),
+            cancel,
+        );
         #[cfg(not(target_os = "linux"))]
         let result: Result<(MicroVmExit, Vec<SandboxProposalWrite>)> =
             Err(refused("Firecracker requires Linux"));
@@ -287,7 +301,18 @@ impl MicroVmBackend for FirecrackerBackend {
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
     ) -> Result<MicroVmExit> {
-        self.boot(vm, image, budget, proxy)
+        self.boot(vm, image, budget, proxy, &StepCancellation::never())
+    }
+
+    fn run_with_proxy_cancellable(
+        &self,
+        vm: &MicroVmHandle,
+        image: &GuestImage,
+        budget: ExecutionBudget,
+        proxy: &CredentialEgressProxy,
+        cancel: &StepCancellation,
+    ) -> Result<MicroVmExit> {
+        self.boot(vm, image, budget, proxy, cancel)
     }
 
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>> {

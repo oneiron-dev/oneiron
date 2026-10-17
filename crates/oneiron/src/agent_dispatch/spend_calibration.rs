@@ -241,6 +241,14 @@ impl ExpectedSpend {
         )
     }
 
+    /// `; ` and the [`Self::dollar_line`] when a USD quote prices this
+    /// spend; empty when none does, so a cap-shortfall line omits it.
+    pub(super) fn dollar_clause(&self) -> String {
+        self.expected_usd_micros
+            .map(|_| format!("; {}", self.dollar_line()))
+            .unwrap_or_default()
+    }
+
     /// A tree's expected spend: the saturating sum. It is a prior if any node is.
     /// Its dollars are the checked sum, unknown if any node's is: an empty
     /// tree is $0.

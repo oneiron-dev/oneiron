@@ -12,7 +12,7 @@ use crate::code_sandbox::{
 use crate::engine_executor::SelfDispatchResponse;
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultRef,
-    JsResultTarget, RESULT_REPLY_INLINE_BYTES,
+    JsResultTarget, RESULT_REPLY_INLINE_BYTES, StepCancellation,
 };
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{EntityId, Result};
@@ -160,7 +160,18 @@ fn bounded_recoverable_reply(path: &str, bytes: &[u8], limit: usize) -> Result<S
     encode(fits)
 }
 
+/// Runs one host operation the step is admitted to make: refused once the
+/// step is cancelled, and failed when a cancel lands while it runs. The
+/// operation itself settles; the step never sees its answer (FIX 600).
+fn admitted<T>(cancel: &StepCancellation, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    cancel.check()?;
+    let answer = operation();
+    cancel.check()?;
+    answer
+}
+
 pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Result<String> {
+    let cancel = state.cancel;
     match name {
         "sandbox.fs.read_file" => {
             let args: File = parse(input)?;
@@ -174,9 +185,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
                     .as_str()
                     .starts_with(crate::engine_executor::RESULT_READ_ROOT)
             {
-                let bytes = state
-                    .host
-                    .read_recoverable_output(path.as_str())?
+                let bytes = admitted(cancel, || state.host.read_recoverable_output(path.as_str()))?
                     .ok_or(failure("recoverable output unavailable"))?;
                 return bounded_recoverable_reply(path.as_str(), &bytes, state.message_bytes);
             }
@@ -184,9 +193,8 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
                 .adapter
                 .as_mut()
                 .ok_or(failure("file service unavailable"))?;
-            let result = service.read_file(SandboxReadFile::new(SandboxVirtualPath::try_new(
-                &args.path,
-            )?))?;
+            let read = SandboxReadFile::new(SandboxVirtualPath::try_new(&args.path)?);
+            let result = admitted(cancel, || service.read_file(read))?;
             Ok(file_reply(result.path.as_str(), &result.bytes).to_string())
         }
         "sandbox.credential.call" => {
@@ -195,11 +203,12 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
                 .adapter
                 .as_mut()
                 .ok_or(failure("credential service unavailable"))?;
-            let result = service.call_credential(SandboxCredentialCall::read_only(
+            let call = SandboxCredentialCall::read_only(
                 args.operation,
                 SandboxCredentialHandle::new(args.credential_handle)?,
                 json_value(args.args),
-            )?)?;
+            )?;
+            let result = admitted(cancel, || service.call_credential(call))?;
             Ok(json!({"operation": result.operation().as_str(), "credentialHandle": result.credential().as_str()}).to_string())
         }
         "self.json.validate" => {
@@ -232,7 +241,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             if name == "self.verbs.call"
                 && let Some(call) = result_call(input)?
             {
-                return Ok(state.host.result_call(call)?.to_string());
+                return Ok(admitted(cancel, || state.host.result_call(call))?.to_string());
             }
             if let Some(refusal) = wrong_root_call(name, input) {
                 return Ok(json!({ "error": refusal }).to_string());
@@ -240,14 +249,19 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             let call = self_call(name, input, state.determinism.frozen_unix_ms / 1000)?;
             // A callable skill runs a step of its own while this one waits on
             // the reply (OF-353), on a fresh sibling of this runtime: never
-            // on this step's store.
+            // on this step's store. That step runs under a child of this
+            // one's token, so a stop of this step stops it too.
             let answered = if matches!(call, SelfCall::SkillsCall(_)) {
                 let mut sibling = state.nested.fresh();
-                state.host.dispatch_self_nested(call, &mut sibling)?
+                admitted(cancel, || {
+                    state
+                        .host
+                        .dispatch_self_nested_cancellable(call, &mut sibling, cancel)
+                })?
             } else {
-                state.host.dispatch_self(call)?
+                admitted(cancel, || state.host.dispatch_self(call))?
             };
-            let body = fit_reply(state.host, reply_body(&answered.outcome)?)?;
+            let body = fit_reply(state.host, cancel, reply_body(&answered.outcome)?)?;
             Ok(answered.guest_json(body).to_string())
         }
     }
@@ -516,13 +530,17 @@ fn encoded_len(value: &Value) -> usize {
 /// the whole reply when it has none). No answer is refused for its size; a
 /// host with no result store sends it as it is, for the message bound to
 /// judge.
-fn fit_reply(host: &mut dyn JsCodeModeHost, mut body: Value) -> Result<Value> {
+fn fit_reply(
+    host: &mut dyn JsCodeModeHost,
+    cancel: &StepCancellation,
+    mut body: Value,
+) -> Result<Value> {
     if encoded_len(&body) <= RESULT_REPLY_INLINE_BYTES {
         return Ok(body);
     }
     let has_output = body.get("output").is_some();
     let stored = if has_output { &body["output"] } else { &body };
-    if let Some(card) = host.store_reply(stored)? {
+    if let Some(card) = admitted(cancel, || host.store_reply(stored))? {
         if has_output {
             body["output"] = card;
         } else {
@@ -597,11 +615,14 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "team_submit_not_led",
     "team_submit_output_missing",
     "team_submit_output_unscoped",
+    "team_submit_scope_stale",
     "team_submit_id_occupied",
     "team_submit_unreviewed",
     // the bridge
     "host_bridge_halted",
     "task_declined",
+    // a callable skill its owner stopped while it ran (FIX 600)
+    "code_step_cancelled",
     // the facade's error codes a coordination call fails with
     "BAD_REQUEST",
     "NOT_FOUND",
@@ -798,7 +819,8 @@ pub(super) fn output(bridge: &mut Bridge<'_>, target: StreamTarget, frame: Vec<u
         other => other,
     };
     let len = frame.len() as u64;
-    if !bridge.host.write_output(target.stream(), &frame)? {
+    let cancel = bridge.cancel;
+    if !admitted(cancel, || bridge.host.write_output(target.stream(), &frame))? {
         bridge.held.take(target, frame, bridge.held_limit)?;
     }
     Ok(len)
