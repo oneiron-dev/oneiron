@@ -2,15 +2,29 @@
 //! ran the same action on the same input snapshot, an equal known action
 //! digest on their runs' bridge calls, and the pattern did not plan it. Two
 //! members of one team whose pattern runs members on the same work by design
-//! are planned redundancy; so is a pair whose team cannot be told. A call
-//! whose inputs were not captured is never equal to another.
+//! are planned redundancy; a pair whose team cannot be told is unknown. A
+//! call whose inputs were not captured is never equal to another. Every pair
+//! gets its `dup_of` label under its team (agent-mind §3.4: "the health
+//! recipe or an audit writes it"); only a redundant one is a finding.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{Attempts, Dispatches, entity};
-use crate::agent_dispatch::TeamRunStamp;
+use crate::agent_dispatch::{TeamRunStamp, attempt_team_stamp};
+use crate::learning::DuplicateWorkKind;
 use crate::team::{TeamPattern, team_spawn_context_for_attempt};
 use crate::{Result, Vault};
+
+/// Two attempts that ran one action on the same inputs, `second` after
+/// `first`.
+pub(super) struct DigestPair {
+    pub(super) first: [u8; 16],
+    pub(super) second: [u8; 16],
+    pub(super) kind: DuplicateWorkKind,
+    /// The team its label goes under: the second's own stamp, else the
+    /// first's. A pair with neither has no label key.
+    pub(super) team: Option<String>,
+}
 
 /// Whether `pattern` runs members on the same work by design: "a vote, a
 /// committee or an independent checker is excluded by the pattern on the
@@ -23,15 +37,15 @@ pub(super) const fn plans_redundancy(pattern: TeamPattern) -> bool {
     )
 }
 
-/// Each attempt updated since `since` that ran an action another attempt
-/// had run first on the same inputs, by attempt bytes, with those earlier
-/// attempts.
+/// Each pair of attempts updated since `since` in which the second ran an
+/// action the first had run first on the same inputs, with what the repeat
+/// was.
 pub(super) fn digest_duplicates(
     vault: &Vault,
     dispatched: &Dispatches,
     attempts: &Attempts,
     since: u64,
-) -> Result<BTreeMap<[u8; 16], BTreeSet<[u8; 16]>>> {
+) -> Result<Vec<DigestPair>> {
     // Each digest's runs: when each attempt first ran it.
     let mut runs: BTreeMap<String, Vec<(u64, [u8; 16])>> = BTreeMap::new();
     for key in dispatched.keys() {
@@ -59,28 +73,41 @@ pub(super) fn digest_duplicates(
         }
     }
     let mut teams: BTreeMap<[u8; 16], Option<Option<TeamRunStamp>>> = BTreeMap::new();
-    let mut out: BTreeMap<[u8; 16], BTreeSet<[u8; 16]>> = BTreeMap::new();
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
     for mut ran in runs.into_values().filter(|ran| ran.len() > 1) {
         ran.sort_unstable();
         let (_, first) = ran[0];
         for &(_, second) in &ran[1..] {
-            if !planned(vault, attempts, &mut teams, first, second) {
-                out.entry(second).or_default().insert(first);
+            if !seen.insert((first, second)) {
+                continue;
             }
+            let team = [second, first]
+                .iter()
+                .filter_map(|key| attempts.get(key))
+                .find_map(|record| attempt_team_stamp(record).ok().flatten())
+                .map(|stamp| stamp.team_ref);
+            out.push(DigestPair {
+                first,
+                second,
+                kind: kind(vault, attempts, &mut teams, first, second),
+                team,
+            });
         }
     }
     Ok(out)
 }
 
-/// Whether `first` and `second` work in one team whose pattern plans the
-/// overlap, or in teams that cannot be told.
-fn planned(
+/// What `second` repeating `first` was: a planned check when both work in
+/// one team whose pattern plans the overlap, unknown when a team cannot be
+/// told, else redundant.
+fn kind(
     vault: &Vault,
     attempts: &Attempts,
     teams: &mut BTreeMap<[u8; 16], Option<Option<TeamRunStamp>>>,
     first: [u8; 16],
     second: [u8; 16],
-) -> bool {
+) -> DuplicateWorkKind {
     let mut team = |key: [u8; 16]| {
         teams
             .entry(key)
@@ -91,11 +118,13 @@ fn planned(
             .clone()
     };
     match (team(first), team(second)) {
-        (Some(Some(first)), Some(Some(second))) => {
-            first.team_ref == second.team_ref && plans_redundancy(first.pattern)
+        (Some(Some(first)), Some(Some(second)))
+            if first.team_ref == second.team_ref && plans_redundancy(first.pattern) =>
+        {
+            DuplicateWorkKind::PlannedCheck
         }
-        (Some(_), Some(_)) => false,
+        (Some(_), Some(_)) => DuplicateWorkKind::Redundant,
         // A team the host could not tell may have planned it.
-        _ => true,
+        _ => DuplicateWorkKind::Unknown,
     }
 }
