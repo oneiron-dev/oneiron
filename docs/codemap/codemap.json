@@ -21714,7 +21714,7 @@
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
       "const": 5,
-      "crate-vis": 3,
+      "crate-vis": 8,
       "enum": 9,
       "fn": 5,
       "struct": 6,
@@ -38353,7 +38353,7 @@
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
