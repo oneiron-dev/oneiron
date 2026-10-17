@@ -107,6 +107,9 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
             Err(_) => None,
         },
     };
+    if let Some(done) = super::authored::lift(vault, txn, decl, row_key, row.as_deref())? {
+        return Ok(done);
+    }
     Ok(match row.as_deref().and_then(write_payload_hit) {
         Some(reason) => Done::Propose(LiftCause::NoDoor, reason),
         None => Done::Clean,
