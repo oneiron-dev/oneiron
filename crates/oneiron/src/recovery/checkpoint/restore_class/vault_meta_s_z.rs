@@ -107,6 +107,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_RESIDENT_OWNER, CONTENT),
     (&t::SKILL_RESIDENT_RECEIPT, CONTENT),
     (&t::SKILL_ATTRIBUTION_AUDIT, CONTENT),
+    (&t::SKILL_ATTRIBUTION_CONTRIBUTION_CHECK, CONTENT),
     (&t::SKILL_ATTRIBUTION_CURSOR, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_JUDGE, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_REVISION, CONTENT),
@@ -207,6 +208,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_CREATE_ORIGIN, CONTENT),
     (&t::TASK_FACT_SUPPRESSED, LIVE),
     (&t::TASK_FOLLOW_UP_MARKER, CONTENT),
+    // Narrative of what each highway call did, like the report journal: not authority.
+    (&t::TASK_LIFECYCLE_RECEIPT, CONTENT),
     (&t::TASK_OWNER_FACT_REVERSE, CONTENT),
     (&t::TASK_PEER_HANDLE, CONTENT),
     (&t::TASK_PROJECT_TRADEOFF_ASK, CONTENT),

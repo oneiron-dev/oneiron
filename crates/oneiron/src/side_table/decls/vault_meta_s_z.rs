@@ -280,6 +280,10 @@ side_tables! {
     /// Persisted audit report of a judge run against the held-out fixture set, keyed by run time then
     /// evidence sequence. Key: u64be + u64be.
     SKILL_ATTRIBUTION_AUDIT: VaultMeta b"skill_attribution:audit:v1:" Raw;
+    /// One matched-fork contribution check: the verdict and the pair it was read from (both fork
+    /// receipts and results, the anchor, the axis). Key: string (attempt receipt "\0" skill hex
+    /// "\0" axis).
+    SKILL_ATTRIBUTION_CONTRIBUTION_CHECK: VaultMeta b"skill_attribution:contribution_check:v1:" Named;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
     /// Replacement judge revision (UTF-8) marking one routed judgment as displaced. Key: u64be
@@ -541,6 +545,10 @@ side_tables! {
     TASK_FACT_SUPPRESSED: VaultMeta b"tasks.fact_suppressed.v1/" Raw;
     /// Follow-up stage idempotency marker. Key: id16 + \x00 + string.
     TASK_FOLLOW_UP_MARKER: VaultMeta b"tasks.followup.v1\0" Raw;
+    /// One mutating task-highway call's `TaskLifecycle` receipt (OF-220), projected as the receipt
+    /// family reads it, written in the call's own transaction. Key: string (the receipt id,
+    /// `task_lifecycle:` + 32 hex).
+    TASK_LIFECYCLE_RECEIPT: VaultMeta b"tasks.lifecycle_receipt.v1/" Named;
     /// Owner-authority fact to forward index key. Key: id16.
     TASK_OWNER_FACT_REVERSE: VaultMeta b"tasks.owner_fact.v1/" Raw;
     /// Display handle for a peer actor. Key: id16.

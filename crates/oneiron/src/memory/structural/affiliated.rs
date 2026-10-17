@@ -3,7 +3,7 @@
 use crate::claim::ClaimApprovalStatus;
 use crate::edge::EdgeKind;
 use crate::error::ErrorKind;
-use crate::gate::record_references::admit_prose_links;
+use crate::gate::record_references::{receipt_landed_prose, unlinked_prose_links};
 use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
     NormalizedIngestClaim,
@@ -89,8 +89,9 @@ impl Memory<'_> {
         // OF-063 prose links (FIX 1228): the one engine write every take,
         // dissent and diary entry passes through reads its markdown for links
         // its writer cannot resolve, once per write, whatever door it came
-        // through. Receipt-only, before the content writer opens.
-        admit_prose_links(
+        // through. The read runs before the content writer opens; its receipt
+        // is written only once the NOTE has landed (landed speech only).
+        let unlinked_prose = unlinked_prose_links(
             self,
             "memory.author_note",
             &NoteProse {
@@ -169,6 +170,7 @@ impl Memory<'_> {
             )?;
             Ok(())
         })?;
+        receipt_landed_prose(self, &unlinked_prose);
         self.entity_ref_receipt_of(&note_id, crate::registry::ENTITY_TYPE_NOTE)
     }
 

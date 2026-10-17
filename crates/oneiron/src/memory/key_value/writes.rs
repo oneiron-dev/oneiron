@@ -4,7 +4,7 @@
 use super::*;
 use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::entity_id::derived_domains::KEY_VALUE;
-use crate::gate::record_references::admit_prose_links;
+use crate::gate::record_references::{receipt_landed_prose, unlinked_prose_links};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 use std::sync::atomic::Ordering;
@@ -18,8 +18,8 @@ impl Memory<'_> {
     pub fn key_value_put(&self, input: &KeyValuePut) -> MemoryResult<KeyValuePutReceipt> {
         // OF-063 prose links (FIX 1228): the value's text is read for links
         // its writer cannot resolve, once per write, whatever door it came
-        // through. Receipt-only, before the writer opens.
-        admit_prose_links(self, "vault.kv.put", input, &["/value"])?;
+        // through: before the writer opens, receipted once the write lands.
+        let unlinked_prose = unlinked_prose_links(self, "vault.kv.put", input, &["/value"])?;
         let address = KeyValueAddress {
             namespace: input.namespace.clone(),
             key: input.key.clone(),
@@ -115,6 +115,7 @@ impl Memory<'_> {
             }
             Ok((self.key_value_item(content.read(), id, stored)?, false))
         })?;
+        receipt_landed_prose(self, &unlinked_prose);
         Ok(KeyValuePutReceipt {
             item,
             replayed,
