@@ -12,6 +12,10 @@
 //! edit reaches peers as well as a new row. A row a sync import wrote
 //! (Observer B, forward rematerialization: [`import_scope`]) is mirrored only
 //! where the doc lacks it: the doc already holds what the import brought.
+//!
+//! The same thread retries the setup window's waiting rows once a local
+//! embedding space move ends (OF-370): a received binding or retirement that
+//! waited on that move lands then, through the window's remat-marker drain.
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -22,6 +26,7 @@ use std::time::Duration;
 use super::WindowManager;
 use crate::Vault;
 use crate::entity_id::EntityId;
+use crate::sync::types::WindowKey;
 
 /// How long the mirror thread waits for rows before it checks that its
 /// manager still lives.
@@ -53,11 +58,12 @@ impl Drop for ImportScope {
 }
 
 /// Rows committed and not yet mirrored: every one, and those a local write
-/// changed.
+/// changed. `setup_retry` asks for the setup window's waiting rows again.
 #[derive(Default)]
 struct Pending {
     rows: BTreeSet<EntityId>,
     edited: BTreeSet<EntityId>,
+    setup_retry: bool,
 }
 
 /// Rows committed here and not yet mirrored, and the thread that mirrors them.
@@ -87,6 +93,23 @@ impl WindowManager {
             }
             pending.rows.extend(rows);
         }
+        self.wake_live_mirror();
+    }
+
+    /// Asks the mirror thread to retry the EMBEDDING_SETUP rows the setup
+    /// window holds back here: a local move ended, so the slot or space they
+    /// wait on may be free.
+    pub(crate) fn note_setup_retry(self: &Arc<Self>) {
+        self.live_mirror
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .setup_retry = true;
+        self.wake_live_mirror();
+    }
+
+    /// Wakes the mirror thread, and starts it on first use.
+    fn wake_live_mirror(self: &Arc<Self>) {
         self.live_mirror.wake.notify_one();
         if !self.live_mirror.started.swap(true, Ordering::AcqRel) {
             let mirror = Arc::clone(&self.live_mirror);
@@ -111,6 +134,9 @@ impl WindowManager {
     /// that reached the doc first, and waits on the lock, finds the mirror's
     /// carrier there and leaves LMDB alone (`carrier_superseded`).
     fn mirror_committed_rows(&self, rows: &BTreeSet<EntityId>, edited: &BTreeSet<EntityId>) {
+        // FIX 1794: a committed room turn's door wrote side rows that ride
+        // its room's, parent's and thread root's windows as well as its own.
+        let carriers = crate::sync::room_facts::committed_carriers(&self.vault, rows);
         for key in self.loaded_keys() {
             let Some(window) = self.window(&key) else {
                 continue;
@@ -131,6 +157,31 @@ impl WindowManager {
                     tracing::warn!(window = %key, %error, "committed rows not mirrored into the live window");
                 }
             }
+            if !carriers.is_empty()
+                && key.world().is_none()
+                && let Err(error) = crate::sync::room_facts::mirror_carriers(
+                    &self.vault,
+                    &window.doc,
+                    &carriers,
+                    None,
+                )
+            {
+                tracing::warn!(window = %key, %error, "room side rows not mirrored into the live window");
+            }
+        }
+    }
+
+    /// Drains the setup window's remat markers: each waiting row lands now,
+    /// or keeps its marker and waits on.
+    fn retry_setup_rows(&self) {
+        let window = WindowKey::from_timestamp(crate::embed::EMBEDDING_SETUP_LEARNED_AT);
+        if let Err(error) = super::super::quarantine::drain_remat_markers_of(
+            &self.vault,
+            &self.user_id,
+            &self.materializer,
+            &window,
+        ) {
+            tracing::warn!(window = %window, %error, "setup rows not retried after a move ended");
         }
     }
 }
@@ -146,7 +197,9 @@ fn mirror_loop(mirror: &LiveMirror, manager: &Weak<WindowManager>) {
                 .unwrap_or_else(PoisonError::into_inner);
             let (mut guard, _) = mirror
                 .wake
-                .wait_timeout_while(guard, LIVENESS_POLL, |pending| pending.rows.is_empty())
+                .wait_timeout_while(guard, LIVENESS_POLL, |pending| {
+                    pending.rows.is_empty() && !pending.setup_retry
+                })
                 .unwrap_or_else(PoisonError::into_inner);
             std::mem::take(&mut *guard)
         };
@@ -155,6 +208,9 @@ fn mirror_loop(mirror: &LiveMirror, manager: &Weak<WindowManager>) {
         };
         if !pending.rows.is_empty() {
             manager.mirror_committed_rows(&pending.rows, &pending.edited);
+        }
+        if pending.setup_retry {
+            manager.retry_setup_rows();
         }
     }
 }
@@ -174,6 +230,20 @@ impl Vault {
         if let Some(manager) = manager {
             let edited = !IMPORTING.with(Cell::get);
             manager.note_committed_rows(rows, edited);
+        }
+    }
+
+    /// Hands a setup retry to the attached window manager's mirror thread
+    /// ([`WindowManager::note_setup_retry`]). With no attached manager no
+    /// window holds a waiting row live.
+    pub(crate) fn retry_embedding_setup_rows(&self) {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .ok()
+            .and_then(|manager| manager.upgrade());
+        if let Some(manager) = manager {
+            manager.note_setup_retry();
         }
     }
 }
