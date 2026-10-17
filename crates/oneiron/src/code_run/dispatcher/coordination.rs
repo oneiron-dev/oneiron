@@ -214,10 +214,19 @@ impl<'a> HostSelfDispatcher<'a> {
             (Some(ask), _) if planned => self.planned_spawn(call.context, ask, now)?,
             (ask, Some(target)) => {
                 let mut context = call.context;
-                super::leader::narrow_budget(
-                    &mut context,
-                    ask.as_ref().and_then(|ask| ask.budget_cap_units.as_ref()),
-                );
+                if let Some(ask) = ask {
+                    super::leader::narrow_budget(&mut context, ask.budget_cap_units.as_ref());
+                    // With no planner bound, a leased agent's spawn is still
+                    // placed on its need text (the rule rung reads it);
+                    // dispatch keeps the stamp.
+                    if self.agent_lease.is_some() {
+                        context.type_ref = Some(self.place_agent_spawn_type(
+                            &ask.need,
+                            context.type_ref.as_ref(),
+                            None,
+                        )?);
+                    }
+                }
                 (target, context)
             }
             (Some(_), None) if self.planner_bound() => {

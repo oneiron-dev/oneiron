@@ -240,6 +240,11 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn code_check(&self) -> Option<&oneiron_code_check::ShadowCheck> {
         None
     }
+    /// The seats a leased agent's planned spawns choose among
+    /// (`[models.planner]`); absent, the host lends no planner.
+    fn planner(&self) -> Option<&crate::config::models::PlannerSettings> {
+        None
+    }
 }
 
 /// Builds one run's compaction seat from the run's write actor, the

@@ -13,7 +13,9 @@ use crate::code_run::{
 };
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
+use crate::llm::decision::{DecisionBandPolicy, DecisionDial, HeldLadder};
 use crate::memory::MemoryResult;
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::skill::LoadedSkillPack;
 use crate::task_type::PlacementDecisions;
 use crate::workspace_roster::{ProjectProofVersion, ProjectRecord, ProjectWriteProof};
@@ -34,15 +36,61 @@ pub struct HostPlannerBinding<'a> {
     pub seats: Vec<PlannerSeat>,
     /// The planner's `model@revision`, stamped on its pack loads.
     pub executor: String,
-    /// The host's planner ladder; unset, the deterministic plan answers.
-    pub planner: Option<&'a PlannerDecisions<'a>>,
-    /// The host's placement ladder; unset, the placement skill's rule rung
+    /// The host's ladder for the shape pick and the type placement; unset,
+    /// the deterministic plan answers and the placement skill's rule rung
     /// reads alone.
-    pub placement: Option<&'a PlacementDecisions<'a>>,
+    pub decisions: Option<HostPlannerDecisions<'a>>,
     /// The leader's starter, pattern and team-shape skills.
     pub leader: LeaderStarterSkills,
     /// How many shapes advice returns when the leader names no count.
     pub top: usize,
+}
+
+/// The host's typed-decision ladder for a run's planner: its principal,
+/// bands and wording of the shape and placement questions. Each call builds
+/// its decisions on a fresh clock of its budget, so a long run's later
+/// spawns get the whole budget too.
+pub struct HostPlannerDecisions<'a> {
+    pub ladder: &'a HeldLadder,
+    pub principal: EntityId,
+    pub bands: DecisionBandPolicy,
+    /// The host's wording of the shape question.
+    pub planner_wording: String,
+    /// How long one shape pick may take.
+    pub planner_budget: std::time::Duration,
+    /// Where the placement ladder starts and how far it climbs.
+    pub placement_dial: DecisionDial,
+    /// The host's wording of the placement question.
+    pub placement_wording: String,
+    /// How long one placement may take.
+    pub placement_budget: std::time::Duration,
+}
+
+impl HostPlannerDecisions<'_> {
+    fn clock(budget: std::time::Duration) -> RetrievalDeadline {
+        RetrievalDeadline::hard(std::time::Instant::now(), budget)
+    }
+
+    fn planner<'d>(&'d self, deadline: &'d RetrievalDeadline) -> PlannerDecisions<'d> {
+        PlannerDecisions {
+            ladder: self.ladder.ladder(),
+            principal: self.principal,
+            bands: self.bands.clone(),
+            wording: self.planner_wording.clone(),
+            deadline,
+        }
+    }
+
+    fn placement<'d>(&'d self, deadline: &'d RetrievalDeadline) -> PlacementDecisions<'d> {
+        PlacementDecisions {
+            ladder: self.ladder.ladder(),
+            principal: self.principal,
+            dial: self.placement_dial,
+            bands: self.bands.clone(),
+            wording: self.placement_wording.clone(),
+            deadline,
+        }
+    }
 }
 
 impl<'a> HostSelfDispatcher<'a> {
@@ -82,15 +130,24 @@ impl HostSelfDispatcher<'_> {
             )));
         }
         let planner = self.planner.as_ref().ok_or_else(invalid)?;
+        let host = planner.decisions.as_ref();
+        let placement_clock = host.map(|host| HostPlannerDecisions::clock(host.placement_budget));
+        let placement = host
+            .zip(placement_clock.as_ref())
+            .map(|(host, clock)| host.placement(clock));
         let type_ref =
-            self.place_agent_spawn_type(&ask.need, context.type_ref.as_ref(), planner.placement)?;
+            self.place_agent_spawn_type(&ask.need, context.type_ref.as_ref(), placement.as_ref())?;
+        let planner_clock = host.map(|host| HostPlannerDecisions::clock(host.planner_budget));
+        let decisions = host
+            .zip(planner_clock.as_ref())
+            .map(|(host, clock)| host.planner(clock));
         let receipt = self.plan_agent_spawn(
             &LivePlanRequest {
                 need: ask.into_need(type_ref),
                 seats: &planner.seats,
                 skills: &planner.skills,
                 executor: &planner.executor,
-                decisions: planner.planner,
+                decisions: decisions.as_ref(),
             },
             at,
         )?;
@@ -108,13 +165,18 @@ impl HostSelfDispatcher<'_> {
             return Ok(Self::planner_unbound(SelfEffect::Leader));
         };
         let at = crate::unix_seconds_now();
+        let host = planner.decisions.as_ref();
+        let clock = host.map(|host| HostPlannerDecisions::clock(host.planner_budget));
+        let decisions = host
+            .zip(clock.as_ref())
+            .map(|(host, clock)| host.planner(clock));
         let answer = match call {
             SelfLeaderCall::Advice { top } => self.leader_advice(
                 &planner.leader,
                 planner.skills.clone(),
                 planner.seats.clone(),
                 &planner.executor,
-                planner.planner,
+                decisions.as_ref(),
                 top.map_or(planner.top, |top| {
                     usize::try_from(top).unwrap_or(usize::MAX)
                 }),
