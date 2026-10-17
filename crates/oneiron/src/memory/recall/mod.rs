@@ -238,7 +238,9 @@ pub struct MemoryItem {
     pub kind: String,
     /// Predicate (claims only).
     pub predicate: Option<String>,
-    /// Text rendering of the item value/content (capped).
+    /// Text rendering of the item value/content (capped), as plain text;
+    /// `vault.refs.links` with `texts` reads its `oneiron://` links as spans
+    /// for the reader.
     pub value_text: String,
     /// Calibrated-absolute confidence in [0, 1] — NEVER set-relative:
     /// read from the claim body, independent of the candidate set.
