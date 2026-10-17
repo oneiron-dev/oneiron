@@ -146,7 +146,30 @@ impl Memory<'_> {
         // One snapshot binds owner authority, content and recipients. The
         // test hook can commit a revocation on another thread at this seam.
         after_authority();
-        Ok(self.vault.preview_entity_delete_in_txn(&txn, id)?)
+        let preview = self.vault.preview_entity_delete_in_txn(&txn, id)?;
+        // The preview is derived from the record, each live grant it revokes
+        // and that grant's recipient, and every other record or owner its
+        // bytes are shared with (DEC-0005).
+        self.produced_from(std::iter::once(preview.entity()));
+        self.produced_from(
+            preview
+                .shared_with()
+                .iter()
+                .flat_map(|(grant, recipient)| [*grant, *recipient]),
+        );
+        self.produced_from(
+            preview
+                .held_bytes()
+                .iter()
+                .flat_map(|row| row.other_holders().iter().copied()),
+        );
+        self.produced_from(
+            preview
+                .lfs_chunks()
+                .iter()
+                .flat_map(|row| row.other_owners().iter().copied()),
+        );
+        Ok(preview)
     }
 
     /// A single owner action revokes the previewed brief grants, publishes a

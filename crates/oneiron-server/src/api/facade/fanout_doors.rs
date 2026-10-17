@@ -10,14 +10,16 @@
 //! of the launch's bound project, acting as the slip's principal with its
 //! declared class (`decision_ask_doors::holder`); the engine verifies the
 //! writer and reads the role again in its transaction.
+//!
+//! Each keeps its proof's own handle, and answers beside the rows that
+//! handle's reads listed (`host_door_lists`).
 use std::sync::Arc;
 
 use oneiron::EdgeActorClass;
-use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{self, FanoutAckRequest, FanoutLaunchView, FanoutResumeRequest};
 
-use super::host_doors::internal;
-use super::legal_hold_doors::as_owner;
+use super::host_doors::{Listed, off_runtime_listing, refused};
+use super::legal_hold_doors::as_owner_listing;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -27,13 +29,19 @@ pub(crate) async fn vault_fanout_resume(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: FanoutResumeRequest,
-) -> MemoryResult<FanoutLaunchView> {
-    as_owner(server, auth, "vault.fanout.resume", move |server, owner| {
-        let memory = server
-            .vault()
-            .memory(owner.revalidate(server.vault())?, EdgeActorClass::Human);
-        sdk::resume_fanout_launch_as(&memory, owner, input)
-    })
+) -> Listed<FanoutLaunchView> {
+    as_owner_listing(
+        server,
+        auth,
+        "vault.fanout.resume",
+        move |server, owner, producers| {
+            let memory = server
+                .vault()
+                .memory(owner.revalidate(server.vault())?, EdgeActorClass::Human)
+                .listing_producers(producers);
+            sdk::resume_fanout_launch_as(&memory, owner, input)
+        },
+    )
     .await
 }
 
@@ -44,18 +52,21 @@ pub(crate) async fn vault_fanout_resume_as(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: FanoutResumeRequest,
-) -> MemoryResult<FanoutLaunchView> {
+) -> Listed<FanoutLaunchView> {
     const VERB: &str = "vault.fanout.resume_as";
-    let holder = super::decision_ask_doors::holder(auth, VERB)?;
+    let holder = match super::decision_ask_doors::holder(auth, VERB) {
+        Ok(holder) => holder,
+        Err(refusal) => return refused(refusal),
+    };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<FanoutLaunchView> {
+    off_runtime_listing(VERB, move |producers| {
         let memory = server
             .vault()
-            .memory(holder.entity_ref(), holder.actor_class());
+            .memory(holder.entity_ref(), holder.actor_class())
+            .listing_producers(producers);
         sdk::resume_fanout_launch_as_holder(&memory, &holder, input)
     })
     .await
-    .map_err(|_| internal(VERB))?
 }
 
 /// `vault.fanout.ack`: the owner acknowledges a launched fan-out's width
@@ -64,12 +75,18 @@ pub(crate) async fn vault_fanout_ack(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: FanoutAckRequest,
-) -> MemoryResult<FanoutLaunchView> {
-    as_owner(server, auth, "vault.fanout.ack", move |server, owner| {
-        let memory = server
-            .vault()
-            .memory(owner.revalidate(server.vault())?, EdgeActorClass::Human);
-        sdk::ack_fanout_check_as(&memory, owner, input)
-    })
+) -> Listed<FanoutLaunchView> {
+    as_owner_listing(
+        server,
+        auth,
+        "vault.fanout.ack",
+        move |server, owner, producers| {
+            let memory = server
+                .vault()
+                .memory(owner.revalidate(server.vault())?, EdgeActorClass::Human)
+                .listing_producers(producers);
+            sdk::ack_fanout_check_as(&memory, owner, input)
+        },
+    )
     .await
 }

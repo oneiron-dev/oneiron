@@ -13,10 +13,9 @@ use oneiron::core_write::{
     CoreEntityWriteReceipt, DagRecordAppendInput, DagRecordAppendReceipt,
 };
 use oneiron::dreamer_wake::WakeTurnSubject;
-use oneiron::memory::MemoryResult;
+use oneiron::memory::{MemoryResult, ProducerRows};
 
-use super::FacadeApiError;
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -46,14 +45,25 @@ pub(crate) async fn write_core_turn(
 }
 
 /// `vault.conversations.records.append`: one DAG record bylined the
-/// credential's principal.
+/// credential's principal. Beside it, the rows its writer's reads listed.
 pub(crate) async fn vault_conversations_records_append(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: DagRecordAppendInput,
-) -> MemoryResult<DagRecordAppendReceipt> {
-    let (actor, class) = super::facade_actor(auth).map_err(FacadeApiError::into_memory_error)?;
-    write_dag_record(server, auth, WriteActor::new(actor, class), &input)
+) -> Listed<DagRecordAppendReceipt> {
+    let (actor, class) = match super::facade_actor(auth) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal.into_memory_error()),
+    };
+    let producers = ProducerRows::default();
+    let answer = write_dag_record_listing(
+        server,
+        auth,
+        WriteActor::new(actor, class),
+        &input,
+        Some(&producers),
+    );
+    (answer, producers.take())
 }
 
 /// One DAG record bylined `actor`, written on `auth`'s own lane, then its
@@ -66,6 +76,18 @@ pub(crate) fn write_dag_record(
     actor: WriteActor,
     input: &DagRecordAppendInput,
 ) -> MemoryResult<DagRecordAppendReceipt> {
+    write_dag_record_listing(server, auth, actor, input, None)
+}
+
+/// [`write_dag_record`], its writer's reads listed in `producers` when a
+/// door collects them.
+fn write_dag_record_listing(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    actor: WriteActor,
+    input: &DagRecordAppendInput,
+    producers: Option<&ProducerRows>,
+) -> MemoryResult<DagRecordAppendReceipt> {
     let writer = crate::api::credential_memory(
         &server.vault,
         Some(auth),
@@ -73,6 +95,10 @@ pub(crate) fn write_dag_record(
         actor.actor_class(),
     )
     .at(auth.locality());
+    let writer = match producers {
+        Some(producers) => writer.listing_producers(producers),
+        None => writer,
+    };
     let receipt = writer.conversations_records_append(input)?;
     server
         .ai

@@ -20,36 +20,30 @@ use oneiron::secret_custody::SECRET_USE_CONNECTOR_CALL;
 use oneiron::task_verb::sdk::{self, SecretUseAnswer, SecretUseRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::connector_call_host::ServedConnectorCallHost;
 use crate::server::SyncServer;
 
 /// `self.use`: `caller`'s use of one secret by its handle, on the credential
 /// it presented, with its call's invocation as a connector call's ledger
-/// identity.
+/// identity. Beside it, the rows its reads listed.
 pub(crate) async fn self_use(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     caller: (EntityId, EdgeActorClass),
     invocation: Option<InvocationId>,
     input: SecretUseRequest,
-) -> MemoryResult<SecretUseAnswer> {
+) -> Listed<SecretUseAnswer> {
     const VERB: &str = "self.use";
-    let (actor, class) = caller;
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-            .at(auth.locality());
+    credential_listing(server, auth, caller, VERB, move |server, _, memory| {
         let memory = match invocation {
             Some(invocation) => memory.with_invocation(invocation),
             None => memory,
         };
-        self_use_as(&server, &memory, input)
+        self_use_as(server, &memory, input)
     })
     .await
-    .map_err(|_| internal(VERB))?
 }
 
 /// One use for the caller `memory` is bound to, with the invocation it

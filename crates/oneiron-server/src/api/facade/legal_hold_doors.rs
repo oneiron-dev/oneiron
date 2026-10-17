@@ -10,13 +10,13 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{LegalHold, LegalHoldEvent};
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult, ProducerRows};
 use oneiron::task_verb::sdk::{
     self, EmptyRequest, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased,
     LegalHoldPlaceRequest, LegalHoldWidenRequest,
 };
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal, off_runtime_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -49,6 +49,25 @@ pub(super) async fn as_owner<T: Send + 'static>(
     tokio::task::spawn_blocking(move || act(&*server, &owner))
         .await
         .map_err(|_| internal(verb))?
+}
+
+/// [`as_owner`] for a door that lists its rows (`host_door_lists`): `act`
+/// gets a fresh collector its handles list into, and beside its answer come
+/// the rows they listed. A refusal of the proof lists none.
+pub(super) async fn as_owner_listing<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, &AuthenticatedOwner, &ProducerRows) -> MemoryResult<T>
+    + Send
+    + 'static,
+) -> Listed<T> {
+    let owner = match owner_proof(server, auth, verb) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    off_runtime_listing(verb, move |producers| act(&*server, &owner, producers)).await
 }
 
 /// `vault.legal_holds.place`: the owner's customer hold.

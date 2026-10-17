@@ -14,7 +14,8 @@ use std::sync::Arc;
 use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest, Modality};
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
+    ProducerRows,
 };
 use oneiron::runtime_hooks::HookVerdict;
 use oneiron::task_verb::sdk::{
@@ -185,34 +186,42 @@ pub(crate) async fn vault_connectors_subscriptions_revoke(
 /// and bands, and holds the proposal for Keep or Discard. A unit with no
 /// image is rendered by the host's LibreOffice renderer when it has one. The
 /// ladder and the render run on a blocking thread, one call per unit.
+/// Beside it, the rows its reads listed, the head it renders from and every
+/// stored image a unit names.
 pub(crate) async fn vault_artifacts_review_slides(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::blob_artifact::SlideReviewSubmit,
-) -> MemoryResult<oneiron::blob_artifact::SlideReviewOutcome> {
-    let (actor, class) = slide_reviewer(auth)?;
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-            .at(auth.locality());
-        let host = server.decision_host();
-        memory.artifacts_review_slides_through(
-            &input,
-            &crate::decision_artifact::HostUnitDecider::new(
-                &server,
-                class,
-                "vault.artifacts.review_slides",
-            ),
-            host.dial(oneiron::llm::decision::DecisionRung::Big),
-            &host.bands(),
-            crate::slide_render::host_renderer().map(|renderer| {
-                renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
-            }),
-        )
-    })
-    .await
-    .map_err(|_| internal("vault.artifacts.review_slides"))?
+) -> Listed<oneiron::blob_artifact::SlideReviewOutcome> {
+    const VERB: &str = "vault.artifacts.review_slides";
+    let caller = match slide_reviewer(auth) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    let beside = read_beside(
+        std::iter::once(input.artifact_ref.as_str()).chain(
+            input
+                .units
+                .iter()
+                .filter_map(|unit| unit.review_image_ref.as_deref()),
+        ),
+    );
+    let (answer, mut listed) =
+        credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+            let host = server.decision_host();
+            memory.artifacts_review_slides_through(
+                &input,
+                &crate::decision_artifact::HostUnitDecider::new(server, caller.1, VERB),
+                host.dial(oneiron::llm::decision::DecisionRung::Big),
+                &host.bands(),
+                crate::slide_render::host_renderer().map(|renderer| {
+                    renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
+                }),
+            )
+        })
+        .await;
+    listed.extend(beside);
+    (answer, listed)
 }
 
 /// The principal a slide review binds its proposal to.
@@ -231,27 +240,31 @@ fn slide_reviewer(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
 /// ladder as the bound actor, from the host's starting dial and bands, and
 /// holds the answers as one proposal for Keep or Discard. The ladder runs on
 /// a blocking thread, one call per unit, as `vault.artifacts.review_slides`.
+/// Beside it, the rows its reads listed and the artifact it asks over.
 pub(crate) async fn vault_artifacts_ask(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::blob_artifact::ArtifactAskSubmit,
-) -> MemoryResult<oneiron::blob_artifact::ArtifactAskOutcome> {
-    let (actor, class) = artifact_asker(auth)?;
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-            .at(auth.locality());
-        let host = server.decision_host();
-        memory.artifacts_ask_through(
-            &input,
-            &crate::decision_artifact::HostUnitDecider::new(&server, class, "vault.artifacts.ask"),
-            host.dial(oneiron::llm::decision::DecisionRung::Big),
-            &host.bands(),
-        )
-    })
-    .await
-    .map_err(|_| internal("vault.artifacts.ask"))?
+) -> Listed<oneiron::blob_artifact::ArtifactAskOutcome> {
+    const VERB: &str = "vault.artifacts.ask";
+    let caller = match artifact_asker(auth) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    let beside = read_beside([input.artifact_ref.as_str()]);
+    let (answer, mut listed) =
+        credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+            let host = server.decision_host();
+            memory.artifacts_ask_through(
+                &input,
+                &crate::decision_artifact::HostUnitDecider::new(server, caller.1, VERB),
+                host.dial(oneiron::llm::decision::DecisionRung::Big),
+                &host.bands(),
+            )
+        })
+        .await;
+    listed.extend(beside);
+    (answer, listed)
 }
 
 /// The principal an artifact ask binds its proposal to.
@@ -267,38 +280,46 @@ fn artifact_asker(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
 
 /// `vault.artifacts.body.deck.preview`: the asked slides of a deck's head,
 /// drawn by this host's review renderer on a blocking thread, for a
-/// credential that reads the artifact.
+/// credential that reads the artifact. Beside it, the rows its reads listed
+/// and the head it draws from.
 pub(crate) async fn vault_artifacts_body_deck_preview(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::office_body::DeckPreviewRequest,
-) -> MemoryResult<oneiron::office_body::DeckPreview> {
-    let (actor, class) = super::facade_actor(auth).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "a deck preview reads as the credential's own principal",
-            &["Present a slip paired with a principal ref and an actor class."],
-        )
-    })?;
-    if let Ok(artifact) = EntityId::from_hex(&input.artifact_ref)
-        && !auth.can_read_entity(&server.vault, &artifact)?
-    {
-        return Err(oneiron::Error::EntityNotFound.into());
-    }
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-            .at(auth.locality())
-            .artifacts_body_deck_preview(
+) -> Listed<oneiron::office_body::DeckPreview> {
+    const VERB: &str = "vault.artifacts.body.deck.preview";
+    let admitted = || -> MemoryResult<(EntityId, EdgeActorClass)> {
+        let caller = super::facade_actor(auth).map_err(|_| {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "a deck preview reads as the credential's own principal",
+                &["Present a slip paired with a principal ref and an actor class."],
+            )
+        })?;
+        if let Ok(artifact) = EntityId::from_hex(&input.artifact_ref)
+            && !auth.can_read_entity(&server.vault, &artifact)?
+        {
+            return Err(oneiron::Error::EntityNotFound.into());
+        }
+        Ok(caller)
+    };
+    let caller = match admitted() {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    let beside = read_beside([input.artifact_ref.as_str()]);
+    let (answer, mut listed) =
+        credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+            memory.artifacts_body_deck_preview(
                 &input,
                 crate::slide_render::host_renderer().map(|renderer| {
                     renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
                 }),
             )
-    })
-    .await
-    .map_err(|_| internal("vault.artifacts.body.deck.preview"))?
+        })
+        .await;
+    listed.extend(beside);
+    (answer, listed)
 }
 
 /// `vault.authority.audit`: one page of the dated AUTHORITY_LOG audit, the
@@ -518,23 +539,22 @@ pub(crate) async fn ai_video_cancel(
 /// their own person proof ([`super::shared_act_doors::person`], OF-490), so
 /// their own Grant decides. Any other caller passes none and the engine door
 /// decides: an agent or system reads as itself, and a person without a proof
-/// is refused.
+/// is refused. Beside it, the rows its reads listed.
 pub(crate) async fn self_memory_diary_query(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::task_verb::sdk::DiaryQueryRequest,
-) -> MemoryResult<oneiron::task_verb::sdk::DiaryQueryOutcome> {
-    let (actor, class) = diary_reader(auth)?;
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        let proof = super::shared_act_doors::person(&server, &auth, "self.memory.diary.query").ok();
-        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-            .at(auth.locality());
+) -> Listed<oneiron::task_verb::sdk::DiaryQueryOutcome> {
+    const VERB: &str = "self.memory.diary.query";
+    let caller = match diary_reader(auth) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |server, auth, memory| {
+        let proof = super::shared_act_doors::person(server, auth, VERB).ok();
         oneiron::task_verb::sdk::diary_query_as(&memory, proof.as_ref(), input)
     })
     .await
-    .map_err(|_| internal("self.memory.diary.query"))?
 }
 
 /// The principal a diary query reads as.
@@ -553,45 +573,54 @@ fn diary_reader(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
 /// vault's own owner for an owner-grade credential that names none. Its
 /// evidence is read under the caller's own scoped read
 /// ([`crate::decision_verdict::run_verdict`]); a screenshot the calling
-/// code run's browser holds comes from that browser.
+/// code run's browser holds comes from that browser. Beside it, the rows its
+/// evidence reads listed and the asset an image it pulls is read from: the
+/// image's lane is a scoped read of its own, which lists nothing itself.
 pub(crate) async fn ai_verdict(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiVerdictRequest,
-) -> MemoryResult<AiVerdict> {
-    let (principal, class) = asking(auth, server)?;
+) -> Listed<AiVerdict> {
+    const VERB: &str = "ai.verdict";
+    let caller = match asking(auth, server) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
     let held = crate::decision_verdict::HeldImage::in_task(input.image.as_deref());
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        let reader = crate::api::credential_memory(&server.vault, Some(&auth), principal, class)
-            .at(auth.locality());
-        // An image is pulled through the caller's own lane before any model
-        // reads it, unless it is the run's own held screenshot.
-        let lane = match (&input.image, &held) {
-            (Some(_), None) => Some(
-                crate::api::scoped_read_for_core_auth(&server.vault, &auth).map_err(|_| {
-                    MemoryError::new(
-                        MEMORY_CODE_FORBIDDEN,
-                        "ai.verdict reads an image under the caller's scoped read",
-                        &["Present a credential that can read the image."],
-                    )
-                })?,
-            ),
-            _ => None,
-        };
-        crate::decision_verdict::run_verdict(
-            &server,
-            principal,
-            class,
-            &reader,
-            lane.as_ref(),
-            held,
-            &input,
-        )
-    })
-    .await
-    .map_err(|_| internal("ai.verdict"))?
+    // A held screenshot is the run's browser's pixels, no row's.
+    let beside = match (&input.image, &held) {
+        (Some(handle), None) => read_beside([handle.as_str()]),
+        _ => Vec::new(),
+    };
+    let (answer, mut listed) =
+        credential_listing(server, auth, caller, VERB, move |server, auth, reader| {
+            // An image is pulled through the caller's own lane before any model
+            // reads it, unless it is the run's own held screenshot.
+            let lane = match (&input.image, &held) {
+                (Some(_), None) => Some(
+                    crate::api::scoped_read_for_core_auth(&server.vault, auth).map_err(|_| {
+                        MemoryError::new(
+                            MEMORY_CODE_FORBIDDEN,
+                            "ai.verdict reads an image under the caller's scoped read",
+                            &["Present a credential that can read the image."],
+                        )
+                    })?,
+                ),
+                _ => None,
+            };
+            crate::decision_verdict::run_verdict(
+                server,
+                caller.0,
+                caller.1,
+                &reader,
+                lane.as_ref(),
+                held,
+                &input,
+            )
+        })
+        .await;
+    listed.extend(beside);
+    (answer, listed)
 }
 
 /// `vault.hooks.replay`: the owner replays a hook over past facts or its
@@ -774,6 +803,85 @@ pub(super) fn internal(verb: &str) -> MemoryError {
         format!("{verb} did not finish on this server"),
         &["Report this SDK host-door failure."],
     )
+}
+
+/// A listing host door's answer (`host_door_lists`), beside the rows its
+/// reads derived it from, as a plain row's answer lists them (DEC-0005):
+/// the rows its caller or its answer names by ref aside. A refusal keeps
+/// its typed error, with the rows read before it.
+pub(crate) type Listed<T> = (MemoryResult<T>, Vec<EntityId>);
+
+/// The rows a listing door answers beside its result, as every served door
+/// releases it by them: a list, or `None` for a call one of whose paths
+/// lists none, never an empty list standing in for it.
+pub(crate) trait ListedRows {
+    /// The rows, `None` when they are unknown.
+    fn rows(self) -> Option<Vec<EntityId>>;
+}
+
+impl ListedRows for Vec<EntityId> {
+    fn rows(self) -> Option<Vec<EntityId>> {
+        Some(self)
+    }
+}
+
+impl ListedRows for Option<Vec<EntityId>> {
+    fn rows(self) -> Option<Vec<EntityId>> {
+        self
+    }
+}
+
+/// A refusal before any read: it lists no row.
+pub(super) fn refused<T>(refusal: MemoryError) -> Listed<T> {
+    (Err(refusal), Vec::new())
+}
+
+/// `act` off the runtime with a fresh collector, which its handles list
+/// into, and beside its answer the rows they listed. A worker that does not
+/// finish answers [`internal`] and lists none.
+pub(super) async fn off_runtime_listing<T: Send + 'static>(
+    verb: &'static str,
+    act: impl FnOnce(&ProducerRows) -> MemoryResult<T> + Send + 'static,
+) -> Listed<T> {
+    tokio::task::spawn_blocking(move || {
+        let producers = ProducerRows::default();
+        let answer = act(&producers);
+        (answer, producers.take())
+    })
+    .await
+    .unwrap_or_else(|_| refused(internal(verb)))
+}
+
+/// `read` off the runtime on the credential's own handle as `caller`, at
+/// its locality ([`crate::api::credential_memory`]), listing every row its
+/// reads derive the answer from: the one collector the credential-backed
+/// host doors share.
+pub(super) async fn credential_listing<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    (actor, class): (EntityId, EdgeActorClass),
+    verb: &'static str,
+    read: impl FnOnce(&SyncServer, &CoreAuth, Memory<'_>) -> MemoryResult<T> + Send + 'static,
+) -> Listed<T> {
+    let (server, auth) = (Arc::clone(server), auth.clone());
+    off_runtime_listing(verb, move |producers| {
+        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
+            .at(auth.locality())
+            .listing_producers(producers);
+        read(&*server, &auth, memory)
+    })
+    .await
+}
+
+/// The rows a door reads beside its handle's own reads, as its caller names
+/// them: a whole id, or an image handle (`<asset>@<hash>`) by its asset.
+/// A short ref is the socket's to resolve, as every named ref is.
+pub(super) fn read_beside<S: AsRef<str>>(named: impl IntoIterator<Item = S>) -> Vec<EntityId> {
+    named
+        .into_iter()
+        .filter_map(|text| oneiron::memory::ImageHandle::parse(text.as_ref()).ok())
+        .map(|handle| handle.asset)
+        .collect()
 }
 
 /// The owner's call of `operation`, admitted against the vault's inference

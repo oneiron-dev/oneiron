@@ -5,15 +5,17 @@
 //! decision ladder, and writes the verdict as the caller. It returns the
 //! verdict, each lens's artifact and the receipts. Nothing is applied to the
 //! target. `host_doors` re-exports it, so the generated HTTP facade handler
-//! and the MCP dispatcher call it by the name every host door has.
+//! and the MCP dispatcher call it by the name every host door has. Beside
+//! the outcome it lists the rows the review was derived from: those its
+//! target read listed, and the rows the review itself reads raw.
 use std::sync::Arc;
 
 use oneiron::critic::review::{CriticReviewOutcome, CriticReviewSubmit, review_artifact};
-use oneiron::memory::{EntityView, MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::memory::{EntityView, MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult, ProducerRows};
 use oneiron::{EdgeActorClass, EntityId, Error, WriteActor};
 use serde_json::{Value, json};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -26,27 +28,41 @@ pub(crate) async fn vault_critic_review(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: CriticReviewSubmit,
-) -> MemoryResult<CriticReviewOutcome> {
-    let (actor, class) = super::facade_actor(auth).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "a critic review writes its verdict as an authenticated principal",
-            &["Present a slip paired from a link created with --principal-ref."],
-        )
-    })?;
+) -> Listed<CriticReviewOutcome> {
+    let (actor, class) = match super::facade_actor(auth) {
+        Ok(caller) => caller,
+        Err(_) => {
+            return refused(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "a critic review writes its verdict as an authenticated principal",
+                &["Present a slip paired from a link created with --principal-ref."],
+            ));
+        }
+    };
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || review(&server, &auth, actor, class, &input))
-        .await
-        .map_err(|_| internal(VERB))?
+    tokio::task::spawn_blocking(move || {
+        let producers = ProducerRows::default();
+        let mut read = Vec::new();
+        let answer = review(&server, &auth, actor, class, &input, &producers, &mut read);
+        read.extend(producers.take());
+        (answer, read)
+    })
+    .await
+    .unwrap_or_else(|_| refused(internal(VERB)))
 }
 
+/// The review, listing in `producers` what its target read lists and in
+/// `read` the rows `review_artifact` reads raw: the target, the session,
+/// every lens's skill and critic, and the verdict it stands on.
 fn review(
     server: &SyncServer,
     auth: &CoreAuth,
     actor: EntityId,
     class: EdgeActorClass,
     input: &CriticReviewSubmit,
+    producers: &ProducerRows,
+    read: &mut Vec<EntityId>,
 ) -> MemoryResult<CriticReviewOutcome> {
     let vault = server.vault();
     let (request, catalog) = input.bind(WriteActor::new(actor, class), vault.now_recorded_at())?;
@@ -65,12 +81,22 @@ fn review(
     }
     let target = crate::api::credential_memory(vault, Some(auth), actor, class)
         .at(auth.locality())
+        .listing_producers(producers)
         .get_entity(&input.target_ref)?
         .value
         .ok_or(Error::EntityNotFound)?;
+    read.extend([request.target, request.session]);
+    read.extend(
+        request
+            .critics
+            .iter()
+            .flat_map(|critic| [critic.lens_ref, critic.actor.entity_ref()]),
+    );
     let state = target_state(&input.kind, &target);
     let decisions = server.decision_host().review_decisions(actor, &state);
-    Ok(review_artifact(vault, &request, &catalog, &decisions)?.into())
+    let result = review_artifact(vault, &request, &catalog, &decisions)?;
+    read.push(result.verdict_claim);
+    Ok(result.into())
 }
 
 /// The target as every lens's questions read it: the caller's view of it,
