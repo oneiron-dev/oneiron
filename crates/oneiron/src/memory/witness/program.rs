@@ -353,11 +353,11 @@ impl Memory<'_> {
             }
         };
 
-        // A quote rides a project room's thread reply, which lands at base
-        // and is no import (OF-460); the room guard proves it there.
+        // A quote rides a room turn that lands at base and is no import
+        // (OF-460, FIX 2027); the room guard proves it there.
         if turn.quote.is_some() && !matches!(landing, Landing::Base { imported: None, .. }) {
             return Err(MemoryError::bad_request(
-                "a quote lands only on a project room's thread reply at base",
+                "a quote lands only on a non-imported room turn at base",
             ));
         }
         // OF-063 prose links (Engine ruling 10-17): every AI-written message
@@ -389,6 +389,9 @@ impl Memory<'_> {
                 summary,
             } => WitnessSink::Overlay(self.overlay_sink(session, route, summary)?),
         };
+        // FIX 2027: a quote's selection is read under the speaker's own key,
+        // taken here, before the writer opens: no read snapshot nests in it.
+        let quote_key = turn.quote.map(|_| self.read_key()).transpose()?;
         before_txn();
 
         let landed = self.with_witness_write_txn_as(callback, admit, room_speech, |wtxn| {
@@ -398,23 +401,24 @@ impl Memory<'_> {
             let admission = match &sink {
                 WitnessSink::Base(_) => {
                     let mut thread = None;
-                    let person_author = match self.base_guards_in_txn(&plan, wtxn, prepare)? {
-                        BaseGuards::HardDeleted(id) => return Ok(Landed::HardDeleted(id)),
-                        BaseGuards::Clear {
-                            mint_conversation: absent,
-                            person_author,
-                            leader_project: project,
-                            quoted: proven,
-                            thread: binding,
-                        } => {
-                            mint_conversation = absent;
-                            leader_project = project;
-                            quoted = proven;
-                            thread = binding;
-                            // The importer is not the author of the source's words.
-                            person_author.filter(|_| plan.imported.is_none())
-                        }
-                    };
+                    let person_author =
+                        match self.base_guards_in_txn(&plan, wtxn, prepare, quote_key.as_ref())? {
+                            BaseGuards::HardDeleted(id) => return Ok(Landed::HardDeleted(id)),
+                            BaseGuards::Clear {
+                                mint_conversation: absent,
+                                person_author,
+                                leader_project: project,
+                                quoted: proven,
+                                thread: binding,
+                            } => {
+                                mint_conversation = absent;
+                                leader_project = project;
+                                quoted = proven;
+                                thread = binding;
+                                // The importer is not the author of the source's words.
+                                person_author.filter(|_| plan.imported.is_none())
+                            }
+                        };
                     self.admit_witness_in_txn(
                         &plan,
                         &self.vault.store,

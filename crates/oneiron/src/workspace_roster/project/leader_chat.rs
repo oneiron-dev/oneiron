@@ -445,18 +445,22 @@ impl Vault {
                 }
             } else {
                 // Witness TURNs carry the speaker bucket and, when the writer
-                // is a PERSON, its immutable `actor` author stamp. The private
-                // authenticated proof is their actor/project binding.
+                // is a PERSON, its immutable `actor` author stamp; a quoted
+                // one (FIX 2027) its reply mode and pointer as well. The
+                // private authenticated proof is their actor/project binding.
                 let mut speakers = fields
                     .iter()
                     .filter(|(key, _)| key.as_str() == Some("speaker"));
                 let stamped = fields.iter().any(|(key, _)| key.as_str() == Some("actor"));
+                let quoted =
+                    crate::conversation_dag::carries_quote(&raw[ENTITY_METADATA_HEADER_LEN..])
+                        .map_err(|_| denied())?;
                 if speakers
                     .next()
                     .and_then(|(_, value)| value.as_str())
                     .is_none()
                     || speakers.next().is_some()
-                    || fields.len() != 1 + usize::from(stamped)
+                    || fields.len() != 1 + usize::from(stamped) + 2 * usize::from(quoted)
                     || (stamped && field("actor")? != proof.actor)
                 {
                     return Err(denied());

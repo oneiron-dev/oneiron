@@ -328,14 +328,16 @@ pub(super) fn reply_pointer(
     Value::Map(pointer)
 }
 
-/// A quoted room thread reply, proven in the room witness's transaction
-/// before its TURN is minted (OF-460). The witness consumes the selection
-/// here and mints the TURN once, with this anchor, reply pointer, `Parent`
-/// and `RepliesTo` in its first body and write; nothing patches it later.
-/// The thread chain continues `parent`, the reply's own, while the reply
-/// answers the TURN holding the quoted MESSAGE.
+/// A quoted room turn, proven in the room witness's transaction before its
+/// TURN is minted (OF-460). The witness consumes the selection here and
+/// mints the TURN once, with this anchor, reply pointer and `RepliesTo` in
+/// its first body and write; nothing patches it later. The turn answers the
+/// TURN holding the quoted MESSAGE. A project room's thread reply is also a
+/// DAG thread record whose chain continues `parent`, the reply's own; an
+/// ordinary room's quoted turn (FIX 2027) has no `parent`, so it stays an
+/// opaque turn, classified as no thread and chained to nothing.
 pub(crate) struct QuotedReply {
-    parent: EntityId,
+    parent: Option<EntityId>,
     actor: WriteActor,
     revision: String,
     proven: ProvenQuote,
@@ -368,45 +370,81 @@ impl QuotedReply {
         )?;
         let target = require_type(&vault.store, txn, &proven.turn, ENTITY_TYPE_TURN)?;
         Ok(Self {
-            parent,
+            parent: Some(parent),
             actor,
             revision: blake3::hash(&target).to_hex().to_string(),
             proven,
         })
     }
 
-    /// The door-owned fields the reply's first TURN body carries: a thread
-    /// record answering the quoted TURN, its pointer holding the anchor.
-    pub(crate) fn body_fields(&self) -> [(Value, Value); 3] {
-        [
-            (
-                Value::from("dag_kind"),
-                Value::from(super::topology::RecordKind::Thread.as_str()),
-            ),
+    /// Proves `quote` for the ordinary room turn `citation` that `actor`
+    /// speaks in `conversation` (FIX 2027): the common quote proof, read from
+    /// the quoted TURN's own chain, and that TURN's revision captured in this
+    /// transaction. The read anchor is no `Parent` of the new turn: the
+    /// caller's scoped read under the room's ceiling has already admitted the
+    /// selection.
+    pub(crate) fn prove_trunk_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        conversation: EntityId,
+        actor: WriteActor,
+        quote: QuoteSpan,
+        citation: EntityId,
+    ) -> Result<Self> {
+        let turn = owning_turn_in(&vault.store, txn, &quote.message)?;
+        let proven =
+            prove_quote_in_txn(vault, txn, conversation, Some(turn), actor, quote, citation)?;
+        let target = require_type(&vault.store, txn, &proven.turn, ENTITY_TYPE_TURN)?;
+        Ok(Self {
+            parent: None,
+            actor,
+            revision: blake3::hash(&target).to_hex().to_string(),
+            proven,
+        })
+    }
+
+    /// The door-owned fields the reply's first TURN body carries: a reply
+    /// answering the quoted TURN, its pointer holding the anchor, and, on a
+    /// project thread reply, the thread record kind.
+    pub(crate) fn body_fields(&self) -> Vec<(Value, Value)> {
+        let mut fields = vec![
             (Value::from("addr"), Value::from("reply")),
             (
                 Value::from("reply_to"),
                 reply_pointer(self.proven.turn, self.revision.clone(), Some(&self.proven)),
             ),
-        ]
+        ];
+        if self.parent.is_some() {
+            fields.insert(
+                0,
+                (
+                    Value::from("dag_kind"),
+                    Value::from(super::topology::RecordKind::Thread.as_str()),
+                ),
+            );
+        }
+        fields
     }
 
-    /// Stages the minted reply's `Parent` and `RepliesTo` edges.
+    /// Stages the minted reply's `RepliesTo` edge and, on a project thread
+    /// reply, its `Parent`.
     pub(crate) fn edges<'v>(
         &self,
-        batch: crate::BatchBuilder<'v>,
+        mut batch: crate::BatchBuilder<'v>,
         record: &EntityId,
         learned_at: u64,
     ) -> crate::BatchBuilder<'v> {
         let value = super::writes::value;
-        batch
-            .edge_with_value_fields(record, EdgeKind::Parent, &self.parent, value(learned_at))
-            .edge_with_value_fields(
-                record,
-                EdgeKind::RepliesTo,
-                &self.proven.turn,
-                value(learned_at),
-            )
+        if let Some(parent) = self.parent {
+            batch =
+                batch.edge_with_value_fields(record, EdgeKind::Parent, &parent, value(learned_at));
+        }
+        batch.edge_with_value_fields(
+            record,
+            EdgeKind::RepliesTo,
+            &self.proven.turn,
+            value(learned_at),
+        )
     }
 
     /// Writes a document anchor's citation pin in the minting transaction.
@@ -563,6 +601,35 @@ pub(super) fn owning_turn_in(
     };
     require_type(store, txn, &turn, ENTITY_TYPE_TURN)?;
     Ok(turn)
+}
+
+/// FIX 3127: a private thread's (FIX 2951) MESSAGE is quoted only from
+/// inside that same thread. `landing` is the root of the thread the quoting
+/// record lands in, `None` on the trunk; a thread born by this write has a
+/// root no quoted MESSAGE sits under yet. A MESSAGE off any private thread
+/// passes, and one whose thread's root no longer resolves refuses, as a
+/// missing thread does. Every quote door runs it beside its proof: the
+/// append, and both room witness arms.
+pub(crate) fn require_quote_landing_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    conversation: EntityId,
+    message: EntityId,
+    landing: Option<EntityId>,
+) -> Result<()> {
+    let turn = owning_turn_in(&vault.store, txn, &message)?;
+    let body = require_type(&vault.store, txn, &turn, ENTITY_TYPE_TURN)?;
+    let Some(binding) = crate::workspace_roster::thread_binding(&body)? else {
+        return Ok(());
+    };
+    if landing != Some(binding.root)
+        && crate::workspace_roster::thread_audience_in(vault, txn, conversation, turn)?.is_some()
+    {
+        return Err(invalid(
+            "a private thread's message is quoted only inside that thread",
+        ));
+    }
+    Ok(())
 }
 
 /// A room-level record (neither a thread reply nor a worker record) reads

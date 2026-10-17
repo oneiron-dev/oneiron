@@ -312,6 +312,15 @@ pub(crate) fn append_in_txn(
     // addresses its audience alone.
     let root =
         super::participation::thread_root_in_txn(&vault.store, txn, input.parent, id, thread)?;
+    if let Some(quote) = &input.quote {
+        super::quote::require_quote_landing_in_txn(
+            vault,
+            txn,
+            input.conversation,
+            quote.message,
+            root,
+        )?;
+    }
     match root {
         None if input.thread_audience.is_some() => {
             return Err(invalid("only a thread's first record names its audience"));
