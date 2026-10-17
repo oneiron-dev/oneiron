@@ -131,6 +131,19 @@ const fn refuse(what: &'static str) -> Class {
 
 const POLICY_MANIFESTS: Class = refuse("policy manifests");
 const FEDERATION_GRANTS: Class = refuse("federation grants");
+/// An owner's own-device grant (FIX 3134) is the access a paired device
+/// stands on, not vault content: it stays as the live vault holds it, so a
+/// device paired after a checkpoint never blocks restoring that checkpoint
+/// (FIX 3293).
+const OWN_DEVICE_GRANTS: Class = LIVE;
+
+/// Whether the entity row `value` holds an own-device grant.
+fn own_device_grant_row(value: &[u8]) -> bool {
+    value
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|body| crate::federation::decode_federation_grant_body(body).ok())
+        .is_some_and(|grant| crate::federation::is_own_device_grant(&grant))
+}
 const ACCESS_GRANTS: Class = refuse("access grants");
 const SECRET_CUSTODY: Class = refuse("secret custody");
 const CONNECTOR_KEYS: Class = refuse("connector keys");
@@ -459,7 +472,14 @@ impl Classes {
         match rows {
             Some(Rows::ByKind) => (
                 EntityMetadataHeader::parse(value)
-                    .and_then(|header| self.kinds[usize::from(header.entity_type)])
+                    .and_then(|header| {
+                        if header.entity_type == ENTITY_TYPE_FEDERATION_GRANT
+                            && own_device_grant_row(value)
+                        {
+                            return Some(OWN_DEVICE_GRANTS);
+                        }
+                        self.kinds[usize::from(header.entity_type)]
+                    })
                     .unwrap_or(UNCLASSIFIED_KINDS),
                 0,
             ),
