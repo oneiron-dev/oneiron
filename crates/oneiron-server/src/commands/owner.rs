@@ -236,26 +236,17 @@ pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
 
 pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
-    // A restore makes a plain vault, and a sealed vault's page-seal mirror
-    // would stay beside it (OF-570); a mirror whose vault's data is missing
-    // is refused first, by name.
-    let sealed = oneiron::world_keys::vault_is_sealed(&config.vault_path)?;
-    let refuse_sealed = || -> anyhow::Result<()> {
-        vault_key::refuse_orphaned_page_seal(&config.vault_path)?;
-        anyhow::ensure!(
-            !sealed,
-            "vault {} is sealed (maximum tier), and a restore makes a plain vault: restore to \
-             another --vault-path",
-            config.vault_path.display()
-        );
-        Ok(())
-    };
     if let Some(previous) = &args.activate {
-        refuse_sealed()?;
+        // The archive keeps its own tier and opens with its own mirror; the
+        // vault that replaced it reads with its own (OF-570).
+        let mut archive = vault_config(&config);
+        archive.page_seal = vault_key::page_seal_at(&config, previous, None)?;
+        let live_seal = vault_key::page_seal_at(&config, &config.vault_path, None)?;
         return emit(&backup::activate(
             previous,
             &config.vault_path,
-            vault_config(&config),
+            archive,
+            live_seal,
         )?);
     }
     let backup = args
@@ -267,7 +258,9 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
             .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?;
         return emit(&crate::owner::vault_key::BackupUnlocks::from(unlocks));
     }
-    refuse_sealed()?;
+    // A page-seal mirror whose vault's data is missing is refused first, by
+    // name (OF-570): a restore never makes a vault under another's custody.
+    vault_key::refuse_orphaned_page_seal(&config.vault_path)?;
     // A backup opens with this install's keystore, as configured, unless the
     // owner names another unlock and the signers to trust.
     let keystore = config.keystore.open(&config.vault_path)?;
@@ -302,10 +295,13 @@ fn restore_unlocked(
         )?);
     }
     let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)?;
+    // A sealed vault (OF-570 maximum tier) opens, or reads beside a `serve`,
+    // with its own seal; the restored copy keeps its tier.
+    let live_seal = vault_key::page_seal_at(config, &config.vault_path, Some(unlock))?;
     if args.rehearse {
         // Read off the disk, beside a `serve` that may hold the vault.
         let mut source =
-            oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path)?;
+            oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path, live_seal)?;
         if let Some(keystore) = keystore {
             source = source.with_keystore(keystore);
         }
@@ -317,11 +313,11 @@ fn restore_unlocked(
             None => backup::rehearse(backup, vault_config(config), scratch, &source)?,
         });
     }
+    let mut live = vault_config(config);
+    live.page_seal = live_seal;
     emit(&match key {
-        Some(key) => {
-            backup::restore_over_keyed(backup, &config.vault_path, vault_config(config), key)?
-        }
-        None => backup::restore_over(backup, &config.vault_path, vault_config(config), keystore)?,
+        Some(key) => backup::restore_over_keyed(backup, &config.vault_path, live, key)?,
+        None => backup::restore_over(backup, &config.vault_path, live, keystore)?,
     })
 }
 

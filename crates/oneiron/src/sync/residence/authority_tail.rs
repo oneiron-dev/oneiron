@@ -17,7 +17,8 @@ use std::collections::BTreeSet;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityEntryHash, PeerMachine, authority_entry_hash, decode_authority_log_entry_body,
+    AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryPage, PeerMachine,
+    authority_entry_hash, decode_authority_log_entry_body,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::{Error, Result, SyncProtocolValidation};
@@ -83,6 +84,23 @@ pub fn authority_tail_for(
         }
     }
     Ok(page)
+}
+
+/// The page of `fetch` this home serves a machine of the owner's whose proof
+/// stands here ([`Vault::authority_history_page`]): the exact rows it names
+/// and, with parent closure, their ancestors down to what the machine holds,
+/// parents first. Refused for any other peer, as the tail is.
+///
+/// # Errors
+///
+/// A refused peer; a fetch naming another vault; storage errors.
+pub fn authority_range_for(
+    vault: &Vault,
+    peer: PeerMachine,
+    fetch: &AuthorityHistoryFetch,
+) -> Result<AuthorityHistoryPage> {
+    require_owner_machine(vault, peer)?;
+    vault.authority_history_page(fetch)
 }
 
 /// Whether `peer` is a machine of the owner's whose proof stands here on the
