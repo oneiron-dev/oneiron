@@ -35,6 +35,8 @@ pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWri
 pub use self::actors_memory::ActorBound;
 #[cfg(test)]
 pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
+#[cfg(feature = "sync")]
+pub(crate) use self::transactions::MAX_SYNC_STATE_KEYS;
 pub use self::doctor_manifest::{
     TextIndexStatus, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
     VaultDoctorHnswReport, VaultDoctorReport,

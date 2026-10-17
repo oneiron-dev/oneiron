@@ -661,7 +661,7 @@ def mcp_input_dispatch(row):
                      '    return execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch })).await;\n'
                      '}\n')
             # The TASKS section reaches MCP as rows, narrowed to the credential before its render cap.
-            body += ('if input.task_ref.is_none() && !input.self_target {\n'
+            body += ('if input.task_ref.is_none() && !input.self_target && !input.vault {\n'
                      '    // The section is narrowed to this credential before its\n'
                      "    // render cap, so its counts are the credential's rows alone.\n"
                      '    let rows = memory.describe_rows().map_err(mcp_facade_error)?;\n'
@@ -1462,8 +1462,8 @@ def outputs():
 # shared wire shape. An input record with no fields is no argument at all. Only
 # a type the inventory could not read crosses as the crate's `WireJson` leaf,
 # parsed into the row's engine input type and written from its typed output on
-# the Rust side; there is no generic `call`. A definition row with a `uniffi` block
-# exports its signature and fails closed until the table makes it callable.
+# the Rust side; there is no generic `call`. A definition row gets no UniFFI
+# export: the generator refuses one until the table gives it a call.
 # Codecs are selected by type (`crates/oneiron-uniffi/src/codec.rs`), never by
 # verb name.
 UNIFFI_INPUTS = {
