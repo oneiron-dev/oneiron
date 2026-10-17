@@ -409,3 +409,166 @@ impl<'a> WaitDeliveries<'a> {
         self.storage.clear_wait(key)
     }
 }
+
+/// Leads a run's seen-change row: `c` + wait + run → the highest option-void
+/// generation of the ask the run has seen while it waits on it (OF-533). It
+/// is one run's cursor: never a reply, and never the group's acknowledgement.
+const OBSERVED_TAG: [u8; 1] = *b"c";
+
+const OBSERVED_CHANGES: SideTable<([u8; 1], EntityId, EntityId), u64, Raw> =
+    SideTable::new(&side_table::CODE_RUN_WAIT_INDEX);
+
+/// The waits some canonical run is parked on with no reply delivered yet,
+/// for a sweep that settles what is due on them.
+pub(crate) fn canonical_wait_ids(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    let mut waits = std::collections::BTreeSet::new();
+    for ((_, wait_id, run), generation) in WAITERS.scan_from(&vault.store, txn, &WAITER_TAG)? {
+        let key = WaitKey {
+            run,
+            wait_id,
+            generation,
+        };
+        if !DELIVERIES.contains(&vault.store, txn, &key.row())? {
+            waits.insert(wait_id);
+        }
+    }
+    Ok(waits)
+}
+
+/// Whether some canonical run is parked on `wait_id`.
+pub(crate) fn has_parked_run_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wait_id: EntityId,
+) -> Result<bool> {
+    Ok(WAITERS
+        .iter_from(&vault.store, txn, &waiter_prefix(wait_id))?
+        .next()
+        .transpose()?
+        .is_some())
+}
+
+fn observed_change_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+    wait_id: EntityId,
+) -> Result<u64> {
+    Ok(OBSERVED_CHANGES
+        .get(&vault.store, txn, &(OBSERVED_TAG, wait_id, run))?
+        .unwrap_or(0))
+}
+
+/// Raises `run`'s seen-change cursor on `wait_id` to `generation`; returns
+/// the cursor as it stands after.
+fn raise_observed_change_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    run: EntityId,
+    wait_id: EntityId,
+    generation: u64,
+) -> Result<u64> {
+    let held = observed_change_in(vault, txn, run, wait_id)?;
+    if generation <= held {
+        return Ok(held);
+    }
+    OBSERVED_CHANGES.put(
+        &vault.store,
+        txn,
+        &(OBSERVED_TAG, wait_id, run),
+        &generation,
+    )?;
+    Ok(generation)
+}
+
+/// The highest option-void generation `run` has seen on `wait_id`: its
+/// cursor, raised to `durably_observed`, which only the run's own committed
+/// bridge receipts may supply. A `tasks.wait` reads it before it chooses
+/// between Changed and a park, so no change the run saw is delivered again.
+pub(crate) fn observe_wait_change(
+    vault: &Vault,
+    run: EntityId,
+    wait_id: EntityId,
+    durably_observed: u64,
+) -> Result<u64> {
+    vault.with_write_txn_grouped(|txn| {
+        raise_observed_change_in(vault, txn, run, wait_id, durably_observed)
+    })
+}
+
+/// Delivers an ask's Changed status, at option-void `generation`, to every
+/// run parked on `wait_id` that has not seen that generation, in the
+/// caller's transaction, waking each one's bound trap. The reply goes to
+/// each waiter's own key and never into the settled row, so a run that
+/// parks later reads the wait afresh; a settled wait takes none, as its
+/// final reply wins. A waiter already holding a reply keeps it, so repeated
+/// voids coalesce. Returns how many runs this call delivered to.
+pub(crate) fn deliver_changed_wait_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    wait_id: EntityId,
+    generation: u64,
+    reply: &serde_json::Value,
+    now_ms: u64,
+) -> Result<usize> {
+    if SETTLED.contains(&vault.store, txn, &(SETTLED_TAG, wait_id))? {
+        return Ok(0);
+    }
+    let changed = WaitDelivery {
+        reply: reply_text(reply)?,
+        delivered_at_ms: now_ms,
+    };
+    let mut delivered = 0;
+    for ((_, _, run), parked) in WAITERS.scan_from(&vault.store, txn, &waiter_prefix(wait_id))? {
+        if observed_change_in(vault, txn, run, wait_id)? >= generation {
+            continue;
+        }
+        let key = WaitKey {
+            run,
+            wait_id,
+            generation: parked,
+        };
+        if deliver_in_txn(vault, txn, &key, &changed)? {
+            delivered += 1;
+        }
+    }
+    Ok(delivered)
+}
+
+impl ExecutorStorage<'_> {
+    /// Commits the replay record of a run resumed from `key`'s reply. When
+    /// that reply is an ask's Changed status, the run's seen-change cursor
+    /// rises in the same transaction, so a failed append acknowledges
+    /// nothing. A room's record commits as any other append does.
+    pub(crate) fn put_code_run_wait_resume_record(
+        &self,
+        record: &crate::code_run::CodeRunReplayRecord,
+        expected: Option<crate::code_run::CodeRunReplayGeneration>,
+        key: &WaitKey,
+    ) -> Result<crate::code_run::CodeRunReplayGeneration> {
+        match self {
+            Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal_and(
+                record,
+                expected,
+                None,
+                |txn| {
+                    let Some(delivery) = DELIVERIES.get(&vault.store, txn, &key.row())? else {
+                        return Ok(());
+                    };
+                    if let Ok(crate::task_verb::TaskAskStatus::Changed { generation, .. }) =
+                        serde_json::from_str::<crate::task_verb::TaskAskStatus>(&delivery.reply)
+                    {
+                        raise_observed_change_in(vault, txn, key.run, key.wait_id, generation)?;
+                    }
+                    Ok(())
+                },
+            ),
+            Self::Session(_) => {
+                self.put_code_run_replay_record_if_generation_with_heal(record, expected, None)
+            }
+        }
+    }
+}
