@@ -366,6 +366,9 @@ pub struct ReaderJobWake {
     pub vault: String,
     pub task: EntityId,
     pub session_ref: Option<String>,
+    /// The participant the parent ran as in its session, which the runner
+    /// reads the session's children as.
+    pub participant: Option<EntityId>,
 }
 
 /// Where a vault's queued reader children go to run. With none installed,

@@ -533,6 +533,7 @@ impl ExecutorStorage<'_> {
                 vault: crate::code_run::vault_ref(self.vault_id()),
                 task,
                 session_ref: self.session_ref().map(str::to_owned),
+                participant: self.participant(),
             });
         }
     }

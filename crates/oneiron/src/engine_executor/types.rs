@@ -460,17 +460,17 @@ impl EngineExecutorOutcome {
         let EngineExecutorStatus::Waiting(wait) = &self.status else {
             return None;
         };
-        let parked = self.replay_record.step_checkpoints.last()?;
         Some(ParkedWait {
             key: super::record::wait_key(&self.replay_record, wait),
-            step_hash: parked.state_hash,
+            step_hash: super::record::previous_state_hash(&self.replay_record),
             wait: wait.clone(),
         })
     }
 }
 
-/// A parked run's wait: the key its reply is delivered under, the parked
-/// step's state hash a host binds a trap to, and the wait itself.
+/// A parked run's wait: the key its reply is delivered under, the state hash
+/// a host binds a trap to (the parked step's, or for a turn hook's ask the
+/// last committed step's, zero before the first), and the wait itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParkedWait {
     pub key: WaitKey,

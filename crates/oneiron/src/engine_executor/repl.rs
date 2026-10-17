@@ -27,14 +27,15 @@ use super::wire::{HealedExecutorReply, heal_executor_reply};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    SelfDurableWait, WaitKey,
+    SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
 };
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
 use crate::off_record::ExecutorUtterance;
 use crate::prompt::resolve_engine_executor_wire_prompt;
+use crate::runtime_hooks::VerbHookStop;
 use crate::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, Error, LlmMessage,
-    LlmMessageRole, LlmRequest, ResponseFormat, TierPrecedence,
+    CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, EntityId, Error,
+    LlmMessage, LlmMessageRole, LlmRequest, ResponseFormat, TierPrecedence,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
@@ -153,9 +154,29 @@ impl EngineNativeExecutor<'_> {
             }
 
             self.land_finished_compaction()?;
-            let turn = self
-                .pre_turn_hooks(config, completed_steps)?
-                .map_err(Error::from)?;
+            // A turn hook's ask parks the run before the turn, as a call's
+            // ask parks the call; a skip or a hidden result ends the entry.
+            let turn = match self.pre_turn_hooks(config, completed_steps)? {
+                Ok(turn) => turn,
+                Err(stop) => {
+                    let Some(wait) = turn_hook_wait(&stop) else {
+                        return Err(Error::from(stop).into());
+                    };
+                    let key = wait_key(&record, &wait);
+                    if !self.storage.park_wait(&key)? {
+                        return Ok(self.outcome(
+                            EngineExecutorStatus::Waiting(wait),
+                            steps_run,
+                            record,
+                        ));
+                    }
+                    // The ask settled before the park: the turn's hooks take
+                    // its answer now, and any stop then ends the entry.
+                    self.storage.clear_wait(&key)?;
+                    self.pre_turn_hooks(config, completed_steps)?
+                        .map_err(Error::from)?
+                }
+            };
             let request = self.build_llm_request(config, &record, &wire_prompt.text)?;
             if let Some(reason) = self.feed_compaction(config, &record, &request)? {
                 return Ok(self.outcome(
@@ -1195,6 +1216,22 @@ impl EngineNativeExecutor<'_> {
         }
         Ok(Some(lines.join("\n")))
     }
+}
+
+/// The wait a turn hook's ask parks the run on, as a call's ask parks the
+/// call (`code_run::dispatcher::verb_hooks`): the ask's group, its prompt
+/// naming the turn's invocation, whose next try takes the answer. `None` for
+/// a skip, a hidden result, or an ask with no group: the turn ends there.
+fn turn_hook_wait(stop: &VerbHookStop) -> Option<SelfDurableWait> {
+    let VerbHookStop::Pending { invocation, ask } = stop else {
+        return None;
+    };
+    Some(SelfDurableWait {
+        wait_id: EntityId::from_hex(ask).ok()?,
+        effect: SelfEffect::TasksWait,
+        reason: SelfDurableWaitReason::PeerResult,
+        prompt: Some(format!("verb_hook:{invocation}")),
+    })
 }
 
 /// `n` with its thousands grouped: `2,104,331`.
