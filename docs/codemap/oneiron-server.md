@@ -15,6 +15,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/admission.rs` | src | m | 11 crate-vis | — | Admission for work a remote caller can start |
 | `src/admission/tests.rs` | test | s | — | — | The queue law every permit site shares (ARCH-0044 C5, SEC rule 5): past the bound, work waits and is served… |
 | `src/ai_host/coach_heal.rs` | src | s | 1 crate-vis | — | The host Coach (ARCH-0066 #coach, OF-418) |
+| `src/ai_host/code_fix.rs` | src | s | 1 crate-vis | — | The host Coach's code fixes (DEC-0005 FIX6, OF-380) |
 | `src/ai_host/code_mode.rs` | src | s | 1 crate-vis | — | MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the… |
 | `src/ai_host/compaction.rs` | src | m | 7 crate-vis | — | Compaction for code mode's runs (agent-runtime-v1 §d7) |
 | `src/ai_host/compaction/tests.rs` | test | s | 1 crate-vis | — | A compaction pass is bounded work: it outlives the call that started it, so its thread holds a permit of its… |
@@ -22,7 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/harness.rs` | src | s | 1 crate-vis | — | The Dreamer's tuning config, recorded as a versioned vault artifact so the nightly harness self-audit… |
 | `src/ai_host/identity.rs` | src | s | 1 crate-vis | — | Identity decisions (OF-123, ask rule B): the host side of the Dreamer's identity re-check |
 | `src/ai_host/local_vision.rs` | src | m | 8 crate-vis | — | The Local-vision seat as the decision ladder's Local rung (OF-329 over OF-600): the small vision model bound… |
-| `src/ai_host/mod.rs` | src | L | 2 struct · 19 fn · 1 re-export · 16 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
+| `src/ai_host/mod.rs` | src | L | 2 struct · 19 fn · 1 re-export · 17 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
 | `src/ai_host/policy.rs` | src | s | 5 crate-vis | — | The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to… |
 | `src/ai_host/status.rs` | src | s | 4 struct · 3 enum · 9 crate-vis | AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus | Live state of the server's background AI work, shared between the workers that change it and the routes that… |
 | `src/ai_host/step.rs` | src | s | 6 crate-vis | — | One saved-workflow step on a model seat |
@@ -34,6 +35,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/turn_actions.rs` | src | s | 1 crate-vis | — | The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)… |
 | `src/ai_host/turns.rs` | src | s | 9 crate-vis | — | Chat turns in flight |
 | `src/ai_host/waves.rs` | src | m | 4 crate-vis | — | Live, model-backed wave planning on the server's durable workflow pump |
+| `src/ai_host/weave_lens.rs` | src | s | 2 crate-vis | — | The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST… |
 | `src/ai_host/workflows.rs` | src | s | 5 crate-vis | — | The saved-workflow pump: runs each open workflow's ready step on the generative seat and advances it… |
 | `src/api/ai/chat.rs` | src | L | 15 crate-vis | — | `POST /v1/ai/chat`: one chat turn on the generative seat |
 | `src/api/ai/media.rs` | src | m | 10 crate-vis | — | The `ai.*` verbs past text: `GET /v1/ai/options`, `POST /v1/ai/image`, `/video`, `/speech`, `/transcribe`… |
@@ -136,7 +138,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/shared_act_doors.rs` | src | m | 14 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
-| `src/api/facade/weave_doors.rs` | src | s | 1 crate-vis | — | The weave lens's human doors (OF-499): the one-tap wrong control a person uses on a link in their own report |
+| `src/api/facade/weave_doors.rs` | src | s | 2 crate-vis | — | The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link in their own report… |
 | `src/api/feedback_inbox.rs` | src | m | 2 crate-vis | — | The open feedback inbox (ARCH-0056 #open-inbox): anyone may leave this vault a note, with no key and no… |
 | `src/api/feedback_inbox/flood.rs` | src | s | 4 crate-vis | — | The open inbox's flood cap: the one refusal its keyless intake makes |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |

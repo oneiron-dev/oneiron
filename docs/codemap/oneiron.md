@@ -799,10 +799,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/weave_correction.rs` | src | m | 1 struct · 2 fn · 1 crate-vis | WeaveLinkCorrection | Authenticated wrong-link labels emitted by the live weave report |
 | `src/claim/scoped_read/weave_digest.rs` | src | L | 2 struct · 2 enum · 10 fn · 1 const · 7 crate-vis | StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule | Per-reader report schedules (OF-499) |
 | `src/claim/scoped_read/weave_digest/tests.rs` | test | m | — | — | — |
-| `src/claim/scoped_read/weave_lens.rs` | src | m | 4 struct · 2 fn · 3 const · 6 crate-vis | WeaveLensPlan, WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRender | The weave lens's generate step (OF-499, ARCH-0063 §6): "Its render is a generate step, a skill with its own… |
+| `src/claim/scoped_read/weave_lens.rs` | src | m | 5 struct · 2 fn · 3 const · 7 crate-vis | WeaveLensPlan, WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRender, WeaveLiveLens | The weave lens's generate step (OF-499, ARCH-0063 §6): "Its render is a generate step, a skill with its own… |
 | `src/claim/scoped_read/weave_report.rs` | src | m | 3 struct · 3 enum · 1 fn · 7 crate-vis | WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec | Live weave data for a reader, not a saved digest or a rendered section recipe |
 | `src/claim/scoped_read/weave_report/tests.rs` | test | m | — | — | — |
-| `src/claim/scoped_read/weave_serve.rs` | src | m | 10 struct · 2 enum · 6 fn · 1 crate-vis | WeaveDigestRequest, WeaveDigestView, WeaveItemView, WeaveLinkCorrectionView, WeaveReaderKind, WeaveReaderRef, WeaveReportRequest, WeaveReportView +4 | The served weave lens (OF-499): the per-reader report and its saved digests as wire views, for the… |
+| `src/claim/scoped_read/weave_serve.rs` | src | m | 10 struct · 2 enum · 8 fn · 1 crate-vis | WeaveDigestRequest, WeaveDigestView, WeaveItemView, WeaveLinkCorrectionView, WeaveReaderKind, WeaveReaderRef, WeaveReportRequest, WeaveReportView +4 | The served weave lens (OF-499): the per-reader report and its saved digests as wire views, for the… |
 | `src/claim/source_trust.rs` | src | m | 1 struct · 2 enum · 23 crate-vis | ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung | Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus… |
 | `src/claim/supersession_diff.rs` | src | s | 4 crate-vis | — | Immutable before/after revision bindings for accepted supersession edges |
 | `src/claim/supersession_provenance.rs` | src | s | 4 crate-vis | — | Runner-owned companion claims; structural taint mirrors also run on replay |
@@ -1335,7 +1335,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/resources/slices.rs` | src | s | 2 crate-vis | — | Read-only extraction children attenuated from one prepared branch |
 | `src/dreamer_consolidation/resources/write.rs` | src | m | 1 struct · 2 fn · 15 crate-vis | ScopedConsolidationWrite | Sealed resource handoff |
 | `src/dreamer_consolidation/reviewed.rs` | src | s | 4 crate-vis | — | Claims the owner's review already holds or decided, which a later pass meets again: this attempt's own… |
-| `src/dreamer_consolidation/roles.rs` | src | s | 3 struct · 3 fn · 4 const · 1 crate-vis | RoleBackend, RoleBackends, RoleCall | The Dreamer's model roles, and the backend each one calls out on |
+| `src/dreamer_consolidation/roles.rs` | src | s | 3 struct · 3 fn · 4 const · 2 crate-vis | RoleBackend, RoleBackends, RoleCall | The Dreamer's model roles, and the backend each one calls out on |
 | `src/dreamer_consolidation/routing.rs` | src | s | 2 struct · 5 fn · 1 type · 1 crate-vis | CandidateKeys, PredicateKeyRule | Three consolidation lanes: free keyed equality, scoped conflicts, cosine nominations |
 | `src/dreamer_consolidation/scope_summary_attempt.rs` | src | m | 1 struct · 1 fn | ScopeSummaryExecutor | The Dreamer writes a declared scope summary's body (ARCH-0006a) |
 | `src/dreamer_consolidation/selection.rs` | src | s | 5 struct · 1 enum · 6 fn | SelectionCandidate, SelectionConfig, SelectionHold, SelectionPlan, StrengthSignals, StrengthWeights | Mechanical candidate selection |
@@ -1366,7 +1366,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/watermark.rs` | src | m | 2 struct · 5 fn · 14 crate-vis | ConsolidationWatermark, WorkingSetTurn | — |
 | `src/dreamer_consolidation/watermark/codec.rs` | src | s | 2 crate-vis | — | Codec for the exact consolidation cursor position |
 | `src/dreamer_consolidation/watermark/rescan_tests.rs` | test | s | — | — | — |
-| `src/dreamer_consolidation/weave_lens.rs` | src | s | 1 struct · 1 fn · 1 const | WeaveLensModel | The weave lens's generate step (OF-499, ARCH-0063 §6): one saved digest period rendered through the shipped… |
+| `src/dreamer_consolidation/weave_lens.rs` | src | s | 1 struct · 2 fn · 1 const | WeaveLensModel | The weave lens's generate step (OF-499, ARCH-0063 §6): one saved digest period rendered through the shipped… |
 | `src/dreamer_plugin_suggest/mod.rs` | src | m | 5 struct · 1 enum · 1 trait · 3 fn · 2 const | LocalSkillHubPackCatalog, PackCandidate, PackCatalog, PluginSuggestJob, PluginSuggestionDisposition, TestPackCatalog, WorkflowPatternNotice | Dreamer proactive-help × pack catalog (ONE-1707) |
 | `src/dreamer_plugin_suggest/tests.rs` | test | s | — | — | Dreamer plugin-suggestion unit tests |
 | `src/dreamer_prefilter/config.rs` | src | s | 2 struct · 4 fn · 3 crate-vis | PrefilterConfig, PrefilterWeights | The operator knob: weights, threshold, its row codec and the Vault read/write doors |
@@ -1395,15 +1395,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/connector_event.rs` | src | s | 2 struct · 1 trait · 4 fn · 2 const · 1 crate-vis | ConnectorEventExecutor, ConnectorEventResponder, ConnectorEventWake | Connector wake delivery retains its typed event; it is not a partition job |
 | `src/dreamer_runner/constants.rs` | src | s | 24 const · 34 crate-vis | — | Pinned wire vocabulary for the private Dreamer runner rows |
 | `src/dreamer_runner/maintenance/agent_health.rs` | src | L | 1 struct · 5 enum · 7 fn · 9 const · 2 crate-vis | AgentHealthCard, AgentHealthConfidence, AgentHealthCounter, AgentHealthMove, AgentHealthOutcome, AgentHealthTone | The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance… |
-| `src/dreamer_runner/maintenance/coach.rs` | src | m | 1 trait · 7 fn · 15 const · 8 crate-vis | PersonThresholdPolicy | The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and… |
-| `src/dreamer_runner/maintenance/coach_heal.rs` | src | m | 2 struct · 1 enum · 3 fn · 2 const · 1 crate-vis | HealDecisions, HealRoute, IssuesRun | The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418) |
+| `src/dreamer_runner/maintenance/coach.rs` | src | m | 1 trait · 7 fn · 16 const · 8 crate-vis | PersonThresholdPolicy | The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and… |
+| `src/dreamer_runner/maintenance/coach_heal.rs` | src | m | 2 struct · 1 enum · 3 fn · 2 const · 3 crate-vis | HealDecisions, HealRoute, IssuesRun | The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418) |
+| `src/dreamer_runner/maintenance/code_fix.rs` | src | m | 6 struct · 1 trait · 1 fn · 1 crate-vis | CandidateRun, CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, CodeFixSettled, CodeFixWork | The Coach's code fixes (DEC-0005 FIX6, OF-380) |
 | `src/dreamer_runner/maintenance/curator.rs` | src | m | 2 struct · 1 enum · 2 fn · 2 crate-vis | CuratorQuestions, CuratorRubric, CuratorTrigger | Curator grading data and minimum-force proposals |
 | `src/dreamer_runner/maintenance/digest.rs` | src | m | 8 struct · 13 fn · 3 const · 1 crate-vis | DigestOffer, DigestProposal, ProactivityCadence, ProactivityDigest, ProactivityPolicyProposal, ProactivityPolicyRequest, ProactivityPresentation, UrgentDigestWake | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
 | `src/dreamer_runner/maintenance/digest/tests.rs` | test | m | — | — | — |
 | `src/dreamer_runner/maintenance/evaluation.rs` | src | m | 4 struct · 3 fn · 1 const · 2 crate-vis | DreamerTuningConfig, HarnessEvaluation, HarnessEvaluationTarget, RetuneThresholds | Eval-schedule observations over actual immutable config artifact versions |
 | `src/dreamer_runner/maintenance/honesty.rs` | src | s | 1 const · 2 crate-vis | — | The Coach's audit-draw recipe on the shared, gated maintenance lane |
 | `src/dreamer_runner/maintenance/identity.rs` | src | L | 10 struct · 4 enum · 8 fn · 4 const · 4 crate-vis | IdentityActNow, IdentityActNowRequest, IdentityAnswerRequest, IdentityAsk, IdentityAskReason, IdentityAskView, IdentityCardCopy, IdentityDecisions +6 | Background identity checks (OF-123; owner ruling: ask rule B) |
-| `src/dreamer_runner/maintenance/mod.rs` | src | s | 1 fn · 3 const · 8 mod · 3 re-export · 7 crate-vis | — | Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly… |
+| `src/dreamer_runner/maintenance/mod.rs` | src | s | 1 fn · 3 const · 9 mod · 3 re-export · 7 crate-vis | — | Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly… |
 | `src/dreamer_runner/maintenance/optimize.rs` | src | s | 2 struct · 1 crate-vis | CoachLiveSlice, CoachSkillOptimizer | The Coach's skill-maintenance body on the shared wake runner |
 | `src/dreamer_runner/maintenance/proposals.rs` | src | s | 3 crate-vis | — | The shared Generated/Proposed writer for deterministic maintenance findings |
 | `src/dreamer_runner/maintenance/representation/approval.rs` | src | m | 2 struct · 12 fn · 2 crate-vis | ApprovedRepresentation, RepresentationReview | Content-bound owner review, live revalidation, and the existing OF-327 adapter |
@@ -1643,8 +1644,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/tests/drill.rs` | test | m | — | — | Retrospective owner drill-in binds the caller, group, trace and receipt |
 | `src/failure_ladder/tests/failure_integrity.rs` | test | s | — | — | — |
 | `src/failure_ladder/transitions.rs` | src | s | 8 crate-vis | — | Queue-transition guards and single-transition helpers (validate, scope-bind, fail/retry once) |
-| `src/failure_signals.rs` | src | m | 5 struct · 4 enum · 9 fn · 3 re-export · 2 crate-vis | AgentKind, AgentSurface, ExportVersionedComponent, FailureClassV1, FailureSignalDimensions, FailureSignalInput, FailureTaxonomy, Tier1FailureCount +1 | Content-free, versioned tier-1 agent failure counts |
-| `src/failure_signals/code_fix.rs` | src | m | 5 struct · 8 enum · 2 trait · 3 fn · 5 const | CandidateFix, CandidateFixResult, CodeFixExport, CodeFixReplay, CodeFixVerdict, CodeFixWithheld, ExportScrubber, FixOutcome +7 | FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2) |
+| `src/failure_signals.rs` | src | m | 5 struct · 4 enum · 9 fn · 3 re-export · 3 crate-vis | AgentKind, AgentSurface, ExportVersionedComponent, FailureClassV1, FailureSignalDimensions, FailureSignalInput, FailureTaxonomy, Tier1FailureCount +1 | Content-free, versioned tier-1 agent failure counts |
+| `src/failure_signals/code_fix.rs` | src | m | 6 struct · 8 enum · 2 trait · 3 fn · 5 const · 2 crate-vis | CandidateFix, CandidateFixResult, CodeFixExport, CodeFixReplay, CodeFixVerdict, CodeFixWithheld, ExportScrubber, FailureSource +8 | FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2) |
 | `src/failure_signals/policy.rs` | src | s | 10 crate-vis | — | Versioned tier-1 aggregation dials from trusted POLICY_MANIFEST rows |
 | `src/failure_signals/tests.rs` | test | m | — | — | — |
 | `src/failure_signals/verbatim.rs` | src | s | 2 const · 1 crate-vis | — | The FIX6 verbatim-span guard: an invented example shares no run of words with the real chat it was drawn from |
@@ -2080,7 +2081,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/mod.rs` | src | s | 1 re-export | — | Vault-local durable RSI budget ledger |
 | `src/llm/budget/rsi.rs` | src | m | 5 struct · 3 enum · 12 fn | RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose | Vault-local durable reserve/settle/refund ledger for research-loop spend |
 | `src/llm/decision/asks.rs` | src | m | 4 struct · 12 fn | AskAnswer, AskPrior, DecisionAsk, DecisionAsks | The person's queue, kept durable: every request the ladder's last rung queues becomes an owner ask that the… |
-| `src/llm/decision/catalogue.rs` | src | m | 1 struct · 1 fn · 35 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/llm/decision/catalogue.rs` | src | m | 1 struct · 1 fn · 36 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/llm/decision/codec.rs` | src | s | 6 crate-vis | — | Canonical entity references for typed-decision wire records |
 | `src/llm/decision/generated.rs` | src | m | 1 struct · 3 enum · 1 fn | GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep | The generated read: a typed pack answered by one generation on the caller's own backend, for a caller… |
 | `src/llm/decision/held.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | HeldLadder | What a component that outlives one call holds to ask typed questions (a worker thread, a provider a host… |
@@ -3553,7 +3554,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_connector.rs` | src | s | 5 struct · 3 fn | ConnectorEntry, ConnectorListRequest, ConnectorNameRequest, ConnectorView, OutboundScheduleRequest | The `connector.*` rows over the foreign surface's catalog (`connector.list`, the discovery lens… |
 | `src/task_verb/sdk_diary.rs` | src | s | 2 struct · 1 enum · 3 fn | DiaryQueryEntry, DiaryQueryOutcome, DiaryQueryRequest | `self.memory.diary.query`: the caller reads an agent's private diary, stating a reason the agent sees in its… |
 | `src/task_verb/sdk_disclosure.rs` | src | s | 2 struct · 1 fn | DisclosureOfferRequest, DisclosureOffered | `vault.disclosure.offer`: an agent OFFERS the owner a contact clearance (OF-365, the ILDF2 consent channel) |
-| `src/task_verb/sdk_generated.rs` | src | XL | 187 fn · 2 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 188 fn · 2 const | — | — |
 | `src/task_verb/sdk_host.rs` | src | L | 20 struct · 5 enum · 16 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +17 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and… |
 | `src/task_verb/sdk_legal_hold.rs` | src | s | 5 struct · 1 enum · 5 fn | LegalHoldEraseState, LegalHoldErasedRecord, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest | The inputs and answers of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`… |
 | `src/task_verb/sdk_memory.rs` | src | s | 14 struct · 1 enum · 3 crate-vis | AppendBlobVersionRequest, BlobContent, ClaimRefRequest, CommitRequest, CreateNoteFromEntityRequest, CreateNoteRequest, EditNoteRequest, EntityRequest +7 | Typed inputs for the public memory verbs in the SDK inventory |
@@ -3584,7 +3585,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/verb_hook_boundary.rs` | src | s | 7 fn | — | The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1) |
 | `src/task_verb/verb_kind.rs` | src | s | 1 struct · 2 enum · 7 fn · 2 crate-vis | TaskAssignee, TaskKind, TaskTtl | — |
 | `src/task_verb/wave_port.rs` | src | m | 2 struct · 1 enum · 8 fn | VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage | Vault-backed, atomic wave plan application through the ordinary TASK doors |
-| `src/task_verb/wire_decode.rs` | src | m | 17 crate-vis | — | Read side of the hand-rolled rmpv wire format for typed TASK bodies |
+| `src/task_verb/wire_decode.rs` | src | L | 18 crate-vis | — | Read side of the hand-rolled rmpv wire format for typed TASK bodies |
 | `src/task_verb/wire_encode.rs` | src | m | 8 crate-vis | — | Write side of the hand-rolled rmpv wire format for typed TASK bodies |
 | `src/team/market.rs` | src | m | 6 struct · 3 enum · 8 fn · 1 const | LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind, SignedReferee +1 | The MARKET pattern's ledger (ARCH-0079 #market, OF-540) |
 | `src/team/mod.rs` | src | s | 5 mod · 5 re-export | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
