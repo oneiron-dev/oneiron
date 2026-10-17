@@ -12,6 +12,7 @@ use crate::store::Store;
 mod device_local;
 mod device_only;
 pub mod model_versioning;
+mod models;
 
 pub(crate) use device_local::{
     device_local_keeps_among, device_local_keeps_in, device_local_worlds_at,

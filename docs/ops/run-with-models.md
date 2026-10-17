@@ -987,8 +987,17 @@ Once every rung of a call has parked, each offer parked on a spent window or
 spent credit leaves the owner a question in `GET /v1/ai/status`
 (`quota_questions`: the provider, model, route, what was spent, the reset if
 any, the choices, and `fallbacks`). A call that a later rung serves asks
-nothing. `fallbacks` lists the chat models on other providers that still have
-usage left, and while it is non-empty the choices include `use_fallback`.
+nothing. `fallbacks` lists the models on other providers that still have
+usage left and can take the parked call:
+
+- they speak the seat's wire: a chat model for a chat seat, and a rung of the
+  same operation's media seat for a media call (a reranker seat has none);
+- they stay on the device when the seat's role must;
+- they accept the request itself (streaming, tools, images, audio, a media
+  row's inputs).
+
+A speech call that names a voice lists none, since a voice stays on its own
+target. While `fallbacks` is non-empty, the choices include `use_fallback`.
 Answer with `POST /v1/ai/quota/{id}`
 `{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait" | "use_fallback", "fallback": "<model>"}`:
 
@@ -996,10 +1005,20 @@ Answer with `POST /v1/ai/quota/{id}`
 - `wait` and `add_account` close the question and leave the offer parked
   until its reset.
 - `use_fallback` names one of `fallbacks` (its engine id). While the offer is
-  parked, a call whose every rung has parked goes to that model instead,
-  whenever the model's own offer is in rotation and the call's world may go
-  where it runs. Setting it is the permission, paid models included. Once the
-  offer is back, calls use it again.
+  parked, a call whose every rung has parked goes to that model instead. That
+  covers a call, a stream as it opens or after any pass of its chain before it
+  has spoken, and a media call. It applies whenever the model's own offer is
+  in rotation, the model can take that call, and the call's world may go where
+  it runs. The answer keeps the seat's receipt:
+  - `rung` is the one after the seat's configured rungs;
+  - `provider` and `requested_model` name the fallback;
+  - `failed_rungs` and `passed_over` count and list the seat's own rungs
+    first.
+
+  Setting it is the permission, paid models included. Once the offer is back,
+  calls use it again. The choice is owner policy, kept in the vault's model
+  settings rather than with the deployment's cooldowns. A checkpoint keeps
+  it, and a restore over a live vault keeps the live vault's choice.
 
 ### When a provider is down
 
@@ -1013,8 +1032,13 @@ that runs out of wait ends with the provider's own failure, not
 `rate_limited`.
 
 When an offer's rest ends it is on probation: a failure rests it again with
-one more strike. A stable recovery is three answers in a row over at least
-30 s. It clears the strikes, and the memory work the outage stopped resumes:
+one more strike. On probation it takes one request at a time. The call that
+sends it holds the offer's probation slot until the request ends: a stream's
+last event, or a media job's end. A call that comes meanwhile passes that rung
+to the next one. If no rung is left, it waits for the probation request to end,
+within its wait budget, and is never refused for it. A stable recovery is three
+answers in a row over at least 30 s. It clears the strikes, and the memory
+work the outage stopped resumes:
 
 - the attempts this server's Dreamer parked on an executor error are
   requeued, as a restart requeues them;
@@ -1023,6 +1047,22 @@ one more strike. A stable recovery is three answers in a row over at least
 
 Work parked on a signal (a budget or consent trap, a wait) is never resumed
 by a recovery.
+
+`GET /v1/ai/status` shows each offer's live health. Each built rung under
+`models.seats[].rungs[]` carries `health`:
+
+- `state`: `healthy`, `down` (resting until `until`), or `recovering` (on
+  probation);
+- `strikes`, `successes`, and `probing` (its one probation request is out);
+- any limit `hold` (`until`, `reset`, `spent`), shown apart, since a hold is
+  not an outage.
+
+A seat's `state` follows its rungs:
+
+- `ready` while a healthy rung that no limit holds can serve;
+- otherwise `recovering` while a free rung is on probation;
+- `down` when every built rung rests for its health;
+- `unavailable` when no rung could be built.
 
 On raw `/v1/llm/stream`, a stream that fails after it has started ends with
 one last line carrying the same typed body as a refusal before it:
