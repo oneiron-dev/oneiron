@@ -9800,7 +9800,7 @@
      "purpose": "The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, its hand-rolled…",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -12866,6 +12866,8 @@
      "kind": "src",
      "notable": [
       "ClaimClassDescriptor",
+      "ClaimSubjectKind",
+      "ClaimValidatorKind",
       "ClaimWriteClass",
       "EnforcementStamp"
      ],
@@ -12873,9 +12875,9 @@
      "purpose": "ARCH-0057 claim-class descriptors as synced maintenance entities (OF-272)",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
-      "enum": 1,
-      "fn": 10,
+      "crate-vis": 4,
+      "enum": 3,
+      "fn": 15,
       "struct": 2
      }
     },
