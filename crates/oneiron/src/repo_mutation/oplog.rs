@@ -178,7 +178,7 @@ impl Vault {
             let recovery_intent = stored.prepared_conflict_resolution.clone();
             let prepared_commit = stored.prepared_commit.clone();
             let stale = public_oplog_entry(stored)?;
-            let (actual_fork_hash, actual_snapshot) = capture_repo_snapshot(repo_root)?;
+            let (actual_fork_hash, actual_snapshot) = capture_repo_snapshot(self, repo_root)?;
             // Old write-ahead records name the same manifest with SHA-256.
             let legacy_hash = sha256_bytes(&actual_snapshot);
             let actual_matches = |expected| expected == actual_fork_hash || expected == legacy_hash;

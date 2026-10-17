@@ -63,7 +63,10 @@ impl Vault {
         let params = self.lfs_chunk_parameters()?;
         let mut spool = self.store.lfs_staging_file()?;
         let mut sha = Sha256::new();
-        let mut scanner = super::scanner::CredentialStream::default();
+        // Spooled bytes get the always-on custody reading only: the owner's
+        // switch reaches the memory admission at install, in each write's
+        // own transaction.
+        let mut scanner = super::scanner::CredentialStream::custody();
         let mut buffer = vec![0u8; LFS_CHUNK_MAX];
         let mut size = 0u64;
         loop {

@@ -125,9 +125,10 @@ pub(super) fn resume_reviewed_document(
             }
         }
     };
-    let (hash, snapshot) = super::snapshot::capture_repo_snapshot(root)?;
+    let (hash, snapshot) = super::snapshot::capture_repo_snapshot(vault, root)?;
     if hash != stale.pre_action_fork_hash
         || Some(expected_post_action_fork_hash(
+            &super::snapshot::SnapshotCustody::of(vault, root)?,
             &request.operation,
             &super::snapshot::decode_snapshot(&snapshot)?,
             hash,
@@ -140,7 +141,8 @@ pub(super) fn resume_reviewed_document(
     // another document operation. Every failure retains Prepared for safe retry.
     land_reviewed_document(vault, row.id)?;
     let repo_conflict_claim_id = execute_repo_mutation(vault, repo, root, &request, &execution)?;
-    if Some(super::snapshot::capture_repo_snapshot(root)?.0) != stale.expected_post_action_fork_hash
+    if Some(super::snapshot::capture_repo_snapshot(vault, root)?.0)
+        != stale.expected_post_action_fork_hash
     {
         return Err(Error::ConcurrentWrite("reviewed recovery result differs"));
     }

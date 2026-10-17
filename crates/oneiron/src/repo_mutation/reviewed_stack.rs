@@ -164,7 +164,7 @@ impl Vault {
         }
         // Never reset failed approval state or retry a document edit until the
         // live repository proves exactly the prefix already authorized above.
-        if capture_repo_snapshot(&root)?.0 != hash {
+        if capture_repo_snapshot(self, &root)?.0 != hash {
             return Err(Error::ConcurrentWrite("reviewed stack recovery diverged"));
         }
         for row in rows.into_iter().skip(outcomes.len()) {
@@ -200,7 +200,7 @@ impl Vault {
                 .entry
                 .expected_post_action_fork_hash
                 .ok_or(invalid("stack postcondition missing"))?;
-            if capture_repo_snapshot(&root)?.0 != hash {
+            if capture_repo_snapshot(self, &root)?.0 != hash {
                 return Err(Error::ConcurrentWrite(
                     "reviewed stack operation result differs",
                 ));
@@ -231,7 +231,7 @@ impl Vault {
         tested: &TestedBatch,
         stack: &ReviewedStack,
     ) -> Result<()> {
-        if capture_repo_snapshot(repo.repo_root())?.0 != stack.pre_snapshot {
+        if capture_repo_snapshot(self, repo.repo_root())?.0 != stack.pre_snapshot {
             return Err(Error::ConcurrentWrite("reviewed stack base changed"));
         }
         let snapshot = {

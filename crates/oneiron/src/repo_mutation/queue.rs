@@ -18,8 +18,8 @@ use super::oplog::{
     repo_mutation_oplog_key, repo_mutation_repo_key_hash, repo_mutation_snapshot_key,
 };
 use super::snapshot::{
-    StoredRepoSnapshot, StoredRepoSnapshotEntry, StoredRepoSnapshotEntryKind,
-    capture_repo_snapshot, decode_snapshot, encode_snapshot, restore_repo_snapshot,
+    SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind, capture_repo_snapshot,
+    decode_snapshot, encode_snapshot, restore_repo_snapshot,
 };
 use super::support::{hex_bytes, now_millis, truncate_failure};
 use super::trailer::{commit_message_with_provenance_trailer, validate_repo_provenance_request};
@@ -279,7 +279,7 @@ impl Vault {
         repo_root: &Path,
         proposal: Option<EntityId>,
     ) -> Result<PreparedRepoMutationAction> {
-        let (fork_hash, snapshot_bytes) = capture_repo_snapshot(repo_root)?;
+        let (fork_hash, snapshot_bytes) = capture_repo_snapshot(self, repo_root)?;
         let pre_action_snapshot = decode_snapshot(&snapshot_bytes)?;
         // A reviewed write is bound to its reviewed snapshot instead; its pin
         // was checked against HEAD when it was proposed.
@@ -303,6 +303,7 @@ impl Vault {
         let prepared = (|| -> Result<PreparedRepoMutation> {
             require_staged_objects_available(repo_root, &execution)?;
             let expected_post_action_fork_hash = expected_post_action_fork_hash(
+                &SnapshotCustody::of(self, repo_root)?,
                 &request.operation,
                 &pre_action_snapshot,
                 fork_hash,
@@ -513,7 +514,10 @@ fn require_staged_objects_available(
     )))
 }
 
+/// The fork hash the checkout will have once `operation` lands on the
+/// snapshot it was prepared on, its file kept as `custody` keeps it.
 pub(super) fn expected_post_action_fork_hash(
+    custody: &SnapshotCustody,
     operation: &RepoMutationOperation,
     pre_action_snapshot: &StoredRepoSnapshot,
     pre_action_fork_hash: RepoForkHash,
@@ -540,18 +544,20 @@ pub(super) fn expected_post_action_fork_hash(
     let executable = post_action_snapshot
         .entries
         .iter()
-        .find(|entry| entry.path == path && entry.kind == StoredRepoSnapshotEntryKind::File)
+        .find(|entry| {
+            entry.path == path
+                && matches!(
+                    entry.kind,
+                    StoredRepoSnapshotEntryKind::File | StoredRepoSnapshotEntryKind::Withheld
+                )
+        })
         .is_some_and(|entry| entry.executable);
     post_action_snapshot
         .entries
         .retain(|entry| entry.path != path);
-    post_action_snapshot.entries.push(StoredRepoSnapshotEntry {
-        path: path.to_owned(),
-        kind: StoredRepoSnapshotEntryKind::File,
-        executable,
-        content: content.to_vec(),
-        symlink_target: None,
-    });
+    post_action_snapshot
+        .entries
+        .push(custody.file(path.to_owned(), executable, content.to_vec()));
     post_action_snapshot
         .entries
         .sort_by(|left, right| left.path.cmp(&right.path));

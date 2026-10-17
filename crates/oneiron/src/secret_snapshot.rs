@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::batch::secret_scan;
 use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
-use crate::error::{CodeError, Error, Result};
+use crate::error::{CodeError, Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_custody::read_secret_custody_in_txn;
 use crate::secret_lease::decode_local_registration_body;
@@ -33,6 +33,18 @@ pub struct SnapshotExclusionSet {
 impl SnapshotExclusionSet {
     /// Collect declared custody paths and live T2 registrations for one project.
     pub fn for_project(vault: &Vault, txn: &RoTxn<'_>, project_id: &str) -> Result<Self> {
+        Self::collect(vault, txn, Some(project_id))
+    }
+
+    /// Declared custody paths and every project's live T2 registrations, for a
+    /// snapshot no project names: the checkout a code mutation writes
+    /// (OF-067). A path another project registered may match there too, which
+    /// only withholds more.
+    pub(crate) fn for_every_project(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
+        Self::collect(vault, txn, None)
+    }
+
+    fn collect(vault: &Vault, txn: &RoTxn<'_>, project_id: Option<&str>) -> Result<Self> {
         let mut declared_paths = BTreeSet::new();
         let mut registered_hashes = BTreeSet::new();
         for entry in vault
@@ -46,7 +58,9 @@ impl SnapshotExclusionSet {
         }
         for (_, raw) in T2_LOCAL_REGISTRATIONS.scan(&vault.store, txn)? {
             let registration = decode_local_registration_body(&raw)?;
-            if registration.registration.project_id == project_id {
+            if project_id
+                .is_none_or(|project_id| registration.registration.project_id == project_id)
+            {
                 registered_hashes.insert(registration.registration.content_hash);
                 declared_paths.insert(
                     registration
@@ -72,6 +86,51 @@ impl SnapshotExclusionSet {
             .iter()
             .any(|declared| path_matches_declared(path, declared, root))
             || self.registered_hashes.contains(content_hash)
+    }
+
+    /// Why [`Vault::apply_custody_to_snapshot`]'s policy keeps one file it
+    /// read out of a snapshot, if it does: a declared path or a registered
+    /// value is excluded, and an undeclared secret the release scan detects
+    /// is quarantined.
+    pub(crate) fn withholds(
+        &self,
+        path: &str,
+        bytes: &[u8],
+        root: Option<&str>,
+    ) -> Option<SnapshotWithhold> {
+        if self.excludes(path, blake3::hash(bytes).as_bytes(), root) {
+            return Some(SnapshotWithhold::Excluded);
+        }
+        secret_scan::scan_file_content(path, bytes).map(SnapshotWithhold::Quarantined)
+    }
+}
+
+/// Why snapshot custody keeps a file's bytes out of a snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SnapshotWithhold {
+    /// A declared custody path, or a registered value's bytes.
+    Excluded,
+    /// An undeclared secret, by the detector's reason.
+    Quarantined(&'static str),
+}
+
+/// The reason a write is refused when snapshot custody keeps its path out of
+/// every snapshot (OF-067): a declared custody path or a registered value, or
+/// a file the snapshot it would change already withholds.
+pub(crate) const REASON_WITHHELD_PATH: &str = "gate.secret_scan.withheld_path";
+
+impl SnapshotWithhold {
+    /// The refusal of a proposed write the policy would withhold: a review
+    /// holds the bytes it approves, so none may hold these.
+    pub(crate) fn refusal(self) -> Error {
+        let reason = match self {
+            Self::Excluded => REASON_WITHHELD_PATH,
+            Self::Quarantined(reason) => reason,
+        };
+        Error::Gate(GateError::GateWriteRejected {
+            outcome: "deny",
+            reason_codes: vec!["gate.secret_scan.detected", reason],
+        })
     }
 }
 

@@ -387,19 +387,63 @@ impl BodyMeter {
     }
 }
 
-/// The recovery-phrase scan of one body as it streams (#1433): its text is
-/// read in order, a character split between two frames carried, and bytes
-/// that are no UTF-8 read as one replacement character each, so a binary
-/// body is scanned too. It keeps the first hit.
-#[derive(Default)]
+/// How much of a body its secret scan keeps to read whole once it ends, by the
+/// write door's structured rules too: as much as an LFS object the door reads
+/// whole (OF-067). A longer body is read by the stream rules alone.
+const SECRET_WHOLE_SCAN_MAX: usize = crate::origin::lfs::LFS_WHOLE_SCAN_MAX as usize;
+
+/// The write door's rules over one body as it streams (#1433; OF-067): a
+/// recovery phrase, a provider key, a private key's armor, a credential
+/// assignment and the blocklist, each read across frame edges, and, for a
+/// body within [`SECRET_WHOLE_SCAN_MAX`], the door's structured reading of
+/// it whole (a credential field; a body nested past its decoder, which no
+/// read takes as clean). Its text is read in order, a character split between
+/// two frames carried, and bytes that are no UTF-8 read as one replacement
+/// character each, so a binary body is scanned too. It keeps the first hit,
+/// which marks the body: build exhaust is kept whole and never refused
+/// (ARCH-0069 S7), whatever the owner's switch says.
 struct SecretScan {
     phrases: crate::batch::secret_scan::PhraseStream,
+    /// Keys and armor a frame edge splits, an assignment whose name and value
+    /// two frames hold, and the blocklist across edges.
+    credentials: crate::origin::lfs::CredentialStream,
     carry: Vec<u8>,
+    /// The body so far, while it is within [`SECRET_WHOLE_SCAN_MAX`].
+    whole: Option<Vec<u8>>,
     hit: Option<&'static str>,
+}
+
+impl Default for SecretScan {
+    fn default() -> Self {
+        Self {
+            phrases: Default::default(),
+            credentials: crate::origin::lfs::CredentialStream::exhaust(),
+            carry: Vec::new(),
+            whole: Some(Vec::new()),
+            hit: None,
+        }
+    }
 }
 
 impl SecretScan {
     fn feed(&mut self, mut bytes: &[u8]) {
+        if self.hit.is_some() {
+            self.whole = None;
+            return;
+        }
+        if let Some(whole) = &mut self.whole {
+            if whole.len().saturating_add(bytes.len()) <= SECRET_WHOLE_SCAN_MAX {
+                whole.extend_from_slice(bytes);
+            } else {
+                self.whole = None;
+            }
+        }
+        // The frame's own text by the door's rules, and what its edges split.
+        self.hit = found(self.credentials.feed(bytes)).or_else(|| {
+            found(crate::batch::secret_scan::scan_write_seam(
+                &String::from_utf8_lossy(bytes),
+            ))
+        });
         while !self.carry.is_empty() && self.hit.is_none() {
             let Some((first, after)) = bytes.split_first() else {
                 return;
@@ -432,6 +476,7 @@ impl SecretScan {
         }
     }
 
+    /// The phrase rule over the text in order.
     fn read(&mut self, text: &str) {
         if self.hit.is_none() {
             self.hit = self.phrases.find(text);
@@ -445,9 +490,32 @@ impl SecretScan {
         if self.hit.is_none() {
             self.hit = self.phrases.find_at_end();
         }
+        if self.hit.is_none() {
+            self.hit = found(self.credentials.finish());
+        }
+        if self.hit.is_none()
+            && let Some(whole) = self.whole.take()
+        {
+            self.hit = crate::batch::secret_scan::write_payload_hit(&whole);
+        }
         self.hit
     }
 }
+
+/// The reason a scan that refuses would give, for a reader that marks the hit
+/// instead: the rule's own code, after the door's `detected`.
+fn found(scanned: Result<()>) -> Option<&'static str> {
+    match scanned {
+        Ok(()) => None,
+        Err(Error::Gate(crate::error::GateError::GateWriteRejected { reason_codes, .. })) => {
+            Some(reason_codes.last().copied().unwrap_or(SECRET_DETECTED))
+        }
+        Err(_) => Some(SECRET_DETECTED),
+    }
+}
+
+/// The reason a hit with no rule of its own marks a body with.
+const SECRET_DETECTED: &str = "gate.secret_scan.detected";
 
 /// Where a finished body went.
 pub(crate) enum SunkBody {
