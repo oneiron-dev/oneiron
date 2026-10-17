@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 270 facade rows, 1014 declarations.
-Inputs: 226 of 270 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 219 of 270 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
-Opaque serde_json::Value leaves: 67; unread shapes: 2.
+Census: 271 facade rows, 1036 declarations.
+Inputs: 226 of 271 fully typed, 43 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 220 of 271 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
+Opaque serde_json::Value leaves: 68; unread shapes: 2.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -483,6 +483,15 @@ class ShapePlanSummary(TypedDict):
     needs_word: int
     ceremonies: int
     no_door: int
+ShapeReachVerdict = Literal["can", "asks"]
+ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "verdict": ShapeReachVerdict})
+class ShapeReach(TypedDict):
+    facts: list[ShapeReachFact]
+class ShapePlanReach(TypedDict):
+    before: ShapeReach
+    after: ShapeReach
+    unresolved: list[str]
+    line: str
 class ShapePlan(TypedDict):
     seed_id: NotRequired[str | None]
     seed: ShapeSeed
@@ -490,6 +499,7 @@ class ShapePlan(TypedDict):
     items: list[ShapePlanItem]
     undeclared: list[ShapeRow]
     summary: ShapePlanSummary
+    reach: NotRequired[ShapePlanReach]
 class ShapeApplyRequest(TypedDict):
     plan: ShapePlan
     approve: NotRequired[list[int]]
@@ -576,6 +586,7 @@ class SteerReceipt(TypedDict):
 class DescribeRequest(TypedDict):
     task_ref: NotRequired[str | None]
     self: NotRequired[bool]
+    vault: NotRequired[bool]
     session_id: NotRequired[str | None]
     key: NotRequired[str | None]
     frame_epoch: NotRequired[int | None]
@@ -610,6 +621,12 @@ class TasksOverflow(TypedDict):
 class TasksSection(TypedDict):
     rows: list[TaskRow]
     overflow: NotRequired[TasksOverflow | None]
+class ShapeCard(TypedDict):
+    seed_id: NotRequired[str | None]
+    counts: dict[str, int]
+    open_applies: int
+    reach: ShapeReach
+    line: str
 class TaskDescriptionSection(TasksSection):
     kind: Literal["tasks_section"]
 class TaskDescriptionCard(TypedDict):
@@ -618,7 +635,10 @@ class TaskDescriptionCard(TypedDict):
 class TaskDescriptionSelfCard(TypedDict):
     kind: Literal["self_card"]
     tail: str
-TaskDescription = TaskDescriptionSection | TaskDescriptionCard | TaskDescriptionSelfCard
+class TaskDescriptionVaultCard(TypedDict):
+    kind: Literal["vault_card"]
+    card: ShapeCard
+TaskDescription = TaskDescriptionSection | TaskDescriptionCard | TaskDescriptionSelfCard | TaskDescriptionVaultCard
 class TaskAssigneeAgentDefBody(TypedDict):
     agent_def_ref: EntityId
 class TaskAssigneeAgentDef(TypedDict):
@@ -2574,11 +2594,16 @@ class LearningSettingClear(TypedDict):
     mode: LearningSettingMode
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
+class SecretLiftClose(TypedDict):
+    proposal: str
+    reason: LiftCloseReason
 class SecretLiftRequest(TypedDict):
     start: NotRequired[bool]
+    close: NotRequired[SecretLiftClose | None]
 SecretScanMode = Literal["on", "off"]
 LiftTrigger = Literal["switch", "owner"]
-LiftFamily = Literal["records", "side_rows", "carriers"]
+LiftFamily = Literal["records", "attempts", "side_rows", "carriers"]
 class LiftCounts(TypedDict):
     family: LiftFamily
     read: int
@@ -2603,23 +2628,33 @@ class SecretLiftReceipt(TypedDict):
     proposals: int
     failed: int
 LiftCause = Literal["unplaceable", "immutable", "held", "file", "no_door", "history"]
+class LiftCauseCount(TypedDict):
+    cause: LiftCause
+    open: int
 class SecretLiftProposal(TypedDict):
     path: str
     detector_reason: str
     suggested_secret_name: str
     project_id: str
 class SecretLiftHistoryProposal(TypedDict):
+    id: NotRequired[str]
     family: LiftFamily
     cause: LiftCause
     proposal: SecretLiftProposal
     run_id: str
     filed_at: int
+    closed_at: NotRequired[int | None]
+    closed_by: NotRequired[str | None]
+    close_reason: NotRequired[LiftCloseReason | None]
+    close_receipt: NotRequired[str | None]
 class SecretLiftStatus(TypedDict):
     mode: SecretScanMode
     paused: bool
     running: NotRequired[SecretLiftProgress | None]
     last: NotRequired[SecretLiftReceipt | None]
     open_proposals: int
+    open_by_cause: list[LiftCauseCount]
+    closed_proposals: int
     proposals: list[SecretLiftHistoryProposal]
 WidenProposalState = Literal["pending", "approved", "declined"]
 class WidenProposalsRequest(TypedDict):
@@ -3106,6 +3141,149 @@ class SlideReviewOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[Any]
     refused: list[SlideUnitRefused]
+class CriticBinding(TypedDict):
+    lens_id: str
+    lens_ref: str
+    actor_ref: str
+    actor_class: int
+class CriticReviewSubmit(TypedDict):
+    target_ref: str
+    kind: str
+    session_ref: str
+    run_ref: str
+    type_node: str
+    type_tree_version: int
+    axis: str
+    auto_resolve_threshold: float
+    catalog: Any
+    critics: list[CriticBinding]
+CritiqueVerdict = Literal["accept", "revise", "discard"]
+class CritiqueTriageScores(TypedDict):
+    accept: float
+    revise: float
+    discard: float
+CritiqueSeverity = Literal["info", "low", "medium", "high", "blocking"]
+class MergedFinding(TypedDict):
+    key: str
+    verdict: CritiqueVerdict
+    severity: CritiqueSeverity
+    confidence: float
+    artifact_ids: list[str]
+    evidence_refs: list[str]
+    suggested_edit: NotRequired[str | None]
+    auto_resolved: bool
+class CritiqueTriage(TypedDict):
+    verdict: CritiqueVerdict
+    scores: CritiqueTriageScores
+    acted_on_artifact_ids: list[str]
+    hard_veto_artifact_ids: list[str]
+    out_of_scope_artifact_ids: list[str]
+    findings: list[MergedFinding]
+    auto_resolved: bool
+class CritiqueProvenance(TypedDict):
+    critic_ref: str
+    critic_class: int
+    model_id: str
+    model_revision: NotRequired[str | None]
+LearningPredicate = Literal["reliability", "edit_cost", "retest_noise", "setting"]
+class CellTypeRef(TypedDict):
+    node_id: str
+    tree_version: int
+class LearningCell(TypedDict):
+    predicate: LearningPredicate
+    subject: EntityId
+    executor: NotRequired[str | None]
+    type_ref: NotRequired[CellTypeRef | None]
+    axis: NotRequired[str | None]
+    consent_scope: NotRequired[str | None]
+    setting_key: NotRequired[str | None]
+class CriticPrediction(TypedDict):
+    what: str
+    by_when: int
+    how_checked: OutcomeBinding
+class CritiqueArtifact(TypedDict):
+    schema_version: int
+    artifact_id: str
+    run_id: str
+    branch_job: AttemptId
+    candidate_ref: str
+    lens_id: str
+    domain: str
+    provenance: CritiqueProvenance
+    calibration: LearningCell
+    prediction: NotRequired[CriticPrediction | None]
+    verdict: CritiqueVerdict
+    severity: CritiqueSeverity
+    hard_check_passed: NotRequired[bool | None]
+    evidence_refs: list[str]
+    suggested_edit: NotRequired[str | None]
+    out_of_scope: NotRequired[bool]
+    created_at: int
+class ProviderPin(TypedDict):
+    rung: DecisionRung
+    model: str
+    version: str
+class DecisionBand(TypedDict):
+    low: float
+    high: float
+class EvidenceVersion(TypedDict):
+    id: str
+    body_hash: list[int]
+class PairedReading(TypedDict):
+    provider: ProviderPin
+    question: str
+    question_version: int
+    probability: float
+StopCause = Literal["done", "deadline", "provider_failure"]
+ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
+class ReasoningNotNeeded(TypedDict):
+    state: Literal["not_needed"]
+class ReasoningRan(TypedDict):
+    state: Literal["ran"]
+    cause: ReasoningCause
+class ReasoningSkipped(TypedDict):
+    state: Literal["skipped"]
+    cause: ReasoningCause
+class ReasoningCut(TypedDict):
+    state: Literal["cut"]
+    cause: ReasoningCause
+Reasoning = ReasoningNotNeeded | ReasoningRan | ReasoningSkipped | ReasoningCut
+class DecisionTime(TypedDict):
+    budget_ms: int
+    used_ms: int
+    stop: StopCause
+    answered: NotRequired[DecisionRung | None]
+    reasoning: Reasoning
+class ImagePin(TypedDict):
+    provider: ProviderPin
+    name: str
+    evidence: EvidenceVersion
+    width: int
+    height: int
+    frame: NotRequired[PixelRegion | None]
+    edge: NotRequired[int | None]
+    sent_width: int
+    sent_height: int
+class DecisionReceipt(TypedDict):
+    question: str
+    question_version: int
+    principal: str
+    providers: list[ProviderPin]
+    band: DecisionBand
+    band_version: NotRequired[int]
+    evidence_versions: NotRequired[list[EvidenceVersion]]
+    cost_per_thousand: NotRequired[float | None]
+    paired: NotRequired[list[PairedReading]]
+    person: NotRequired[list[PairedReading]]
+    time: NotRequired[DecisionTime | None]
+    images: NotRequired[list[ImagePin]]
+    think_row: NotRequired[int | None]
+    person_row: NotRequired[int | None]
+class CriticReviewOutcome(TypedDict):
+    verdict_claim_ref: str
+    triage: CritiqueTriage
+    artifacts: list[CritiqueArtifact]
+    receipts: list[DecisionReceipt]
 class DeckProposeRequest(TypedDict):
     artifact_ref: str
     transaction: Any
@@ -4006,66 +4184,6 @@ class AiVerdictRequest(TypedDict):
     locate: NotRequired[bool]
     misses: NotRequired[int]
     until_ms: NotRequired[int | None]
-class ProviderPin(TypedDict):
-    rung: DecisionRung
-    model: str
-    version: str
-class DecisionBand(TypedDict):
-    low: float
-    high: float
-class EvidenceVersion(TypedDict):
-    id: str
-    body_hash: list[int]
-class PairedReading(TypedDict):
-    provider: ProviderPin
-    question: str
-    question_version: int
-    probability: float
-StopCause = Literal["done", "deadline", "provider_failure"]
-ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
-class ReasoningNotNeeded(TypedDict):
-    state: Literal["not_needed"]
-class ReasoningRan(TypedDict):
-    state: Literal["ran"]
-    cause: ReasoningCause
-class ReasoningSkipped(TypedDict):
-    state: Literal["skipped"]
-    cause: ReasoningCause
-class ReasoningCut(TypedDict):
-    state: Literal["cut"]
-    cause: ReasoningCause
-Reasoning = ReasoningNotNeeded | ReasoningRan | ReasoningSkipped | ReasoningCut
-class DecisionTime(TypedDict):
-    budget_ms: int
-    used_ms: int
-    stop: StopCause
-    answered: NotRequired[DecisionRung | None]
-    reasoning: Reasoning
-class ImagePin(TypedDict):
-    provider: ProviderPin
-    name: str
-    evidence: EvidenceVersion
-    width: int
-    height: int
-    frame: NotRequired[PixelRegion | None]
-    edge: NotRequired[int | None]
-    sent_width: int
-    sent_height: int
-class DecisionReceipt(TypedDict):
-    question: str
-    question_version: int
-    principal: str
-    providers: list[ProviderPin]
-    band: DecisionBand
-    band_version: NotRequired[int]
-    evidence_versions: NotRequired[list[EvidenceVersion]]
-    cost_per_thousand: NotRequired[float | None]
-    paired: NotRequired[list[PairedReading]]
-    person: NotRequired[list[PairedReading]]
-    time: NotRequired[DecisionTime | None]
-    images: NotRequired[list[ImagePin]]
-    think_row: NotRequired[int | None]
-    person_row: NotRequired[int | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
@@ -4814,7 +4932,42 @@ class XlsxBodyOpDeleteName(TypedDict):
     op: Literal["delete_name"]
     name: str
     sheet: NotRequired[str | None]
-XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName
+class XlsxBodyOpAddSheet(TypedDict):
+    op: Literal["add_sheet"]
+    sheet: str
+    at: NotRequired[int | None]
+class XlsxBodyOpRenameSheet(TypedDict):
+    op: Literal["rename_sheet"]
+    sheet: str
+    name: str
+class XlsxBodyOpMoveSheet(TypedDict):
+    op: Literal["move_sheet"]
+    sheet: str
+    at: int
+class XlsxBodyOpDeleteSheet(TypedDict):
+    op: Literal["delete_sheet"]
+    sheet: str
+class XlsxBodyOpInsertRows(TypedDict):
+    op: Literal["insert_rows"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpDeleteRows(TypedDict):
+    op: Literal["delete_rows"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpInsertColumns(TypedDict):
+    op: Literal["insert_columns"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpDeleteColumns(TypedDict):
+    op: Literal["delete_columns"]
+    sheet: str
+    at: int
+    count: int
+XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):

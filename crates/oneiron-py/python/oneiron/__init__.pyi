@@ -438,6 +438,8 @@ class Oneiron:
         @property
         def code(self) -> "Oneiron._VaultCodeVerbs": ...
         @property
+        def critic(self) -> "Oneiron._VaultCriticVerbs": ...
+        @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs": ...
         @property
         def projects(self) -> "Oneiron._VaultProjectsVerbs": ...
@@ -721,7 +723,7 @@ class Oneiron:
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
     class _VaultSecretsVerbs:
         def lift_history(self, spec: Facade.SecretLiftRequest) -> Facade.SecretLiftStatus:
-            """The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."""
+            """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
     class _VaultWidenProposalsVerbs:
         def __call__(self, spec: Facade.WidenProposalsRequest) -> Facade.WidenProposalsView:
             """The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."""
@@ -809,6 +811,9 @@ class Oneiron:
         def blame(self, request: Facade.CodeStateRequest) -> Facade.CodeBlameView | None: ...
         def proposal_view(self, request: Facade.CodeProposalViewRequest) -> Facade.CodeProposalView | None: ...
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
+    class _VaultCriticVerbs:
+        def review(self, spec: Facade.CriticReviewSubmit) -> Facade.CriticReviewOutcome:
+            """Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."""
     class _VaultRoomsVerbs:
         def list(self) -> list[Facade.RoomEntry]:
             """The caller's rooms its own grants admit; inside a room turn, only that room."""

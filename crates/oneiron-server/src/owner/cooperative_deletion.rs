@@ -81,6 +81,9 @@ pub(crate) struct AnswerAsk {
     /// Under a delete choice, the records to hard-delete, as 32 hex.
     #[serde(default)]
     pub(crate) delete: Vec<String>,
+    /// Under a legal hold choice, the records to hold, as 32 hex.
+    #[serde(default)]
+    pub(crate) hold: Vec<String>,
     /// The requester's host origin, to send the answer back; without it the
     /// answer stays on this side.
     #[serde(default)]
@@ -147,7 +150,7 @@ fn peer_url(field: &str, origin: &str, path: &str) -> OwnerResult<String> {
 }
 
 /// Runs `sign` with this host's authority key.
-fn with_issuer<T>(
+pub(super) fn with_issuer<T>(
     server: &SyncServer,
     sign: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> OwnerResult<T> {
@@ -295,11 +298,17 @@ pub(crate) fn answer(
         .iter()
         .map(|id| entity_id("delete", id))
         .collect::<OwnerResult<Vec<_>>>()?;
+    let hold = request
+        .hold
+        .iter()
+        .map(|id| entity_id("hold", id))
+        .collect::<OwnerResult<Vec<_>>>()?;
     let answer = CooperativeDeletionAnswer {
         kind: request.choice,
         reason_code: request.reason_code.clone(),
         review_at: request.review_at,
         delete,
+        hold,
     };
     let mut filed = vault
         .answer_cooperative_deletion_as(owner, &pact, &nonce, &answer, now())

@@ -767,6 +767,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.critic.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::critic::review::CriticReviewSubmit,
+                >(),
+            ),
+            (
                 "vault.artifacts.propose_deck",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::DeckProposeRequest,
@@ -1813,6 +1819,10 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/self")?.clone(),
             );
             properties.insert(
+                "vault".to_owned(),
+                schema.pointer("/properties/vault")?.clone(),
+            );
+            properties.insert(
                 "session_id".to_owned(),
                 schema.pointer("/properties/session_id")?.clone(),
             );
@@ -2620,6 +2630,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.review_slides" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.critic.review" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -4035,6 +4052,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.review_slides" => {
             let _input: crate::blob_artifact::SlideReviewSubmit = decode(value.clone())?;
         }
+        "vault.critic.review" => {
+            let _input: crate::critic::review::CriticReviewSubmit = decode(value.clone())?;
+        }
         "vault.artifacts.propose_deck" => {
             let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
         }
@@ -4802,6 +4822,7 @@ pub fn invoke(
         "vault.artifacts.review_slides" => {
             encode(vault_artifacts_review_slides(memory, decode(value)?)?)
         }
+        "vault.critic.review" => encode(vault_critic_review(memory, decode(value)?)?),
         "vault.artifacts.propose_deck" => {
             encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
         }
@@ -5355,6 +5376,8 @@ pub fn describe(
         Err(MemoryError::bad_request(
             "describe(self) requires a bound run session",
         ))?
+    } else if input.vault {
+        memory.describe_vault(&input)?
     } else if input.key.is_some() {
         Err(MemoryError::bad_request(
             "describe(card key) expands a board card, which only a live board session holds",
@@ -6335,6 +6358,12 @@ pub fn vault_artifacts_review_slides(
     input: crate::blob_artifact::SlideReviewSubmit,
 ) -> MemoryResult<crate::blob_artifact::SlideReviewOutcome> {
     memory.artifacts_review_slides(&input)
+}
+pub fn vault_critic_review(
+    memory: &Memory<'_>,
+    input: crate::critic::review::CriticReviewSubmit,
+) -> MemoryResult<crate::critic::review::CriticReviewOutcome> {
+    crate::task_verb::sdk::host_only(memory, "vault.critic.review", &input)
 }
 pub fn vault_artifacts_propose_deck(
     memory: &Memory<'_>,

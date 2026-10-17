@@ -537,7 +537,7 @@ export class Oneiron {
       }),
     },
     secrets: {
-      /** The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start. */
+      /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
       lift_history: (input: Facade.SecretLiftRequest): Facade.SecretLiftStatus => this.#call(() => this.#client.vaultSecretsLiftHistory(input) as Facade.SecretLiftStatus),
     },
     /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
@@ -664,6 +664,10 @@ export class Oneiron {
       proposal_view: (request: Facade.CodeProposalViewRequest): Facade.CodeProposalView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeProposalView(keyedJson(request))) as Facade.CodeProposalView | null; return result === null ? null : result }),
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
+    },
+    critic: {
+      /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
+      review: (input: Facade.CriticReviewSubmit): Facade.CriticReviewOutcome => this.#call(() => this.#client.vaultCriticReview(input) as Facade.CriticReviewOutcome),
     },
     rooms: {
       /** The caller's rooms its own grants admit; inside a room turn, only that room. */
