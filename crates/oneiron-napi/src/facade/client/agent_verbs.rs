@@ -1456,6 +1456,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_messages_react(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.messages.react", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_host(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.host", input)
@@ -1798,6 +1807,15 @@ impl NativeClient {
     pub fn vault_claims_admit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.admit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.create", input)
             .map_err(facade_error)
     }
     #[napi]

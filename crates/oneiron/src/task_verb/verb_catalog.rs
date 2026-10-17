@@ -151,6 +151,7 @@ pub enum AgentVerb {
     VaultProjectsRouteTradeoff,
     VaultConversationsTurnContinue,
     VaultConversationsTurnRetry,
+    VaultMessagesReact,
     VaultRoomsHost,
     VaultRoomsHostPin,
     VaultRoomsHostHand,
@@ -235,6 +236,7 @@ pub enum AgentVerb {
     VaultStructuralPut,
     VaultHabitsCheckin,
     VaultClaimsAdmit,
+    VaultArtifactsCreate,
     VaultArtifactsPut,
     VaultArtifactsAppend,
     VaultArtifactsRead,
@@ -398,6 +400,7 @@ impl AgentVerb {
         Self::VaultProjectsRouteTradeoff,
         Self::VaultConversationsTurnContinue,
         Self::VaultConversationsTurnRetry,
+        Self::VaultMessagesReact,
         Self::VaultRoomsHost,
         Self::VaultRoomsHostPin,
         Self::VaultRoomsHostHand,
@@ -482,6 +485,7 @@ impl AgentVerb {
         Self::VaultStructuralPut,
         Self::VaultHabitsCheckin,
         Self::VaultClaimsAdmit,
+        Self::VaultArtifactsCreate,
         Self::VaultArtifactsPut,
         Self::VaultArtifactsAppend,
         Self::VaultArtifactsRead,
@@ -652,6 +656,7 @@ impl AgentVerb {
             Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
             Self::VaultConversationsTurnContinue => "vault.conversations.turn.continue",
             Self::VaultConversationsTurnRetry => "vault.conversations.turn.retry",
+            Self::VaultMessagesReact => "vault.messages.react",
             Self::VaultRoomsHost => "vault.rooms.host",
             Self::VaultRoomsHostPin => "vault.rooms.host.pin",
             Self::VaultRoomsHostHand => "vault.rooms.host.hand",
@@ -736,6 +741,7 @@ impl AgentVerb {
             Self::VaultStructuralPut => "vault.structural.put",
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultClaimsAdmit => "vault.claims.admit",
+            Self::VaultArtifactsCreate => "vault.artifacts.create",
             Self::VaultArtifactsPut => "vault.artifacts.put",
             Self::VaultArtifactsAppend => "vault.artifacts.append",
             Self::VaultArtifactsRead => "vault.artifacts.read",
@@ -898,6 +904,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultMessagesReact
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
@@ -946,6 +953,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsCreate
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1152,6 +1160,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultMessagesReact
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
@@ -1200,6 +1209,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsCreate
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1431,6 +1441,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultMessagesReact
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
@@ -1507,6 +1518,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsCreate
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1612,6 +1624,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultMessagesReact
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
                 | Self::VaultCompanionsSharingSet
@@ -1654,6 +1667,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsCreate
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
@@ -1831,6 +1845,7 @@ impl AgentVerb {
             Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
+            Self::VaultMessagesReact => &["spec"],
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsHostPin => &["spec"],
             Self::VaultRoomsHostHand => &["spec"],
@@ -1915,6 +1930,7 @@ impl AgentVerb {
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
+            Self::VaultArtifactsCreate => &["spec"],
             Self::VaultArtifactsPut => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
@@ -2079,6 +2095,7 @@ impl AgentVerb {
             Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
+            Self::VaultMessagesReact => &["spec"],
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsHostPin => &["spec"],
             Self::VaultRoomsHostHand => &["spec"],
@@ -2163,6 +2180,7 @@ impl AgentVerb {
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
+            Self::VaultArtifactsCreate => &["spec"],
             Self::VaultArtifactsPut => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
@@ -2580,6 +2598,9 @@ impl AgentVerb {
             Self::VaultConversationsTurnRetry => {
                 "Queues a new answer to the user turn an assistant turn answered; the old reply stays."
             }
+            Self::VaultMessagesReact => {
+                "Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."
+            }
             Self::VaultRoomsHost => {
                 "Who hosts a room now, and the caller's own speaking role there."
             }
@@ -2761,6 +2782,9 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => "Appends one immutable check-in under a Habit TASK.",
             Self::VaultClaimsAdmit => {
                 "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."
+            }
+            Self::VaultArtifactsCreate => {
+                "Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run."
             }
             Self::VaultArtifactsPut => {
                 "Registers one blob artifact; its bytes ride vault.artifacts.append."

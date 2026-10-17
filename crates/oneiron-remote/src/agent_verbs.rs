@@ -498,6 +498,9 @@ impl OneironClient {
                 "vault.conversations.turn.retry" => remote_agent_verb_output::<
                     oneiron::conversation::TurnActionReceipt,
                 >(client, verb, &input),
+                "vault.messages.react" => remote_agent_verb_output::<
+                    oneiron::reaction::MessageReactionReceipt,
+                >(client, verb, &input),
                 "vault.rooms.host" => remote_agent_verb_output::<
                     oneiron::workspace_roster::RoomStanding,
                 >(client, verb, &input),
@@ -642,6 +645,9 @@ impl OneironClient {
                 "vault.claims.admit" => {
                     remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
                 }
+                "vault.artifacts.create" => remote_agent_verb_output::<
+                    Option<oneiron::blob_artifact::ArtifactView>,
+                >(client, verb, &input),
                 "vault.artifacts.put" => remote_agent_verb_output::<
                     oneiron::memory::EntityRefReceipt,
                 >(client, verb, &input),
@@ -2562,6 +2568,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.conversations.turn.retry", value)
     }
+    pub fn vault_messages_react(
+        &self,
+        input: &oneiron::reaction::MessageReactionRequest,
+    ) -> Result<oneiron::reaction::MessageReactionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.messages.react", value)
+    }
     pub fn vault_rooms_host(
         &self,
         input: &oneiron::task_verb::sdk::RoomHostRequest,
@@ -3162,6 +3180,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.claims.admit", value)
+    }
+    pub fn vault_artifacts_create(
+        &self,
+        input: &oneiron::blob_artifact::ArtifactCreateRequest,
+    ) -> Result<Option<oneiron::blob_artifact::ArtifactView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.create", value)
     }
     pub fn vault_artifacts_put(
         &self,

@@ -1438,6 +1438,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_messages_react(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.messages.react")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.messages.react", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_rooms_host(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.rooms.host")?;
         let output = py
@@ -1785,6 +1792,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.claims.admit")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.claims.admit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.create", input))
             .map_err(raise)?;
         encode(&output)
     }
