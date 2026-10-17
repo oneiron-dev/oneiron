@@ -255,7 +255,7 @@
       "prose_links": ["/label", "/spec"],
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
-      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::msgpack_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
+      "call": "memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?",
       "scope": "Write",
       "proposes": true,
       "mcp_fields": {
@@ -1036,6 +1036,30 @@
       "output": "crate::task_verb::sdk::ShareCreated",
       "call": "crate::task_verb::sdk::create_share_as_caller(memory, input)?",
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.shares.revoke",
+      "input": "crate::task_verb::sdk::ShareRevokeRequest",
+      "output": "crate::receipt::ShareRevokeReceipt",
+      "call": "crate::task_verb::sdk::revoke_share_as_caller(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.shares.view",
+      "input": "crate::task_verb::sdk::ShareViewRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefView>>",
+      "call": "crate::task_verb::sdk::view_shared_brief_as_caller(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -2034,6 +2058,70 @@
         "unrestricted_record_scope": true,
         "validate": "crate::memory::caps::check_batch_len(\"evidence\", input.evidence.len())?; crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
+      "section": false
+    },
+    {
+      "name": "vault.graph.ask",
+      "input": "crate::receipt::GraphAskRequest",
+      "output": "crate::receipt::GraphAskOutcome",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.ask\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false
+    },
+    {
+      "name": "vault.questions.create",
+      "input": "crate::receipt::QuestionCreateRequest",
+      "output": "crate::llm::decision::questions::QuestionRecord",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.create\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.edit",
+      "input": "crate::receipt::QuestionEditRequest",
+      "output": "crate::llm::decision::questions::QuestionRecord",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.edit\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.pause",
+      "input": "crate::receipt::QuestionPauseRequest",
+      "output": "crate::receipt::QuestionPaused",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.pause\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.read",
+      "input": "crate::receipt::QuestionReadRequest",
+      "output": "Option<crate::llm::decision::questions::QuestionRecord>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.read\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.answers",
+      "input": "crate::receipt::QuestionAnswersRequest",
+      "output": "Vec<crate::llm::decision::questions::AnswerRecord>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.answers\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "section": false
     },
     {

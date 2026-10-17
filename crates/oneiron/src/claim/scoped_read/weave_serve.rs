@@ -444,7 +444,10 @@ impl Memory<'_> {
         })
     }
 
-    pub(super) fn weave_sections(&self, report: &WeaveReport) -> MemoryResult<Vec<WeaveSectionView>> {
+    pub(super) fn weave_sections(
+        &self,
+        report: &WeaveReport,
+    ) -> MemoryResult<Vec<WeaveSectionView>> {
         report
             .sections
             .iter()

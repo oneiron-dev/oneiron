@@ -497,7 +497,10 @@ pub(crate) fn settle_weave_lens_axes(
                 target,
             } = item
                 && vault
-                    .weave_link_correction_labels_in_txn(txn, EdgeRef::new(*source, *kind, *target))?
+                    .weave_link_correction_labels_in_txn(
+                        txn,
+                        EdgeRef::new(*source, *kind, *target),
+                    )?
                     .iter()
                     .any(|label| label.actor == id && label.recorded_at >= render.rendered_at)
             {
@@ -553,7 +556,11 @@ pub(crate) fn weave_lens_attempt_period(
         .as_str()
         .and_then(|tag| WeaveDigestReader::from_tag(tag, id))
         .ok_or_else(|| invalid("attempt reader"))?;
-    let scheduled_for = fields[2].as_u64().ok_or_else(|| invalid("attempt period"))?;
-    let rendered_at = fields[3].as_u64().ok_or_else(|| invalid("attempt period"))?;
+    let scheduled_for = fields[2]
+        .as_u64()
+        .ok_or_else(|| invalid("attempt period"))?;
+    let rendered_at = fields[3]
+        .as_u64()
+        .ok_or_else(|| invalid("attempt period"))?;
     Ok((reader, scheduled_for, rendered_at))
 }
