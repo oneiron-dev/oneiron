@@ -8178,6 +8178,7 @@ dependencies = [
  "security-framework-sys",
  "tempfile",
  "thiserror 2.0.20",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 
@@ -8555,7 +8556,11 @@ dependencies = [
 name = "oneiron-uniffi"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "oneiron",
+ "oneiron-remote",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "uniffi",
 ]

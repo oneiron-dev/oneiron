@@ -437,11 +437,29 @@ pub struct Memory<'v> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostWriteOrigin {
     envelope: crate::WriteEnvelope,
+    /// The running agent attempt the dispatcher bound as the call's TASK
+    /// creator (OF-532), read from its live lease, never from the guest.
+    task_host: Option<crate::task_verb::HostBinding>,
 }
 
 impl HostWriteOrigin {
     pub(crate) const fn new(envelope: crate::WriteEnvelope) -> Self {
-        Self { envelope }
+        Self {
+            envelope,
+            task_host: None,
+        }
+    }
+
+    /// This origin with the run's TASK creator binding, if it has one.
+    pub(crate) fn with_task_host(mut self, binding: Option<crate::task_verb::HostBinding>) -> Self {
+        self.task_host = binding;
+        self
+    }
+
+    /// The TASK creator the dispatcher bound, if any.
+    #[must_use]
+    pub const fn task_host(&self) -> Option<&crate::task_verb::HostBinding> {
+        self.task_host.as_ref()
     }
 
     /// The source every claim written under this origin carries.
@@ -674,6 +692,9 @@ impl Memory<'_> {
     /// source and the gate decides.
     #[must_use]
     pub fn with_host_origin(mut self, origin: HostWriteOrigin) -> Self {
+        if let Some(binding) = &origin.task_host {
+            self.task_host = Some(binding.clone());
+        }
         self.host_origin = Some(origin);
         self
     }
@@ -847,13 +868,12 @@ impl Memory<'_> {
     }
 
     /// PRE-TRANSACTION variant of the hard-delete refusal, used ONLY where
-    /// the engine owns the write transaction internally (companion create,
+    /// the engine owns the write transaction internally (imported-claim
     /// ingest admission) and the marker check cannot ride it. Residual for
-    /// those two verbs: a hard delete landing between this check and the
-    /// engine's commit recreates at the purged id; closing it needs in-txn
-    /// engine seams (`create_companion_record_in_txn`, ingest). Every other
-    /// id-accepting verb checks the marker INSIDE its own write
-    /// transaction (A1).
+    /// that verb: a hard delete landing between this check and the engine's
+    /// commit recreates at the purged id; closing it needs an in-txn ingest
+    /// seam. Every other id-accepting verb checks the marker INSIDE its own
+    /// write transaction (A1).
     pub(super) fn refuse_hard_deleted_id(&self, id: &EntityId) -> MemoryResult<()> {
         let rtxn = self
             .vault

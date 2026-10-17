@@ -212,6 +212,21 @@ impl ResultRead {
         }))
     }
 
+    /// The result read.
+    pub(crate) fn output(&self) -> &CodeRunRawOutput {
+        &self.output
+    }
+
+    /// The range of its body the read is narrowed to, if any.
+    pub(crate) fn range(&self) -> Option<(u64, u64)> {
+        self.range
+    }
+
+    /// Whether the occurrence read is tainted now.
+    pub(crate) fn is_tainted(&self) -> bool {
+        self.state.is_tainted()
+    }
+
     /// The reference a reply names the result by: a range by its parent's
     /// handle, a whole result by its name, or its handle when it has none.
     fn reference(&self) -> String {
@@ -414,7 +429,9 @@ pub(crate) fn refusal(code: &str) -> Value {
 /// `can({read: r})`'s verdict on a read refused before its taint, with the
 /// refusal's own detail: `unknown_handle` for a reference to no result of
 /// the run, `withheld_rows` when the rows its answers were served from stay
-/// where the reader is not, else `denied`.
+/// where the reader is not, `outside_delegated_range` for a reader child's
+/// range past what its parent delegated, `reader_task_settled` once a
+/// child's job is settled or claimed again, else `denied`.
 pub(crate) fn cannot(refused: Value) -> Value {
     let Value::Object(mut fields) = refused else {
         return json!({"can": false, "reason": "denied"});
@@ -422,6 +439,8 @@ pub(crate) fn cannot(refused: Value) -> Value {
     let reason = match fields.get("denied").and_then(Value::as_str) {
         Some("unknown_handle") => "unknown_handle",
         Some("result_withheld") => "withheld_rows",
+        Some("outside_delegated_range") => "outside_delegated_range",
+        Some("reader_task_settled") => "reader_task_settled",
         _ => "denied",
     };
     fields.insert("can".to_owned(), json!(false));

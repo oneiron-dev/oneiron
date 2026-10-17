@@ -10,6 +10,8 @@ use crate::attempt_queue::AttemptRecord;
 use crate::code_run::storage::ExecutorStorage;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
+use crate::memory::MemoryResult;
+use crate::workspace_roster::{ProjectProofVersion, ProjectRecord, ProjectWriteProof};
 use crate::{EntityId, Vault};
 
 fn invalid() -> Error {
@@ -108,6 +110,91 @@ impl HostSelfDispatcher<'_> {
             None => planner,
         };
         dispatcher.leader_advice(&leased, skills, executor, &mut planner, at)
+    }
+
+    /// The bound leader splits her wrapper TASK into a subproject under
+    /// `parent`, led by `leader` (OF-389). The host signs her spawn proof
+    /// ([`Self::leader_spawn_proof`]), and
+    /// [`crate::memory::Memory::spawn_task_subproject`] links the TASK and the
+    /// child both ways in one write.
+    pub fn spawn_leader_subproject(
+        &self,
+        issuer: &crate::authority::HostSlipIssuer,
+        wrapper: EntityId,
+        parent: EntityId,
+        leader: EntityId,
+        slice: crate::llm::Scope,
+        now: u64,
+    ) -> MemoryResult<ProjectRecord> {
+        let (vault, _) = self.leader_attempt()?;
+        let child = EntityId::now();
+        let proof = self.leader_spawn_proof(vault, issuer, parent, child, leader, &slice)?;
+        vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .spawn_task_subproject(wrapper, parent, child, leader, slice, proof, now)
+    }
+
+    /// The leader's proof for spawning `child` under `parent`: the host mints
+    /// her a slip narrowed to `project.write` on `parent`, held under the
+    /// host's binding key, and signs the child's authority as the spawn door
+    /// builds it, so the signature covers what lands.
+    fn leader_spawn_proof(
+        &self,
+        vault: &Vault,
+        issuer: &crate::authority::HostSlipIssuer,
+        parent: EntityId,
+        child: EntityId,
+        leader: EntityId,
+        slice: &crate::llm::Scope,
+    ) -> Result<ProjectWriteProof> {
+        let actor = self.actor.entity_ref();
+        let effective = {
+            let txn = vault.store.env.read_txn()?;
+            vault
+                .effective_project_in_txn(&txn, parent)?
+                .map(|(_, effective)| effective)
+                .ok_or(crate::error::RecordError::InvalidProjectBody(
+                    "missing parent project",
+                ))?
+        };
+        let mut body = ProjectRecord::new(
+            child,
+            Some(parent),
+            EntityId::from_hex(&effective.claims_scope_ref)?,
+            leader,
+        )?;
+        body.slice = slice.clone();
+        body.depth_limit = effective.depth_limit;
+        body.depth_remaining = effective
+            .depth_remaining
+            .min(effective.depth_limit)
+            .saturating_sub(1);
+        body.board.push(actor.to_hex());
+        let mut claims = vault.ensure_host_root_slip(issuer)?.claims;
+        claims.slip_id = *blake3::hash(child.as_bytes()).as_bytes();
+        claims.parent_id = None;
+        claims.holder_ref = actor.to_hex();
+        let mut scope = crate::federation::Scope::top();
+        scope.audience = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            crate::federation::ScopeId(parent),
+        ]));
+        scope.verbs = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            "project.write".into(),
+        ]));
+        claims.scope = scope;
+        let slip = vault.mint_capability_slip(issuer, claims)?;
+        let signed_at = slip.claims.issued_at;
+        let version = ProjectProofVersion::V3;
+        let challenge = body
+            .authority_at(version)
+            .write_challenge(child, version, signed_at, None)?;
+        Ok(ProjectWriteProof {
+            slip_wire: slip.to_token()?,
+            holder_signature: issuer.binding_proof(&slip, &challenge)?,
+            signed_at,
+            anchor: None,
+            version,
+        })
     }
 
     fn leader_attempt(&self) -> Result<(&Vault, AttemptRecord)> {
