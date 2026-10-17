@@ -233,6 +233,7 @@ fn run_pipeline<S: EditSession>(
         warnings,
         pptx_holder_limits: None,
         slide_judgments: Vec::new(),
+        paragraph_judgments: Vec::new(),
     };
 
     let report = validate(&before, &after, format);

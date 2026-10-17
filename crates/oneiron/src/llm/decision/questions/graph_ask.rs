@@ -765,7 +765,7 @@ pub(super) fn unit_audio(
 /// A full decision is for this question, asker and contract; an answer
 /// carries a probability; no person answered it; and its readings are
 /// well formed.
-pub(super) fn validate_decision(
+pub(crate) fn validate_decision(
     question: &DecisionQuestion,
     principal: EntityId,
     decision: &TypedDecision,

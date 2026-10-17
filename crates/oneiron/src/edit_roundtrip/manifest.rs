@@ -69,6 +69,9 @@ pub struct EditManifest {
     /// Typed slide judgments bound to exported modern comments, when present.
     #[serde(default)]
     pub slide_judgments: Vec<super::slides_review::SlideJudgment>,
+    /// Typed paragraph judgments bound to native Word comments, when present.
+    #[serde(default)]
+    pub paragraph_judgments: Vec<super::paragraph_review::ParagraphJudgment>,
 }
 
 impl EditManifest {

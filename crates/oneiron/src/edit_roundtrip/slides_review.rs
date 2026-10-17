@@ -2,12 +2,13 @@
 //!
 //! Every unit is one call through the shared decide() ladder (ARCH-0076 §2).
 //! The engine reads each unit's identity and text from the typed deck view; the
-//! host supplies only the rendered image, which stays host-side and reaches a
-//! provider by its key in `state.media`. No provider output may select the
-//! principal, receipt, comment anchor, or settle authority. The existing PPTX
-//! writer owns OOXML.
+//! host supplies only the rendered image, which rides the call as its `render`
+//! image when the host's decider reads images, pinned on the receipt at its
+//! pixels' hash. No provider output may select the principal, receipt, comment
+//! anchor, or settle authority. The existing PPTX writer owns OOXML.
 
 use super::EditProposal;
+use super::artifact_question::{UnitCall, UnitDecider};
 use super::pptx::{
     PptxAuthor, PptxCommentAction, PptxCommentPatch, PptxCommentTarget, PptxError,
     PptxProposalError, PptxSlideIdentity, inspect_pptx, run_comment_roundtrip,
@@ -15,7 +16,7 @@ use super::pptx::{
 use crate::EntityId;
 use crate::llm::decision::{
     AnswerContract, BandMode, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionLadder, DecisionQuestion, DecisionRung, EvidenceVersion, MAX_DECISION_STATE_BYTES,
+    DecisionImage, DecisionQuestion, DecisionRung, EvidenceVersion, MAX_DECISION_STATE_BYTES,
     PairedReading, Reasoning, ReasoningCause, Reversibility, SlideReviewLimits, StopCause,
     TypedDecision,
 };
@@ -37,13 +38,13 @@ pub(crate) const MAX_JUDGMENTS: usize = 4096;
 #[derive(Debug, Clone)]
 pub struct SlideReviewUnit {
     pub target: PptxCommentTarget,
-    /// Kept by the host: a provider resolves it by [`review_image_key`].
+    /// PNG or JPEG: the call's `render` image. Other bytes are named in
+    /// `state.media` by [`review_image_key`] only.
     pub review_image: Vec<u8>,
     pub renderer: String,
 }
 
-/// The key a review image goes by in a unit's `state.media`; the host's
-/// providers look its bytes up by this key.
+/// The key a review image goes by in a unit's `state.media`: its pixels' hash.
 pub fn review_image_key(image: &[u8]) -> String {
     blake3::hash(image).to_hex().to_string()
 }
@@ -60,7 +61,7 @@ pub struct SlideReviewLabels {
 }
 
 impl SlideReviewLabels {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if [&self.yes, &self.no, &self.low, &self.middle, &self.high]
             .iter()
             .any(|s| s.trim().is_empty() || s.len() > 128)
@@ -69,7 +70,12 @@ impl SlideReviewLabels {
         }
         Ok(())
     }
-    fn comment(&self, answer: &DecisionAnswer, probability: f64, band: DecisionBand) -> String {
+    pub(crate) fn comment(
+        &self,
+        answer: &DecisionAnswer,
+        probability: f64,
+        band: DecisionBand,
+    ) -> String {
         let severity = if probability < band.low {
             &self.low
         } else if probability > band.high {
@@ -132,6 +138,9 @@ pub struct SlideJudgment {
     pub band_mode: BandMode,
     pub renderer: String,
     pub frontier: [u8; 32],
+    /// The rendered image's pixels' hash; a receipt row naming it is the
+    /// image the call read.
+    pub render_hash: [u8; 32],
     /// Hash of the exact state the providers read: the unit, its text and its
     /// image key.
     pub evidence_hash: [u8; 32],
@@ -209,8 +218,8 @@ pub struct SlideReviewRequest<'a> {
     pub policy: &'a DecisionBandPolicy,
     pub reversibility: Reversibility,
     pub labels: &'a SlideReviewLabels,
-    /// The decide() ladder every unit goes through; the review keeps no rungs.
-    pub ladder: &'a DecisionLadder<'a>,
+    /// The host's decide() every unit goes through; the review keeps no rungs.
+    pub decider: &'a dyn UnitDecider,
     /// Access-checked evidence beside the deck, such as the excerpt a claim cites.
     pub evidence: &'a [EntityId],
     /// Each unit call's anytime budget, from when it is asked.
@@ -243,7 +252,7 @@ pub fn review_slides(
         policy,
         reversibility,
         labels,
-        ladder,
+        decider,
         evidence,
         budget,
         deadline,
@@ -347,19 +356,39 @@ pub fn review_slides(
             refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
             continue;
         }
+        let render_hash = *blake3::hash(&unit.review_image).as_bytes();
+        let images: Vec<DecisionImage> = base
+            .artifact
+            .zip(image_media_type(&unit.review_image))
+            .filter(|_| decider.reads_images())
+            .map(|(id, media_type)| DecisionImage {
+                name: "render".to_owned(),
+                evidence: EvidenceVersion {
+                    id,
+                    body_hash: render_hash,
+                },
+                image: crate::llm::image::ImageBytes {
+                    bytes: unit.review_image.clone(),
+                    media_type: media_type.to_owned(),
+                },
+            })
+            .into_iter()
+            .collect();
         let now = Instant::now();
         let clock =
             RetrievalDeadline::hard(now, budget.min(deadline.saturating_duration_since(now)));
-        let mut decision = ladder.run(
+        let mut decision = decider.decide_unit(&UnitCall {
             question,
             principal,
-            &evidence,
-            &state,
+            evidence: &evidence,
+            images: &images,
+            state: &state,
             dial,
             policy,
             reversibility,
-            &clock,
-        )?;
+            deadline: &clock,
+        })?;
+        // The deck at its frontier, then each image the ladder was shown.
         decision.receipt.evidence_versions = base
             .artifact
             .map(|id| EvidenceVersion {
@@ -367,6 +396,7 @@ pub fn review_slides(
                 body_hash: frontier,
             })
             .into_iter()
+            .chain(images.iter().map(|image| image.evidence.clone()))
             .collect();
         if decision.answer == DecisionAnswer::Abstain {
             abstained.push(SlideAbstention {
@@ -401,6 +431,7 @@ pub fn review_slides(
             band_mode: band_policy.mode,
             renderer: unit.renderer.clone(),
             frontier,
+            render_hash,
             evidence_hash: *blake3::hash(&state_bytes).as_bytes(),
             judged_version: base.version,
             comment,
@@ -506,7 +537,7 @@ fn read_unit(
 }
 
 /// A shape's paragraphs, one line each; `None` for a shape with no text body.
-fn shape_text(shape: &ShapeView) -> Option<String> {
+pub(super) fn shape_text(shape: &ShapeView) -> Option<String> {
     let body = shape.text.as_ref()?;
     Some(
         body.paragraphs
@@ -535,6 +566,17 @@ fn refusal(target: &PptxCommentTarget, reason: SlideUnitRefusalReason) -> SlideU
         target: target.clone(),
         reason,
         offer,
+    }
+}
+
+/// A render's media type, from its signature: PNG or JPEG only.
+fn image_media_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else {
+        None
     }
 }
 
@@ -633,10 +675,9 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
                 &receipt.providers,
             )
             || receipt.question_version == 0
-            || receipt
-                .evidence_versions
-                .iter()
-                .any(|version| version.body_hash != row.frontier)
+            || receipt.evidence_versions.iter().any(|version| {
+                version.body_hash != row.frontier && version.body_hash != row.render_hash
+            })
             || row.anchor.slide_part.is_empty()
             || row.anchor.shape.is_some() != target.shape_creation_id.is_some()
             || row.frontier != proposal.base_content_hash

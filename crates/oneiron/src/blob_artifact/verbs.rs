@@ -13,15 +13,17 @@ use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
     SlideReviewError, SlideReviewLabels, SlideReviewRequest, SlideReviewUnit,
 };
-use crate::edit_roundtrip::{DeckEditContext, EditOutcome};
+use crate::edit_roundtrip::{
+    ArtifactAsk, DeckEditContext, EditOutcome, FolderAsk, FolderItem, ParagraphAsk, RangeRef,
+    SheetRowsAsk, UnitAbstention, UnitDecider, UnitRefusal,
+};
 use crate::edit_settle::{
     KeepUndo, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionQuestion, Reversibility,
-    SlideReviewLimits,
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
 };
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByTrigger};
@@ -198,6 +200,95 @@ pub struct SlideUnitRefused {
     pub target: serde_json::Value,
     pub reason: String,
     pub offer: Option<serde_json::Value>,
+}
+
+/// One typed question over an artifact's units (ARCH-0076 §2): rows of a
+/// sheet, paragraphs of a document, or files answered into a workbook
+/// column. Each unit is asked through the host's decide() ladder; the
+/// answers become one proposal held for Keep or Discard.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactAskSubmit {
+    /// Where the answers land: the workbook for sheet rows and folder
+    /// items, the document for paragraphs.
+    pub artifact_ref: String,
+    /// The run ref the proposal is held under: the consume-once key.
+    pub run_ref: String,
+    /// The typed question (`DecisionQuestion`), as JSON.
+    pub question: serde_json::Value,
+    pub units: ArtifactAskUnits,
+    /// `reversible_read` (the default) or `outbound_effect`.
+    #[serde(default)]
+    pub reversibility: Option<serde_json::Value>,
+    /// Access-checked evidence beside the artifact, by ref.
+    #[serde(default)]
+    pub evidence_refs: Vec<String>,
+    /// Each unit call's budget; 30 s when absent.
+    #[serde(default)]
+    pub unit_budget_ms: Option<u64>,
+    /// The whole ask's deadline from now; five minutes when absent.
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+    /// The made_by envelope Keep gives the version, as JSON.
+    #[serde(default)]
+    pub made_by: Option<serde_json::Value>,
+}
+
+/// The units one ask covers, and where each answer lands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ArtifactAskUnits {
+    /// Each row of `rows` (an A1 range on `sheet`) is one unit, read across
+    /// the range's columns; its answer fills column `answer_column`
+    /// (1-based) of that row.
+    SheetRows {
+        sheet: String,
+        rows: String,
+        answer_column: u32,
+        /// The row naming the read columns.
+        #[serde(default)]
+        header_row: Option<u32>,
+        /// Holder cap on answers; the vault's policy can only narrow it.
+        #[serde(default)]
+        max_count: Option<u64>,
+    },
+    /// Each paragraph, by its stable block id, is one unit; its answer
+    /// lands as a Word comment quoting it.
+    Paragraphs {
+        blocks: Vec<String>,
+        /// The comments' author name.
+        author: String,
+        /// The display words, severity words included (`SlideReviewLabels`), as JSON.
+        labels: serde_json::Value,
+    },
+    /// Each file is one unit, read whole at its head; its answer fills
+    /// column `answer_column` of its row on `sheet`.
+    FolderItems {
+        sheet: String,
+        answer_column: u32,
+        items: Vec<FolderItemInput>,
+        /// Holder cap on answers; the vault's policy can only narrow it.
+        #[serde(default)]
+        max_count: Option<u64>,
+    },
+}
+
+/// One file of a folder ask and the result row its answer fills.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FolderItemInput {
+    pub artifact_ref: String,
+    pub row: u32,
+}
+
+/// What an ask did: the proposal held for Keep (none when no unit was
+/// answered), the units left unanswered with their receipts, and those it
+/// refused.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtifactAskOutcome {
+    pub proposed: Option<PendingProposalView>,
+    pub abstained: Vec<UnitAbstention>,
+    pub refused: Vec<UnitRefusal>,
 }
 
 /// Whether a held organ call was let go.
@@ -393,7 +484,7 @@ impl Memory<'_> {
     pub fn artifacts_review_slides_through(
         &self,
         input: &SlideReviewSubmit,
-        ladder: &DecisionLadder<'_>,
+        decider: &dyn UnitDecider,
         dial: DecisionDial,
         policy: &DecisionBandPolicy,
     ) -> MemoryResult<SlideReviewOutcome> {
@@ -454,7 +545,7 @@ impl Memory<'_> {
             policy,
             reversibility,
             labels: &labels,
-            ladder,
+            decider,
             evidence: &evidence,
             budget: std::time::Duration::from_millis(input.unit_budget_ms.unwrap_or(30_000)),
             deadline: started
@@ -487,7 +578,12 @@ impl Memory<'_> {
             abstained: run
                 .abstained
                 .iter()
-                .map(|unit| target_json(&unit.target))
+                .map(|unit| {
+                    serde_json::json!({
+                        "target": target_json(&unit.target),
+                        "decision": unit.decision,
+                    })
+                })
                 .collect(),
             refused: run
                 .refused
@@ -498,6 +594,164 @@ impl Memory<'_> {
                     offer: unit.offer.as_ref().map(target_json),
                 })
                 .collect(),
+        })
+    }
+
+    /// `vault.artifacts.ask` on an embedded handle, which holds no decision
+    /// ladder: a server's host door answers it.
+    pub fn artifacts_ask(&self, _input: &ArtifactAskSubmit) -> MemoryResult<ArtifactAskOutcome> {
+        Err(MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            "an artifact ask asks through a server's decision ladder",
+            &["Call vault.artifacts.ask on a server, where the host's ladder answers."],
+        ))
+    }
+
+    /// `vault.artifacts.ask` through a host's decide(): asks each unit as
+    /// the bound actor and holds the answers as one proposal for Keep or
+    /// Discard (`vault.artifacts.keep`/`discard`).
+    pub fn artifacts_ask_through(
+        &self,
+        input: &ArtifactAskSubmit,
+        decider: &dyn UnitDecider,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+    ) -> MemoryResult<ArtifactAskOutcome> {
+        let artifact = entity(&input.artifact_ref)?;
+        if input.question.is_null() {
+            return Err(invalid("an artifact ask names its question").into());
+        }
+        let question: DecisionQuestion = json_field(Some(input.question.clone()), "question")?
+            .ok_or_else(|| invalid("an artifact ask names its question"))?;
+        let reversibility: Reversibility =
+            json_field(input.reversibility.clone(), "reversibility")?
+                .unwrap_or(Reversibility::ReversibleRead);
+        let made_by: Option<MadeBy> = json_field(input.made_by.clone(), "made_by")?;
+        let evidence = input
+            .evidence_refs
+            .iter()
+            .map(|reference| entity(reference))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        let actor = self.artifact_actor();
+        let (_, at) = self.artifact_moment();
+        let started = std::time::Instant::now();
+        let ask = ArtifactAsk {
+            question: &question,
+            principal: actor.entity_ref(),
+            dial,
+            policy,
+            reversibility,
+            decider,
+            evidence: &evidence,
+            budget: std::time::Duration::from_millis(input.unit_budget_ms.unwrap_or(30_000)),
+            deadline: started
+                + std::time::Duration::from_millis(input.deadline_ms.unwrap_or(300_000)),
+            run_ref: &input.run_ref,
+        };
+        let vault = self.vault();
+        let run = match &input.units {
+            ArtifactAskUnits::SheetRows {
+                sheet,
+                rows,
+                answer_column,
+                header_row,
+                max_count,
+            } => vault.ask_blob_artifact_sheet_rows(
+                &artifact,
+                &SheetRowsAsk {
+                    ask,
+                    sheet,
+                    rows: RangeRef::parse(rows)?,
+                    answer_col: *answer_column,
+                    header_row: *header_row,
+                    max_count_override: *max_count,
+                },
+            )?,
+            ArtifactAskUnits::Paragraphs {
+                blocks,
+                author,
+                labels,
+            } => {
+                let labels: SlideReviewLabels = json_field(Some(labels.clone()), "labels")?
+                    .ok_or_else(|| invalid("a paragraph ask names its labels"))?;
+                vault.ask_blob_artifact_paragraphs(
+                    &artifact,
+                    &ParagraphAsk {
+                        ask,
+                        blocks,
+                        author,
+                        labels: &labels,
+                    },
+                )?
+            }
+            ArtifactAskUnits::FolderItems {
+                sheet,
+                answer_column,
+                items,
+                max_count,
+            } => {
+                let items = items
+                    .iter()
+                    .map(|item| {
+                        Ok(FolderItem {
+                            artifact: entity(&item.artifact_ref)?,
+                            row: item.row,
+                        })
+                    })
+                    .collect::<MemoryResult<Vec<_>>>()?;
+                // A credential reads only the files its lane serves; the rest
+                // are refused, never sent to a model.
+                let ids: Vec<EntityId> = items.iter().map(|item| item.artifact).collect();
+                let readable = self.credential_readable_ids(&ids)?;
+                let (asked, unread): (Vec<FolderItem>, Vec<FolderItem>) =
+                    items.into_iter().partition(|item| {
+                        readable
+                            .as_ref()
+                            .is_none_or(|readable| readable.contains(&item.artifact))
+                    });
+                let mut run = if asked.is_empty() {
+                    crate::edit_roundtrip::ArtifactAskRun {
+                        proposal: None,
+                        abstained: Vec::new(),
+                        refused: Vec::new(),
+                    }
+                } else {
+                    vault.ask_folder_items_into_sheet(
+                        &artifact,
+                        &FolderAsk {
+                            ask,
+                            items: &asked,
+                            sheet,
+                            answer_col: *answer_column,
+                            max_count_override: *max_count,
+                            sight: self.secret_sight()?,
+                        },
+                    )?
+                };
+                run.refused.extend(unread.iter().map(|item| UnitRefusal {
+                    unit: serde_json::json!({
+                        "file": item.artifact.to_hex(),
+                        "row": item.row,
+                    }),
+                    reason: "unreadable_file".into(),
+                }));
+                run
+            }
+        };
+        let proposed = match &run.proposal {
+            Some(proposal) => Some(vault.retain_edit_proposal(
+                &artifact,
+                proposal,
+                made_by.as_ref(),
+                actor,
+                at,
+            )?),
+            None => None,
+        };
+        Ok(ArtifactAskOutcome {
+            proposed,
+            abstained: run.abstained,
+            refused: run.refused,
         })
     }
 

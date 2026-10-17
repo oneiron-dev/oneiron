@@ -92,6 +92,7 @@ pub(super) fn run_docx_revision_with_limits(
                 .collect(),
             pptx_holder_limits: None,
             slide_judgments: Vec::new(),
+            paragraph_judgments: Vec::new(),
         },
         inspection,
         validation: report,

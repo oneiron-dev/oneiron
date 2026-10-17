@@ -129,11 +129,14 @@ pub struct SettlementRecord {
     pub pptx_review_identities: Vec<PptxReviewIdentity>,
     /// Per-unit typed decisions for a comment review, retained with the settle.
     pub pptx_judgments: Vec<crate::edit_roundtrip::slides_review::SlideJudgment>,
+    /// Per-paragraph typed decisions for Word comments, retained with the settle.
+    pub docx_judgments: Vec<crate::edit_roundtrip::ParagraphJudgment>,
     /// The anchor set that moved on select (empty for a discard).
     pub anchors: Vec<SettledAnchor>,
     /// Why the proposal was discarded (discard only).
     pub reason: Option<String>,
-    /// Per-cell typed answer evidence retained on Keep (also present on a stale proposal).
+    /// Per-cell typed decisions, retained on Keep, on a stale proposal and on
+    /// a discard; only a Keep's are kept answers.
     pub sheet_answers: Option<Box<SheetAnswerBundle>>,
     /// The native deck transaction a Keep settled: its handoff hash, part
     /// diff report and context (made_by, thread, review renders).

@@ -71,9 +71,11 @@
 //!   the manifest bytes to receipt.
 
 mod address;
+pub mod artifact_question;
 mod deck;
 pub mod deck_create;
 mod docx;
+pub mod folder_review;
 mod formula;
 mod inspect;
 mod judgment;
@@ -82,6 +84,7 @@ mod manifest;
 mod native_recalc;
 mod opc;
 mod ops;
+pub mod paragraph_review;
 mod pipeline;
 pub mod pptx;
 mod session_validate;
@@ -96,7 +99,12 @@ pub(crate) use self::deck::{VaultAssets, deck_op, verify_deck_proposal};
 pub use self::docx::run_docx_revision;
 pub(crate) use self::docx::{docx_parts_match_replay, validate_docx_passthrough};
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
-pub use self::judgment::{SheetAnswerBundle, SheetCellAnswer};
+pub use self::artifact_question::{
+    ArtifactAsk, ArtifactAskRun, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
+};
+pub use self::folder_review::{FolderAsk, FolderItem};
+pub use self::judgment::{SheetAnswerBundle, SheetCellAnswer, SheetRowsAsk};
+pub use self::paragraph_review::{ParagraphAsk, ParagraphJudgment};
 pub use self::manifest::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditWarning, MutationMode, WarningCode,
 };
