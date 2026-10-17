@@ -12,8 +12,8 @@ mod prune;
 mod sealed;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
-    AUTHORITY_TAIL_PAGE_MAX, AuthorityPageImport, authority_append_for, authority_tail_for,
-    authority_wanted, held_authority_entries, import_authority_page,
+    AUTHORITY_TAIL_PAGE_MAX, AuthorityPageImport, authority_append_for, authority_range_for,
+    authority_tail_for, authority_wanted, held_authority_entries, import_authority_page,
 };
 pub use discover::discover_local_window_keys;
 pub use policy::{
@@ -24,9 +24,9 @@ pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
 pub use sealed::{
-    SEALED_PACKET_MAX, SEALED_PUT_PART_MAX, SEALED_READ_PART_MAX, SEALED_SHELF_PAGE_MAX,
-    SealedShelfEntry, sealed_shelf_after, sealed_shelf_packet, sealed_shelf_packet_part,
-    shelve_sealed_window, shelve_staged_sealed_window, stage_sealed_part, want_sealed_replacement,
+    SEALED_PUT_PART_MAX, SEALED_READ_PART_MAX, SEALED_SHELF_PAGE_MAX, SealedShelfEntry,
+    sealed_shelf_after, sealed_shelf_packet, sealed_shelf_packet_part, shelve_sealed_window,
+    shelve_staged_sealed_window, stage_sealed_part, want_sealed_replacement,
     wanted_sealed_replacements,
 };
 
