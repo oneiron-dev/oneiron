@@ -226,7 +226,7 @@ fn mark_token(mark: Option<ScratchpadMark>) -> &'static str {
 }
 
 /// At most `max` bytes of `text`, cut on a char boundary.
-fn clip(text: &str, max: usize) -> &str {
+pub(super) fn clip(text: &str, max: usize) -> &str {
     let mut end = text.len().min(max);
     while !text.is_char_boundary(end) {
         end -= 1;
@@ -262,7 +262,11 @@ fn fold_row(line: &PadLine<'_>) -> String {
 /// Pinned and newest lines in full, older lines folded to their first words
 /// and the rest counted as `older: +N`. The reader line is the section's
 /// pinned floor: the agent always sees who can read its pad.
-fn pad_section(pad: EntityId, text: &str) -> Result<BoardSection, BoardFrameError> {
+fn pad_section(
+    pad: EntityId,
+    text: &str,
+    readers: String,
+) -> Result<BoardSection, BoardFrameError> {
     let lines: Vec<PadLine<'_>> = text
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -288,7 +292,7 @@ fn pad_section(pad: EntityId, text: &str) -> Result<BoardSection, BoardFrameErro
     );
     BoardSection::new(
         "SCRATCHPAD",
-        vec!["readers: owner-only".to_owned()],
+        vec![readers],
         rows,
         vec![format!("count: {}", lines.len())],
         SectionPolicy {
@@ -581,7 +585,8 @@ impl Memory<'_> {
         let Some(text) = self.pad_markdown(pad)? else {
             return Ok(None);
         };
-        let section = pad_section(pad, &text).map_err(|error| {
+        let readers = super::readers::sealed_pad_readers_line(&self.sealed_pad_readers()?);
+        let section = pad_section(pad, &text, readers).map_err(|error| {
             MemoryError::new(
                 MEMORY_CODE_INTERNAL,
                 error.to_string(),

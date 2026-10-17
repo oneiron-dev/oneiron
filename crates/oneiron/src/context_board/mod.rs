@@ -63,6 +63,7 @@ mod notifications;
 pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;
 mod plugin;
+mod readers;
 mod scratchpad;
 mod stream;
 
