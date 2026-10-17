@@ -8181,7 +8181,7 @@
      "path": "src/campaign/enrollment/program.rs",
      "purpose": "Persisted campaign program and step state authorizing both halves of the consequence",
      "surface": {
-      "const": 5,
+      "const": 1,
       "crate-vis": 1,
       "fn": 10,
       "struct": 8
@@ -38901,7 +38901,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ArtifactTaintState",
@@ -38912,9 +38912,9 @@
      "purpose": "SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build…",
      "surface": {
       "const": 5,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 2,
-      "fn": 10,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -52703,7 +52703,7 @@
     "secret_rotation": {
      "files": 3,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build…"
     },
@@ -53051,7 +53051,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 164,
+   "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3213,
    "test_files": 902
