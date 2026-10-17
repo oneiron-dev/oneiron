@@ -7,7 +7,10 @@ use super::document::{
 use super::pin_index::{NOTE_PIN_CITING, NOTE_PIN_CLAIM, NOTE_PIN_SOURCE};
 use super::side_keys::HexHexHash;
 use super::{NoteBody, NoteKind, encode_note_body};
-use crate::batch::secret_scan::{SecretScanMode, scan_write_payload, secret_scan_mode_in_txn};
+use crate::batch::secret_scan::{
+    Lifted, Part, SecretScanMode, admit_parts_in_txn, scan_content_in_txn, scan_write_payload,
+    secret_scan_mode_in_txn,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_doc::PurgeReceipt;
 use crate::error::Result;
@@ -46,7 +49,7 @@ pub(super) fn persist_authoritative(
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
 ) -> Result<()> {
-    persist_structural(vault, txn, doc)?;
+    persist_structural(vault, txn, doc, true)?;
     super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
 }
 
@@ -57,7 +60,7 @@ pub(super) fn persist_replica(
     doc: &NoteDocument,
 ) -> Result<()> {
     super::title_index::remove_replica_projection_in_txn(vault, txn, doc.id)?;
-    persist_structural(vault, txn, doc)
+    persist_structural(vault, txn, doc, false)
 }
 
 #[cfg(feature = "sync")]
@@ -66,12 +69,33 @@ pub(super) fn persist_recovered_document(
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
 ) -> Result<()> {
-    persist_structural(vault, txn, doc)
+    persist_structural(vault, txn, doc, false)
 }
 
-fn persist_structural(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
+/// `masks`: this host's own write, whose live text a mask on write may
+/// rewrite. A replica's or a recovered document's text keeps the plain door.
+fn persist_structural(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+    masks: bool,
+) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
+    // The title lands beside the body, in the document and the title index,
+    // so it is scanned as the body is, under the same switch, as an import's
+    // titles are. So is each citation's quote, which the pin rows below keep:
+    // its hash checks it, so no handle can stand in it. Both refuse before
+    // the body's secrets are lifted.
+    if secret_scan_mode_in_txn(&vault.store, txn)? == SecretScanMode::On {
+        if let Some(title) = doc.title()? {
+            scan_write_payload(title.as_bytes())?;
+        }
+        for pin in doc.pins()? {
+            scan_write_payload(pin.quote_text.as_bytes())?;
+        }
+    }
+    let masked = admit_body(vault, txn, doc, masks)?;
     // Keep the live NOTE projection valid, including after concurrent
     // batches merge. A refused commit leaves the durable document unchanged.
     let markdown = doc.view()?.markdown;
@@ -82,15 +106,9 @@ fn persist_structural(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocume
     if doc.snapshot()?.len() > super::operations::MAX_RECEIPT_PAYLOAD - 18 {
         return Err(invalid("NOTE snapshot exceeds wire bound"));
     }
-    // The batch door below scans the body; the title lands beside it, in the
-    // document and the title index, so it is scanned the same way, under the
-    // same switch, as an import's titles are.
-    if let Some(title) = doc.title()?
-        && secret_scan_mode_in_txn(&vault.store, txn)? == SecretScanMode::On
-    {
-        scan_write_payload(title.as_bytes())?;
-    }
-    super::storage::snapshot(vault, txn, doc.id, &doc.doc, false)?;
+    // A masked document is stored without the history that held the value,
+    // as a citation scrub stores one.
+    super::storage::snapshot(vault, txn, doc.id, &doc.doc, masked)?;
     vault
         .batch_in()
         .text(&doc.id, &[("markdown", markdown.as_str())])
@@ -110,6 +128,36 @@ fn persist_structural(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocume
         NOTE_PIN_CITING.put(&vault.store, txn, &citing, &index_bytes)?;
     }
     Ok(())
+}
+
+/// The live text as the NOTE stores it (OF-067; ARCH-0069 #mask-on-write),
+/// admitted before its snapshot, history, receipt or text index is written.
+/// With the owner's switch on, each secret the batch door's text rules place
+/// goes to custody and the live text keeps its handle. Without `masks` the
+/// text keeps the plain door: its writer owns its bytes, so a hit refuses.
+/// Returns whether the text changed.
+fn admit_body(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+    masks: bool,
+) -> Result<bool> {
+    let mut text = doc.view()?.markdown;
+    if !masks {
+        scan_content_in_txn(&vault.store, txn, text.as_bytes())?;
+        return Ok(false);
+    }
+    let masked = admit_parts_in_txn(
+        vault,
+        txn,
+        doc.id,
+        &mut [("text:markdown", Part::Text(&mut text))],
+        &mut Lifted::default(),
+    )?;
+    if masked {
+        doc.mask_body(&text)?;
+    }
+    Ok(masked)
 }
 
 impl Vault {

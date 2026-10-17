@@ -556,6 +556,7 @@ fn commit_as<T>(
     doc.set_peer_id(LoroDoc::new().peer_id())
         .map_err(|_| invalid("typed body peer"))?;
     let peer = doc.peer_id();
+    let before = doc.state_frontiers();
     let value = edit(doc)?;
     let message = format!(
         "{STAMP} {verb} actor={}.{} {RECEIPT_PREFIX}{encoded}",
@@ -567,6 +568,7 @@ fn commit_as<T>(
     if end <= 0 {
         return Err(invalid("the call changed nothing"));
     }
+    admit_body(vault, txn, doc, &before)?;
     bind_peer(vault, txn, peer, actor, made_by.at)?;
     Ok((
         value,
@@ -578,6 +580,26 @@ fn commit_as<T>(
             made_by: made_by.clone(),
         },
     ))
+}
+
+/// The body as one call left it, read whole by the write door under the
+/// owner's switch before it is serialized (OF-067). A typed body's history is
+/// its receipt ledger, so no handle can replace what an operation wrote: a
+/// hit refuses the call, unless the body read the same way before it.
+fn admit_body(vault: &Vault, txn: &RoTxn<'_>, doc: &LoroDoc, before: &Frontiers) -> Result<()> {
+    let read = |doc: &LoroDoc| {
+        serde_json::to_vec(&doc.get_deep_value())
+            .map_err(|_| Error::InvariantViolation("typed body state did not encode"))
+    };
+    crate::batch::secret_scan::scan_document_in_txn(&vault.store, txn, &read(doc)?, || {
+        if before.is_empty() {
+            return Ok(None);
+        }
+        let prior = doc
+            .fork_at(before)
+            .map_err(|_| invalid("unknown typed body frontier"))?;
+        read(&prior).map(Some)
+    })
 }
 
 /// Whether `made_by` is a receipt `actor` may give: its process names the

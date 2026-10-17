@@ -16,6 +16,7 @@
 //! overwritten, and the door reads that copy again; only a clean copy mints
 //! custody records.
 
+pub(super) mod admit;
 pub(super) mod side_row;
 
 use std::collections::HashMap;

@@ -141,6 +141,7 @@ impl Vault {
     ) -> MessageStreamResult<MessageStreamReceipt> {
         let mut state = lock(entry)?;
         state.check(handle)?;
+        self.close_withheld(&mut state)?;
         let receipt = commit_terminal(self, &state, outcome, finish_reason, false, gate)?;
         // Storage success is authoritative. No output is removed on an error.
         state.terminal = true;
@@ -172,23 +173,25 @@ impl Vault {
                 continue;
             }
             let handle = state.handle();
-            match commit_terminal(
-                self,
-                &state,
-                (
-                    StreamFinality::Partial,
-                    if state.seed.idle_timeout_ms == DEFAULT_MESSAGE_STREAM_IDLE_MS {
-                        StreamFinalityReason::IdleTimeout30s
-                    } else {
-                        StreamFinalityReason::IdleTimeout {
-                            timeout_ms: state.seed.idle_timeout_ms,
-                        }
-                    },
-                ),
-                None,
-                false,
-                None,
-            ) {
+            match self.close_withheld(&mut state).and_then(|()| {
+                commit_terminal(
+                    self,
+                    &state,
+                    (
+                        StreamFinality::Partial,
+                        if state.seed.idle_timeout_ms == DEFAULT_MESSAGE_STREAM_IDLE_MS {
+                            StreamFinalityReason::IdleTimeout30s
+                        } else {
+                            StreamFinalityReason::IdleTimeout {
+                                timeout_ms: state.seed.idle_timeout_ms,
+                            }
+                        },
+                    ),
+                    None,
+                    false,
+                    None,
+                )
+            }) {
                 Ok(receipt) => {
                     state.terminal = true;
                     #[cfg(feature = "sync")]
@@ -200,6 +203,35 @@ impl Vault {
             }
         }
         Ok(report)
+    }
+    /// A stream whose admitted text withholds a secret it may still have been
+    /// writing takes it into custody whole as it ends (OF-067). Its seed
+    /// checkpoints the closed text first, so the seed and the final MESSAGE
+    /// hold the same handles.
+    fn close_withheld(&self, state: &mut State) -> MessageStreamResult<()> {
+        if !state.withheld {
+            return Ok(());
+        }
+        let mut lifted = state.lifted.clone();
+        let pending = self.try_with_write_txn_grouped(|txn| -> MessageStreamResult<String> {
+            let (pending, _) = crate::batch::secret_scan::admit_stream_text_in_txn(
+                self,
+                txn,
+                state.seed.message_id,
+                admission::CONTENT,
+                &state.raw,
+                false,
+                &mut lifted,
+            )?;
+            let row = state.checkpoint(pending.clone());
+            admission::authorize(self, txn, &row, &format!("{}{}", state.base, pending))?;
+            storage::checkpoint(self, txn, &row)?;
+            Ok(pending)
+        })?;
+        state.pending = pending;
+        state.lifted = lifted;
+        state.withheld = false;
+        Ok(())
     }
     /// Open-time recovery after all read-only compatibility gates passed.
     /// Surviving seeds prove an interrupted process, even if it restarted inside
@@ -244,9 +276,15 @@ impl Vault {
                 return Ok(());
             };
             for mut seed in seeds {
+                // A seed holds its text as admitted; no raw copy outlives
+                // the process that wrote it.
+                let pending = std::mem::take(&mut seed.saved);
                 let state = State {
                     last_op_at_ms: seed.created_at_ms,
-                    pending: std::mem::take(&mut seed.saved),
+                    raw: pending.clone(),
+                    pending,
+                    lifted: Lifted::default(),
+                    withheld: false,
                     seed,
                     base: String::new(),
                     sequence: 0,

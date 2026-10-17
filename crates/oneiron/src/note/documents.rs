@@ -1,5 +1,6 @@
 //! Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites.
 
+use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn, scan_content_in_txn};
 use crate::error::{Error, RecordError, Result};
 use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault};
@@ -366,6 +367,11 @@ pub(crate) fn snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
         .map_err(|_| invalid("document snapshot"))
 }
 /// Proposal-only storage. No caller can advance canonical authority with bytes.
+///
+/// The proposed text is admitted as live text is (OF-067): each secret the
+/// batch door's text rules place goes to custody, and the fork itself keeps
+/// the handle, so the review record that copies its text does too. Its title
+/// refuses a hit, as a live title does.
 pub(crate) fn store_doc(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -377,11 +383,34 @@ pub(crate) fn store_doc(
     super::ensure_citations_ready(&vault.store, txn, doc.note)?;
     super::verbs::note_core(vault, txn, doc.note)?;
     let title = super::document::NoteDocument::from_loro(doc.note, doc.doc.fork())?.title()?;
+    if let Some(title) = &title {
+        scan_content_in_txn(&vault.store, txn, title.as_bytes())?;
+    }
+    let mut text = doc.text();
+    if admit_parts_in_txn(
+        vault,
+        txn,
+        doc.head,
+        &mut [("text:body", Part::Text(&mut text))],
+        &mut Lifted::default(),
+    )? {
+        doc.doc
+            .get_text(TEXT)
+            .update(
+                &text,
+                UpdateOptions {
+                    timeout_ms: None,
+                    use_refined_diff: true,
+                },
+            )
+            .map_err(|_| invalid("proposal mask"))?;
+        doc.doc.commit();
+    }
     NOTE_PROPOSAL_DOC.put(
         &vault.store,
         txn,
         &HexPair(HexId(doc.note), HexId(doc.head)),
-        &snapshot(&proposal_value(doc.note, &doc.text(), title.as_deref())?)?,
+        &snapshot(&proposal_value(doc.note, &text, title.as_deref())?)?,
     )
 }
 

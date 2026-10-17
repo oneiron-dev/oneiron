@@ -130,7 +130,7 @@ pub(super) fn persist(
         Some(entity_type) => text_changed(store, txn, entity, doc)?.then_some(entity_type),
         None => None,
     };
-    crate::batch::secret_scan::scan_metadata_field(&doc.text())?;
+    crate::batch::secret_scan::scan_content_in_txn(store, txn, doc.text().as_bytes())?;
     vault.ensure_text_index_trusted()?;
     crate::vault::ensure_text_index_manifest_matches_wtxn(store, txn, &vault.analyzer)?;
     let birth = h.generation == 0;

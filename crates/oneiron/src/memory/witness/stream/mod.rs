@@ -11,6 +11,7 @@ mod storage;
 mod tests;
 mod types;
 
+use crate::batch::secret_scan::Lifted;
 use crate::memory::Memory;
 use crate::{EntityId, Vault};
 pub use completion::MessageCompletion;
@@ -44,7 +45,16 @@ impl Default for MessageStreamRuntime {
 struct State {
     seed: Seed,
     base: String,
+    /// The accepted text as admitted (OF-067): what the seed checkpoints, a
+    /// partial publishes and the final MESSAGE commits.
     pending: String,
+    /// The accepted text as its writer appended it. Only this process's
+    /// memory holds it; each checkpoint admits it again whole.
+    raw: String,
+    /// The secrets this stream lifted into custody, with their handles.
+    lifted: Lifted,
+    /// Whether `pending` withholds a secret `raw` may still be writing.
+    withheld: bool,
     last_op_at_ms: u64,
     sequence: u64,
     emitted_chars: usize,

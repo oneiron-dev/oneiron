@@ -479,9 +479,21 @@ impl Vault {
             }
             (candidate, Vec::new())
         };
-        if merged.get_text("body").to_string().len() > MAX_FILE_BYTES {
+        let merged_text = merged.get_text("body").to_string();
+        if merged_text.len() > MAX_FILE_BYTES {
             return Err(invalid());
         }
+        // The edited file, read whole by the write door under the owner's
+        // switch before any snapshot or receipt is written (OF-067). Its
+        // receipt binds the edit's bytes, so a replay can prove it the same
+        // edit: no handle can stand in a secret, and a hit refuses, unless
+        // the file read the same way before the edit.
+        crate::batch::secret_scan::scan_document_in_txn(
+            &self.store,
+            wtxn,
+            merged_text.as_bytes(),
+            || Ok(Some(text.into_bytes())),
+        )?;
         let after = frontier(&merged, &session.repo, session.document_id)?;
         if let Some(path) = &edit.new_path {
             if after.path != *path {
