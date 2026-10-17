@@ -15,11 +15,12 @@ use axum::response::Json;
 use axum::routing::post;
 use oneiron::receipt::{GuestRevokeResponse, project_guest_revoke};
 use oneiron::task_verb::sdk::GuestRevokeRequest;
+use serde_json::Value;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, blocking, hooked_owner};
 use crate::api::json_payload;
 use crate::auth::CoreAuth;
-use crate::owner::{OwnerError, OwnerResult};
+use crate::owner::{OwnerError, OwnerResult, hooked_row};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -33,21 +34,30 @@ async fn revoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<GuestRevokeRequest>, JsonRejection>,
-) -> OwnerReply<GuestRevokeResponse> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let response = blocking(move || -> OwnerResult<GuestRevokeResponse> {
-        let outcome = crate::api::pairing::with_issuer(&server, |issuer| {
-            Ok(server
-                .vault()
-                .revoke_guest_access(&owner, issuer, request.grant_ref))
-        })
-        .map_err(|_| {
-            OwnerError::Refused(
-                "this host holds no signing key for the guest's pact disconnects".to_owned(),
-            )
-        })??;
-        Ok(project_guest_revoke(outcome))
+    let response = blocking(move || {
+        hooked_row(
+            server.vault(),
+            actor,
+            "vault.guests.revoke",
+            request,
+            |request: GuestRevokeRequest| -> OwnerResult<GuestRevokeResponse> {
+                let outcome = crate::api::pairing::with_issuer(&server, |issuer| {
+                    Ok(server
+                        .vault()
+                        .revoke_guest_access(&owner, issuer, request.grant_ref))
+                })
+                .map_err(|_| {
+                    OwnerError::Refused(
+                        "this host holds no signing key for the guest's pact disconnects"
+                            .to_owned(),
+                    )
+                })??;
+                Ok(project_guest_revoke(outcome))
+            },
+        )
     })
     .await?;
     Ok(Json(response))

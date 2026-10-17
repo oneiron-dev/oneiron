@@ -92,9 +92,10 @@ pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
 /// named on the host, and a changed tree put in force (see
 /// [`super::type_tree_upkeep`]).
 pub const COACH_TYPE_TREE_UPKEEP_FACET: &str = "coach.type_tree_upkeep";
-/// Room upkeep (ARCH-0067 §8, OF-417): each room the Coach reads gets its
-/// summary declared when its turns moved, and each quiet thread with open
-/// TASKs a Proposed nudge for the room's host. A closed-form job.
+/// Room upkeep (ARCH-0067 §8, OF-417): each room in the Coach's room reach
+/// (refs and turn times of what the Dreamer reads) gets its summary declared
+/// when its turns moved, and each quiet thread with open TASKs a Proposed
+/// nudge for the room's host. A closed-form job.
 pub const COACH_ROOM_UPKEEP_FACET: &str = "coach.room_upkeep";
 /// Tradeoff routing (FIX-LIST 817): each pending project-bound skill tradeoff
 /// ask is handed to the leader of every project board it reached, to ask on
@@ -420,8 +421,8 @@ impl Vault {
 
     /// Records what the receipts since showed against one offer's promise,
     /// under the leased `coach.offer_check` attempt its check date queued. A
-    /// check that read whether the promise held is an outcome for the
-    /// Coach's own offer record; an unknown one is none.
+    /// check that read whether the promise held is an outcome for the offer
+    /// skill that drafted it (`record_offer_check`); an unknown one is none.
     pub fn run_coach_offer_check(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -430,19 +431,7 @@ impl Vault {
     ) -> Result<crate::skill_optimize::OfferCheck> {
         self.require_coach_attempt(attempt, COACH_OFFER_CHECK_FACET)?;
         let offer = offer_check_target(&attempt.status.payload.input)?;
-        let check = crate::skill_optimize::record_offer_check(self, &offer, input, now)?;
-        if let Some(held) = check.held {
-            super::coach_learning::record_coach_outcome(
-                self,
-                super::coach_learning::COACH_OFFER_AXIS,
-                format!("offer_check:{}", check.id.to_hex()),
-                check.at,
-                crate::learning::Anchor::WorldOutcome,
-                held,
-                now,
-            )?;
-        }
-        Ok(check)
+        crate::skill_optimize::record_offer_check(self, &offer, input, now)
     }
 
     /// The leased attempt is this facet's, stamped for the Coach.
