@@ -118,10 +118,15 @@ impl DollarBasis {
 }
 
 /// What a launch's dollar figure prices: a local agent, or a peer consult,
-/// which is never priced at a local agent's rate.
+/// which is never priced at a local agent's rate. An agent's `model` is its
+/// plan's resolved model, a pin included, when the launch has one (FIX
+/// 3043); `None` prices the role's binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UsdPriceTarget {
-    Agent(EntityId),
+pub enum UsdPriceTarget<'a> {
+    Agent {
+        agent: EntityId,
+        model: Option<&'a crate::llm::ModelId>,
+    },
     PeerConsult(EntityId),
 }
 
@@ -143,7 +148,7 @@ pub trait LaunchUsdPrices: Send + Sync {
         &self,
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
-        target: UsdPriceTarget,
+        target: UsdPriceTarget<'_>,
         unit: &LeaseUnit,
     ) -> Result<Option<UsdUnitPrice>>;
 }
@@ -201,7 +206,7 @@ impl ExpectedSpend {
         mut self,
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
-        target: UsdPriceTarget,
+        target: UsdPriceTarget<'_>,
         unit: &LeaseUnit,
     ) -> Result<Self> {
         let rate = match vault.launch_usd_prices.get() {
@@ -303,12 +308,30 @@ impl AgentDispatcher<'_> {
         agent: EntityId,
         unit: &LeaseUnit,
     ) -> Result<ExpectedSpend> {
+        self.expected_agent_spend_for_model_in_txn(txn, agent, unit, None)
+    }
+
+    /// [`Self::expected_agent_spend_in_txn`] priced at `model` when the
+    /// launch's plan resolved one: the same calibrated units, the dollar
+    /// figure at the model that will run rather than the role's binding.
+    pub(super) fn expected_agent_spend_for_model_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        unit: &LeaseUnit,
+        model: Option<&crate::llm::ModelId>,
+    ) -> Result<ExpectedSpend> {
         let expected = ExpectedSpend::from_row(CALIBRATION.get(
             &self.vault.store,
             txn,
             &calibration_key(&agent, unit),
         )?);
-        expected.priced(self.vault, txn, UsdPriceTarget::Agent(agent), unit)
+        expected.priced(
+            self.vault,
+            txn,
+            UsdPriceTarget::Agent { agent, model },
+            unit,
+        )
     }
 
     /// One consult's expected spend in `unit` when delivered to `peer`: its

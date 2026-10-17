@@ -242,6 +242,12 @@ impl RowBirth {
         })
     }
 
+    /// Whether this is a document birth: the stand-in a document's first
+    /// commit stamps when no door stamped the row (`entity_doc`'s doors).
+    pub(crate) fn is_document_birth(&self) -> bool {
+        self.made_by.process.identity.starts_with("entity_doc.")
+    }
+
     /// The input hash over `parts`, each length-prefixed so two splits of the
     /// same bytes never collide.
     #[must_use]
@@ -424,13 +430,15 @@ pub(crate) fn stamp_birth_if_absent_in_txn(
 /// a prompt input or trigger may be absent here: it can sit in another
 /// window, outside the receiver's grant, or not have arrived yet. The trigger
 /// index is written from the envelope alone, so the born-from read still
-/// lists the row once the trigger lands.
+/// lists the row once the trigger lands. A document birth stamped before the
+/// carried one landed was a stand-in: the carried birth replaces it (Engine
+/// 10-18, FIX 1180: the origin's carried birth wins).
 ///
 /// # Errors
 ///
 /// [`Error::InvalidConfig`] for a malformed envelope or an absent row;
-/// [`Error::InvariantViolation`] when the row already has a different birth;
-/// storage errors as they occur.
+/// [`Error::InvariantViolation`] when the row already has a different birth
+/// that is not a document birth; storage errors as they occur.
 pub(crate) fn stamp_replicated_row_birth_in_txn(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
@@ -445,6 +453,11 @@ pub(crate) fn stamp_replicated_row_birth_in_txn(
     }
     match ROW_BIRTH.get(store, txn, row)? {
         Some(stored) if stored == *birth => return Ok(()),
+        Some(stored) if stored.is_document_birth() => {
+            if let Some(trigger) = &stored.made_by.trigger {
+                BIRTH_BY_TRIGGER.delete(store, txn, &(trigger.row(), *row))?;
+            }
+        }
         Some(_) => {
             return Err(Error::InvariantViolation(
                 "a row's birth envelope is immutable",

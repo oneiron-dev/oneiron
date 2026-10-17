@@ -9,8 +9,8 @@ use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
     INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, authority_append_for,
-    authority_range_for, authority_tail_for, authority_wanted, home_search_candidates,
-    index_selection_revision, promotion_snapshot_with, sealed_shelf_after,
+    authority_checkpoint_part_for, authority_range_for, authority_tail_for, authority_wanted,
+    home_search_candidates, index_selection_revision, promotion_snapshot_with, sealed_shelf_after,
     sealed_shelf_packet_part, selected_item_blob_with, shelve_sealed_window,
     shelve_staged_sealed_window, stage_sealed_part, want_sealed_replacement,
     wanted_sealed_replacements, window_index_page, window_index_projection_with,
@@ -163,16 +163,16 @@ struct AuthorityTailRequest {
     limit: usize,
 }
 
-/// The exact authority entries a machine wants, as concatenated 32-byte
-/// hashes in base64, whether their ancestors come too, down to the entries it
-/// holds or staged (`held`, packed the same way), and how many it takes from
+/// The authority entries a machine wants (`selection`), whether their
+/// ancestors come too, down to the entries it holds or staged (`held`, as
+/// concatenated 32-byte hashes in base64), and how many it takes from
 /// `cursor` in one page (OF-469).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuthorityRangeRequest {
     #[serde(default)]
     vault_id: Option<String>,
-    hashes: String,
+    selection: AuthorityRangeSelection,
     #[serde(default)]
     parent_closure: bool,
     #[serde(default)]
@@ -180,6 +180,40 @@ struct AuthorityRangeRequest {
     #[serde(default)]
     cursor: Option<String>,
     limit: usize,
+}
+
+/// Which authority entries a range fetch selects, tagged: `{"hashes":
+/// "<packed hashes>"}` for exact entries, or `{"covered": {...}}` for the
+/// entries one kept checkpoint image covers.
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AuthorityRangeSelection {
+    Hashes(String),
+    Covered(AuthorityRangeCovered),
+}
+
+/// The entries the kept checkpoint image `checkpoint` covers, or that its
+/// archive manifest `archive` lists, with hashes in `(lower_exclusive,
+/// upper_inclusive]`; each a 32-byte value in base64.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityRangeCovered {
+    checkpoint: String,
+    #[serde(default)]
+    archive: Option<String>,
+    #[serde(default)]
+    lower_exclusive: Option<String>,
+    #[serde(default)]
+    upper_inclusive: Option<String>,
+}
+
+/// A part of the checkpoint image a machine adopts (OF-469): the image's id
+/// in base64 and the byte offset the part starts at.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityCheckpointRequest {
+    checkpoint: String,
+    offset: u64,
 }
 
 /// The signed authority entries a machine appends, each canonical signed
@@ -220,6 +254,7 @@ pub(super) fn run(
             "residence.authority.tail" => authority_tail(server, peer, request.params),
             "residence.authority.append" => authority_append(server, peer, request.params),
             "residence.authority.range" => authority_range(server, peer, request.params),
+            "residence.authority.checkpoint" => authority_checkpoint(server, peer, request.params),
             _ => Err(AppError::bad_request(
                 "unknown residence RPC",
                 Some("method"),
@@ -965,11 +1000,14 @@ fn one_hash(encoded: &str) -> Result<[u8; 32], AppError> {
     <[u8; 32]>::try_from(raw.as_slice()).map_err(|_| AppError::invalid_params())
 }
 
-/// The exact authority entries the proved machine names and, with parent
-/// closure, their ancestors down to what it holds, parents first, from this
-/// home's hot log (OF-469). Only a machine of the owner's is served; any
-/// other looks missing. Nothing in the reply is trusted there: the machine
-/// verifies every entry itself and reads `unheld` as this home's claim only.
+/// The authority entries the proved machine selects (exact hashes, or the
+/// rows one kept checkpoint image covers) and, with parent closure, their
+/// ancestors down to what it holds, parents first, from this home's hot log
+/// (OF-469). Only a machine of the owner's is served; any other looks
+/// missing, as does an image or archive this home does not keep. Nothing in
+/// the reply is trusted there: the machine verifies every entry itself,
+/// checks `selection` names what it asked, and reads `unheld` as this
+/// home's claim only.
 fn authority_range(
     server: &SyncServer,
     peer: PeerMachine,
@@ -977,9 +1015,30 @@ fn authority_range(
 ) -> Result<Answer, AppError> {
     let input: AuthorityRangeRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let selection = match input.selection {
+        AuthorityRangeSelection::Hashes(packed) => {
+            oneiron::authority::AuthorityHistorySelection::Hashes(packed_hashes(&packed)?)
+        }
+        AuthorityRangeSelection::Covered(covered) => {
+            oneiron::authority::AuthorityHistorySelection::Covered {
+                checkpoint: one_hash(&covered.checkpoint)?,
+                archive: covered.archive.as_deref().map(one_hash).transpose()?,
+                lower_exclusive: covered
+                    .lower_exclusive
+                    .as_deref()
+                    .map(one_hash)
+                    .transpose()?,
+                upper_inclusive: covered
+                    .upper_inclusive
+                    .as_deref()
+                    .map(one_hash)
+                    .transpose()?,
+            }
+        }
+    };
     let fetch = oneiron::authority::AuthorityHistoryFetch {
         vault_id: input.vault_id.as_deref().map(one_hash).transpose()?,
-        hashes: packed_hashes(&input.hashes)?,
+        selection,
         parent_closure: input.parent_closure,
         held: packed_hashes(&input.held)?,
         cursor: input.cursor.as_deref().map(one_hash).transpose()?,
@@ -995,9 +1054,39 @@ fn authority_range(
         json!({
             "vault_id": page.vault_id.map(|id| encode(&id)),
             "checkpoint": page.checkpoint.map(|head| encode(&head)),
+            "selection": encode(&page.selection),
             "rows": page.rows.iter().map(|row| encode(row)).collect::<Vec<_>>(),
             "unheld": encode(&unheld),
             "next": page.next.map(|next| encode(&next)),
+        }),
+        Some(Vec::new()),
+    ))
+}
+
+/// One part of the checkpoint image this home keeps at the id asked for,
+/// with its whole length and, on the part at offset zero, the attestations
+/// kept for it (OF-469). Only a machine of the owner's is served; any other,
+/// an image not kept here and an offset past its end look missing. Nothing
+/// here is trusted there: the machine adopts the image only once it verifies
+/// against the pin its pairing returned.
+fn authority_checkpoint(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    let input: AuthorityCheckpointRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let id = one_hash(&input.checkpoint)?;
+    let part = authority_checkpoint_part_for(&server.vault, peer, &id, input.offset)
+        .map_err(|_| AppError::not_found("authority checkpoint", None))?
+        .ok_or_else(|| AppError::not_found("authority checkpoint", None))?;
+    let attestations = serde_json::to_value(&part.attestations)
+        .map_err(|_| AppError::internal_server_error("authority checkpoint unavailable"))?;
+    Ok((
+        json!({
+            "total": part.total,
+            "part": base64::engine::general_purpose::STANDARD.encode(&part.part),
+            "attestations": attestations,
         }),
         Some(Vec::new()),
     ))

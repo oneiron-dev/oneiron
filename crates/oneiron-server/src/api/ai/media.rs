@@ -46,10 +46,10 @@ pub(super) struct OptionsQuery {
     inputs: Option<String>,
 }
 
-/// The rows a call could use: each text seat's rungs and each media row
-/// that serves the operation over those inputs, where each runs, what it
-/// takes, the rates its native counts settle at, and what the media meter
-/// has left.
+/// The rows the caller could call now: each live text rung and media row
+/// that serves the operation over those inputs and that the caller's call
+/// doors would admit, where each runs, what it takes, its price, the rates
+/// its native counts settle at, and what its meter has left (FIX 2942).
 pub(super) async fn options(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -84,10 +84,10 @@ pub(super) async fn options(
             }
         }
     }
-    let runtime = server.ai.model_runtime();
+    let listed = super::caller_options(&server, auth.is_owner_grade(), operation, &inputs);
     Json(serde_json::json!({
-        "options": runtime.ai_options(operation, &inputs),
-        "media_units_left": runtime.media().units_left(),
+        "options": listed.options,
+        "media_units_left": listed.media_units_left,
     }))
     .into_response()
 }

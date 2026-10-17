@@ -238,6 +238,9 @@ side_tables! {
     SHARED_ACT_RECEIPT: VaultMeta b"shared-act:receipt:v1:" Raw;
     /// A pending shared act awaiting its members' objection window. Key: hex32 (act id).
     SHARED_ACT_RECORD: VaultMeta b"shared-act:record:v1:" Raw;
+    /// An export-first removal's archive, delivered to the removed Owner alone and kept for them
+    /// until its term ends (FIX 1300). Key: hex32 (removed Owner) ":" hex32 (receipt id).
+    SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named;
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// The executed delete-the-vault act and its backup retention deadline. Key: ().
     SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
@@ -277,6 +280,10 @@ side_tables! {
     /// Persisted audit report of a judge run against the held-out fixture set, keyed by run time then
     /// evidence sequence. Key: u64be + u64be.
     SKILL_ATTRIBUTION_AUDIT: VaultMeta b"skill_attribution:audit:v1:" Raw;
+    /// One matched-fork contribution check: the verdict and the pair it was read from (both fork
+    /// receipts and results, the anchor, the axis). Key: string (attempt receipt "\0" skill hex
+    /// "\0" axis).
+    SKILL_ATTRIBUTION_CONTRIBUTION_CHECK: VaultMeta b"skill_attribution:contribution_check:v1:" Named;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
     /// Replacement judge revision (UTF-8) marking one routed judgment as displaced. Key: u64be
@@ -444,6 +451,9 @@ side_tables! {
     /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
     /// (check).
     SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
+    /// The owner's final pick between a blind preference pair's two responses (preferred side,
+    /// picker, time). Key: string (pair reference).
+    SKILL_OPTIMIZE_RESPONSE_PAIR: VaultMeta b"skill_optimize:response_pair:v1:" Named;
     /// The amendment verdict replacing one attempt's outcome row (MessagePack map: amendment
     /// receipt, `skill_defect` share, event time). Key: the outcome row's full stored key, table
     /// prefix included.
@@ -538,6 +548,10 @@ side_tables! {
     TASK_FACT_SUPPRESSED: VaultMeta b"tasks.fact_suppressed.v1/" Raw;
     /// Follow-up stage idempotency marker. Key: id16 + \x00 + string.
     TASK_FOLLOW_UP_MARKER: VaultMeta b"tasks.followup.v1\0" Raw;
+    /// One mutating task-highway call's `TaskLifecycle` receipt (OF-220), projected as the receipt
+    /// family reads it, written in the call's own transaction. Key: string (the receipt id,
+    /// `task_lifecycle:` + 32 hex).
+    TASK_LIFECYCLE_RECEIPT: VaultMeta b"tasks.lifecycle_receipt.v1/" Named;
     /// Owner-authority fact to forward index key. Key: id16.
     TASK_OWNER_FACT_REVERSE: VaultMeta b"tasks.owner_fact.v1/" Raw;
     /// Display handle for a peer actor. Key: id16.
