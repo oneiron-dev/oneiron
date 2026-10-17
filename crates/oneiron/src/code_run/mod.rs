@@ -8,6 +8,7 @@
 pub mod actions;
 pub mod blocked;
 pub mod consent;
+pub mod live_run;
 pub mod vault_read;
 
 // The guest authoring request is decoded at the typed component bridge, and

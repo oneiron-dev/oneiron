@@ -178,8 +178,14 @@ impl HttpLink {
             .post(url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
-            .header("x-oneiron-binding", binding)
-            .body(body);
+            .header("x-oneiron-binding", binding);
+        // OF-604: a large body crosses zstd, as the remote SDK's does.
+        let request = match oneiron::sync::transport::encode_http_body(&body) {
+            Some(encoded) => request
+                .header(reqwest::header::CONTENT_ENCODING, "zstd")
+                .body(encoded),
+            None => request.body(body),
+        };
         self.runtime.block_on(async move {
             let deadline = tokio::time::Instant::from_std(bounds.until);
             let mut response = match timeout_at(deadline, request.send()).await {
