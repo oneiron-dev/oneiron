@@ -14,8 +14,10 @@
 //!
 //! A screenshot the calling code run's browser holds is named by its
 //! `blake3:` ref. The run reads it from its own browser and hands it in as
-//! [`HELD_IMAGE`], an evidence ref on that run: no scoped read pulls it, and
-//! a ref no browser of the run holds is refused.
+//! [`HELD_IMAGE`]: no scoped read pulls it, and a ref no browser of the run
+//! holds is refused. The decision keeps it as a blob artifact written on the
+//! run, so its receipt's evidence pin names pixels a later reader can pull
+//! back after the browser dropped them.
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -27,7 +29,9 @@ use oneiron::llm::decision::{
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
-use oneiron::memory::{ImageViewRequest, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
+use oneiron::memory::{
+    BlobArtifactInput, ImageViewRequest, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult,
+};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
 use oneiron::{BudgetExhaustionPolicy, EdgeActorClass, EntityId, WriteActor};
@@ -168,7 +172,7 @@ pub(crate) fn run_verdict(
         ));
     }
     let images = match (&request.image, held) {
-        (Some(_), Some(held)) => vec![readable(held)?],
+        (Some(handle), Some(held)) => vec![kept(reader, handle, readable(held)?)],
         (Some(handle), None) if handle.starts_with(HELD_PREFIX) => {
             return Err(MemoryError::bad_request_with(
                 format!("no browser of this run holds image {handle}"),
@@ -311,6 +315,43 @@ fn contract(request: &AiVerdictRequest) -> MemoryResult<AnswerContract> {
             options: request.options.clone(),
         }
     })
+}
+
+/// A held screenshot kept as a blob artifact the caller writes, its bytes a
+/// version made by the run that took it: the pin then names that artifact
+/// at the bytes' hash, which is the version's own. A caller that may not
+/// write keeps the pin on the run, and the pixels go with its browser.
+fn kept(reader: &Memory<'_>, handle: &str, image: DecisionImage) -> DecisionImage {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let run = image.evidence.id.to_hex();
+    let stored = reader
+        .put_blob_artifact(&BlobArtifactInput {
+            id: None,
+            name: format!("decision screenshot {handle}"),
+            media_type: image.image.media_type.clone(),
+            occurred_at: now,
+            learned_at: None,
+        })
+        .and_then(|artifact| {
+            reader.append_blob_version(&artifact.id_hex, &image.image.bytes, Some(&run), now, None)
+        });
+    let artifact = match stored.map(|version| EntityId::from_hex(&version.artifact_ref)) {
+        Ok(Ok(artifact)) => artifact,
+        Ok(Err(_)) => return image,
+        Err(error) => {
+            tracing::warn!(%error, %handle, "the decision screenshot stays a ref on its run");
+            return image;
+        }
+    };
+    DecisionImage {
+        evidence: EvidenceVersion {
+            id: artifact,
+            ..image.evidence
+        },
+        ..image
+    }
 }
 
 /// The call's budget, and the Unix milliseconds it ends at: the time left
