@@ -821,12 +821,14 @@ pub struct SelfAgentDefinitionPutResult {
 /// No parent/run/actor fields are accepted from guest code.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfAgentSpawnCall {
-    pub target: crate::agent_dispatch::AgentDispatchTarget,
+    /// The agent or workflow to run. Unset, the spawn needs the host's
+    /// planner to pick its seat.
+    pub target: Option<crate::agent_dispatch::AgentDispatchTarget>,
     pub context: crate::agent_dispatch::AgentSpawnContext,
     pub intent_key: String,
-    /// OF-541: what a leased agent asks the planner for. Set, the host
-    /// places the spawn's type and plans its seat; the plan's seat replaces
-    /// `target`. Unset, the spawn dispatches `target` directly.
+    /// OF-541: what the spawner asks the planner for. With the host's
+    /// planner and the agent's lease, the host places the spawn's type and
+    /// plans its seat, which replaces `target`. Otherwise `target` runs.
     pub ask: Option<SelfSpawnAsk>,
 }
 

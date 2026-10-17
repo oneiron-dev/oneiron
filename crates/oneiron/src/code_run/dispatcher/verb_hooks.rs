@@ -47,6 +47,10 @@ const VERB_HOOK_PENDING: &str = "verb_hook_pending";
 /// What the wait a hook's ask parks a call on says, before the invocation the
 /// ask waits under.
 const VERB_HOOK_WAIT: &str = "verb_hook:";
+/// The refusal a guest reads when settlement already ran the call a hook's
+/// ask stopped, so it never runs twice. Its reason codes are the invocation,
+/// and the error's code when the call failed.
+const VERB_HOOK_COMPLETED: &str = "verb_hook_completed";
 
 /// A call by its replay row, less the bridge's own stamps.
 pub(crate) type ParkedCall = (SelfEffect, rmpv::Value);
@@ -66,7 +70,7 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let effect = call.effect();
-        let (call, hooked) = match self.enter_verb_hooks(call, site)? {
+        let (call, hooked) = match self.enter_verb_hooks(call, site, read_as.clone())? {
             Ok(entered) => entered,
             Err(stopped) => return Ok(stopped),
         };
@@ -81,11 +85,14 @@ impl HostSelfDispatcher<'_> {
     /// rewritten when a hook rewrote it, and what its post chain picks up;
     /// `Err` the answer a stop gives in its place. A run bound to an
     /// off-record session runs no hook: its receipts would land on record.
-    /// A call no binding can take passes before its args are built.
+    /// A call no binding can take passes before its args are built. A hook
+    /// reads under `read_as`, the key the run's door admitted the call with,
+    /// and as the run's actor when its host binds no door.
     pub(crate) fn enter_verb_hooks(
         &self,
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<std::result::Result<(SelfCall, HookedCall), SelfDispatchOutcome>> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return Ok(Ok((call, HookedCall(None))));
@@ -106,6 +113,7 @@ impl HostSelfDispatcher<'_> {
             scope: None,
             board_epoch: None,
             domain: hook_domain(&call),
+            reader: read_as,
         };
         let check = |rewritten: &Value| rewrite(&call, rewritten).map(|_| ());
         let pre = match vault.pre_verb_hooks(hook_call, args.clone(), &check)? {
@@ -230,6 +238,12 @@ fn stopped(effect: SelfEffect, stop: VerbHookStop) -> SelfDispatchOutcome {
             denied(effect, VERB_HOOK_SKIPPED, vec![hook, reason])
         }
         VerbHookStop::Hidden { hook } => denied(effect, VERB_HOOK_HIDDEN, vec![hook]),
+        VerbHookStop::Completed { invocation, .. } => {
+            denied(effect, VERB_HOOK_COMPLETED, vec![invocation])
+        }
+        VerbHookStop::CompletedWithError {
+            invocation, code, ..
+        } => denied(effect, VERB_HOOK_COMPLETED, vec![invocation, code]),
     }
 }
 
@@ -247,6 +261,10 @@ fn stopped_view(stop: &VerbHookStop) -> Value {
         VerbHookStop::Skipped { hook, reason } => (VERB_HOOK_SKIPPED, vec![hook, reason]),
         VerbHookStop::Pending { invocation, ask } => (VERB_HOOK_PENDING, vec![invocation, ask]),
         VerbHookStop::Hidden { hook } => (VERB_HOOK_HIDDEN, vec![hook]),
+        VerbHookStop::Completed { invocation, .. } => (VERB_HOOK_COMPLETED, vec![invocation]),
+        VerbHookStop::CompletedWithError {
+            invocation, code, ..
+        } => (VERB_HOOK_COMPLETED, vec![invocation, code]),
     };
     json!({"denied": word, "reasonCodes": codes})
 }
@@ -390,12 +408,12 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
 fn hook_args(call: &SelfCall) -> Result<Value> {
     Ok(match call {
         SelfCall::AgentsSpawn(spawn) => {
-            let (kind, target) = match spawn.target {
-                AgentDispatchTarget::Custom(id) => ("agent_def", id),
-                AgentDispatchTarget::Workflow(id) => ("workflow", id),
-            };
+            let target = spawn.target.as_ref().map(|target| match target {
+                AgentDispatchTarget::Custom(id) => json!({"kind": "agent_def", "id": id.to_hex()}),
+                AgentDispatchTarget::Workflow(id) => json!({"kind": "workflow", "id": id.to_hex()}),
+            });
             json!({
-                "target": {"kind": kind, "id": target.to_hex()},
+                "target": target,
                 "intentKey": spawn.intent_key,
                 "contextSpec": to_json(&spawn.context.context_spec)?,
                 "contextFrom": spawn

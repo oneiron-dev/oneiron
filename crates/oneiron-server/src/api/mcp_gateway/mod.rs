@@ -9,6 +9,7 @@ mod exec_board_verbs;
 mod memory_response;
 mod stream_reads;
 mod tasks_response;
+mod verb_hooks;
 mod wakes;
 
 pub(crate) use self::actor_dispatch::{
@@ -26,7 +27,7 @@ use self::board_setup::{
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
     mcp_resolve_page,
 };
-pub(crate) use self::code_mode_verbs::ReaderChildDoor;
+pub(crate) use self::code_mode_verbs::{ReaderChildDoor, RunGuests, VerdictAsker};
 use self::device_release::mcp_release_result;
 #[cfg(test)]
 pub(crate) use self::device_release::release_hook;

@@ -251,10 +251,11 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         };
         // The call's verb hooks once it is admitted (ARCH-0080 §3): a rewrite
         // names the skill and the args it runs with.
-        let (skill, hooked) = match self
-            .gated_write
-            .enter_verb_hooks(SelfCall::SkillsCall(skill), Some(site))?
-        {
+        let (skill, hooked) = match self.gated_write.enter_verb_hooks(
+            SelfCall::SkillsCall(skill),
+            Some(site),
+            lease.read_as.clone(),
+        )? {
             Ok((SelfCall::SkillsCall(skill), hooked)) => (skill, hooked),
             Ok(_) => {
                 return Err(Error::InvariantViolation(

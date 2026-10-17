@@ -5,14 +5,17 @@
 //! code mode's browser rows and the native handles that call the engine
 //! directly. Each door wraps the row's own call, never a wrapper around it,
 //! so a hook fires once per logical verb. A hook's stop reaches the caller as
-//! a refusal whose `hook` carries the typed stop.
+//! a refusal whose `hook` carries the typed stop. A call the generated
+//! `invoke` runs for an on-device caller with no credential saves how to run
+//! it again with its ask, so settlement resumes it (`Vault::drain_verb_asks`);
+//! a retry then answers what it returned.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
+use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume};
 use crate::task_verb::sdk::{AgentVerb, validate_input};
 use crate::{EntityId, Vault};
 
@@ -28,29 +31,51 @@ pub fn row_domain(verb: &str) -> VerbDomain {
 }
 
 /// The call of row `verb` on `memory`: its actor and class, the invocation
-/// its host bound or a fresh one, and the room a room turn runs in, as
-/// `room:<hex>` (the `<axis>:<value>` form a hook's scope names).
-#[must_use]
-pub fn row_call(memory: &Memory<'_>, verb: &str) -> VerbCall {
-    let mut call = VerbCall::for_memory(memory, verb, row_domain(verb));
+/// its host bound or a fresh one, the caller's read key when a hook may run,
+/// and the room a room turn runs in, as `room:<hex>` (the `<axis>:<value>`
+/// form a hook's scope names).
+///
+/// # Errors
+///
+/// When a hook may run and the handle's read key does not build.
+pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
+    let mut call = VerbCall::for_memory(memory, verb, row_domain(verb))?;
     call.scope = memory
         .room_turn()
         .map(|turn| format!("room:{}", turn.room.to_hex()));
-    call
+    Ok(call)
 }
 
 /// Runs the pre chain of row `verb` over its JSON `args`: the args to run it
-/// with. A rewrite must pass the row's own input check.
+/// with. A rewrite must pass the row's own input check, then the admission
+/// its door bound on `memory`.
 ///
 /// # Errors
 ///
 /// A hook's stop, as the refusal the caller reads; storage errors.
 pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    let check = |args: &Value| validate_input(verb, args).map_err(|error| error.to_string());
-    memory
+    row_pre_resumable(memory, verb, args, None)?.map_err(stopped)
+}
+
+/// [`row_pre`] with the stop as it is. `resume` is how settlement runs the
+/// call again without its caller; a door that runs the row itself, not
+/// through the generated `invoke`, passes `None`, since the drain could not
+/// run it the way that door does.
+fn row_pre_resumable(
+    memory: &Memory<'_>,
+    verb: &str,
+    args: Value,
+    resume: Option<VerbResume>,
+) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
+    let check = |args: &Value| {
+        validate_input(verb, args).map_err(|error| error.to_string())?;
+        memory
+            .rewrite_admit()
+            .map_or(Ok(()), |admit| admit(verb, args))
+    };
+    Ok(memory
         .vault()
-        .pre_verb_hooks(row_call(memory, verb), args, &check)?
-        .map_err(stopped)
+        .pre_verb_hooks_resumable(row_call(memory, verb)?, args, &check, resume)?)
 }
 
 /// Runs the post chain over the row's JSON `result`: the caller's view of it.
@@ -77,18 +102,28 @@ pub fn row_post(vault: &Vault, pre: VerbHookPre, result: Value) -> MemoryResult<
 }
 
 /// The pre chain, the row and the post chain for one call on JSON: `run`
-/// gets the args every rewrite left.
+/// gets the args every rewrite left. The generated `invoke` is its one
+/// caller, so a call on a surface settlement can rebuild saves its resume
+/// target with an ask, and a call settlement already ran answers what it
+/// returned.
 ///
 /// # Errors
 ///
-/// What `run` returns, and what [`row_pre`] and [`row_post`] return.
+/// What `run` returns, and what [`row_pre`] and [`row_post`] return; the
+/// error a call settlement ran failed with.
 pub fn row(
     memory: &Memory<'_>,
     verb: &str,
     args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
-    let pre = row_pre(memory, verb, args)?;
+    let resume = memory
+        .resume_bounds()
+        .map(|(session, room)| VerbResume::Row { session, room });
+    let pre = match row_pre_resumable(memory, verb, args, resume)? {
+        Ok(pre) => pre,
+        Err(stop) => return completed(verb, stop),
+    };
     let result = run(pre.args.clone())?;
     row_post(memory.vault(), pre, result)
 }
@@ -113,7 +148,12 @@ where
     O: Serialize + DeserializeOwned,
 {
     let args = encode(&input)?;
-    let pre = row_pre(memory, verb, args.clone())?;
+    // A typed door's own call may differ from the generated `invoke`'s, so
+    // it saves no resume target: its caller's retry resumes it.
+    let pre = match row_pre_resumable(memory, verb, args.clone(), None)? {
+        Ok(pre) => pre,
+        Err(stop) => return completed(verb, stop),
+    };
     let input = if pre.args == args {
         input
     } else {
@@ -154,4 +194,23 @@ fn encode(value: &impl Serialize) -> MemoryResult<Value> {
 
 fn stopped(stop: VerbHookStop) -> MemoryError {
     MemoryError::from(crate::Error::from(stop))
+}
+
+/// A row's answer to a pre-chain stop: what a call settlement already ran
+/// returned, as the row's output, or the error it failed with. Any other
+/// stop is the refusal the caller reads.
+fn completed<O: DeserializeOwned>(verb: &str, stop: VerbHookStop) -> MemoryResult<O> {
+    match stop {
+        VerbHookStop::Completed { result, .. } => serde_json::from_value(result).map_err(|error| {
+            MemoryError::bad_request(format!("{verb}'s saved result does not decode: {error}"))
+        }),
+        VerbHookStop::CompletedWithError { code, message, .. } => Err(MemoryError::new(
+            &code,
+            message,
+            &[
+                "This invocation already ran once its hook's ask was answered; call again with a new invocation.",
+            ],
+        )),
+        stop => Err(stopped(stop)),
+    }
 }
