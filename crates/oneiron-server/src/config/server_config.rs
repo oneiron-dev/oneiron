@@ -14,6 +14,7 @@ use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
+use super::self_heal::SelfHealConfig;
 use super::skills::SkillsConfig;
 use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
@@ -58,6 +59,8 @@ pub struct SyncServerConfig {
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
     pub oauth_resource_indicator: Option<String>,
+    /// The `[native_mail]` server the native mail pack's check reaches.
+    pub native_mail: Option<super::NativeMailConfig>,
     /// Explicit local/dev escape hatch for running without `auth_secret`.
     pub allow_unauthenticated: bool,
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
@@ -123,6 +126,7 @@ impl Default for SyncServerConfig {
             oauth_issuer: None,
             oauth_jwks_uri: None,
             oauth_resource_indicator: None,
+            native_mail: None,
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
             artifact_domains: Vec::new(),
@@ -281,6 +285,9 @@ pub struct ServeConfig {
     /// The `[failure_signals]` section: the publisher this deployment's
     /// failure signals go to.
     pub failure_signals: FailureSignalsConfig,
+    /// The `[self_heal]` section: the model-graded detectors over retrieval
+    /// telemetry.
+    pub self_heal: SelfHealConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
     /// The `[skills]` section: the skill-edit gate's live pull budget.
@@ -306,6 +313,9 @@ pub struct ServeConfig {
     /// config file names it. Absent means every batch runs where its slot's
     /// provider runs.
     pub gpu: Option<crate::runtime::GpuPoolConfig>,
+    /// The `[native_mail]` section: the host's own mail server, absent until
+    /// the config file names it.
+    pub native_mail: Option<super::NativeMailConfig>,
     /// The `[embedding]` section: spaces and kind slots seeded at start,
     /// absent until the config file names it.
     pub embedding: Option<super::EmbeddingConfig>,
@@ -366,6 +376,7 @@ impl Default for ServeConfig {
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
             failure_signals: FailureSignalsConfig::default(),
+            self_heal: SelfHealConfig::default(),
             recall: RecallConfig::default(),
             skills: SkillsConfig::default(),
             keystore: KeystoreConfig::default(),
@@ -375,6 +386,7 @@ impl Default for ServeConfig {
             browser: None,
             desktop: None,
             gpu: None,
+            native_mail: None,
             embedding: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
@@ -438,6 +450,7 @@ impl fmt::Debug for ServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("failure_signals", &self.failure_signals)
+            .field("self_heal", &self.self_heal)
             .field("recall", &self.recall)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)
@@ -447,6 +460,7 @@ impl fmt::Debug for ServeConfig {
             .field("browser", &self.browser)
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
+            .field("native_mail", &self.native_mail)
             .field("embedding", &self.embedding)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -469,6 +483,7 @@ impl ServeConfig {
             oauth_issuer: self.oauth_issuer.clone(),
             oauth_jwks_uri: self.oauth_jwks_uri.clone(),
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
+            native_mail: self.native_mail.clone(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
             artifact_domains: self.artifact_domains.clone(),
