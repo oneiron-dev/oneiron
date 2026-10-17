@@ -50,6 +50,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.inbox.list",
+                crate::code_run::vault_read::request_schema::<InboxListRequest>(),
+            ),
+            (
+                "self.inbox.mark",
+                crate::code_run::vault_read::request_schema::<InboxMarkRequest>(),
+            ),
+            (
                 "self.inbox.concern",
                 crate::code_run::vault_read::request_schema::<
                     crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest,
@@ -1052,6 +1060,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ReadBlobVersionRequest>(),
             ),
             (
+                "vault.consolidation.enqueue",
+                crate::code_run::vault_read::request_schema::<ConsolidationEnqueueRequest>(),
+            ),
+            (
+                "vault.consolidation.status",
+                crate::code_run::vault_read::request_schema::<ConsolidationStatusRequest>(),
+            ),
+            (
+                "vault.claims.seed",
+                crate::code_run::vault_read::request_schema::<CommitRequest>(),
+            ),
+            (
                 "connector.outbound.schedule",
                 crate::code_run::vault_read::request_schema::<OutboundScheduleRequest>(),
             ),
@@ -1209,6 +1229,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.identity.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.mark" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2467,6 +2501,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consolidation.enqueue" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consolidation.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.seed" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.outbound.schedule" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2532,6 +2587,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.identity.settle" => {
             let _input: crate::dreamer_runner::maintenance::identity::IdentityActNowRequest =
                 decode(value.clone())?;
+        }
+        "self.inbox.list" => {
+            let _input: InboxListRequest = decode(value.clone())?;
+        }
+        "self.inbox.mark" => {
+            let _input: InboxMarkRequest = decode(value.clone())?;
         }
         "self.inbox.concern" => {
             let _input: crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest =
@@ -3226,6 +3287,19 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.read" => {
             let _input: ReadBlobVersionRequest = decode(value.clone())?;
         }
+        "vault.consolidation.enqueue" => {
+            let _input: ConsolidationEnqueueRequest = decode(value.clone())?;
+        }
+        "vault.consolidation.status" => {
+            let _input: ConsolidationStatusRequest = decode(value.clone())?;
+        }
+        "vault.claims.seed" => {
+            let input: CommitRequest = decode(value.clone())?;
+            crate::memory::caps::check_batch_len("claims", input.claims.len())?;
+            for claim in &input.claims {
+                crate::memory::caps::check_claim_input(claim)?;
+            }
+        }
         "connector.outbound.schedule" => {
             let _input: OutboundScheduleRequest = decode(value.clone())?;
         }
@@ -3263,6 +3337,8 @@ pub fn invoke(
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
         "self.identity.answer" => encode(self_identity_answer(memory, decode(value)?)?),
         "self.identity.settle" => encode(self_identity_settle(memory, decode(value)?)?),
+        "self.inbox.list" => encode(self_inbox_list(memory, decode(value)?)?),
+        "self.inbox.mark" => encode(self_inbox_mark(memory, decode(value)?)?),
         "self.inbox.concern" => encode(self_inbox_concern(memory, decode(value)?)?),
         "self.inbox.concern.outcome" => encode(self_inbox_concern_outcome(memory, decode(value)?)?),
         "self.inbox.concern.move" => encode(self_inbox_concern_move(memory, decode(value)?)?),
@@ -3513,6 +3589,11 @@ pub fn invoke(
         "vault.artifacts.put" => encode(vault_artifacts_put(memory, decode(value)?)?),
         "vault.artifacts.append" => encode(vault_artifacts_append(memory, decode(value)?)?),
         "vault.artifacts.read" => encode(vault_artifacts_read(memory, decode(value)?)?),
+        "vault.consolidation.enqueue" => {
+            encode(vault_consolidation_enqueue(memory, decode(value)?)?)
+        }
+        "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
+        "vault.claims.seed" => encode(vault_claims_seed(memory, decode(value)?)?),
         "connector.outbound.schedule" => {
             encode(connector_outbound_schedule(memory, decode(value)?)?)
         }
@@ -3757,6 +3838,21 @@ pub fn self_identity_settle(
     input: crate::dreamer_runner::maintenance::identity::IdentityActNowRequest,
 ) -> MemoryResult<crate::dreamer_runner::maintenance::identity::IdentityActNow> {
     memory.identity_act_now(&input)
+}
+pub fn self_inbox_list(
+    memory: &Memory<'_>,
+    input: InboxListRequest,
+) -> MemoryResult<crate::inbox::NotificationPage> {
+    memory.inbox_list(
+        input.after.as_deref(),
+        input.limit.unwrap_or(crate::inbox::INBOX_PAGE_DEFAULT),
+    )
+}
+pub fn self_inbox_mark(
+    memory: &Memory<'_>,
+    input: InboxMarkRequest,
+) -> MemoryResult<crate::inbox::NotificationRow> {
+    memory.inbox_mark(&input.notification_ref, input.mark)
 }
 pub fn self_inbox_concern(
     memory: &Memory<'_>,
@@ -5450,6 +5546,38 @@ pub fn vault_artifacts_read(
     input: ReadBlobVersionRequest,
 ) -> MemoryResult<Option<crate::task_verb::sdk::BlobContent>> {
     memory_requests::read_blob(memory, input)
+}
+pub fn vault_consolidation_enqueue(
+    memory: &Memory<'_>,
+    input: ConsolidationEnqueueRequest,
+) -> MemoryResult<crate::memory::DreamerAttemptRef> {
+    memory_requests::enqueue_consolidation(memory, input)
+}
+pub fn vault_consolidation_status(
+    memory: &Memory<'_>,
+    input: ConsolidationStatusRequest,
+) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
+    memory_requests::dreamer_attempt_status(memory, input)
+}
+pub fn vault_claims_seed(
+    memory: &Memory<'_>,
+    input: CommitRequest,
+) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+    crate::memory::caps::check_batch_len("claims", input.claims.len())?;
+    for claim in &input.claims {
+        crate::memory::caps::check_claim_input(claim)?;
+    }
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.claims.seed",
+        &input,
+        &[
+            "/claims/*/subject_ref",
+            "/claims/*/world_ref",
+            "/claims/*/relationship_ref",
+        ],
+    )?;
+    memory_requests::seed_claims(memory, input)
 }
 pub fn connector_outbound_schedule(
     memory: &Memory<'_>,
