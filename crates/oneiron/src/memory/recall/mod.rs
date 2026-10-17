@@ -807,6 +807,10 @@ impl Memory<'_> {
                 if let Some(vector) = execution.embedding {
                     pipeline = pipeline.search_vector(vector, limit);
                 }
+                for seed in execution.media {
+                    pipeline =
+                        pipeline.search_media(seed.space, seed.kind, seed.vector, &[], limit);
+                }
                 if !execution.phonetic_codes.is_empty() {
                     pipeline = pipeline.search_phonetic(execution.phonetic_codes);
                 }
@@ -892,6 +896,9 @@ impl Memory<'_> {
                 }
                 if let Some(vector) = execution.embedding {
                     builder = builder.search_vector(vector, limit);
+                }
+                for seed in execution.media {
+                    builder = builder.search_media(seed.space, seed.kind, seed.vector, &[], limit);
                 }
                 if !execution.phonetic_codes.is_empty() {
                     builder = builder.search_phonetic(execution.phonetic_codes);
