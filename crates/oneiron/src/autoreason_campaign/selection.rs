@@ -19,6 +19,16 @@ pub struct MeasuredBranch {
     pub expected_gain: f64,
 }
 
+/// How a round ranks its measured parents. The DGM formula is the floor;
+/// information gain ranks only for an estimator version that beat it on a
+/// held-out selection benchmark, and DGM still breaks its ties.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParentRanking {
+    Dgm,
+    /// Each measured branch's information gain, keyed by attempt id.
+    InformationGain(BTreeMap<String, f64>),
+}
+
 /// Campaign-specific policy knobs resolved from trusted vault manifest rows.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -152,7 +162,8 @@ pub enum OracleSignal {
 /// No writes or resource reservations occur in this decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectionDecision {
-    /// Select a measured parent by sigmoid(quality) / (1 + direct children).
+    /// Select a measured parent by sigmoid(quality) / (1 + direct children),
+    /// or by an admitted information gain first.
     Fork { parent_id: String, stagnation: bool },
     /// Resource exhaustion pauses work; it never claims the search failed.
     PausedBudget,
@@ -192,6 +203,7 @@ pub fn decide_experiment_for(
     prior_best_gains: &[f64],
     budget_available: bool,
     oracle: OracleSignal,
+    ranking: &ParentRanking,
 ) -> crate::Result<SelectionDecision> {
     let policy = selection_policy_for(vault, campaign_id, holder_id)?;
     decide_experiment(
@@ -202,6 +214,7 @@ pub fn decide_experiment_for(
         policy,
         budget_available,
         oracle,
+        ranking,
     )
     .map_err(|error| crate::Error::InvalidConfig(error.to_string()))
 }
@@ -220,7 +233,9 @@ pub fn decide_experiment_for(
 /// # Errors
 ///
 /// Refuses duplicate/unknown nodes, non-finite measurements and histories,
-/// missing measurements, or invalid policy bounds.
+/// missing measurements, an information gain missing or invalid for a
+/// branch, or invalid policy bounds.
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn decide_experiment(
     tree: &RunTree,
     branches: &[MeasuredBranch],
@@ -229,6 +244,7 @@ pub(crate) fn decide_experiment(
     policy: SelectionPolicy,
     budget_available: bool,
     oracle: OracleSignal,
+    ranking: &ParentRanking,
 ) -> SelectionResult<SelectionDecision> {
     if !policy.expected_gain_floor.is_finite()
         || policy.expected_gain_floor < 0.0
@@ -271,6 +287,15 @@ pub(crate) fn decide_experiment(
             || branch.expected_gain < 0.0
         {
             return Err(SelectionError::Invalid("invalid branch measurement"));
+        }
+        if let ParentRanking::InformationGain(gains) = ranking
+            && !gains
+                .get(&branch.attempt_id)
+                .is_some_and(|gain| gain.is_finite() && *gain >= 0.0)
+        {
+            return Err(SelectionError::Invalid(
+                "information gain missing or invalid for a branch",
+            ));
         }
     }
     let best_quality = branches
@@ -330,14 +355,20 @@ pub(crate) fn decide_experiment(
                 || b.attempt_id != top_id
         })
         .max_by(|a, b| {
+            let gain_order = match ranking {
+                ParentRanking::Dgm => std::cmp::Ordering::Equal,
+                ParentRanking::InformationGain(gains) => {
+                    gains[&a.attempt_id].total_cmp(&gains[&b.attempt_id])
+                }
+            };
             let log_weight = |branch: &MeasuredBranch| {
                 // Compare in log space: finite negative quality can make the
                 // sigmoid underflow to zero, but the order must remain exact.
                 log_sigmoid(branch.quality)
                     - (1.0 + children[branch.attempt_id.as_str()] as f64).ln()
             };
-            log_weight(a)
-                .total_cmp(&log_weight(b))
+            gain_order
+                .then_with(|| log_weight(a).total_cmp(&log_weight(b)))
                 // At saturation, equal children still rank by quality;
                 // equal quality still ranks by inverse child count.
                 .then_with(|| {

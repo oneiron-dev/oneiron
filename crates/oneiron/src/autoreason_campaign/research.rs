@@ -20,6 +20,9 @@
 //! - Every weave names the claim it landed through the gate, its common
 //!   ancestor and its validation overlap, and is refused until a held-out win
 //!   in this campaign turned merge crossover on.
+//! - Parents rank by the DGM formula until the engine estimator's information
+//!   gain wins a held-out selection benchmark (`estimator`). Each round
+//!   receipts every branch's Beta belief either way.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -27,8 +30,8 @@ use sha2::{Digest, Sha256};
 
 use super::general::{CampaignConfig, Measurement, MetricRole};
 use super::selection::{
-    MeasuredBranch, OracleSignal, SelectionDecision, SelectionPolicy, decide_experiment_for,
-    selection_policy_for,
+    MeasuredBranch, OracleSignal, ParentRanking, SelectionDecision, SelectionPolicy,
+    decide_experiment_for, selection_policy_for,
 };
 use super::{CampaignDatasetRef, CampaignError};
 use crate::entity_id::bytes_to_hex_lower;
@@ -41,12 +44,17 @@ use crate::{
 };
 
 mod budget;
+mod estimator;
 mod promotion;
 
 pub use budget::{
     ResearchBudgetRead, ResearchReservation, ResearchReservationLine, refund_research_work,
     research_budget, research_reservations, reserve_research_exploration, reserve_research_work,
     settle_research_work,
+};
+pub use estimator::{
+    BranchBelief, ENGINE_ESTIMATOR_VERSION, MIN_SELECTION_BENCHMARK_CASES, PriorRung, PriorSeed,
+    SelectionBenchmark, SelectionRanking, record_selection_benchmark, selection_benchmark,
 };
 pub use promotion::{
     CampaignPromotionReceipt, ConfirmationOutcome, ConfirmationReceipt, HeldOutCall,
@@ -124,6 +132,9 @@ pub struct ResearchBinding {
     pub confirmation: Option<ResearchConfirmationSeat>,
     /// The soft or owner-pinned RSI share the campaign's token work draws on.
     pub share: Option<String>,
+    /// The cold-start ladder the root's belief seeds from: user, persona,
+    /// then global data. Empty starts uniform.
+    pub prior_ladder: Vec<PriorSeed>,
     pub bound_at: u64,
 }
 
@@ -138,6 +149,7 @@ pub struct ResearchBindRequest {
     pub share: Option<String>,
     /// The incumbent configuration, pinned as the root node.
     pub incumbent: CandidateRef,
+    pub prior_ladder: Vec<PriorSeed>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,6 +180,9 @@ pub struct SearchEvidence {
     /// The versioned estimator (DGM floor, Beta belief or information gain)
     /// that produced `expected_gain`.
     pub estimator_version: String,
+    /// The reliability, in `[0, 1]`, of the knobs this node's change touched:
+    /// its belief's prior mean is pulled halfway toward it.
+    pub knob_reliability: Option<f64>,
     pub receipt_refs: Vec<String>,
 }
 
@@ -298,6 +313,8 @@ pub struct BranchSnapshot {
     pub reward: f64,
     pub expected_gain: f64,
     pub estimator_version: String,
+    /// The engine estimator's belief, once the incumbent root is measured.
+    pub belief: Option<BranchBelief>,
 }
 
 /// The durable receipt of one selection round.
@@ -310,6 +327,7 @@ pub struct SelectionReceipt {
     pub branches: Vec<BranchSnapshot>,
     pub best_quality: f64,
     pub best_gain: f64,
+    pub ranking: SelectionRanking,
     pub policy_digest: String,
     pub budget_available: bool,
     pub oracle_goal_met: bool,
@@ -435,6 +453,7 @@ pub fn bind_research(
     if let Some(share) = &request.share {
         bounded(share, "a campaign budget share is a bounded key")?;
     }
+    estimator::validate_ladder(&request.prior_ladder)?;
     let record = AttemptQueue::new(vault)
         .get(request.root)?
         .ok_or(invalid("the campaign root attempt is missing"))?;
@@ -482,6 +501,7 @@ pub fn bind_research(
         policy_digest: policy_digest(&policy)?,
         confirmation: request.confirmation,
         share: request.share,
+        prior_ladder: request.prior_ladder,
         bound_at: at,
     };
     let root = ExperimentNode {
@@ -906,6 +926,9 @@ pub fn record_search_measurement(
         || !evidence.expected_gain.is_finite()
         || evidence.expected_gain < 0.0
         || !evidence.reward().is_finite()
+        || evidence
+            .knob_reliability
+            .is_some_and(|reliability| !(0.0..=1.0).contains(&reliability))
     {
         return Err(invalid("search evidence is out of range"));
     }
@@ -1102,9 +1125,11 @@ pub fn select_next(
         .map(|(_, round)| round)
         .collect();
     drop(txn);
+    let beliefs = estimator::branch_beliefs(&nodes, root, &binding.prior_ladder);
     let mut by_hex = BTreeMap::new();
     let mut branches = Vec::new();
     let mut snapshots = Vec::new();
+    let mut gains = BTreeMap::new();
     for node in nodes.values() {
         let Some(search) = &node.search else { continue };
         if node.invalid.is_some() || pruned_lineage(&nodes, &node.attempt) {
@@ -1112,6 +1137,13 @@ pub fn select_next(
         }
         let id = hex(&node.attempt);
         by_hex.insert(id.clone(), node.attempt);
+        let belief = beliefs
+            .as_ref()
+            .and_then(|beliefs| beliefs.get(node.attempt.as_bytes()))
+            .copied();
+        if let Some(belief) = belief {
+            gains.insert(id.clone(), belief.information_gain);
+        }
         branches.push(MeasuredBranch {
             attempt_id: id,
             quality: search.reward(),
@@ -1122,8 +1154,23 @@ pub fn select_next(
             reward: search.reward(),
             expected_gain: search.expected_gain,
             estimator_version: search.estimator_version.clone(),
+            belief,
         });
     }
+    // Information gain ranks only under an admitted version, and only when
+    // every branch has a belief; otherwise the DGM floor ranks.
+    let ranked = gains.len() == branches.len()
+        && estimator::estimator_admitted(vault, ENGINE_ESTIMATOR_VERSION)?;
+    let (ranking, parent_ranking) = if ranked {
+        (
+            SelectionRanking::InformationGain {
+                estimator_version: ENGINE_ESTIMATOR_VERSION.to_owned(),
+            },
+            ParentRanking::InformationGain(gains),
+        )
+    } else {
+        (SelectionRanking::Dgm, ParentRanking::Dgm)
+    };
     let prior_qualities: Vec<f64> = rounds.iter().map(|round| round.best_quality).collect();
     let prior_gains: Vec<f64> = rounds.iter().map(|round| round.best_gain).collect();
     let budget_available = budget::work_available(vault, &binding)?;
@@ -1137,6 +1184,7 @@ pub fn select_next(
         &prior_gains,
         budget_available,
         oracle,
+        &parent_ranking,
     )?;
     let step = match decision {
         SelectionDecision::Fork {
@@ -1172,6 +1220,7 @@ pub fn select_next(
             .map(|branch| branch.expected_gain)
             .fold(0.0_f64, f64::max),
         branches: snapshots,
+        ranking,
         policy_digest: policy_digest(&policy)?,
         budget_available,
         oracle_goal_met: oracle == OracleSignal::GoalMet,
