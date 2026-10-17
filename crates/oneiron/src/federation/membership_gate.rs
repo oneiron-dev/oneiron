@@ -244,7 +244,10 @@ pub(crate) const FIRST_PARTY_MEMBER_ROLES: [FederationGrantRole; 5] = [
 impl Vault {
     /// `person`'s standing in shared vault `vault_id` in the caller's
     /// snapshot. A delegate grant is an attenuated read, not membership, and
-    /// is skipped; a deleted vault holds no standing. `None`: no live grant.
+    /// is skipped; a deleted vault holds no standing. A guest grant is
+    /// ask-scoped and names no vault, so it is evidence only for the shared
+    /// vault whose store holds it: asked about another `vault_id`, it gives
+    /// no standing (FIX 1014). `None`: no live grant.
     pub(crate) fn membership_standing_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -258,6 +261,9 @@ impl Vault {
         if fold.vault_root_is_conflicted() {
             return Err(denied());
         }
+        let guest_vault = self
+            .shared_vault_creation_in_txn(txn)?
+            .map(|creation| creation.vault_id);
         let mut guest = None;
         for entry in self
             .store
@@ -304,7 +310,7 @@ impl Vault {
                         role: grant.role,
                     }));
                 }
-                FederationGrantRole::Guest => {
+                FederationGrantRole::Guest if guest_vault == Some(vault_id) => {
                     guest.get_or_insert(MembershipStanding::ScopedGuest { grant: id });
                 }
                 _ => {}
