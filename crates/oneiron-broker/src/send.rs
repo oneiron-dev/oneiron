@@ -1,7 +1,8 @@
 //! The broker's one send: verified TLS, no redirect, no retry, no proxy, and
 //! no content encoding, so the reply it strips is the reply the daemon reads.
 //! The one exception to "no redirect" is a shape row's own: one hop, to the
-//! path the row names under the same origin, without the key.
+//! path the row names under the same origin (scheme, host and port), with
+//! the key, which goes back only to the host it was already sent to.
 
 use std::future::Future;
 use std::io;
@@ -198,7 +199,7 @@ impl Sender {
 
     /// Sends the request once with the key, and for a shape that follows one
     /// redirect, follows it once: only to the row's path under the call's own
-    /// origin, and without the key or the call's headers. Returns the
+    /// origin, with the key but none of the call's other headers. Returns the
     /// response whose body is the reply, or the outcome that ends the call
     /// before one.
     async fn reach(
@@ -233,13 +234,17 @@ impl Sender {
                 .get(LOCATION)
                 .and_then(|location| location.to_str().ok())
                 .and_then(|location| url.join(location).ok())
-                .filter(|target| target.as_str() == expected)
+                .filter(|target| target.origin() == url.origin() && target.as_str() == expected)
                 .ok_or_else(|| redirected.clone())?;
             drop(response);
+            // The same scheme, host and port the key was just sent to, so
+            // the key goes along: the provider's download hop asks for it.
+            let auth = auth_value(call, secret).map_err(|reason| Outcome::Refused { reason })?;
             let follow = self
                 .client
                 .get(target)
                 .header(ACCEPT_ENCODING, "identity")
+                .header(call.shape.auth_header(), auth)
                 .build()
                 .map_err(|_| redirected.clone())?;
             response = self
@@ -266,15 +271,7 @@ impl Sender {
         body: &[u8],
         secret: &[u8],
     ) -> Result<reqwest::Request, Refusal> {
-        // Only a key the strip rule is sure to find in a reply: ASCII, so no
-        // key byte hides inside a multibyte one, in the rule's own alphabet.
-        if secret.len() < MIN_SECRET || secret.len() > MAX_SECRET || !admits(secret) {
-            return Err(Refusal::Secret);
-        }
-        let mut auth = Zeroizing::new(call.shape.auth_prefix().as_bytes().to_vec());
-        auth.extend_from_slice(secret);
-        let mut auth = HeaderValue::from_bytes(&auth).map_err(|_| Refusal::Secret)?;
-        auth.set_sensitive(true);
+        let auth = auth_value(call, secret)?;
         let method = Method::from_bytes(call.method.as_bytes()).map_err(|_| Refusal::Method)?;
         let mut builder = self
             .client
@@ -290,6 +287,20 @@ impl Sender {
         }
         builder.build().map_err(|_| Refusal::Header)
     }
+}
+
+/// The shape's key header value for `secret`, marked sensitive.
+fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
+    // Only a key the strip rule is sure to find in a reply: ASCII, so no key
+    // byte hides inside a multibyte one, in the rule's own alphabet.
+    if secret.len() < MIN_SECRET || secret.len() > MAX_SECRET || !admits(secret) {
+        return Err(Refusal::Secret);
+    }
+    let mut auth = Zeroizing::new(call.shape.auth_prefix().as_bytes().to_vec());
+    auth.extend_from_slice(secret);
+    let mut auth = HeaderValue::from_bytes(&auth).map_err(|_| Refusal::Secret)?;
+    auth.set_sensitive(true);
+    Ok(auth)
 }
 
 /// Whether the body arrives under a coding the HTTP stack did not undo, so
