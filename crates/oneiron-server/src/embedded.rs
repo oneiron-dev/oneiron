@@ -120,7 +120,7 @@ pub async fn serve_embedded<A: AppHost>(
         mesh_server,
         &crate::handler::mesh::MeshConfig::from_env()?,
         &app,
-        header_read_timeout,
+        config.limits.connections(),
     )
     .await?;
     host.ready()?;
