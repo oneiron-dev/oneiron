@@ -239,14 +239,15 @@ fn payload_units(query: &str, documents: &[&str]) -> u64 {
     u64::try_from(pairs).unwrap_or(u64::MAX)
 }
 
-/// The server's runtime for rerank calls its doors cannot drive on their
-/// caller's (see the module doc): one worker, built on first use, dropped
-/// without waiting for a call still out.
+/// The server's runtime for rerank calls, and the one-space preset's query
+/// embeds, that its doors cannot drive on their caller's (see the module
+/// doc): one worker, built on first use, dropped without waiting for a call
+/// still out.
 #[derive(Default)]
 pub(crate) struct CallRuntime(Mutex<Option<tokio::runtime::Runtime>>);
 
 impl CallRuntime {
-    fn handle(&self) -> MemoryResult<tokio::runtime::Handle> {
+    pub(super) fn handle(&self) -> MemoryResult<tokio::runtime::Handle> {
         let not_started =
             || unavailable("the server could not start a runtime to call the reranker on");
         let mut slot = self.0.lock().map_err(|_| not_started())?;
