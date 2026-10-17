@@ -130,6 +130,8 @@ pub enum ErrorKind {
     SkillContentAnchorTypeMismatch,
     SkillPackageUnavailable,
     InvalidAgentDefBody,
+    InvalidEmbeddingSetupBody,
+    EmbeddingSetupDependencyPending,
     AgentDefinitionNotFound,
     AgentDefinitionDisabled,
     SeededAgentDefinitionConflict,
