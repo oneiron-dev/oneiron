@@ -29,7 +29,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
 use crate::learning::{TeamEvent, project_run_coordination, team_events_from_attempts};
-use crate::learning_setting::{SettingSpec, setting_value_scoped_in_txn};
+use crate::learning_setting::{SettingSpec, setting_value_in_scope_in_txn};
 use crate::llm::run_admission::LeaseUnit;
 use crate::llm::{DreamerTrapKind, OpenTrapWait, open_trap_waits};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
@@ -452,8 +452,8 @@ impl DialBook {
     }
 }
 
-/// The dials one project and task type resolve to. A type row matches its
-/// node at any tree version.
+/// The dials one project and task type resolve to: goal, project, task type,
+/// then vault rows (OF-542). A type row matches its node at any tree version.
 fn read_dials(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -465,7 +465,7 @@ fn read_dials(
         tree_version: 0,
     });
     let value = |spec: &SettingSpec| {
-        setting_value_scoped_in_txn(&vault.store, rtxn, spec, project, type_ref.as_ref())
+        setting_value_in_scope_in_txn(vault, rtxn, spec, project, type_ref.as_ref())
     };
     Ok(Dials {
         review: value(&HEALTH_REVIEW)? >= 0.5,
@@ -582,7 +582,8 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
             .map_or(finding.window.0, |record| {
                 record.claimed_at.unwrap_or(record.created_at)
             });
-        finding.blocked = said_blocked(vault, finding.subject, finding.task, began)?;
+        finding.blocked =
+            said_blocked(vault, finding.subject, finding.task, began, finding.attempt)?;
     }
 
     // Each finding's DIAGNOSTIC, in its own write: the event door opens one.
@@ -856,7 +857,7 @@ fn silent_findings(
             || traps.contains_key(id)
             || runner.parked_attempt(record.id)?.is_some();
         let task = task_of(record);
-        if waiting || said_blocked(vault, dispatch.actor, task, claimed)? {
+        if waiting || said_blocked(vault, dispatch.actor, task, claimed, Some(record.id))? {
             continue;
         }
         let Some(attempt) = entity(record.id) else {
@@ -1115,12 +1116,14 @@ fn p90(mut values: Vec<u64>) -> u64 {
 }
 
 /// Whether the agent said it was stuck: its TASK is Blocked, or it filed a
-/// blocked report (`self.report_blocked`) at or after `since`.
+/// blocked report (`self.report_blocked`) at or after `since` that is
+/// unbound or bound to `attempt`.
 fn said_blocked(
     vault: &Vault,
     actor: EntityId,
     task: Option<EntityId>,
     since: u64,
+    attempt: Option<AttemptId>,
 ) -> Result<bool> {
     let recent = {
         let rtxn = vault.store.env.read_txn()?;
@@ -1148,9 +1151,12 @@ fn said_blocked(
         }
         recent
     };
-    // The report reader opens its own snapshot.
+    // The report reader opens its own snapshot. A report the host bound to
+    // another attempt of the same agent speaks for that one only.
     for id in recent {
-        if crate::code_run::blocked::read_blocked_receipt(vault, &id)?.is_some() {
+        if crate::code_run::blocked::read_blocked_receipt(vault, &id)?
+            .is_some_and(|receipt| receipt.speaks_for(attempt))
+        {
             return Ok(true);
         }
     }
