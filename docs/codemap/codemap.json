@@ -65104,7 +65104,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "crate-vis": 7,
-      "fn": 7,
+      "fn": 13,
       "struct": 1
      }
     },
