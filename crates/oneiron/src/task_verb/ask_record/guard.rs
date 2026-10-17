@@ -83,13 +83,13 @@ pub(crate) fn guard_ask_fact_put(
                 .iter()
                 .map(|member| entity(&member.actor))
                 .collect::<Result<std::collections::BTreeSet<_>>>()?;
+            let effective = group
+                .requested
+                .effective(&who, group.created_at, group.context_class.clone())
+                .map_err(|_| invalid())?;
             if group.base_policy_version != 1
                 || group.members.len() != who.len()
-                || group
-                    .requested
-                    .effective(&who, group.created_at, group.context_class.clone())
-                    .map_err(|_| invalid())?
-                    != group.effective
+                || effective != group.effective
                 || blake3::hash(&rmp_serde::to_vec_named(&group.requested).map_err(|_| invalid())?)
                     .to_hex()
                     .as_str()
@@ -120,6 +120,16 @@ pub(crate) fn guard_ask_fact_put(
                 }
             }
             entity(&group.owner)?;
+            // Local admission and sync replay both keep the group here: its
+            // rows are measured once, on this store's watch, and never
+            // refuse it. A class key no band key can hold still does.
+            crate::task_verb::ask_limits::check_ask_work(
+                store,
+                &group.requested,
+                &effective,
+                who.len(),
+            )
+            .map_err(|_| invalid())?;
         }
         Some(ANSWER) => {
             let fact: AskAnswerFact = decode(data, ANSWER)?.ok_or_else(invalid)?;
@@ -141,6 +151,9 @@ pub(crate) fn guard_ask_fact_put(
             } else if fact.link_proof.is_some() {
                 return Err(invalid());
             }
+            // Kept here whether admitted on this device or replayed: every
+            // reference is kept, and past its row the answer asks.
+            crate::task_verb::ask_limits::measure_answer_provenance(&store.limit_watch, &fact.word);
         }
         Some(crate::task_verb::ask_soft_confirm::SOFT_CONFIRM) => {
             let notice: crate::task_verb::TaskAskSoftConfirmNotice =
@@ -222,9 +235,7 @@ pub(in crate::task_verb) fn validate_notice_companion(
 }
 
 pub(super) fn validate_word(group: &AskGroup, word: &TaskAskWord) -> Result<()> {
-    if word.provenance_refs.len() > 64
-        || (word.companion_for.is_some() && word.inform_for.is_some())
-    {
+    if word.companion_for.is_some() && word.inform_for.is_some() {
         return Err(invalid());
     }
     if word.confirmation.is_some() && (word.inform_for.is_some() || word.companion_for.is_some()) {

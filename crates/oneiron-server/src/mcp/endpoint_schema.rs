@@ -433,15 +433,10 @@ fn verb_argument_field_schema(field: &str) -> Value {
 
         }),
         "task_ref" | "room_ref" | "turn_ref" => entity_id_schema(),
-        // The advertised ceiling IS the writer's ceiling, stated in the closed
-        // schema so a caller learns the bound from `tools/list` instead of from
-        // a refusal. `maxLength` counts code points, so the byte bound the
-        // runtime enforces is the narrower of the two by construction.
         "label" => json!({
             "type": "string",
             "minLength": 1,
             "pattern": "\\S",
-            "maxLength": oneiron::context_board::TASK_LABEL_MAX_BYTES,
         }),
         _ => json!({}),
     }

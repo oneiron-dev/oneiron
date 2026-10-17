@@ -79,6 +79,8 @@ impl Memory<'_> {
             now,
             context_class.clone(),
         )?;
+        // Its rows are measured where the group is kept, once.
+        super::ask_limits::check_ask_keys(&self.vault().store, input, &effective)?;
         self.ask_question_in(txn, &effective.what)?;
         // One ask counts once on the asker's ask window, whatever its
         // recipients; a replay returned above never counts again.
@@ -554,7 +556,7 @@ impl Memory<'_> {
         step_key: Option<&str>,
         observed_generation: u64,
     ) -> MemoryResult<TaskAskWait> {
-        if step_key.is_some_and(|key| key.is_empty() || key.len() > 256) {
+        if step_key.is_some_and(str::is_empty) {
             return Err(MemoryError::bad_request("invalid wait step key"));
         }
         self.with_verified_actor_write_txn(|txn| {
@@ -645,10 +647,8 @@ fn require_ask_audience(group: &AskGroup, actor: EntityId) -> MemoryResult<()> {
 /// The intent-key check every admission runs first, and the request digest
 /// a replay is held to.
 fn ask_admission_digest(input: &TaskAskSpec) -> MemoryResult<String> {
-    if input.intent_key.trim().is_empty() || input.intent_key.len() > 256 {
-        return Err(MemoryError::bad_request(
-            "ask intent key must contain 1..=256 bytes",
-        ));
+    if input.intent_key.trim().is_empty() {
+        return Err(MemoryError::bad_request("ask intent key must not be blank"));
     }
     ask_request_digest(input)
 }
@@ -690,8 +690,6 @@ impl Memory<'_> {
         )?)
     }
 }
-
-const MAX_WAITS_PER_ASK: usize = 64;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct WaitRow {
@@ -751,13 +749,15 @@ impl Memory<'_> {
         let mut row = if let Some(row) = TASK_ASK_WAITS.get(&self.vault().store, txn, &key)? {
             row
         } else {
-            let count = TASK_ASK_WAITS
+            // Every identity the ask holds counts, consumed ones too; past
+            // its row the wait asks and is bound anyway.
+            let held = TASK_ASK_WAITS
                 .iter_from(&self.vault().store, txn, handle.group_ref.as_bytes())?
-                .take(MAX_WAITS_PER_ASK)
-                .try_fold(0, |count, row| row.map(|_| count + 1))?;
-            if count >= MAX_WAITS_PER_ASK {
-                return Err(MemoryError::bad_request("ask waiter limit reached"));
-            }
+                .try_fold(0u64, |count, row| row.map(|_| count.saturating_add(1)))?;
+            self.vault().limit_watch().measure(
+                crate::limit_ask::EngineLimit::AskWaitIdentities,
+                held.saturating_add(1),
+            );
             // Answer-before-wait needs only bounded exactly-once bookkeeping.
             // Do not mint a detached step or a trap for a completed answer.
             let trap_ref = if matches!(status, TaskAskStatus::Pending { .. }) {

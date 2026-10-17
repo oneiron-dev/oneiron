@@ -236,6 +236,14 @@ impl LimitsConfig {
             code_result_session_memory_bytes,
             image_room_bytes,
             code_reader_backlog,
+            ask_options,
+            ask_option_text_bytes,
+            ask_context_refs,
+            ask_recipients,
+            ask_spec_msgpack_bytes,
+            ask_reminders,
+            answer_provenance_refs,
+            ask_wait_identities,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -282,6 +290,14 @@ impl LimitsConfig {
             ),
             (EngineLimit::ImageRoomBytes, image_room_bytes),
             (EngineLimit::CodeReaderBacklog, code_reader_backlog),
+            (EngineLimit::AskOptions, ask_options),
+            (EngineLimit::AskOptionTextBytes, ask_option_text_bytes),
+            (EngineLimit::AskContextRefs, ask_context_refs),
+            (EngineLimit::AskRecipients, ask_recipients),
+            (EngineLimit::AskSpecMsgpackBytes, ask_spec_msgpack_bytes),
+            (EngineLimit::AskReminders, ask_reminders),
+            (EngineLimit::AnswerProvenanceRefs, answer_provenance_refs),
+            (EngineLimit::AskWaitIdentities, ask_wait_identities),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -397,4 +413,12 @@ pub(super) struct LimitsConfigOverride {
     pub(super) code_result_session_memory_bytes: Option<u64>,
     pub(super) image_room_bytes: Option<u64>,
     pub(super) code_reader_backlog: Option<u64>,
+    pub(super) ask_options: Option<u64>,
+    pub(super) ask_option_text_bytes: Option<u64>,
+    pub(super) ask_context_refs: Option<u64>,
+    pub(super) ask_recipients: Option<u64>,
+    pub(super) ask_spec_msgpack_bytes: Option<u64>,
+    pub(super) ask_reminders: Option<u64>,
+    pub(super) answer_provenance_refs: Option<u64>,
+    pub(super) ask_wait_identities: Option<u64>,
 }

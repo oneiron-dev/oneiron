@@ -17,7 +17,6 @@ use super::signal::RunAsk;
 const WAITS: SideTable<[u8; 80], WaitBinding, Named> =
     SideTable::new(&side_table::RUN_TREE_ASK_WAIT);
 const WAIT_DOMAIN: &[u8] = side_table::RUN_TREE_ASK_WAIT.prefix;
-const MAX_WAITS_PER_ASK: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunAskWait {
@@ -106,12 +105,9 @@ pub(super) fn signal_waiters_in_txn(
     handle: &str,
     at_ms: u64,
 ) -> Result<()> {
+    // Every waiting step wakes in this commit, however many: each was
+    // measured against its row when it was bound.
     let rows = WAITS.scan_from(&vault.store, txn, &wait_prefix(branch, handle))?;
-    if rows.len() > MAX_WAITS_PER_ASK {
-        return Err(Error::InvalidConfig(
-            "ask wait binding limit exceeded".into(),
-        ));
-    }
     for (_, binding) in rows {
         if binding.handle != handle {
             return Err(Error::InvalidConfig(
@@ -177,16 +173,16 @@ impl RunTreeAdapter<'_> {
         if ask.answers.len() == ask.questions.len() {
             return Ok(RunAskWait::Available(ask));
         }
+        // Every identity the branch's ask holds counts, consumed ones too;
+        // past its row the step asks and is bound anyway.
         let prefix = wait_prefix(ctx.attempt_id, handle);
-        let count = WAITS
+        let held = WAITS
             .iter_from(&self.vault.store, &txn, &prefix)?
-            .take(MAX_WAITS_PER_ASK)
-            .try_fold(0, |count, row| row.map(|_| count + 1))?;
-        if count >= MAX_WAITS_PER_ASK {
-            return Err(Error::InvalidConfig(
-                "ask wait binding limit exceeded".into(),
-            ));
-        }
+            .try_fold(0u64, |count, row| row.map(|_| count.saturating_add(1)))?;
+        self.vault.limit_watch().measure(
+            crate::limit_ask::EngineLimit::AskWaitIdentities,
+            held.saturating_add(1),
+        );
         let mut hash = blake3::Hasher::new();
         hash.update(WAIT_DOMAIN);
         hash.update(ctx.attempt_id.as_bytes());

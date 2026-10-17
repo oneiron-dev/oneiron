@@ -38,6 +38,7 @@ impl Memory<'_> {
             self.ask_class_in_txn(&txn, input.task_ref)?
                 .map(|(_, class)| class),
         )?;
+        super::ask_limits::check_ask_work(&self.vault().store, input, &effective, holders.len())?;
         self.ask_question_in(&txn, &effective.what)?;
         if let Some(TaskAskTarget::Guests(guests)) = &effective.who {
             for (person, guest) in guests {
@@ -143,12 +144,12 @@ impl Memory<'_> {
         let class = self
             .ask_class_in_txn(txn, input.task_ref)?
             .map(|(_, class)| class);
-        input.effective(
+        let effective = input.effective(
             &holders.iter().copied().collect(),
             self.vault().store.clock.now_recorded_at(),
             class,
         )?;
-        Ok(())
+        super::ask_limits::check_ask_keys(&self.vault().store, input, &effective)
     }
 
     /// Reads an ask's question and context rows as the ask reads them: each

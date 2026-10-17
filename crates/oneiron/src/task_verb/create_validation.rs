@@ -3,7 +3,6 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::context_board::TASK_LABEL_MAX_BYTES;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::human_task::HumanTaskError;
@@ -168,16 +167,12 @@ pub(super) struct ValidatedTaskCreate {
     pub(super) type_ref: crate::task_type::TaskTypeRef,
 }
 
-/// Refuses a TASK label the board cannot render: a present label must carry a
-/// non-whitespace character and fit [`TASK_LABEL_MAX_BYTES`].
+/// Refuses a blank TASK label: a present label must carry a non-whitespace
+/// character. A label of any length is stored and read whole; the board shows
+/// a bounded preview of a long one.
 pub fn check_task_label(label: &str) -> MemoryResult<()> {
     if label.trim().is_empty() {
         return Err(MemoryError::bad_request("task label must not be blank"));
-    }
-    if label.len() > TASK_LABEL_MAX_BYTES {
-        return Err(MemoryError::bad_request(format!(
-            "task label must be at most {TASK_LABEL_MAX_BYTES} bytes"
-        )));
     }
     Ok(())
 }

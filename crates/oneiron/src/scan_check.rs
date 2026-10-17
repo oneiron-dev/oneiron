@@ -125,11 +125,14 @@ pub enum EngineScan {
     /// The contact claims naming a party, which an external send reads when
     /// a party-wide opt-out stands for its party and no contact row held it.
     PartyContactClaims,
+    /// The soft-confirm notice deliveries one retry sweep's page reads,
+    /// settled ones included.
+    AskSoftConfirmDeliveryRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 38] = [
+    pub const ALL: [Self; 39] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -168,6 +171,7 @@ impl EngineScan {
         Self::ProjectTaskRows,
         Self::PendingCommStops,
         Self::PartyContactClaims,
+        Self::AskSoftConfirmDeliveryRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -220,6 +224,7 @@ impl EngineScan {
             Self::ProjectTaskRows => "project_task_rows",
             Self::PendingCommStops => "pending_comm_stops",
             Self::PartyContactClaims => "party_contact_claims",
+            Self::AskSoftConfirmDeliveryRows => "ask_soft_confirm_delivery_rows",
         }
     }
 
@@ -263,6 +268,7 @@ impl EngineScan {
             Self::ProjectTaskRows => 42,
             Self::PendingCommStops => 64,
             Self::PartyContactClaims => 65,
+            Self::AskSoftConfirmDeliveryRows => 66,
         }]
     }
 }
