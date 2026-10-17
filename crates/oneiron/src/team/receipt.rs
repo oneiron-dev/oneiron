@@ -122,13 +122,15 @@ pub struct TeamReceipt {
     pub shape: TeamShape,
     pub decided_by: DecidedBy,
     pub coverage: Option<Coverage>,
-    /// Confessions on the team's attempts. Control evidence only.
-    pub confessions: u32,
+    /// Confessions on the team's attempts. Control evidence only. `None`:
+    /// the host could not count them in full.
+    pub confessions: Option<u32>,
     /// Spend against the hard cap stated before launch, in the cap's unit.
     pub spend: Option<f64>,
     pub spend_cap: Option<f64>,
     pub elapsed_secs: u64,
-    pub calls: u64,
+    /// The team's calls. `None`: the host could not count them in full.
+    pub calls: Option<u64>,
     pub outcome: Option<TeamOutcome>,
     pub at: u64,
 }
@@ -237,21 +239,34 @@ pub fn settle_team_outcome(
     team_ref: &str,
     outcome: &TeamOutcome,
 ) -> Result<TeamReceipt> {
+    vault.with_write_txn_grouped(|wtxn| settle_team_outcome_in_txn(vault, wtxn, team_ref, outcome))
+}
+
+/// [`settle_team_outcome`] in the caller's transaction, so the source of the
+/// anchor, the outcome and its learning evidence land together.
+///
+/// # Errors
+///
+/// As [`settle_team_outcome`].
+pub(crate) fn settle_team_outcome_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    team_ref: &str,
+    outcome: &TeamOutcome,
+) -> Result<TeamReceipt> {
     bounded(
         &outcome.receipt,
         "an outcome receipt is 1..=256 bytes without NUL",
     )?;
-    vault.with_write_txn_grouped(|wtxn| {
-        let mut receipt = TEAM_RECEIPT
-            .get(&vault.store, wtxn, &team_ref.to_owned())?
-            .ok_or(Error::EntityNotFound)?;
-        receipt.outcome = Some(outcome.clone());
-        TEAM_RECEIPT.put(&vault.store, wtxn, &receipt.team_ref, &receipt)?;
-        if let Some(skill) = &receipt.pattern_skill {
-            feed_pattern_payoff_in_txn(vault, wtxn, &receipt, skill.skill, outcome)?;
-        }
-        Ok(receipt)
-    })
+    let mut receipt = TEAM_RECEIPT
+        .get(&vault.store, wtxn, &team_ref.to_owned())?
+        .ok_or(Error::EntityNotFound)?;
+    receipt.outcome = Some(outcome.clone());
+    TEAM_RECEIPT.put(&vault.store, wtxn, &receipt.team_ref, &receipt)?;
+    if let Some(skill) = &receipt.pattern_skill {
+        feed_pattern_payoff_in_txn(vault, wtxn, &receipt, skill.skill, outcome)?;
+    }
+    Ok(receipt)
 }
 
 fn feed_pattern_payoff_in_txn(
@@ -284,7 +299,16 @@ fn feed_pattern_payoff_in_txn(
 /// Storage errors.
 pub fn team_receipt(vault: &Vault, team_ref: &str) -> Result<Option<TeamReceipt>> {
     let rtxn = vault.store.env.read_txn()?;
-    TEAM_RECEIPT.get(&vault.store, &rtxn, &team_ref.to_owned())
+    team_receipt_in_txn(vault, &rtxn, team_ref)
+}
+
+/// [`team_receipt`] in the caller's snapshot.
+pub(super) fn team_receipt_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    team_ref: &str,
+) -> Result<Option<TeamReceipt>> {
+    TEAM_RECEIPT.get(&vault.store, txn, &team_ref.to_owned())
 }
 
 /// Every team receipt, optionally only those of one task type.

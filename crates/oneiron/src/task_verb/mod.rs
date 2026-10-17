@@ -247,6 +247,7 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
+pub(crate) use ask_option_link::deliver_ask_change_in_txn;
 pub(crate) use ask_option_link::{
     ack_option_void_generation, has_option_link_void, option_void_generation,
 };
@@ -259,6 +260,7 @@ pub(crate) use ask_record::{
 pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
+pub(crate) use lifecycle_facade::deliver_task_result_in_txn;
 
 pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};
 
