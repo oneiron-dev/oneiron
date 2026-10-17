@@ -834,8 +834,10 @@ oldest first (50 unless `limit` says fewer, at most 500). Each ask carries:
 - the principal it is for, and the evidence ids;
 - why it was asked;
 - the answer the ladder held, if any, and the model that read it;
-- your answer, once given.
-`open=true` keeps only the unanswered asks.
+- your answer, once given;
+- `withdrawn_at`, when the decision stopped waiting on it (an exploration
+  overrun ask that lapsed, for example).
+`open=true` keeps only the asks that are neither answered nor withdrawn.
 
 Answer one with `POST /v1/owner/decisions/asks/answer`:
 
@@ -848,7 +850,8 @@ options) or `score` (a number in its range). An abstention is not an answer.
 The decision waiting on the ask gets your answer. When your answer differs
 from the ladder's, the case is kept for the Coach, which tunes when the
 ladder asks you. Sending the same answer again changes nothing. A different
-answer to an answered ask is refused.
+answer to an answered ask is refused, and so is any answer to a withdrawn
+ask.
 
 ## The vault key on a new host
 
@@ -1116,6 +1119,10 @@ Each REST route (`POST /v1/core/conversations`, `.../{id}/turns`, `.../{id}/reco
 instead when the request is larger than one action argument (16 KiB of JSON), names a room
 turn, or comes from a credential that binds no person or agent. The route picks the path before
 it writes. A TURN write wakes the Dreamer once on either path.
+
+A running server holds the frame of each card `vault.lenses.default` returns, for your credential:
+- `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotencyKey"}` runs one event.
+- `DELETE /v1/core/lens-frames/{card_id}` closes the card; an unknown card answers `NOT_FOUND`.
 
 ## Widen proposals
 

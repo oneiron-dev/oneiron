@@ -1,8 +1,8 @@
 //! `vault.artifacts.body.deck.*`: the deck doors the generic body verbs do
 //! not cover, as agent verbs (FIX 2284). The generic rows read, edit, fork,
 //! edit a fork of and discard a deck; these review and land a deck fork,
-//! project and land an export, and read and record the export gate's oracle
-//! receipt. Each binds the facade's actor as the generic rows do. A deck
+//! project and land an export (or hold a closed-gate one for Keep), and read
+//! and record the export gate's oracle receipt. Each binds the facade's actor as the generic rows do. A deck
 //! fork merges by a person other than its opener, as an office fork does
 //! (CALLS "OF-505 body verbs").
 
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::{PptxBody, PptxReview};
 use crate::blob_artifact::BlobVersionProvenance;
 use crate::edge::EdgeActorClass;
+use crate::edit_settle::PendingProposalView;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::office_body::OfficeBodyExportRecord;
 use oneiron_docedit::edit::Preset;
@@ -40,6 +41,8 @@ pub struct DeckForkMergeRequest {
 
 /// `vault.artifacts.body.deck.export`: project the deck at its head, and
 /// land it as the artifact's next version when the export gate is open.
+/// While it is closed, the projection waits beside the artifact as a
+/// proposal under `run_ref`, for a person to keep or discard.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeckExportRequest {
@@ -115,7 +118,7 @@ pub struct DeckReviewView {
 /// `vault.artifacts.body.deck.export`: the projection, and the version it
 /// landed. Nothing lands while the gate is closed (the projection is a
 /// proposal) or when the deck equals its retained package.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckExportView {
     pub frontier: Vec<u8>,
     pub profile: String,
@@ -124,7 +127,14 @@ pub struct DeckExportView {
     pub noop: bool,
     pub changed_parts: Vec<String>,
     pub record: Option<OfficeBodyExportRecord>,
+    /// A closed-gate projection waiting beside the artifact for Keep under
+    /// the request's run ref; `None` when it landed or changed nothing.
+    pub proposed: Option<PendingProposalView>,
 }
+
+/// Whether a closed-gate export waits as a proposal for Keep (CALLS
+/// "OF-510 closed-gate deck export"); otherwise its bytes are dropped.
+const CLOSED_GATE_EXPORT_WAITS: bool = true;
 
 /// `vault.artifacts.body.deck.gate` and `.oracle`: one profile's export
 /// gate, open only on a clean all-pass receipt for the current projector.
@@ -270,6 +280,19 @@ impl Memory<'_> {
         } else {
             None
         };
+        let proposed = if CLOSED_GATE_EXPORT_WAITS && !export.authoritative && !export.outcome.noop
+        {
+            let made_by = self.body_made_by(input.made_by.as_ref(), "office_body.deck_export")?;
+            Some(self.vault().propose_pptx_export(
+                &artifact,
+                &export,
+                &input.run_ref,
+                self.body_actor(),
+                &made_by,
+            )?)
+        } else {
+            None
+        };
         Ok(DeckExportView {
             frontier: export.frontier,
             profile: export.outcome.key.profile,
@@ -278,6 +301,7 @@ impl Memory<'_> {
             noop: export.outcome.noop,
             changed_parts: export.outcome.changed_parts,
             record,
+            proposed,
         })
     }
 
