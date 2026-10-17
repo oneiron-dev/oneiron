@@ -27,7 +27,7 @@ const WORDING: &str = "Which fix does this agent need so its work can go on? \
     grant or a connector it needs is missing or broken, and person when none of \
     these fits or a person must look.";
 const TICK: Duration = Duration::from_secs(5);
-const LEASE_OWNER: &str = "coach.host";
+pub(super) const LEASE_OWNER: &str = "coach.host";
 /// The Coach's own admission counter. Its questions spend on the decision
 /// ladder's meters, so each lease reserves one unit and gives it back.
 const BUDGET_ID: &str = "coach.heal";
@@ -78,7 +78,7 @@ fn round(server: &SyncServer) -> oneiron::Result<()> {
             _ => return Ok(()),
         };
         let ran = run_one(server, &admitted, now);
-        settle(vault, &store, &admitted, ran)?;
+        settle(vault, &store, &admitted, ran, BUDGET_ID)?;
     }
     Ok(())
 }
@@ -120,12 +120,13 @@ fn run_one(
     Ok(())
 }
 
-/// Completes or fails the lease, then gives its unit back.
-fn settle(
+/// Completes or fails the lease, then gives its unit back to `budget_id`.
+pub(super) fn settle(
     vault: &oneiron::Vault,
     store: &DreamerRunnerStore<'_>,
     admitted: &DreamerAdmittedAttempt,
     ran: oneiron::Result<()>,
+    budget_id: &str,
 ) -> oneiron::Result<()> {
     let attempt = &admitted.status.attempt;
     let now = vault.now_recorded_at();
@@ -139,18 +140,19 @@ fn settle(
             })?;
         }
         Err(error) => {
-            tracing::warn!(kind = ?error.kind(), "a Coach heal attempt failed");
+            let facet = &admitted.status.payload.attempt_type;
+            tracing::warn!(kind = ?error.kind(), %facet, "a Coach attempt failed");
             store.fail(FailDreamerAttempt {
                 id: attempt.id,
                 lease_owner: LEASE_OWNER.to_owned(),
                 attempt_count: attempt.attempt_count,
-                reason: format!("coach heal failed: {:?}", error.kind()),
+                reason: format!("{facet} failed: {:?}", error.kind()),
                 now,
             })?;
         }
     }
     store.abort_budget_reservation(AbortDreamerBudgetReservation {
-        budget_id: BUDGET_ID.to_owned(),
+        budget_id: budget_id.to_owned(),
         child_attempt: attempt.id,
         now,
     })?;
