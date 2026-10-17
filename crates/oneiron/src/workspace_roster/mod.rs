@@ -149,8 +149,8 @@ pub(crate) use project::{
     GoalLimits, HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, PROJECT_PACK, PROJECT_SHORT_ID_PREFIX,
     ProjectReader, admit_leader_chat_turn, admit_leader_chat_witness, deindex_project_room,
     guard_goal_claim_put, guard_goal_delete, guard_goal_pointer_put, is_project_entity,
-    is_project_type, leader_chat_allowed, leader_chat_record_permitted, normalize_project_body,
-    note_project_proof, permit_leader_chat_record, precheck_goal_delete,
+    is_project_type, leader_chat_allowed, leader_chat_reader_in, leader_chat_record_permitted,
+    normalize_project_body, note_project_proof, permit_leader_chat_record, precheck_goal_delete,
     project_mint_gate_refs_in_txn, project_room_dependency, reconcile_project_rooms,
     retire_goal_for_delete, room_facets_in, root_project_in, seed_root_project,
     settle_leader_chat_record, validate_local_leader_chat_turns, validate_project_body,
@@ -189,7 +189,7 @@ pub(crate) use rooms::RoomThreadTask;
 pub use rooms::{HostPin, HostPinKind, RoomHostHand, RoomHostPin};
 pub use rooms::{
     OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferReopenRequest, OfferSettlement,
-    OfferState, OfferVoteRequest, OffersPage, OffersRequest,
+    OfferState, OfferVoteRequest, OfferVoteTally, OffersPage, OffersRequest,
 };
 pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};

@@ -153,7 +153,7 @@ impl Default for RoomThreadPolicy {
 
 /// A root names a trunk anchor; continuations inherit that same anchor but
 /// point at a turn inside the thread rather than at the trunk itself.
-pub(super) fn is_thread_root(turn: &RoomTurn) -> bool {
+pub(in crate::workspace_roster) fn is_thread_root(turn: &RoomTurn) -> bool {
     turn.thread_of.as_ref().is_some_and(|anchor| {
         turn.reply_to
             .as_deref()
