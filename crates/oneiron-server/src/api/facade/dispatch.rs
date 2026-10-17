@@ -596,19 +596,17 @@ async fn vault_fanout_resume(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.fanout.resume")?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "vault.fanout.resume",
-        value,
-        &producers,
+    oneiron::task_verb::sdk::validate_input("vault.fanout.resume", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.fanout.resume", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_fanout_resume(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
 }
 async fn vault_fanout_ack(
     server: &Arc<SyncServer>,
@@ -618,19 +616,17 @@ async fn vault_fanout_ack(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.fanout.ack")?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "vault.fanout.ack",
-        value,
-        &producers,
+    oneiron::task_verb::sdk::validate_input("vault.fanout.ack", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.fanout.ack", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_fanout_ack(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
 }
 async fn tasks_update(
     server: &Arc<SyncServer>,

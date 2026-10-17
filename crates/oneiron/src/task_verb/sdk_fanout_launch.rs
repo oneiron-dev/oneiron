@@ -2,11 +2,14 @@
 //! launched fan-out, `vault.fanout.resume` is the owner's ruling on a held
 //! launch, and `vault.fanout.ack` the owner's answer to the width check of a
 //! fan-out that already went out. A ruling names the plan digest the owner
-//! saw, as lower hex.
+//! saw, as lower hex. The two rulings are host doors: a server passes the
+//! owner proof its request carried (`*_as`), an embedded handle its own
+//! embedded owner.
 use serde::{Deserialize, Serialize};
 
 use super::{ConsultFanOutChoice, FanoutCheckChoice, FanoutLaunchReceipt};
 use crate::agent_dispatch::FanoutStatement;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
@@ -107,7 +110,20 @@ pub fn resume_fanout_launch_embedded(
     memory: &Memory<'_>,
     input: FanoutResumeRequest,
 ) -> MemoryResult<FanoutLaunchView> {
-    let owner = memory.embedded_owner("vault.fanout.resume")?;
+    resume_fanout_launch_as(
+        memory,
+        &memory.embedded_owner("vault.fanout.resume")?,
+        input,
+    )
+}
+
+/// `vault.fanout.resume` under the owner's proof; the engine door
+/// revalidates it in its own transaction.
+pub fn resume_fanout_launch_as(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: FanoutResumeRequest,
+) -> MemoryResult<FanoutLaunchView> {
     let choice = match input.ruling {
         FanoutLaunchRuling::ApproveOnce => ConsultFanOutChoice::ApproveOnce,
         FanoutLaunchRuling::ApproveAndRemember => ConsultFanOutChoice::ApproveAndRemember,
@@ -118,7 +134,7 @@ pub fn resume_fanout_launch_embedded(
             input.launch_ref,
             plan_digest(&input.plan_digest)?,
             choice,
-            &owner,
+            owner,
             input.remembered_cap,
         )?
         .into())
@@ -129,13 +145,22 @@ pub fn ack_fanout_check_embedded(
     memory: &Memory<'_>,
     input: FanoutAckRequest,
 ) -> MemoryResult<FanoutLaunchView> {
-    let owner = memory.embedded_owner("vault.fanout.ack")?;
+    ack_fanout_check_as(memory, &memory.embedded_owner("vault.fanout.ack")?, input)
+}
+
+/// `vault.fanout.ack` under the owner's proof; the engine door revalidates
+/// it in its own transaction.
+pub fn ack_fanout_check_as(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: FanoutAckRequest,
+) -> MemoryResult<FanoutLaunchView> {
     Ok(memory
         .ack_task_fanout_check(
             input.launch_ref,
             plan_digest(&input.plan_digest)?,
             input.answer,
-            &owner,
+            owner,
             input.remembered_cap,
         )?
         .into())
