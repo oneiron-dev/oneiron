@@ -19,7 +19,7 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "get",
         path: "/authority/handoff-alarms",
-        summary: "Every saved alarm, open ones first.",
+        summary: "Every saved alarm in the shape and order vault.authority.handoff_alarms answers (OF-158): unix seconds, oldest raised first, then by signer.",
         row: None,
     },
     OwnerRoute {
@@ -157,7 +157,7 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "get",
         path: "/conflicts/settled",
-        summary: "(optionally ?subject=<32 hex>&limit=<n>): the standing settlements, the Dreamer's among them, newest first.",
+        summary: "The standing settlements, the Dreamer's among them, newest first.",
         row: None,
     },
     OwnerRoute {
@@ -343,7 +343,7 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "get",
         path: "/disclosure/entry",
-        summary: "(or &session_key=..&speaker_key=..): one attendee's first entry into a chat or room, the P5 question the owner answers once.",
+        summary: "One attendee's first entry into a chat or room, the P5 question the owner answers once.",
         row: None,
     },
     OwnerRoute {
@@ -397,7 +397,19 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "get",
         path: "/dreamer/changes",
-        summary: "(optionally ?limit=<n>): the Dreamer's standing changes, newest first, and the people whose about it wrote.",
+        summary: "The Dreamer's standing changes, newest first, and the people whose about it wrote.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/dreamer/maintenance/applied",
+        summary: "Every applied write, reverted ones too, newest first.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/dreamer/maintenance/revert",
+        summary: "The owner's revert of one applied write.",
         row: None,
     },
     OwnerRoute {
@@ -1244,6 +1256,18 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/skills/judge/measure",
         summary: "Measures an open proposal on its goal's plan with the registered judge and live arms, and keeps the report for the gate.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/skills/judge/pairs",
+        summary: "Every pick the owner made between a blind preference pair's two responses.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/skills/judge/pairs/pick",
+        summary: "The owner's pick between a blind preference pair's two responses.",
         row: None,
     },
     OwnerRoute {
