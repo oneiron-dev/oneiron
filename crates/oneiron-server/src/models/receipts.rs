@@ -58,6 +58,11 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "route": id(&facts.route),
             "locality": facts.locality,
             "payer": facts.payer,
+            // A room-paid call's payer PERSON, root scope and which account
+            // it bills (OF-531); never the account itself.
+            "payer_person": facts.payer_person.as_ref().map(|payer| payer.person.to_hex()),
+            "payer_scope": facts.payer_person.as_ref().map(|payer| id(payer.root_scope.as_str())),
+            "billed": facts.payer_person.as_ref().map(|payer| payer.account.kind()),
             "reserved_units": facts.reserved_units,
             "unit": unit_name(&facts.unit),
             "allocation_reserved_units": facts.allocation_reserved_units,

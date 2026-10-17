@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 303 facade rows, 1172 declarations.
-Inputs: 260 of 303 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 261 of 303 fully typed, 42 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 308 facade rows, 1186 declarations.
+Inputs: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
@@ -468,6 +468,10 @@ ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStatePr
 class ShapeApplyItem(TypedDict):
     item: ShapePlanItem
     state: ShapeItemState
+class ShapeApplyRun(TypedDict):
+    run_id: str
+    root: str
+    items: list[str]
 class ShapeApplyReceipt(TypedDict):
     frontier: str
     seed_id: str
@@ -475,6 +479,7 @@ class ShapeApplyReceipt(TypedDict):
     started_at: int
     items: list[ShapeApplyItem]
     done: bool
+    run: ShapeApplyRun
 class ShapeRead(TypedDict):
     seed: NotRequired[StoredShapeSeed | None]
     live: ShapeSeed
@@ -2492,6 +2497,40 @@ class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
+ResidenceModeName = Literal["opened", "all"]
+class ResidenceModeRequest(TypedDict):
+    machine: EntityId
+    mode: ResidenceModeName
+class ResidenceModeChanged(TypedDict):
+    mode: ResidenceModeName
+    retained: list[str]
+    unsynced: list[str]
+    pruned_items: int
+class ResidenceOpenRequest(TypedDict):
+    machine: EntityId
+    window: str
+    item: EntityId
+class ResidenceOpened(TypedDict):
+    item: EntityId
+    window: str
+    residence: str
+    bytes: int
+class ResidenceMachineRequest(TypedDict):
+    machine: EntityId
+class ResidenceIndexEntry(TypedDict):
+    entity_id: str
+    title: NotRequired[str | None]
+    learned_at: int
+class ResidenceIndexWindowView(TypedDict):
+    window: str
+    items: list[ResidenceIndexEntry]
+class ResidenceIndex(TypedDict):
+    windows: list[ResidenceIndexWindowView]
+class ResidencePruneRequest(TypedDict):
+    machine: EntityId
+    before: int
+class ResidencePruned(TypedDict):
+    dropped: int
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):
@@ -5168,6 +5207,22 @@ class ConnectorSchemaReply(TypedDict):
     input_schema: NotRequired[Any | None]
     destructive: NotRequired[bool | None]
     reasons: NotRequired[list[str]]
+class ConnectorCallStatusRequest(TypedDict):
+    call_ref: str
+class ConnectorCallStatusPending(TypedDict):
+    state: Literal["pending"]
+    call_ref: str
+    name: str
+    tool: str
+    held_at_ms: int
+    reasons: NotRequired[list[str]]
+class ConnectorCallStatusSettled(TypedDict):
+    state: Literal["settled"]
+    call_ref: str
+    name: str
+    tool: str
+    reply: ConnectorCallReply
+ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
 class CommitRequest(TypedDict):
     claims: list[ClaimInput]
 class ClaimRefRequest(TypedDict):

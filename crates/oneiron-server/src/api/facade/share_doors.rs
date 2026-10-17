@@ -6,7 +6,8 @@
 //! Both act as the credential's own principal, built as
 //! `vault.shares.create` builds its issuer: the slip's principal ref and
 //! actor class, on a handle whose reads are bound to the same credential.
-//! Neither takes an actor, a revoker or a viewer from the request.
+//! Neither takes an actor, a revoker or a viewer from the request. Each
+//! answers beside the rows its reads listed (`host_door_lists`).
 use std::sync::Arc;
 
 use oneiron::claim::ScopedReadResult;
@@ -15,7 +16,7 @@ use oneiron::receipt::{ShareRevokeReceipt, SharedBriefView};
 use oneiron::task_verb::sdk::{ShareRevokeRequest, ShareViewRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, credential_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -27,18 +28,16 @@ pub(crate) async fn vault_shares_revoke(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ShareRevokeRequest,
-) -> MemoryResult<ShareRevokeReceipt> {
+) -> Listed<ShareRevokeReceipt> {
     const VERB: &str = "vault.shares.revoke";
-    let (actor, class) = principal(auth, VERB)?;
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-            .at(auth.locality());
+    let caller = match principal(auth, VERB) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         oneiron::task_verb::sdk::revoke_share_as_caller(&memory, input)
     })
     .await
-    .map_err(|_| internal(VERB))?
 }
 
 /// `vault.shares.view`: the credential's principal opens a shared brief
@@ -48,18 +47,16 @@ pub(crate) async fn vault_shares_view(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ShareViewRequest,
-) -> MemoryResult<ScopedReadResult<Option<SharedBriefView>>> {
+) -> Listed<ScopedReadResult<Option<SharedBriefView>>> {
     const VERB: &str = "vault.shares.view";
-    let (actor, class) = principal(auth, VERB)?;
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-            .at(auth.locality());
+    let caller = match principal(auth, VERB) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         oneiron::task_verb::sdk::view_shared_brief_as_caller(&memory, input)
     })
     .await
-    .map_err(|_| internal(VERB))?
 }
 
 /// The credential's own principal, as the facade binds a write to one. An
