@@ -8412,7 +8412,7 @@
      "path": "src/channel_identity/assignment.rs",
      "purpose": "Two-slot channel assignment index",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
      }
     },
     {
@@ -8473,7 +8473,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelIdentityFacts"
@@ -8481,8 +8481,8 @@
      "path": "src/channel_identity/facts.rs",
      "purpose": "Channel facts as claims (OF-272): every write of a ChannelIdentity row moves its `channel_identity.*` heads…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 1,
+      "crate-vis": 3,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -10018,7 +10018,7 @@
      "purpose": "Per-reader report schedules (OF-499)",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 10,
       "struct": 2
@@ -10046,7 +10046,7 @@
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
       "const": 3,
-      "crate-vis": 7,
+      "crate-vis": 11,
       "fn": 2,
       "struct": 5
      }
@@ -10868,7 +10868,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "fn": 8,
       "re-export": 2,
       "struct": 1,
@@ -11194,7 +11194,7 @@
      "path": "src/code_run/storage/reader_folds.rs",
      "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -18398,6 +18398,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/detectors.rs",
+     "purpose": "The Coach's nightly detector pass (ARCH-0066 §4, OF-298): the tier-1 sweep over Gate receipts plus the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -18496,7 +18506,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 10,
+      "mod": 11,
       "re-export": 4
      }
     },
@@ -29671,8 +29681,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 43,
-      "fn": 28,
+      "crate-vis": 44,
+      "fn": 30,
       "struct": 2,
       "type": 1
      }
@@ -38175,8 +38185,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 14,
-      "re-export": 5
+      "crate-vis": 15,
+      "re-export": 6
      }
     },
     {
@@ -38290,6 +38300,43 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SecretUseDecision",
+      "SecretUseOperation",
+      "SecretUseOutcome",
+      "SecretUseReceipt",
+      "SecretUseSend"
+     ],
+     "path": "src/secret_custody/use_handle.rs",
+     "purpose": "`self.use(handle)` (OF-560; ARCH-0069 \"One use(handle) call\"): an agent hands a secret to one trusted…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 2,
+      "re-export": 1,
+      "static": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecretBindRequest",
+      "SecretBound"
+     ],
+     "path": "src/secret_custody/use_handle/bind.rs",
+     "purpose": "The owner binds a secret to an effector (OF-560): the door a handle with no binding names, so the secret it…",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -38317,7 +38364,7 @@
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -38679,7 +38726,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
       "crate-vis": 6,
-      "mod": 7,
+      "mod": 8,
       "re-export": 9
      }
     },
@@ -38790,6 +38837,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/served_signals.rs",
+     "purpose": "The served degradation signals (ARCH-0066 §4, OF-298): every tier-1 tripwire whose facts a serving vault…",
+     "surface": {
+      "const": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "Tier1Sweep"
      ],
@@ -38871,15 +38929,16 @@
       "ConsentStormDetector",
       "DreamerRunFacts",
       "PredicateDriftDetector",
+      "RetrievalRegressionDetector",
       "TripwireBounds"
      ],
      "path": "src/self_heal/tripwires.rs",
      "purpose": "Closed-form T1 projections",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
-      "fn": 7,
-      "struct": 5
+      "crate-vis": 5,
+      "fn": 10,
+      "struct": 6
      }
     },
     {
@@ -43812,12 +43871,30 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "MeshPathDirection",
+      "MeshPathKind",
+      "MeshPathOutcome",
+      "MeshPathReceipt"
+     ],
+     "path": "src/sync/mesh_path.rs",
+     "purpose": "Path receipts for paired-machine mesh connections (OF-535)",
+     "surface": {
+      "const": 2,
+      "enum": 3,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
       "crate-vis": 8,
-      "mod": 23,
+      "mod": 24,
       "re-export": 16
      }
     },
@@ -45978,7 +46055,7 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 18,
+      "re-export": 19,
       "struct": 36
      }
     },
@@ -46094,7 +46171,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 300
+      "fn": 301
      }
     },
     {
@@ -46255,6 +46332,23 @@
       "enum": 1,
       "fn": 4,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecretUseAnswer",
+      "SecretUseRecord",
+      "SecretUseRequest",
+      "SecretUseStatus"
+     ],
+     "path": "src/task_verb/sdk_secret_use.rs",
+     "purpose": "`self.use`: an agent hands a secret to one trusted operation by its handle, and reads the operation's…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -51363,7 +51457,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51993,7 +52087,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 13,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52028,7 +52122,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52175,7 +52269,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 155,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52203,7 +52297,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 121,
+     "files": 122,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -52366,7 +52460,7 @@
    },
    "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3167,
+   "source_files": 3173,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59465,8 +59559,10 @@
       "MeshStream",
       "MeshTransport",
       "PairedMachineGrants",
+      "PathReceipts",
       "VaultMachineGrants",
-      "VaultMachineRoster"
+      "VaultMachineRoster",
+      "VaultPathReceipts"
      ],
      "path": "src/lib.rs",
      "purpose": "Vault-scoped mesh transport",
@@ -59475,9 +59571,9 @@
       "enum": 1,
       "fn": 2,
       "mod": 3,
-      "re-export": 1,
-      "struct": 4,
-      "trait": 7,
+      "re-export": 2,
+      "struct": 5,
+      "trait": 8,
       "type": 2
      }
     },
@@ -60106,8 +60202,9 @@
      "path": "src/llm/protocol.rs",
      "purpose": "Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical…",
      "surface": {
+      "const": 1,
       "enum": 5,
-      "fn": 6,
+      "fn": 7,
       "struct": 7
      }
     },
@@ -60276,7 +60373,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 254
+      "fn": 255
      }
     },
     {
@@ -61292,7 +61389,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 255
+      "fn": 256
      }
     },
     {
@@ -62727,7 +62824,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -64716,6 +64813,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/budget_hold_routes.rs",
+     "purpose": "`/v1/owner/runs/hold`: the owner reads a run its budget held (OF-541, ARCH-0079 #budget) and resumes it",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/commitment_routes.rs",
      "purpose": "Owner doors for where commitment reminders go (OF-187)",
      "surface": {
@@ -64928,6 +65035,16 @@
      "notable": [],
      "path": "src/api/owner_routes/secret_reveal_routes.rs",
      "purpose": "`/v1/owner/secrets/reveal*`: the owner's side of reveal by handle (OF-560; ARCH-0069 #reveal-check)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/secret_use_routes.rs",
+     "purpose": "`POST /v1/owner/secrets/bind`: the owner binds a secret to an effector, so an agent's `self.use` can hand it…",
      "surface": {
       "crate-vis": 1
      }
@@ -67707,7 +67824,7 @@
      "path": "src/http_listener.rs",
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -70646,7 +70763,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 285,
+     "files": 287,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71005,7 +71122,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 566,
+   "source_files": 568,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -71755,6 +71872,10 @@
       "ScratchpadRecallReply",
       "ScratchpadRecallReplyLine",
       "ScratchpadRecallRequest",
+      "SecretUseAnswer",
+      "SecretUseRecord",
+      "SecretUseRequest",
+      "SecretUseStatus",
       "SelfDurableWait",
       "SelfDurableWaitReason",
       "SelfEffect",
@@ -71940,8 +72061,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 215,
-      "struct": 547
+      "enum": 216,
+      "struct": 550
      }
     },
     {
