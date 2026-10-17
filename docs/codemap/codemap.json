@@ -41709,7 +41709,8 @@
      "path": "src/skill_hub/pack_catalog/agent_admission.rs",
      "purpose": "The receiving half of the AgentPack another party shared (OF-491, FIX 2041 and 3168)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -49416,13 +49417,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
