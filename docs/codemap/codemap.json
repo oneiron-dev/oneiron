@@ -24568,18 +24568,24 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OfferAnswerIntent",
-      "OfferCardPayload"
+      "OfferCardIntent",
+      "OfferCardOutcome",
+      "OfferCardPayload",
+      "OfferCardPhase",
+      "OfferReopenIntent",
+      "OfferVoteIntent"
      ],
      "path": "src/genui/offer_card.rs",
-     "purpose": "The offer card's render-neutral payload and its write-free answer intent (OF-530)",
+     "purpose": "The offer card's render-neutral payload and its write-free intents (OF-530): the host's answer, a room…",
      "surface": {
-      "const": 2,
-      "fn": 7,
-      "struct": 2
+      "const": 5,
+      "enum": 3,
+      "fn": 15,
+      "struct": 4
      }
     },
     {
@@ -28447,7 +28453,7 @@
      "surface": {
       "const": 6,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -46772,7 +46778,7 @@
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -46847,6 +46853,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/lifecycle_receipt.rs",
+     "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -46867,7 +46883,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 2,
       "re-export": 24
      }
@@ -46970,7 +46986,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7
      }
     },
@@ -47156,7 +47172,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 23,
+      "re-export": 24,
       "struct": 36
      }
     },
@@ -47326,7 +47342,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 334
+      "fn": 349
      }
     },
     {
@@ -47470,6 +47486,36 @@
      "surface": {
       "fn": 3,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ResearchBasisWire",
+      "ResearchBenchmarkWire",
+      "ResearchBindWire",
+      "ResearchCandidateWire",
+      "ResearchForkWire",
+      "ResearchHeldOutWire",
+      "ResearchInvalidWire",
+      "ResearchPromoteWire",
+      "ResearchPruneCause",
+      "ResearchPruneWire",
+      "ResearchRefereeScores",
+      "ResearchRefundWire",
+      "ResearchSearchWire",
+      "ResearchSelectWire",
+      "ResearchSettleWire",
+      "ResearchWeaveWire",
+      "ResearchWorkWire"
+     ],
+     "path": "src/task_verb/sdk_research.rs",
+     "purpose": "`vault.research.*` (OF-351): the autoresearch workflow skill's verbs over the campaign record…",
+     "surface": {
+      "enum": 1,
+      "fn": 15,
+      "struct": 16
      }
     },
     {
@@ -53635,7 +53681,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 128,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53798,7 +53844,7 @@
    },
    "over_bar": 177,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3265,
+   "source_files": 3267,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61896,7 +61942,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 287
+      "fn": 302
      }
     },
     {
@@ -62914,7 +62960,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 288
+      "fn": 303
      }
     },
     {
@@ -64456,6 +64502,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/lens_callbacks.rs",
+     "purpose": "OF-181 (FIX 2611): a lens card's model round trip goes back to the agent that emitted the card, as that…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -64475,7 +64531,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 21,
       "re-export": 1,
       "struct": 2
@@ -65638,7 +65694,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/agent_verbs.rs",
@@ -72753,7 +72809,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73154,7 +73210,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 609,
+   "source_files": 610,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -73332,7 +73388,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/facade_generated.rs",
@@ -73378,7 +73434,11 @@
       "AnswerRecord",
       "AnsweringAuthority",
       "ApproveScope",
+      "ArchiveAxis",
       "ArchiveCampaignProgramRequest",
+      "ArchiveDescriptor",
+      "ArchiveOutputRef",
+      "ArchiveQualityMetric",
       "ArtifactAskOutcome",
       "ArtifactAskRecord",
       "ArtifactAskStanding",
@@ -73420,11 +73480,14 @@
       "BornFromSource",
       "BornFromView",
       "BornWithField",
+      "BranchBelief",
+      "BranchSnapshot",
       "BriefConstraints",
       "BriefContext",
       "BriefIntent",
       "BriefStamp",
       "BudgetDenied",
+      "BudgetLease",
       "BundleVerdict",
       "BundledSkillPermissions",
       "CalibrationPair",
@@ -73433,6 +73496,10 @@
       "CallReceiptRequest",
       "CallTransport",
       "CallableCardView",
+      "CampaignArchivePin",
+      "CampaignConfig",
+      "CampaignDatasetRef",
+      "CampaignKnobs",
       "CampaignProgramAudienceSpec",
       "CampaignProgramDefinitionView",
       "CampaignProgramLifecycle",
@@ -73441,7 +73508,10 @@
       "CampaignProgramReadResult",
       "CampaignProgramRecord",
       "CampaignProgramStepSpec",
+      "CampaignPromotionReceipt",
+      "CampaignSplits",
       "CancelRejectionPathology",
+      "CandidateRef",
       "Care",
       "CellTypeRef",
       "ChangeKind",
@@ -73486,6 +73556,7 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "ConfirmationReceipt",
       "Conflict",
       "ConflictKind",
       "ConnectorCallReply",
@@ -73544,6 +73615,7 @@
       "CritiqueVerdict",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
+      "DecideRules",
       "DecisionAnswer",
       "DecisionAsk",
       "DecisionAskAnswerRequest",
@@ -73572,6 +73644,7 @@
       "DeckProposeRequest",
       "DeckReviewView",
       "DeclaredMaximum",
+      "DerivationKind",
       "DiaryEntryReceipt",
       "DiaryEntryRequest",
       "DiaryQueryEntry",
@@ -73614,9 +73687,18 @@
       "EraseShare",
       "EscalationRule",
       "EscalationTrigger",
+      "EvalCase",
+      "EvalExposure",
+      "EvalExposureKind",
+      "EvalLabel",
+      "EvalLabelKind",
+      "EvalRelease",
+      "EvalSeat",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
       "ExpectedSpend",
+      "ExperimentKind",
+      "ExperimentNode",
       "ExplainGateNotice",
       "ExplainGateReply",
       "ExplainGateRequest",
@@ -73638,6 +73720,7 @@
       "FederationGrantRole",
       "FeedbackProposal",
       "FolderItemInput",
+      "ForkKind",
       "ForkState",
       "GateDecisionId",
       "GeneratedLens",
@@ -73659,6 +73742,8 @@
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
+      "HeldOutCall",
+      "HeldOutEvidence",
       "HolderKind",
       "HookPhase",
       "HookReplayCase",
@@ -73687,6 +73772,7 @@
       "InspectionResolveRequest",
       "InspectionResolved",
       "InspectionState",
+      "InvalidReceipt",
       "InvitationSlip",
       "InvitationSlipRequest",
       "IssueCategory",
@@ -73766,11 +73852,13 @@
       "MadeByInputRole",
       "MadeByProcess",
       "MadeByTrigger",
+      "Measurement",
       "MediaUsage",
       "MemberAnswer",
       "MemberVerdict",
       "MembershipConsent",
       "MemoryExport",
+      "MergeCrossover",
       "MergedFinding",
       "MeshPathDirection",
       "MeshPathKind",
@@ -73782,6 +73870,10 @@
       "MessageReactionExternal",
       "MessageReactionReceipt",
       "MessageReactionRequest",
+      "MetricAxis",
+      "MetricDirection",
+      "MetricRole",
+      "MetricSet",
       "MutationIntent",
       "NativeOutputRequest",
       "NodeKind",
@@ -73895,6 +73987,8 @@
       "PixelRegion",
       "PolicyActionOutcome",
       "Preset",
+      "PriorRung",
+      "PriorSeed",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
       "ProjectCardRecord",
@@ -73915,6 +74009,8 @@
       "ProjectRosterWriteOutcome",
       "ProjectRosterWriteRequest",
       "ProjectTradeoffRouteRequest",
+      "PromotionBasis",
+      "PromotionDisposition",
       "ProposalAsk",
       "ProposalHeader",
       "ProposalMember",
@@ -73922,6 +74018,8 @@
       "ProposalSettlement",
       "ProseSpan",
       "ProviderPin",
+      "PruneReason",
+      "PruneReceipt",
       "PulledImage",
       "QuestionActivation",
       "QuestionAnswer",
@@ -73971,6 +74069,31 @@
       "ReportRoute",
       "ReportStatus",
       "RequiredParty",
+      "ResearchBasisWire",
+      "ResearchBenchmarkWire",
+      "ResearchBindWire",
+      "ResearchBinding",
+      "ResearchBudgetRead",
+      "ResearchCandidateWire",
+      "ResearchConfirmationSeat",
+      "ResearchForkWire",
+      "ResearchGoalPin",
+      "ResearchHeldOutWire",
+      "ResearchInvalidWire",
+      "ResearchPromoteWire",
+      "ResearchPruneCause",
+      "ResearchPruneWire",
+      "ResearchRefereeScores",
+      "ResearchRefundWire",
+      "ResearchReservation",
+      "ResearchReservationLine",
+      "ResearchSearchWire",
+      "ResearchSelectWire",
+      "ResearchSettleWire",
+      "ResearchStep",
+      "ResearchTarget",
+      "ResearchWeaveWire",
+      "ResearchWorkWire",
       "ResolveRecordRefRequest",
       "ResolvedRole",
       "RetrievalScoreComponent",
@@ -74014,6 +74137,8 @@
       "RoomTurnRequest",
       "RoomWaitKind",
       "RoutineOutcome",
+      "RsiSettlement",
+      "RsiSpendPurpose",
       "Run",
       "RunSignalState",
       "RunTree",
@@ -74034,6 +74159,8 @@
       "ScratchpadRecallRequest",
       "ScratchpadSealRequest",
       "ScratchpadWriteReply",
+      "SearchAxis",
+      "SearchEvidence",
       "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
@@ -74046,6 +74173,9 @@
       "SecretUseRecord",
       "SecretUseRequest",
       "SecretUseStatus",
+      "SelectionBenchmark",
+      "SelectionRanking",
+      "SelectionReceipt",
       "SelfDurableWait",
       "SelfDurableWaitReason",
       "SelfEffect",
@@ -74140,6 +74270,9 @@
       "StepOutcome",
       "StopCause",
       "StoredShapeSeed",
+      "SufficiencyCard",
+      "SufficiencyInput",
+      "SufficiencyVerdict",
       "TaskAccept",
       "TaskAnswerRequest",
       "TaskAskAnswer",
@@ -74218,6 +74351,7 @@
       "UndoneKeep",
       "UnitAbstention",
       "UnitRefusal",
+      "UnknownReason",
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
       "WakePolicySetRequest",
@@ -74225,6 +74359,7 @@
       "WeaveItemCorrectionView",
       "WeaveItemView",
       "WeaveLinkCorrectionView",
+      "WeaveReceipt",
       "WeaveReportRequest",
       "WeaveReportView",
       "WeaveSectionInput",
@@ -74271,8 +74406,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 258,
-      "struct": 666
+      "enum": 281,
+      "struct": 722
      }
     },
     {
@@ -74330,7 +74465,7 @@
     "facade_generated": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file",
      "purpose": "—"
     },
