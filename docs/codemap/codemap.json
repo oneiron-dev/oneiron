@@ -53212,28 +53212,39 @@
   "oneiron-android": {
    "files": [
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine.rs",
+     "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
-      "fn": 4
+      "fn": 4,
+      "mod": 1
      }
     }
    ],
    "modules": {
-    "lib": {
+    "engine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Minimal JNI/Kotlin ownership adapter"
+     "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…"
     }
    },
    "over_bar": 0,
    "purpose": "Minimal JNI/Kotlin ownership adapter",
-   "source_files": 1,
+   "source_files": 2,
    "test_files": 0
   },
   "oneiron-authority": {
@@ -58876,6 +58887,22 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "OneironAppHost",
+      "OneironEngine",
+      "OneironReply",
+      "OneironSecretSink"
+     ],
+     "path": "src/lib/engine.rs",
+     "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, in the app's own process, over the vault…",
+     "surface": {
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/lib/entity.rs",
      "purpose": "Free fns plus vault lifecycle, health, and entity entry points",
@@ -58900,7 +58927,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
      "surface": {
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -58958,7 +58985,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58967,7 +58994,7 @@
    },
    "over_bar": 0,
    "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 1
   },
   "oneiron-guest": {
@@ -67216,7 +67243,7 @@
       "const": 1,
       "crate-vis": 6,
       "fn": 12,
-      "re-export": 19,
+      "re-export": 20,
       "struct": 1
      }
     },
@@ -67550,11 +67577,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "OpenedServedVault"
+     ],
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 11,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -68315,13 +68346,30 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/embedded.rs",
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…",
      "surface": {
-      "fn": 1
+      "fn": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BlockingEngine",
+      "EmbeddedEngine",
+      "EmbeddedReply",
+      "EmbeddedRequest"
+     ],
+     "path": "src/embedded/engine.rs",
+     "purpose": "The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding",
+     "surface": {
+      "fn": 20,
+      "struct": 4
      }
     },
     {
@@ -71953,10 +72001,10 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "embedded": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…"
     },
     "embedder": {
@@ -72200,7 +72248,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 588,
+   "source_files": 589,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -72344,6 +72392,25 @@
      "surface": {
       "enum": 7,
       "struct": 50
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AppHostCallbacks",
+      "EmbeddedEngine",
+      "EngineHeader",
+      "EngineLimits",
+      "EngineReply",
+      "EngineRequest"
+     ],
+     "path": "src/embedded_engine.rs",
+     "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the…",
+     "surface": {
+      "fn": 6,
+      "struct": 5,
+      "trait": 1
      }
     },
     {
@@ -73240,7 +73307,7 @@
      "surface": {
       "const": 1,
       "fn": 9,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 1
      }
     }
@@ -73267,6 +73334,13 @@
      "layout": "file",
      "purpose": "The typed UniFFI records of the SDK surface"
     },
+    "embedded_engine": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the…"
+    },
     "error": {
      "files": 1,
      "impl_vault": false,
@@ -73291,7 +73365,7 @@
    },
    "over_bar": 4,
    "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 0
   },
   "oneiron-vault-contract": {
