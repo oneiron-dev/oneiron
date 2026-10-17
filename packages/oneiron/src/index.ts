@@ -643,6 +643,8 @@ export class Oneiron {
   readonly tasks = {
     /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal. */
     create: (input: Facade.TaskCreateRequest): Facade.TaskCreateReceipt => this.#call(() => this.#client.tasksCreate(input) as Facade.TaskCreateReceipt),
+    /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
+    wave: (input: Facade.TaskWaveRequest): Facade.TaskWaveReceipt => this.#call(() => this.#client.tasksWave(input) as Facade.TaskWaveReceipt),
     /** Records the owner's acknowledgement of a failed TASK; any other task stays as it was. */
     update: (input: Facade.TaskUpdateRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
