@@ -13,6 +13,9 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Wasabi snapshot credential runbook](wasabi-snapshot-credential-runbook.md) — preflight, mint,
   custody registration, smoke, root retirement, and rotation of the bucket-scoped snapshot
   credential.
+- [Sync a machine to its home](device-sync.md) — the `[device_sync]` section: the home a
+  machine that is not the elected home dials over the paired mesh, the credential file the
+  `/ws` upgrade presents, and what the log shows.
 - [Connect Claude Code or Codex](connect-an-agent.md) — `oneiron token agent` mints a scoped,
   revocable agent credential; `oneiron mcp` serves MCP on stdio to the agent.
 - [Import your history](import-history.md) — `oneiron import` for ChatGPT and Claude.ai exports

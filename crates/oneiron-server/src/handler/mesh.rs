@@ -221,6 +221,12 @@ mod host {
     }
 
     impl MeshHost {
+        /// The listener's transport, so a dialer rides this install's one
+        /// endpoint rather than binding a second ([`crate::device_sync`]).
+        pub(crate) fn transport(&self) -> Arc<dyn MeshTransport> {
+            Arc::clone(&self.transport) as Arc<dyn MeshTransport>
+        }
+
         /// Stops accepting and closes the endpoint; connections end with it.
         pub(crate) async fn stop(self) {
             for task in &self.tasks {
