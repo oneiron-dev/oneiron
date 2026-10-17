@@ -178,6 +178,7 @@ pub mod fanout_auto;
 pub mod inbox;
 pub mod learning;
 pub mod learning_setting;
+pub mod learning_setting_choice;
 pub mod learning_setting_doors;
 pub mod own_rate;
 pub mod policy_setting_doors;
@@ -458,7 +459,7 @@ pub use crate::llm::{
     LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream,
     LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality, ModelTierRef,
     PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError, TierPrecedence,
-    UnsupportedCapability, auto_check_llm_request,
+    UnsupportedCapability,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,

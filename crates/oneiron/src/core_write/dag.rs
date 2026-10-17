@@ -66,6 +66,11 @@ pub struct DagRecordAppendInput {
     pub session: Option<String>,
     #[serde(default)]
     pub quote: Option<CoreDagQuoteInput>,
+    /// A private thread's audience (FIX 2951). This row appends on the
+    /// trunk, which names none, so a record that sets it is refused; a
+    /// thread opens through its own reply door.
+    #[serde(default)]
+    pub thread_audience: Option<Vec<String>>,
 }
 
 /// The appended record, HEAD after the append and the record's parent.
@@ -126,6 +131,15 @@ impl DagRecordAppendInput {
             text: core_text_pairs(self.text.as_deref().map(text_pairs), &body),
             session: optional_entity_id(self.session.as_deref(), "session")?,
             actor,
+            thread_audience: self
+                .thread_audience
+                .as_ref()
+                .map(|ids| {
+                    ids.iter()
+                        .map(|id| entity_id(id, "thread_audience"))
+                        .collect::<MemoryResult<std::collections::BTreeSet<_>>>()
+                })
+                .transpose()?,
         })
     }
 }

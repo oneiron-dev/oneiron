@@ -153,6 +153,7 @@ pub(super) fn apply_ops_with_origin(
 ) -> Result<()> {
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
+    let run_derivations = crate::skill_attribution::run_derivations(&ops.ops, replay);
     let hub_admission = gate_mode.hub_admission.take();
     let refinement_admission = gate_mode.refinement_admission.take();
     let birth_mask = gate_mode.birth_mask;
@@ -842,6 +843,7 @@ pub(super) fn apply_ops_with_origin(
     }
 
     masked_files.restrict(store, wtxn)?;
+    crate::skill_attribution::note_run_derivations_in_txn(store, wtxn, run_derivations.as_ref())?;
 
     finalize_batch_indexes(
         store,

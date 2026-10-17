@@ -179,3 +179,19 @@ pub fn team_spawn_context_for_attempt_in_txn(
         None => Ok(None),
     }
 }
+
+/// The TASK each recorded team start ran, by team reference: the grouping a
+/// comparison of team runs on one task reads. Starts that name no TASK are
+/// left out.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn team_run_tasks(vault: &Vault) -> Result<std::collections::BTreeMap<String, String>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(TEAM_RUN
+        .scan(&vault.store, &rtxn)?
+        .into_iter()
+        .filter_map(|(_, run)| Some((run.stamp.team_ref, run.root_task?)))
+        .collect())
+}

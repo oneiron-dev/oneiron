@@ -2,7 +2,8 @@
 //! vault (frontiers, input hashes, made_by rows, actors and triggers) never
 //! travel. Text born with the body (the prompt, the why, the keep memo, a lens
 //! pack's intent prompt) travels only when the sharer says so, and the share
-//! receipt lists what travelled.
+//! receipt lists what travelled. An AgentPack travels as the reference-free
+//! projection in [`agent_pack`].
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,6 +14,13 @@ use crate::provenance::made_by::{MadeBy, MadeByInputRole};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::side_table::{self, Named, SideTable};
 use crate::{Result, Vault};
+
+pub mod agent_pack;
+
+pub use self::agent_pack::{
+    AGENT_PACK_TRAVEL_SCHEMA, AgentPackKnowledge, AgentPackPolicy, AgentPackSkill,
+    AgentPackTravelProjection,
+};
 
 /// The share receipt field listing the born-with fields that travelled.
 pub const FIELD_TRAVELLED: &str = "travelled";
@@ -67,6 +75,7 @@ pub enum TravelKind {
     Brief,
     Artifact,
     Document,
+    AgentPack,
 }
 
 /// The sharer's choice of born-with text to send. Refs are never a choice.
@@ -80,7 +89,9 @@ pub struct TravelChoice {
 impl TravelChoice {
     /// What travels unless the sharer says otherwise: a lens pack's intent
     /// prompt, because it is the recipe. A summary's prompt and keep memo, and
-    /// every other kind's born-with text, stay home.
+    /// every other kind's born-with text, stay home. An agent pack's
+    /// instructions and skill bodies are the pack, not born-with text, so they
+    /// travel whatever this says.
     #[must_use]
     pub fn default_for(kind: TravelKind) -> Self {
         let born_with = match kind {
@@ -88,7 +99,8 @@ impl TravelChoice {
             TravelKind::Summary
             | TravelKind::Brief
             | TravelKind::Artifact
-            | TravelKind::Document => BTreeSet::new(),
+            | TravelKind::Document
+            | TravelKind::AgentPack => BTreeSet::new(),
         };
         Self { born_with }
     }
@@ -212,25 +224,79 @@ impl Vault {
     /// lens's intent prompt, and on a copy from another vault the text that
     /// travelled with it. Only the prose is read; the refs that point at it
     /// stay home. A part with no text document reads as absent, so a failed
-    /// read sends less, never more.
+    /// read sends less, never more. This is the owner's own read; text that
+    /// goes to another party reads through [`Self::born_with_text_kept_off`].
     pub fn born_with_text(&self, entity: &EntityId, made_by: Option<&MadeBy>) -> Result<BornWith> {
+        self.born_with_text_kept_off(entity, made_by, &BTreeSet::new())
+    }
+
+    /// [`Self::born_with_text`] for another party that reads nothing of a
+    /// world kept off an unknown machine: a brief share's recipient, an
+    /// artifact export's.
+    pub(crate) fn born_with_text_for_another(
+        &self,
+        entity: &EntityId,
+        made_by: Option<&MadeBy>,
+    ) -> Result<BornWith> {
+        let kept = {
+            let txn = self.store.env.read_txn()?;
+            crate::settings::device_local_worlds_at(
+                self,
+                &txn,
+                crate::claim::CallerLocality::OffDevice,
+            )?
+        };
+        self.born_with_text_kept_off(entity, made_by, &kept)
+    }
+
+    /// [`Self::born_with_text`] for a party the worlds in `kept` are kept off
+    /// (DEC-0005): a row one of them holds, the body or a prompt row, gives
+    /// that party no text.
+    pub(crate) fn born_with_text_kept_off(
+        &self,
+        entity: &EntityId,
+        made_by: Option<&MadeBy>,
+        kept: &BTreeSet<EntityId>,
+    ) -> Result<BornWith> {
         let mut text = BornWith::new();
         let birth = match made_by {
             Some(_) => None,
             None => self.row_birth(entity)?,
         };
+        let mut prompts = Vec::new();
         if let Some(made_by) = made_by.or(birth.as_ref().map(|birth| &birth.made_by)) {
-            let prompt = made_by
-                .inputs
-                .iter()
-                .filter(|input| input.role == MadeByInputRole::Prompt)
-                .filter_map(|input| self.entity_text(&input.row).ok())
-                .filter(|prompt| !prompt.trim().is_empty())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            if !prompt.is_empty() {
-                text.insert(BornWithField::Prompt, prompt);
+            prompts.extend(
+                made_by
+                    .inputs
+                    .iter()
+                    .filter(|input| input.role == MadeByInputRole::Prompt)
+                    .map(|input| input.row),
+            );
+        }
+        if !kept.is_empty() {
+            let txn = self.store.env.read_txn()?;
+            let keeps = |row: &EntityId| {
+                crate::settings::device_local_keeps_among(&self.store, &txn, kept, row)
+            };
+            if keeps(entity)? {
+                return Ok(text);
             }
+            let mut sent = Vec::with_capacity(prompts.len());
+            for row in prompts {
+                if !keeps(&row)? {
+                    sent.push(row);
+                }
+            }
+            prompts = sent;
+        }
+        let prompt = prompts
+            .iter()
+            .filter_map(|row| self.entity_text(row).ok())
+            .filter(|prompt| !prompt.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if !prompt.is_empty() {
+            text.insert(BornWithField::Prompt, prompt);
         }
         if let Ok(document) =
             self.entity_document(entity, crate::vault::entity_revision::ReadMode::Live)

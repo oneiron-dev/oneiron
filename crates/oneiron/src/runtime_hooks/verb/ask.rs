@@ -24,6 +24,9 @@ use crate::{EntityId, Error, MemoryError, Result, Vault};
 
 use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, VerbResume, credential};
 
+/// Leads a verb hook's ask intent key, `hook.verb/<invocation>/<binding>`:
+/// settlement parses the rest, and an ask's Changed deliveries skip it.
+pub(crate) const VERB_HOOK_INTENT: &str = "hook.verb/";
 /// Calls stopped on a hook's ask, by invocation.
 const ASKS: SideTable<[u8; 16], VerbAsk, Named> = SideTable::new(&side_table::HOOKS_VERB_ASK);
 /// The answer that lets the verb run.
@@ -372,7 +375,7 @@ pub(super) fn open(
     }
     let mut spec = TaskAskSpec::shorthand(None, what, None, TaskAskDefault::Hold);
     spec.intent_key = format!(
-        "hook.verb/{}/{}",
+        "{VERB_HOOK_INTENT}{}/{}",
         call.invocation.to_hex(),
         binding_id.to_hex()
     );

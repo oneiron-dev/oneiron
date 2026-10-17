@@ -87,7 +87,7 @@ impl MediaVoiceRoute {
         }
     }
 
-    fn request(&self, part: MediaPart, voice: Option<MediaVoice>) -> MediaRequest {
+    pub(super) fn request(&self, part: MediaPart, voice: Option<MediaVoice>) -> MediaRequest {
         let operation = self.operation();
         let mut params = BTreeMap::new();
         if operation == AiOperation::Speech {

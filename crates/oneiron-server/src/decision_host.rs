@@ -28,9 +28,9 @@ use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, TH
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
     DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadGate,
-    DecisionReadProvider, DecisionRung, GatedRead, HeldLadder, ModelDecisionProvider,
-    PersonThreshold, ProviderCapability, ProviderDecision, ProviderPin, RemoteDecisionSeat,
-    RuleDecisionProvider, SeatPhase, SeatRequest,
+    DecisionReadProvider, DecisionRung, GatedRead, HeldLadder, HostRuleProvider,
+    ModelDecisionProvider, PersonThreshold, ProviderCapability, ProviderDecision, ProviderPin,
+    RemoteDecisionSeat, SeatPhase, SeatRequest,
 };
 use oneiron::llm::run_admission::{CallOutcome, HostAccount, PaidConnector, RunReceiptSink};
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
@@ -60,7 +60,8 @@ use crate::config::models::{
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
 
-/// The rule table's identity on this host.
+/// The rule table's identity on this host: the vault's host rule rows, which the owner's
+/// reasons write ([`oneiron::llm::decision::HostRule`]).
 const RULE_TABLE: &str = "host-rules";
 /// The owner ask queue's identity, the ladder's human pin.
 const OWNER_ASKS: &str = "owner-asks";
@@ -164,7 +165,7 @@ impl DecisionHost {
     /// The rule table and the owner's ask queue: what every server has.
     pub(crate) fn new(vault: &Arc<Vault>) -> Self {
         let asks = Arc::new(DecisionAsks::new(Arc::clone(vault)));
-        let rule = RuleDecisionProvider::new(RULE_TABLE.into(), ONE.into())
+        let rule = HostRuleProvider::new(Arc::clone(vault), RULE_TABLE.into(), ONE.into())
             .ok()
             .map(|rule| Arc::new(rule) as Arc<dyn DecisionProvider>);
         Self {
@@ -606,9 +607,10 @@ impl DecisionHost {
     /// The Dreamer's consolidation questions through this ladder, in the
     /// shipped wording: the verdict role's generated read sits at the Local
     /// slot, and an answer still in the band steps up the host's stronger
-    /// rungs and then asks the role the Dreamer binds for the claims'
-    /// project, under the host's bands. The work an ask decides waits for its
-    /// answer; the rest of the pass goes on.
+    /// rungs under the host's bands. A consolidation verdict never asks a
+    /// person: the executor caps its dial at Big (`VERDICT_CEILING`, OF-023),
+    /// and a verdict still in band parks its pair as a `conflict.open` with
+    /// both claims standing.
     pub(crate) fn consolidation_decisions(&self) -> oneiron::Result<ConsolidationDecisions> {
         Ok(ConsolidationDecisions {
             ladder: self.ladder.clone(),
