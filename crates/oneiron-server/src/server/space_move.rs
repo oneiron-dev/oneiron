@@ -7,20 +7,41 @@
 //! once. The engine swaps the candidate in, keeps the incumbent, or leaves the
 //! move open, and leaves the result note.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use base64::Engine as _;
 use oneiron::embed::{
-    InputKind, MediaEmbedReport, MediaEmbedder, SpaceMove, SpaceMoveOutcome, SpaceMoveState,
-    SpaceProbeEncoder, SpaceRef,
+    EmbedderLocality, InputKind, MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, SpaceMove,
+    SpaceMoveOutcome, SpaceMoveState, SpaceProbeAuthor, SpaceProbeEncoder, SpaceRef,
+};
+use oneiron::llm::manifest::ModelRole;
+use oneiron::{
+    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error, ImageContent,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence,
 };
 
 use super::core::SyncServer;
 use super::media_embedding::{MediaEmbedRefusal, RuntimeMediaEmbedder};
+use crate::ai_host::CHAT_ROLE;
 
 /// How long an undecided move waits before its probes run again.
 const SPACE_MOVE_RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
 /// The media type a probe query is sent as.
 const PROBE_MEDIA_TYPE: &str = "text/plain; charset=utf-8";
+
+/// Probes one pass writes per kind while a move is open.
+const PROBE_AUTHOR_BATCH: usize = 4;
+/// The most of a text document a probe author reads.
+const PROBE_SOURCE_MAX_CHARS: usize = 4000;
+/// The purpose a probe call is budgeted and audited under.
+const PROBE_PURPOSE: &str = "embedding.space_probe";
+/// What a probe author is asked.
+const PROBE_INSTRUCTION: &str = "You write search queries for a retrieval check. Given one \
+    stored item, write one short query, at most twenty words, that a person would type to find \
+    it again later. Use your own words: describe it, never copy its phrases. Answer with the \
+    query alone.";
 
 /// One media backfill pass's result per space.
 pub(super) type SpacePasses = Vec<(String, Result<MediaEmbedReport, MediaEmbedRefusal>)>;
@@ -64,7 +85,175 @@ impl SpaceProbeEncoder for ServerProbeEncoder<'_> {
     }
 }
 
+/// A probe author on one of the server's seats, a model other than the
+/// spaces' own: the chat seat for a text document, the captioner or the
+/// Local-vision seat for an image. Each call is one admitted role call the
+/// Dreamer pays for, as a stewardship draft is.
+struct ServerProbeAuthor<'a> {
+    server: &'a SyncServer,
+    role: ModelRole,
+    model: ModelId,
+    author: String,
+    locality: ModelLocality,
+    runtime: &'a tokio::runtime::Handle,
+}
+
+impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
+    fn author_id(&self) -> &str {
+        &self.author
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        match self.locality {
+            ModelLocality::OnDevice => EmbedderLocality::OnDevice,
+            ModelLocality::OwnServer => EmbedderLocality::OwnerServer,
+            ModelLocality::ThirdParty => EmbedderLocality::ThirdParty,
+        }
+    }
+
+    fn write_probe(&self, document: &MediaEmbeddingInput<'_>) -> oneiron::Result<Option<String>> {
+        let part = match document.kind {
+            InputKind::Text => ContentPart::Text {
+                text: std::str::from_utf8(document.bytes)
+                    .map_err(|_| Error::InvalidConfig("a text document is not UTF-8".into()))?
+                    .chars()
+                    .take(PROBE_SOURCE_MAX_CHARS)
+                    .collect(),
+            },
+            InputKind::Image => ContentPart::Image {
+                media_type: document.media_type.to_owned(),
+                image: ImageContent::Base64 {
+                    data: base64::engine::general_purpose::STANDARD.encode(document.bytes),
+                },
+            },
+            InputKind::Audio => return Ok(None),
+        };
+        let purpose = CallPurpose::Other {
+            name: PROBE_PURPOSE.to_owned(),
+        };
+        let request = LlmRequest {
+            model: self.model.clone(),
+            envelope: CallEnvelope {
+                seat_effort: None,
+                scope: Default::default(),
+                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef(PROBE_PURPOSE.to_owned())),
+                purpose,
+                class: CallClass::BestEffort,
+                response_format: ResponseFormat::Text,
+                locality: self.locality,
+            },
+            messages: vec![
+                LlmMessage {
+                    role: LlmMessageRole::System,
+                    content: vec![ContentPart::Text {
+                        text: PROBE_INSTRUCTION.to_owned(),
+                    }],
+                },
+                LlmMessage {
+                    role: LlmMessageRole::User,
+                    content: vec![part],
+                },
+            ],
+            tools: Vec::new(),
+            params: BTreeMap::new(),
+            provider_options: BTreeMap::new(),
+        };
+        let vault = &self.server.vault;
+        let call = self
+            .server
+            .ai
+            .admit_role(vault, self.role, request)
+            .map_err(|refusal| Error::InvalidConfig(format!("space probe call refused: {refusal}")))?;
+        let run_id = format!("space-probe:{}", document.entity_id.to_hex());
+        let units = self.server.ai.chat_settings().turn_budget_units;
+        let guard = vault.policy_budget_guard(
+            run_id.clone(),
+            units,
+            oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(units),
+            BudgetExhaustionPolicy::Suspend,
+            vault.dreamer_authority()?,
+        )?;
+        let run = self.server.ai.undeclared_run(run_id, guard);
+        let response = self
+            .runtime
+            .block_on(call.ladder.generate(&run, call.request, None))
+            .map_err(|error| Error::InvalidConfig(format!("space probe call failed: {error}")))?;
+        let text: String = response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        Ok(text
+            .lines()
+            .map(|line| line.trim().trim_matches(|c| c == '"' || c == '\''))
+            .find(|line| !line.is_empty())
+            .map(str::to_owned))
+    }
+}
+
 impl SyncServer {
+    /// The seat that writes `kind`'s probes; none for audio, or when no such
+    /// seat is bound.
+    fn probe_author<'a>(
+        &'a self,
+        kind: InputKind,
+        runtime: &'a tokio::runtime::Handle,
+    ) -> Option<ServerProbeAuthor<'a>> {
+        let roles: &[ModelRole] = match kind {
+            InputKind::Text => &[CHAT_ROLE],
+            InputKind::Image => &[ModelRole::Captioner, ModelRole::LocalVision],
+            InputKind::Audio => &[],
+        };
+        roles.iter().find_map(|role| {
+            let seat = self.ai.seat(*role)?;
+            Some(ServerProbeAuthor {
+                server: self,
+                role: *role,
+                author: format!(
+                    "{}/{}@{}",
+                    seat.model.provider(),
+                    seat.model.name(),
+                    seat.model.revision()
+                ),
+                model: seat.model.clone(),
+                locality: seat.locality,
+                runtime,
+            })
+        })
+    }
+
+    /// Tops up the probes of every kind an open move carries, a few per pass,
+    /// while its candidate fills. Blocking.
+    pub(super) fn author_space_probes(&self, runtime: &tokio::runtime::Handle, moves: &[SpaceMove]) {
+        let kinds: std::collections::BTreeSet<InputKind> = moves
+            .iter()
+            .filter(|moving| moving.state == SpaceMoveState::Open)
+            .flat_map(|moving| moving.kinds.iter().copied())
+            .collect();
+        for kind in kinds {
+            let Some(author) = self.probe_author(kind, runtime) else {
+                continue;
+            };
+            match self
+                .vault
+                .author_space_probes(kind, &author, PROBE_AUTHOR_BATCH)
+            {
+                Ok(report) if report.written > 0 => tracing::info!(
+                    ?kind,
+                    written = report.written,
+                    held = report.held,
+                    "space probes written"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::debug!(?kind, %error, "space probes not written"),
+            }
+        }
+    }
+
     /// Runs the paired probes of every open move whose candidate's pass just
     /// stored nothing, once it has never run or [`SPACE_MOVE_RECHECK`] has
     /// passed since. A check that fails takes the candidate's place in

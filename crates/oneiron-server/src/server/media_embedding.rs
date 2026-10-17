@@ -240,8 +240,9 @@ impl SyncServer {
 
     /// One pass over each space a kind slot binds to, the text slot's on the
     /// one-space preset included, and each open version move's candidate;
-    /// then the probe check of each candidate that is full
-    /// ([`Self::check_space_moves`]). Blocking.
+    /// then the moves' probes are topped up ([`Self::author_space_probes`])
+    /// and each full candidate is checked ([`Self::check_space_moves`]).
+    /// Blocking.
     fn backfill_media_pass(
         &self,
         runtime: &tokio::runtime::Handle,
@@ -272,6 +273,7 @@ impl SyncServer {
                 (space.to_owned(), pass)
             })
             .collect();
+        self.author_space_probes(runtime, &moves);
         self.check_space_moves(runtime, &moves, &mut passes);
         passes
     }

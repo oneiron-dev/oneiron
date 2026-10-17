@@ -92,7 +92,9 @@ impl SpaceProbe {
 pub trait SpaceProbeAuthor: Send + Sync {
     /// The model id a probe records as its author.
     fn author_id(&self) -> &str;
-    /// Where the model runs. Stored documents never leave for a third party from this door.
+    /// Where the model runs. Stored image and audio bytes never leave for a third party from
+    /// this door; a text document goes where the host's admitted call (the vault's inference
+    /// policy) lets it.
     fn locality(&self) -> EmbedderLocality;
     /// One search query a person might type to find `document`, in other words than its own;
     /// `None` when the model writes none.
@@ -157,17 +159,17 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConfig`] when the author runs at a third party; storage and model
-    /// errors otherwise.
+    /// [`Error::InvalidConfig`] when the author runs at a third party and `kind` is a media
+    /// kind; storage and model errors otherwise.
     pub fn author_space_probes(
         &self,
         kind: InputKind,
         author: &dyn SpaceProbeAuthor,
         max_items: usize,
     ) -> Result<SpaceProbeReport> {
-        if author.locality() == EmbedderLocality::ThirdParty {
+        if author.locality() == EmbedderLocality::ThirdParty && kind != InputKind::Text {
             return Err(Error::InvalidConfig(
-                "a third-party probe author has no egress grant for stored documents".into(),
+                "a third-party probe author has no egress grant for stored media".into(),
             ));
         }
         let mut report = SpaceProbeReport::default();
