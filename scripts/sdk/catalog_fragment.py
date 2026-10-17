@@ -8,8 +8,10 @@ This module renders it from that table and the Rust types its rows name.
 The text covers every row code mode serves, at its SDK path. These are the
 host's rows (facade, host door, board and browser rows) and then the rows the
 run answers itself, under the `self`/`vault`/`connector`/`ai`/`tasks` roots or
-bare. Each row has its typed input and its typed reply. Every type they reach
-is written out once, nested types included, in one namespace. The types come
+bare. Each row has its typed input and its typed reply. A row whose reply
+turns on which input field is present (`outputs_by_input`) takes one overload
+per such field, most specific first, then its own. Every type they reach is
+written out once, nested types included, in one namespace. The types come
 from the facade type inventory (`facade_types.Inventory`), walked here over
 the code-mode rows. The facade's own TypeScript and Python outputs keep their
 own inventory, so this module changes neither. Verbs are laid out as the
@@ -22,7 +24,7 @@ A change to the table or to a reached type changes both, and
 """
 import hashlib
 import json
-from facade_types import Inventory
+from facade_types import Inventory, compound, ts_key
 
 FRAGMENT = 'crates/oneiron/src/task_verb/catalog_fragment.d.ts'
 REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
@@ -72,18 +74,46 @@ class Fragment:
         for row in rows:
             self.inventory.root_ir(row['input'])
             if 'output' in row: self.inventory.root_ir(row['output'])
+            for field, output in row.get('outputs_by_input', {}).items():
+                if row['name'] in POSITIONAL: raise ValueError(f'{row["name"]}: a positional verb has no input field to select its reply')
+                if field not in self.fields(row['input']):
+                    raise ValueError(f'{row["name"]}: outputs_by_input names {field}, which its input {row["input"]} does not carry')
+                self.inventory.root_ir(output)
         self.budget = self.inventory.ts_type(BUDGET, '')
 
     def ts(self, text):
         return self.inventory.ts_type(text, NAMESPACE + '.')
 
+    def fields(self, text):
+        'The wire field names of an input that reads as one object.'
+        node = self.inventory.root_ir(text)
+        if node[0] == 'ref': node = self.inventory.decls[node[1]]['ir']
+        return {field[0] for field in node[1]} if node[0] == 'object' else set()
+
     def params(self, row):
         return POSITIONAL.get(row['name']) or f'(input: {self.ts(row["input"])})'
 
+    def reply(self, text):
+        return f'Promise<{NAMESPACE}.Reply<{self.ts(text) if text else "unknown"}>>'
+
     def result(self, row):
         if row['name'] in COORDINATION: return 'Promise<unknown>'
-        output = self.ts(row['output']) if 'output' in row else 'unknown'
-        return f'Promise<{NAMESPACE}.Reply<{output}>>'
+        return self.reply(row.get('output'))
+
+    def signatures(self, row):
+        'The row\'s call signatures, most specific first: one per input field whose presence selects its own reply, then its own.'
+        own = (self.params(row), self.result(row))
+        if 'outputs_by_input' not in row: return [own]
+        base = self.ts(row['input'])
+        if compound(base): base = f'({base})'
+        return [(f'(input: {base} & {{ {ts_key(field)}: NonNullable<{base}[{json.dumps(field)}]> }})', self.reply(output))
+                for field, output in row['outputs_by_input'].items()] + [own]
+
+    def call(self, row):
+        'The row as one call type: an arrow, or a call-signature literal over its overloads.'
+        signatures = self.signatures(row)
+        if len(signatures) == 1: return f'{signatures[0][0]} => {signatures[0][1]}'
+        return '{ ' + ' '.join(f'{params}: {result};' for params, result in signatures) + ' }'
 
     def typed(self, row):
         'Whether the row\'s reply names its output type.'
@@ -108,7 +138,7 @@ class Fragment:
     def kind(self, node, depth):
         'A path segment\'s type: its call signature, the members it holds, or both at once.'
         row = node['row']
-        call = f'{self.params(row)} => {self.result(row)}' if row else None
+        call = self.call(row) if row else None
         if not node['children']: return call or '{}'
         members = '{\n' + self.members(node['children'], depth + 1) + '  ' * depth + '}'
         return f'({call}) & {members}' if call else members
@@ -119,7 +149,7 @@ class Fragment:
             node = children[name]
             out += self.doc(node, indent)
             if node['row'] and not node['children']:
-                out += f'{indent}{name}{self.params(node["row"])}: {self.result(node["row"])};\n'
+                out += ''.join(f'{indent}{name}{params}: {result};\n' for params, result in self.signatures(node['row']))
             else:
                 out += f'{indent}{name}: {self.kind(node, depth)};\n'
         return out
@@ -135,7 +165,7 @@ class Fragment:
                     out += self.doc(child, '  ') + f'  const {name}: {self.kind(child, 1)};\n'
                 out += '}\n'
             elif node['row'] and not node['children']:
-                out += self.doc(node, '') + f'declare function {root}{self.params(node["row"])}: {self.result(node["row"])};\n'
+                out += self.doc(node, '') + ''.join(f'declare function {root}{params}: {result};\n' for params, result in self.signatures(node['row']))
             else:
                 out += self.doc(node, '') + f'declare const {root}: {self.kind(node, 0)};\n'
         return out
@@ -148,6 +178,11 @@ class Fragment:
         for row in self.rows:
             state = self.inventory.root_state(row['output']) if self.typed(row) else 'unnamed'
             states[state] = states.get(state, 0) + 1
+        by_input = {}
+        for row in self.rows:
+            for output in row.get('outputs_by_input', {}).values():
+                state = self.inventory.root_state(output)
+                by_input[state] = by_input.get(state, 0) + 1
         unread = sorted({where for where, _, _ in self.inventory.fallbacks})
         return [
             f'Census: {len(self.rows)} code-mode rows ({len(self.rows) - run} host rows, {run} run rows), '
@@ -155,6 +190,8 @@ class Fragment:
             f'Replies: {states.get("typed", 0)} fully typed, {states.get("opaque", 0)} typed down to an opaque '
             f'serde_json::Value leaf, {states.get("unknown", 0)} with a shape the generator could not read, '
             f'{states.get("unnamed", 0)} unknown (rows whose output the table does not name, or the run\'s own coordination reply).',
+            f'Per-input replies: {sum(by_input.values())} ({by_input.get("typed", 0)} fully typed, {by_input.get("opaque", 0)} typed '
+            f'down to an opaque serde_json::Value leaf, {by_input.get("unknown", 0)} with a shape the generator could not read).',
             f'Opaque serde_json::Value leaves: {len(self.inventory.opaques)}; unread shapes: '
             + (', '.join(unread) if unread else 'none') + '.',
         ]
