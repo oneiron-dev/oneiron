@@ -4867,7 +4867,7 @@
      "path": "src/blob_artifact/born_from.rs",
      "purpose": "Born-from (ARCH-0078 section 4): every artifact answers \"born from what\" the same way",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -13525,7 +13525,7 @@
       "const": 3,
       "crate-vis": 6,
       "enum": 4,
-      "fn": 33,
+      "fn": 34,
       "struct": 7
      }
     },
@@ -14457,6 +14457,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/context_board/readers.rs",
+     "purpose": "The READERS board block (ARCH-0067 #inbox-section, ARCH-0032 #private-reads): an agent sees who may read its…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RoomBar",
       "RoomMode",
@@ -14516,7 +14527,7 @@
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -27871,7 +27882,7 @@
      "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
      "surface": {
       "crate-vis": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -28613,19 +28624,22 @@
       "DiaryReadReceipt",
       "DiaryReadRecord",
       "DiaryReadRequest",
+      "DiaryReader",
+      "DiaryReaderList",
       "DiaryReadsRequest",
       "DiaryReadsView",
       "DiaryReviewAnswer",
-      "DiaryReviewState"
+      "DiaryReviewState",
+      "SealedPadReader"
      ],
      "path": "src/memory/diary_read.rs",
      "purpose": "The reason-logged door to an agent's diary (OF-490, owner AGM-1+8)",
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "enum": 4,
-      "fn": 13,
-      "struct": 9
+      "enum": 5,
+      "fn": 15,
+      "struct": 11
      }
     },
     {
@@ -28865,7 +28879,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 2,
-      "re-export": 34
+      "re-export": 35
      }
     },
     {
@@ -38995,7 +39009,7 @@
      "path": "src/skill/exploration_trial.rs",
      "purpose": "Exploration trials: an open optimizer proposal runs on live work as a version choice for the active skill it…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -40618,7 +40632,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 11
      }
     },
@@ -40765,8 +40779,8 @@
      "path": "src/skill_optimize/gate/tradeoff.rs",
      "purpose": "The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`]",
      "surface": {
-      "crate-vis": 7,
-      "fn": 11,
+      "crate-vis": 10,
+      "fn": 12,
       "struct": 5
      }
     },
@@ -50263,7 +50277,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51392,7 +51406,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3106,
+   "source_files": 3107,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62062,6 +62076,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/booking/free_text.rs",
+     "purpose": "A booking page's free-text constraint (ONE-1816), parsed on the cheap seat…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/booking/helpers.rs",
      "purpose": "—",
      "surface": {
@@ -62459,7 +62483,7 @@
      "path": "src/api/context_board/scratchpad.rs",
      "purpose": "POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -62953,7 +62977,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/role_picks.rs",
-     "purpose": "OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE)",
+     "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
       "crate-vis": 1
      }
@@ -65638,6 +65662,7 @@
      "notable": [
       "BigReply",
       "BigSettings",
+      "BookingParseSettings",
       "DecisionsSettings",
       "ImagePickSettings",
       "SeatPickSettings",
@@ -65648,7 +65673,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -66005,7 +66030,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "crate-vis": 12,
-      "fn": 15,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -66329,7 +66354,7 @@
      "path": "src/handler/app_tier.rs",
      "purpose": "Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -66557,6 +66582,16 @@
      "path": "src/idempotency/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ladder_poll.rs",
+     "purpose": "Polling an engine future whose decisions run on the host's ladder",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -67637,8 +67672,18 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 10,
-      "fn": 14,
+      "fn": 15,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/jobs.rs",
+     "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -68631,7 +68676,7 @@
      "path": "src/server/recall_rerank.rs",
      "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -69421,7 +69466,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 277,
+     "files": 278,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69581,6 +69626,13 @@
      "layout": "file+dir",
      "purpose": "—"
     },
+    "ladder_poll": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Polling an engine future whose decisions run on the host's ladder"
+    },
     "linear_host": {
      "files": 3,
      "impl_vault": false,
@@ -69624,7 +69676,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69752,7 +69804,7 @@
    },
    "over_bar": 37,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 546,
+   "source_files": 549,
    "test_files": 182
   },
   "oneiron-spawn": {

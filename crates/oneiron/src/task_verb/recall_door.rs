@@ -48,8 +48,7 @@ pub fn recall_with_vector(
 }
 
 /// What a host that embeds nothing says to a recall naming `media`.
-pub const RECALL_MEDIA_UNSERVED: &str =
-    "vault.recall: this host serves no ai.embed rung, so it cannot search media; retry without media or recall on a server";
+pub const RECALL_MEDIA_UNSERVED: &str = "vault.recall: this host serves no ai.embed rung, so it cannot search media; retry without media or recall on a server";
 
 /// `vault.recall` on a host that embeds nothing (an embedded handle): its
 /// query recalls as [`recall_with_vector`] with no vector does, and a request
@@ -63,7 +62,9 @@ pub fn recall_unembedded(
         return Err(crate::memory::MemoryError::new(
             crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
             RECALL_MEDIA_UNSERVED,
-            &["Recall media through a server that serves the space's rung under [models.media.embed]."],
+            &[
+                "Recall media through a server that serves the space's rung under [models.media.embed].",
+            ],
         ));
     }
     recall_with_vector(memory, input, |_| None)
