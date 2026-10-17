@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 221 facade rows, 763 declarations.
-Inputs: 190 of 221 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 178 of 221 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 223 facade rows, 765 declarations.
+Inputs: 192 of 223 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 180 of 223 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 49; unread shapes: 1.
 """
 
@@ -3068,6 +3068,7 @@ class OfferDraft(TypedDict):
     what: str
     artifact_ref: NotRequired[str | None]
     spend_scope: NotRequired[SpendScopeId | None]
+    until: NotRequired[int | None]
     intent_key: str
 class DeclaredMaximum(TypedDict):
     units: int
@@ -3101,6 +3102,8 @@ class OfferCard(TypedDict):
     join_ref: str
     state: OfferState
     created_at: int
+    until: NotRequired[int | None]
+    last_engaged_at: int
 OfferAnswer = Literal["join", "not_now"]
 class OfferAnswerRequest(TypedDict):
     offer_id: str
@@ -3112,6 +3115,13 @@ class OfferSettlement(TypedDict):
     join: NotRequired[JoinOutcome | None]
     turn_ref: NotRequired[str | None]
     diary_ref: NotRequired[str | None]
+class OfferVoteRequest(TypedDict):
+    offer_id: str
+    action: OfferAnswer
+class OfferReopenRequest(TypedDict):
+    offer_id: str
+    expected_last_engaged_at: int
+    until: NotRequired[int | None]
 class OffersRequest(TypedDict):
     room: EntityId
     branch: NotRequired[EntityId | None]

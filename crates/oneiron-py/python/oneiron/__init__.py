@@ -1027,11 +1027,17 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def __call__(self, spec):
-            """Publishes an agent's offer card to join a room or one of its threads."""
+            """Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."""
             return json.loads(_translate(lambda: self._client.vault_rooms_offer(json.dumps(spec))))
         def answer(self, spec):
             """The room's host answers an offer card: join, or not now."""
             return json.loads(_translate(lambda: self._client.vault_rooms_offer_answer(json.dumps(spec))))
+        def vote(self, spec):
+            """Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_offer_vote(json.dumps(spec))))
+        def reopen(self, spec):
+            """The room's owner or delegated host reopens its aged-out room-wide offer card."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_offer_reopen(json.dumps(spec))))
     class _VaultRoomsHostVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

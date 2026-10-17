@@ -163,6 +163,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.rooms.consent", post(facade_route))
         .route("/vault.rooms.offer", post(facade_route))
         .route("/vault.rooms.offer.answer", post(facade_route))
+        .route("/vault.rooms.offer.vote", post(facade_route))
+        .route("/vault.rooms.offer.reopen", post(facade_route))
         .route("/vault.rooms.offers", post(facade_route))
         .route("/vault.projects.goal.revisions", post(facade_route))
         .route("/vault.projects.goal.dismiss", post(facade_route))

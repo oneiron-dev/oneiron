@@ -524,6 +524,12 @@ impl OneironClient {
                 "vault.rooms.offer.answer" => remote_agent_verb_output::<
                     oneiron::workspace_roster::OfferSettlement,
                 >(client, verb, &input),
+                "vault.rooms.offer.vote" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::OfferCard,
+                >(client, verb, &input),
+                "vault.rooms.offer.reopen" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::OfferCard,
+                >(client, verb, &input),
                 "vault.rooms.offers" => remote_agent_verb_output::<
                     oneiron::workspace_roster::OffersPage,
                 >(client, verb, &input),
@@ -2715,6 +2721,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.offer.answer", value)
+    }
+    pub fn vault_rooms_offer_vote(
+        &self,
+        input: &oneiron::workspace_roster::OfferVoteRequest,
+    ) -> Result<oneiron::workspace_roster::OfferCard, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.offer.vote", value)
+    }
+    pub fn vault_rooms_offer_reopen(
+        &self,
+        input: &oneiron::workspace_roster::OfferReopenRequest,
+    ) -> Result<oneiron::workspace_roster::OfferCard, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.offer.reopen", value)
     }
     pub fn vault_rooms_offers(
         &self,

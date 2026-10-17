@@ -128,6 +128,24 @@ impl<'a> HostModels<'a> {
         purpose: &'static str,
         budget_units: u64,
     ) -> oneiron::Result<Self> {
+        Self::open_on(
+            server,
+            run_id,
+            purpose,
+            budget_units,
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    /// [`Self::open`] blocking on `handle`: a thread outside the server's
+    /// runtime names it.
+    pub(super) fn open_on(
+        server: &'a SyncServer,
+        run_id: String,
+        purpose: &'static str,
+        budget_units: u64,
+        handle: tokio::runtime::Handle,
+    ) -> oneiron::Result<Self> {
         let vault = server.vault();
         let runtime = server.ai.model_runtime();
         let guard = vault.policy_budget_guard(
@@ -141,7 +159,7 @@ impl<'a> HostModels<'a> {
             vault,
             runtime,
             run: runtime.undeclared_run(run_id, guard),
-            handle: tokio::runtime::Handle::current(),
+            handle,
             purpose,
         })
     }

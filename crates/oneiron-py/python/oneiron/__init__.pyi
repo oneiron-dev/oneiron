@@ -714,9 +714,13 @@ class Oneiron:
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
     class _VaultRoomsOfferVerbs:
         def __call__(self, spec: Facade.OfferDraft) -> Facade.OfferCard:
-            """Publishes an agent's offer card to join a room or one of its threads."""
+            """Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."""
         def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferSettlement:
             """The room's host answers an offer card: join, or not now."""
+        def vote(self, spec: Facade.OfferVoteRequest) -> Facade.OfferCard:
+            """Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits."""
+        def reopen(self, spec: Facade.OfferReopenRequest) -> Facade.OfferCard:
+            """The room's owner or delegated host reopens its aged-out room-wide offer card."""
     class _VaultRoomsHostVerbs:
         def __call__(self, spec: Facade.RoomHostRequest) -> Facade.RoomStanding:
             """Who hosts a room now, and the caller's own speaking role there."""
