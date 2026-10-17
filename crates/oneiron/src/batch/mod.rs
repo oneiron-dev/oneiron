@@ -44,8 +44,12 @@ mod tests;
 pub use self::builder::BatchBuilder;
 pub(crate) use self::vad_postcommit::VadPostcommitScope;
 #[cfg(feature = "sync")]
+pub(crate) use self::vad_postcommit::queue_committed_rows;
+#[cfg(feature = "sync")]
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
+#[cfg(feature = "sync")]
+pub(crate) use self::vad_postcommit::queue_room_join;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_task_updates;
 

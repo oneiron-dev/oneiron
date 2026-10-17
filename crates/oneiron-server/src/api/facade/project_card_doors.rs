@@ -32,9 +32,13 @@ const PROJECT_CARD_TAP_SURFACE: ConsentSurface = ConsentSurface::Dashboard;
 /// `vault.projects.confirm`: the owner's tap mints the project a host-held
 /// card proposes. Beside the answer, the records it derives from: the card's
 /// source message, room and thread, and the project it minted.
+/// `tap_session` is the sitting the call names (FIX 3045): a conversion picks
+/// its room host among the leaders present there, and only a call naming
+/// none falls back to the source message's sitting.
 pub(crate) async fn vault_projects_confirm(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    tap_session: Option<EntityId>,
     input: ProjectCardConfirmRequest,
 ) -> (MemoryResult<ProjectMintReceipt>, Vec<EntityId>) {
     const VERB: &str = "vault.projects.confirm";
@@ -85,7 +89,7 @@ pub(crate) async fn vault_projects_confirm(
             Ok(vault
                 .owner_project_signer(issuer)
                 .and_then(|signer| {
-                    vault.confirm_project_card(&input.card_id, &tap, &owner, &signer)
+                    vault.confirm_project_card(&input.card_id, &tap, &owner, &signer, tap_session)
                 })
                 .map_err(MemoryError::from))
         })
