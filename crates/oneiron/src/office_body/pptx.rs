@@ -23,7 +23,7 @@ use crate::Vault;
 use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, LiveDeckRefusal, Result};
 use crate::provenance::made_by::MadeBy;
 use crate::provenance::text_commit::TextCommitReceipt;
 use crate::store::Store;
@@ -572,5 +572,31 @@ fn fresh_node(entropy: &EntityId) -> NodeId {
 }
 
 fn live(error: LiveError) -> Error {
-    invalid(&format!("live deck: {error}"))
+    live_refused(error)
+}
+
+/// The docedit refusal as the engine error, kept whole: its class, its
+/// message and the live nodes it names.
+pub(crate) fn live_refused(error: LiveError) -> Error {
+    let refusal = match &error {
+        LiveError::Deck(_) => LiveDeckRefusal::Deck,
+        LiveError::Package(_) => LiveDeckRefusal::Package,
+        LiveError::Edit(_) => LiveDeckRefusal::Edit,
+        LiveError::Invalid(_) => LiveDeckRefusal::Invalid,
+        LiveError::UnknownNode => LiveDeckRefusal::UnknownNode,
+        LiveError::TreeShape(_) => LiveDeckRefusal::TreeShape,
+        LiveError::SelfSettle => LiveDeckRefusal::SelfSettle,
+        LiveError::HeadAdvanced => LiveDeckRefusal::HeadAdvanced,
+        LiveError::UnboundNodes(_) => LiveDeckRefusal::UnboundNodes,
+        LiveError::Encoding(_) => LiveDeckRefusal::Encoding,
+    };
+    let nodes = match &error {
+        LiveError::UnboundNodes(nodes) => nodes.iter().map(|node| node.0).collect(),
+        _ => Vec::new(),
+    };
+    Error::Artifact(ArtifactError::LiveDeckRefused {
+        refusal,
+        detail: error.to_string(),
+        nodes,
+    })
 }
