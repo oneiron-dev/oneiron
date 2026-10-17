@@ -1398,8 +1398,10 @@ export type DecisionQuestion = { id: string; version: number; text: string; clas
 export type GraphAskSelection = { entity_type: number; limit: number }
 /** `oneiron::config::HostingPrivacyPosture` */
 export type HostingPrivacyPosture = "managed" | "relay" | "self-host"
+/** `oneiron::llm::decision::questions::records::QuestionCriteria` */
+export type QuestionCriteria = { yes_if_all: string[]; no_if_any: string[]; not_a_reason_to_say_no: string[] }
 /** `oneiron::receipt::questions::GraphAskRequest` */
-export type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: HostingPrivacyPosture | null }
+export type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: HostingPrivacyPosture | null; criteria?: QuestionCriteria | null }
 /** `oneiron::llm::decision::types::TypedDecision` */
 export type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null }
 /** `oneiron::llm::decision::questions::records::AnswerRecord` */
@@ -1414,8 +1416,6 @@ export type DecisionDial = { first: DecisionRung; ceiling: DecisionRung; band: D
 export type QuestionActivation = "one_off" | "standing"
 /** `oneiron::llm::decision::questions::records::RefreshPolicy` */
 export type RefreshPolicy = { on_arrival: boolean; every_seconds?: number | null }
-/** `oneiron::llm::decision::questions::records::QuestionCriteria` */
-export type QuestionCriteria = { yes_if_all: string[]; no_if_any: string[]; not_a_reason_to_say_no: string[] }
 /** `oneiron::llm::decision::questions::records::QuestionAudience` */
 export type QuestionAudience = "asker"
 /** `oneiron::llm::decision::questions::records::QuestionMedia` */
