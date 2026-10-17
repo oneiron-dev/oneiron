@@ -353,10 +353,17 @@ fn fold_view_for_key(
             next_deadline_secs,
             continuation,
         } => Ok((view, next_deadline_secs, continuation)),
-        AuthorityTailFold::NeedHistory(_) => {
-            Err(Error::CorruptedIndex("authority history incomplete"))
-        }
+        AuthorityTailFold::NeedHistory(_) => Err(Error::CorruptedIndex(HISTORY_INCOMPLETE)),
     }
+}
+
+/// What a fold refuses with when it needs history this vault does not hold.
+const HISTORY_INCOMPLETE: &str = "authority history incomplete";
+
+/// Whether `error` is a fold's refusal for history this vault does not hold,
+/// which an import of that history may close, rather than a fault.
+pub(super) fn is_history_incomplete(error: &Error) -> bool {
+    matches!(error, Error::CorruptedIndex(reason) if *reason == HISTORY_INCOMPLETE)
 }
 
 /// The stored log's fold behind `key` past `baseline` (OF-469). The rows the
