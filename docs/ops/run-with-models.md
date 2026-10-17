@@ -537,7 +537,19 @@ secret the mask on write found has no binding, so `self.use` refuses it and
 names the owner door that adds one. Every use, and every refused one, leaves a
 Gate record with the handle, generation, effector, operation and send status.
 When the host's model ladder served the turn, each verb call the turn's
-program makes carries the provider that answered it.
+program makes carries the provider that answered it, and a reveal's ask names
+that provider. An agent no host model drives, such as an external HTTP or MCP
+agent, gets an ask that says the host does not know its provider.
+
+A value custody already holds, including one a reveal delivered, does not stay
+in what comes back. It may come back in a run's output (its console, answer,
+stored results and files, and the model's reply kept as evidence), or in a
+later write or side row. Each copy is replaced by its own record's handle, and
+no new record is minted. The match is exact and needs at least 12 bytes. It
+reads a keyed index that holds each value's length and fingerprint, never the
+value. The index's key never leaves this machine. The owner's "not a secret"
+ruling for a record wins over the match. The step's program is stored as the
+model wrote it, so a resumed step runs the same code.
 
 ### Reader children, summaries and fold receipts
 

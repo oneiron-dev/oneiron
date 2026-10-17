@@ -383,7 +383,10 @@ fn put_custody_body_in_txn(
         write.text_index_trusted,
         false,
         true,
-    )
+    )?;
+    // Every custody write lands here, so the known-value index keys each
+    // value a record holds, at each generation (OF-560 C).
+    super::known_values::remember_in_txn(write.store, wtxn, id, rec)
 }
 
 impl Vault {

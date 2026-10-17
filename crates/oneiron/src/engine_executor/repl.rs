@@ -16,8 +16,8 @@ use super::store::{
     RESULT_REPLY_INLINE_BYTES, checkpoint_label, clean_for_context, fallback_speech_marker,
     implicit_speak_output_path, load_context_output, load_observation_window, load_utf8_output,
     observation_output_path, observation_ref, publish_output, record_reply_evidence,
-    record_text_output, recoverable_chunk_path, resumed_output_path, resumed_output_wait,
-    script_output_path, validate_runtime_outputs, write_json,
+    record_script_output, record_text_output, recoverable_chunk_path, resumed_output_path,
+    resumed_output_wait, script_output_path, validate_runtime_outputs, write_json,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -211,7 +211,7 @@ impl EngineNativeExecutor<'_> {
                 trailing_speak,
                 repairs,
             } = heal_executor_reply(&response)?;
-            record_text_output(
+            record_script_output(
                 &self.storage,
                 &mut record,
                 script_output_path(completed_steps),

@@ -733,6 +733,15 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// [`Self::code_run_output_sink`] for a step's program, which a resumed
+    /// step runs again as stored: never swept.
+    pub(crate) fn code_run_script_sink(&self) -> Result<BodySink> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_script_sink(),
+            Self::Session(binding) => binding.output_sink(),
+        }
+    }
+
     /// Publishes the body `sink` wrote as run `owner`'s output at `path`. An
     /// off-record session's body is not registered: it lives in the
     /// session's spill directory and goes when the session closes.
