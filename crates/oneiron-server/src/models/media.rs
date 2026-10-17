@@ -28,6 +28,8 @@ use serde::Serialize;
 
 use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind};
 
+use super::broker::{BrokerSite, KeyDoor};
+use super::broker_media::broker_media_backend;
 use super::catalog::{catalog_entry, engine_model_id};
 use super::cooldown::{FallbackRung, OfferCooldowns, ProbePermit};
 use super::gemini_media::gemini_backend;
@@ -295,11 +297,15 @@ impl MediaRuntime {
     }
 
     /// Builds each `[models.media]` seat. A rung whose provider cannot
-    /// start drops out of its ladder, and the reason shows in `status`.
+    /// start drops out of its ladder, and the reason shows in `status`. A
+    /// `key_secret` provider's calls go through the credential broker at
+    /// `site`, its key read at `keys`.
     pub(super) fn build(
         config: &ModelsConfig,
         rests: &Arc<OfferCooldowns>,
         status: &mut Vec<SeatStatus>,
+        site: Option<&Result<BrokerSite, String>>,
+        keys: Option<&Arc<dyn KeyDoor>>,
     ) -> Self {
         let mut runtime = Self::empty();
         if config.media.seats.is_empty() {
@@ -317,7 +323,7 @@ impl MediaRuntime {
             .map(|(name, _)| name.clone())
             .collect();
         runtime.cloners = voice_cloners(config);
-        let backends = media_backends(config);
+        let backends = media_backends(config, site, keys);
         for (operation, seat) in &config.media.seats {
             let mut rungs = Vec::new();
             let mut rung_status = Vec::new();
@@ -693,8 +699,13 @@ impl AiMediaDoor for MediaRuntime {
 }
 
 /// One media client per provider some media seat names, each serving the
-/// models those seats name on it.
-fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBackend>> {
+/// models those seats name on it. A `key_secret` provider's client sends
+/// through the credential broker.
+fn media_backends(
+    config: &ModelsConfig,
+    site: Option<&Result<BrokerSite, String>>,
+    keys: Option<&Arc<dyn KeyDoor>>,
+) -> BTreeMap<String, Arc<dyn MediaBackend>> {
     let mut models: BTreeMap<&str, BTreeMap<ModelId, String>> = BTreeMap::new();
     for model in config.media.seats.values().flat_map(|seat| &seat.rungs) {
         let provider = &config.providers[&model.provider];
@@ -709,6 +720,9 @@ fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBacken
     for (name, wire_models) in models {
         let provider = &config.providers[name];
         let built: anyhow::Result<Arc<dyn MediaBackend>> = match provider.kind {
+            _ if provider.key_secret.is_some() => {
+                broker_media_backend(name, provider, wire_models, site, keys)
+            }
             ProviderKind::Cartesia => {
                 ProviderHttp::new(&cartesia(provider), KeyStyle::ApiKeyHeader).map(|http| {
                     Arc::new(HostedSpeech {

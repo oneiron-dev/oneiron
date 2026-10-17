@@ -30,6 +30,7 @@ use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind
 
 mod anthropic;
 mod broker;
+mod broker_media;
 mod catalog;
 mod cooldown;
 mod decision_read;
@@ -221,11 +222,12 @@ impl ModelRuntime {
         };
         let mut status = ModelsStatus::default();
         let mut built = BTreeMap::new();
-        // One broker for every `key_secret` provider, made only if one exists.
+        // One broker for every `key_secret` provider, chat or media, made
+        // only if one exists.
         let brokered = config
             .providers
             .values()
-            .any(|provider| provider.key_secret.is_some() && provider.kind.generates());
+            .any(|provider| provider.key_secret.is_some());
         let site =
             brokered.then(|| broker::BrokerSite::new(config).map_err(|error| error.to_string()));
         for (name, provider) in &config.providers {
@@ -368,7 +370,13 @@ impl ModelRuntime {
                     .push(SeatStatus::new(*role, None, state, rung_status));
             }
         }
-        let media = MediaRuntime::build(config, &rests, &mut status.seats);
+        let media = MediaRuntime::build(
+            config,
+            &rests,
+            &mut status.seats,
+            site.as_ref(),
+            keys.as_ref(),
+        );
         // Each chat model the router serves, and each media seat's rung, is
         // one a parked offer's calls may fall back to once the owner names
         // it (`use_fallback`).
@@ -574,7 +582,7 @@ fn build_reranker(
     // it would carry no key, while its offer says the broker holds one.
     if provider.key_secret.is_some() {
         anyhow::bail!(
-            "a reranker cannot use a key_secret key yet: the credential broker sends chat calls only"
+            "a reranker cannot use a key_secret key yet: the credential broker has no rerank shape"
         );
     }
     let http = http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?;
