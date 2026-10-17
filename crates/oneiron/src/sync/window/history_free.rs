@@ -111,14 +111,16 @@ impl HistoryCheck {
         });
         let mut erased = BTreeSet::new();
         for id in soft {
-            let raw =
-                crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, &rtxn, &id)?;
-            if crate::deletion::row_deletion_marked(
+            let marked = match crate::ports::EntityStoreRead::port_entity_with_raw(
                 &vault.store,
                 &rtxn,
                 &id,
-                raw.as_deref().map(Vec::as_slice),
+                |raw| crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, Some(raw)),
             )? {
+                Some(marked) => marked,
+                None => crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, None)?,
+            };
+            if marked {
                 erased.insert(id);
             }
         }

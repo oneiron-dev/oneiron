@@ -315,7 +315,10 @@ pub(crate) fn read_secret_file(path: &Path, what: &str) -> anyhow::Result<Zeroiz
 
 /// One secret, from the named owner-only file or else stdin, exactly as given
 /// but for one trailing line break.
-fn read_secret(source: &SecretSourceArgs, what: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+pub(super) fn read_secret(
+    source: &SecretSourceArgs,
+    what: &str,
+) -> anyhow::Result<Zeroizing<Vec<u8>>> {
     let mut value = Zeroizing::new(Vec::with_capacity(SECRET_LIMIT + 1));
     match &source.secret_file {
         Some(path) => read_owner_only(path, &mut value)?,
@@ -484,8 +487,12 @@ pub(crate) enum HostUnlock {
 
 impl HostUnlock {
     /// The unlock `args` name for `backup`, its secret read now. An escrow
-    /// secret comes from the named recovery box when there is one.
+    /// secret comes from the named recovery box when there is one, and the
+    /// world kit's from its pieces.
     pub(super) fn read(args: &RestoreArgs, backup: &Path) -> anyhow::Result<Self> {
+        if args.unlock == UnlockMethod::Kit {
+            return super::recovery_kit::kit_unlock(args);
+        }
         Self::read_with(
             args.unlock,
             args.credential.as_deref(),
@@ -550,6 +557,10 @@ impl HostUnlock {
                 let secret = oneiron::world_keys::escrow_recipient(&seed)?;
                 Self::Escrow { label, secret }
             }
+            UnlockMethod::Kit => anyhow::bail!(
+                "--unlock kit opens a backup (`oneiron restore --unlock kit`); a vault on this \
+                 host unlocks with device, password, passkey or escrow"
+            ),
         })
     }
 

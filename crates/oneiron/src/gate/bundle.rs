@@ -485,6 +485,15 @@ impl Vault {
                 {
                     return Err(Error::CorruptedIndex("gate consent bundle member"));
                 }
+                // An answer to a Coach heal counts as its review (OF-418).
+                crate::dreamer_runner::maintenance::coach_heal::record_owner_review_in_txn(
+                    self,
+                    wtxn,
+                    id,
+                    &body,
+                    entry.member.created_at,
+                    now,
+                )?;
 
                 frontier.update(entry.member.read_frontier_hash);
                 member_claim_ids.push(id);

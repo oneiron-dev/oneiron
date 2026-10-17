@@ -42,7 +42,7 @@ use crate::vault::Vault;
 
 mod accumulation;
 mod controls;
-pub use controls::{RecallExecution, RetrievalDeadline};
+pub use controls::{RecallExecution, RecallMediaSeed, RecallQueryVectors, RetrievalDeadline};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use controls::{SlowRetrievalStage, still_deadline_clock_for_test};
 mod session_scope;
@@ -74,6 +74,7 @@ const STANDARD_PPR_SEED_LIMIT: usize = 8;
 /// engine that emits them and the surface that shows them.
 const SIGNAL_TEXT: &str = "text";
 const SIGNAL_VECTOR: &str = "vector";
+const SIGNAL_MEDIA_VECTOR: &str = "media_vector";
 const SIGNAL_PPR: &str = "ppr";
 const SIGNAL_SUBQUERIES: &str = "subqueries";
 const SIGNAL_BACKEND_DECOMPOSE: &str = "backend_decompose";
@@ -117,6 +118,18 @@ pub enum SearchProbe {
         /// the question it then answers.
         query_text: Option<String>,
     },
+    /// Dense probe into one declared embedding space (OF-370): the one-space
+    /// preset's text slot is the case a server sends.
+    Space {
+        /// The declared space's id.
+        space: String,
+        /// The tower that encoded the query.
+        query_kind: crate::embed::InputKind,
+        /// Query embedding, at the space's width.
+        embedding: Vec<f32>,
+        /// As for [`Self::Vector`].
+        query_text: Option<String>,
+    },
 }
 
 impl SearchProbe {
@@ -125,7 +138,9 @@ impl SearchProbe {
     pub fn query_text(&self) -> Option<&str> {
         match self {
             Self::Text { query } => Some(query.as_str()),
-            Self::Vector { query_text, .. } => query_text.as_deref(),
+            Self::Vector { query_text, .. } | Self::Space { query_text, .. } => {
+                query_text.as_deref()
+            }
         }
     }
 }
@@ -449,6 +464,27 @@ fn run_direct_channel(
             // No query recorded: a float vector is not a string a later
             // channel could compare against, and `signals_used` is where a
             // dense channel is reported.
+        }
+        SearchProbe::Space {
+            space,
+            query_kind,
+            embedding,
+            ..
+        } => {
+            acc.mark(SIGNAL_MEDIA_VECTOR);
+            acc.attempt(RetrievalSignal::MediaVector);
+            let hits = scoped.search_space_revisioned(
+                space,
+                *query_kind,
+                embedding,
+                request.channel_limit(),
+                None,
+            )?;
+            acc.narrowing.push(hits.receipt);
+            let narrowed =
+                request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
+            acc.merge_revisioned(narrowed, hits.revisions);
+            acc.complete(RetrievalSignal::MediaVector);
         }
     }
     Ok(())

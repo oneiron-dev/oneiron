@@ -25,13 +25,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/vault_read/types.rs` | src | s | 7 struct · 2 enum · 3 fn | AskRequest, CodeExecuteRequest, CodeSearchRequest, CoreBatchShortIdHydrateRequest, CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryRequest, CountMode +1 | Vault-read request shapes and the view / count-mode knobs they carry |
 | `src/edge.rs` | src | s | 1 enum · 2 fn | EdgeActorClass | Edge vocabulary the write path shares |
 | `src/entity_id.rs` | src | m | 4 struct · 18 fn · 3 const · 2 mod | EntityId, ForeignWorldId, LocalWorldId, ParsedPresentationId | `EntityId` + world-id newtypes + id parsing/hex |
-| `src/entity_id/derived_domains.rs` | src | s | 40 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
+| `src/entity_id/derived_domains.rs` | src | s | 41 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
 | `src/entity_id/serde_hex.rs` | src | s | 4 fn · 1 mod | — | Validated entity-id representation for opt-in domain records |
-| `src/error/artifact.rs` | src | s | 1 enum · 1 crate-vis | ArtifactError | Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions… |
+| `src/error/artifact.rs` | src | s | 2 enum · 1 fn · 1 crate-vis | ArtifactError, LiveDeckRefusal | Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions… |
 | `src/error/claim.rs` | src | s | 1 enum · 1 crate-vis | ClaimError | Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the… |
 | `src/error/code.rs` | src | s | 1 enum · 1 crate-vis | CodeError | Code-domain errors: codebase snapshots and symbol manifests, repo mutations, the micro-VM backend, code… |
 | `src/error/gate.rs` | src | m | 1 struct · 3 enum · 7 fn · 2 crate-vis | GateDenial, GateDenialOutcome, GateDenialReason, GateError | Gate-domain errors: consent grants and bounds, disclosure scope and clamps, and the Gate write refusal with… |
-| `src/error/hook.rs` | src | s | 1 enum | VerbHookStop | A verb hook's stop (ARCH-0080 §3): the typed answer a caller gets when a pre-hook skipped or asked, or a… |
+| `src/error/hook.rs` | src | s | 1 enum | VerbHookStop | A verb hook's stop (ARCH-0080 §3): the typed answer a caller gets when a pre-hook skipped or asked, a… |
 | `src/error/maintenance.rs` | src | s | 2 enum · 1 crate-vis | CompactionPacketError, MaintenanceError | Maintenance-domain errors: the compaction handoff refusal with its per-axis taxonomy, and the vault-cleanup… |
 | `src/error/mod.rs` | src | m | 2 enum · 7 fn · 1 type · 14 re-export | Error, ErrorKind | — |
 | `src/error/off_record.rs` | src | s | 1 enum · 1 crate-vis | OffRecordError | Off-record-domain errors: the kill switch, off-record session lifecycle, the overlay and its leases, and the… |

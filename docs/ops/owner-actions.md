@@ -694,6 +694,34 @@ participates, the vault keeps a standing grant on that channel for the sender, s
 you; turning participation off revokes it. A record leaves the vault only once the publisher took
 it: a failed send keeps it for the next one.
 
+## Model-graded self-heal detectors
+
+Canon ships no detector wording, so no model-graded detector runs until you write one. Each
+`[self_heal.detectors.<family>]` table is one detector over the retrieval telemetry:
+
+```toml
+[self_heal.detectors.recall_gaps]
+class = "retrieval_miss"   # the diagnostic class a finding carries (not agent_health)
+tier = "t3"                # t3 (default), t2 or session
+prompt = "…"               # what it looks for
+rubric = "…"               # how a positive is told from a negative
+consecutive = 3            # runs a window needs; for t2, positives in a row that raise
+window_secs = 3600         # one window of time; for session, how long a conversation is quiet
+```
+
+Every five minutes the server reads the newest 1,024 runs and asks each detector's question of
+each window it has not graded yet, up to 8 windows a pass, on the decision ladder's local and big
+rungs (never a person). `t3` judges each completed window of time at once. `t2` asks once per
+run. `session` judges one conversation's runs once it has been quiet for `window_secs`. A raised
+window becomes a proposed diagnostic: nothing is repaired. Changing a prompt or rubric grades
+windows again.
+
+`GET /v1/owner/self-heal/findings?family=<family>` lists one detector's raised `t3` findings,
+newest first, each with your label. `POST /v1/owner/self-heal/findings/label` with
+`{"family", "event", "positive"}` labels one finding; a label never changes. Once a family has
+`consecutive` positive labels and one negative, a `t2` detector of that family asks with the
+labeled findings.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the
@@ -787,6 +815,47 @@ since it may be the only copy of that vault's wraps. A restore makes a plain vau
 over a sealed one; restore to another `--vault-path`. Body files, `.lines`, LFS staging and lock
 files stay outside the tier.
 
+## The world recovery kit
+
+The world kit carries your recovery root: the key every private world's key is also wrapped to.
+It is a fixed 2 of 3: any two pieces open it, and one piece alone, or the passphrase alone, opens
+nothing. No piece ever lives on the host. Run these on a stopped vault:
+
+```sh
+oneiron recovery-kit issue --home paper --home password-manager --home passphrase --out /Volumes/KEY/kit
+oneiron recovery-kit confirm --piece /Volumes/KEY/kit/piece-1.txt --piece /Volumes/KEY/kit/piece-2.txt
+oneiron recovery-kit status
+oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
+```
+
+`issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
+`file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
+`security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
+recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`. Nothing
+is published yet: the kit is pending. Put each piece where its home says, then `confirm` with two
+of them, or with one and the passphrase. That re-entry is the proof you saved them. Confirm makes
+the kit's root live on this machine and marks every earlier kit replaced. When this machine's
+keystore opens the vault key, confirm also seals it to the root as the escrow wrap `world-kit`. A
+replaced kit's pieces still open their own old root;
+replacing a kit does not revoke it. `this-machine` is refused until a keystore slot can hold a
+piece.
+
+`status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
+private world's state. `covered` means only that the world's current key has a wrap to the pinned
+root. A running server shows the same at `GET /v1/owner/recovery-kit`; issue, confirm and restore
+run only from the CLI, so no piece crosses HTTP.
+
+`restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
+world's settings. A kit opened with one piece and the passphrase is not verified on its own:
+pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
+
+On a new host, the kit also opens a backup through the `world-kit` wrap. `--vault-id` is the id
+`status` prints:
+
+```sh
+oneiron restore BACKUP --unlock kit --vault-id <hex> --piece piece-1.txt --piece piece-2.txt --trust signer.json
+```
+
 ## Contact disclosure
 
 A contact sees only what you cleared it for. An agent or the companion can only offer you a
@@ -847,6 +916,36 @@ oneiron handoff-alarms acknowledge SUITE:HEX    # you have seen this key's alarm
 Routes: `GET /v1/owner/authority/handoff-alarms` (open alarms first) and
 `POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
 signer is 404, and acknowledging an acknowledged alarm changes nothing.
+
+## Learned settings
+
+A learned setting is a knob the vault fits from its own runs, such as the audit rate
+(`audit_rate`), a planner floor or a health dial (`health.loop.repeats`). You can lay two kinds of
+row on a knob. A **seed** is a prior the fit starts from, weighted in runs. A **pin** is the value,
+whatever the fit says.
+
+A row applies to the vault, to one project, or to one task type (a type row matches its node at
+any tree version). A read takes the narrowest pin (project, then type, then vault). Without a
+pin, it takes the vault's fit once the fit has runs of its own. Failing that, it takes the
+narrowest seed, then the catalog seed. The catalog keeps each knob's bounds; a value outside
+them is refused.
+
+```sh
+oneiron learning-settings list                                  # catalog, values now, your rows
+oneiron learning-settings list --key health.loop.repeats
+oneiron learning-settings put health.loop.repeats pin 5 --why "noisy tools" --project HEX32
+oneiron learning-settings put audit_rate seed 0.1 --weight-runs 20 --why "start low"
+oneiron learning-settings put health.silent.minutes pin 60 --why "slow jobs" --task-type research
+oneiron learning-settings clear health.loop.repeats pin --project HEX32
+```
+
+The commands open a stopped vault. A running server answers the same at
+`GET /v1/owner/settings/learning[?key=…]`, `POST /v1/owner/settings/learning` with
+`{"key", "mode": "seed"|"pin", "value", "weight_runs"?, "why", "project"?, "task_type"?}`, and
+`POST /v1/owner/settings/learning/clear` with `{"key", "mode", "project"?, "task_type"?}`.
+Each answers with the key's catalog entry and rows. The host verbs `vault.settings.learning`,
+`.put` and `.clear` take the same input over the facade and MCP. All of them are the owner's
+alone, and clearing an absent row succeeds.
 
 ## Legal holds
 
@@ -929,13 +1028,25 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
 - `PUT /v1/owner/embedding-spaces` with `{"id", "dimensions", "accepts", "query_towers"}` (and
   optional `"evidence": {"floor", "strong"}`) declares a space. `POST .../bind` with
   `{"kind", "space"}` binds one slot; leave out `space` to return the slot to its default.
-  `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included.
+  `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included. Both
+  refuse a slot an open move carries until the move ends.
+  With the text slot bound, a text query embeds through that space's text tower in the context
+  pack, the Context Board, `/v1/core/query` and recall (HTTP, WebSocket and MCP), and its list
+  holds every kind of item the space holds. `/api/search/semantic` still reads the text index.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
+- **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
+  `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
+  for the preset, apply at each `serve` start. A start declares only spaces the vault does not
+  hold and binds only slots the vault leaves unbound and no open move carries, so a door edit
+  or a model move stays. A listed space the vault holds at another width stops `serve`: a new
+  width needs a new id.
 - **Moving to a new model version.** `POST .../move` with `{"candidate", "incumbent", "margin"}`
   starts moving every slot the incumbent serves to the candidate. Leave out `incumbent` for the
   text index. The media backfill fills the candidate while the incumbent keeps serving, and
-  writes probes meanwhile: short queries the chat seat writes from text documents, and the
-  captioner or Local-vision seat from images. Once the candidate holds every document, the
+  writes probes meanwhile: short queries the chat seat writes from text documents, the
+  captioner or Local-vision seat from images, and the chat seat from audio once the
+  `[models.media]` transcribe seat has transcribed it. Audio and image bytes never go to a
+  third-party seat for a probe. Once the candidate holds every document, the
   probes run on both spaces, and on the incumbent twice for its retest noise. The candidate swaps
   in by itself only when every kind is not worse: the low end of the kind's family-grouped
   paired interval stays at or above minus that noise, or minus your stricter `margin`. A kind
@@ -943,12 +1054,71 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   than 10 probe families, or an interval across the margin, reads unknown. Unknown never swaps
   by itself: the move stays open and is checked again every 6 hours. Each swap, keep and undo
   leaves a short note in the inbox.
-- `POST .../move/check` with `{"candidate"}` runs the probes now. `.../move/approve` swaps a
-  full candidate in on your yes. `.../move/undo` binds the incumbent again after a swap, and
-  `.../move/abandon` ends an open move without one.
+- The media backfill skips any document a space's model refuses by its content (a format it
+  cannot read, a content filter) until the document changes, so one bad file never stalls a
+  space or a move. A model that refuses everything it is sent before it has embedded anything
+  is treated as down, and the backfill retries it. `GET .../embedding-spaces` counts each
+  space's refused documents under `refused`; `GET .../refused?space=<id>` lists them with the
+  reason and time, and `POST .../refused/clear` with `{"space", "id"}` forgets one, so the
+  backfill sends the same bytes again (after a provider's policy or model changed).
+- A move that goes 14 days from its start without one check (its model never filled the
+  candidate, or the probes never ran) closes as kept, with a note: the incumbent keeps serving
+  and the candidate's rows go. Begin the move again once that model answers.
+- `POST .../move/check` with `{"candidate"}` runs the probes now. It answers within 20 seconds:
+  past that it answers `running`, and the check finishes on its own and records its reading on
+  the move. `.../move/approve` swaps a full candidate in on your yes. `.../move/undo` binds the
+  incumbent again after a swap, and `.../move/abandon` ends an open move without one. An undo
+  works for 30 days after the swap. Then the incumbent retires (its rows and declaration go)
+  unless a slot binds it again.
 - `GET .../probes` lists the probes. `POST .../probes` with `{"kind", "query", "family",
   "targets", "author"}` stores one you wrote. `POST .../probes/delete` with `{"id"}` removes
-  one. Audio probes are only the ones you store.
+  one.
+
+On a stopped vault the same acts run from the command line, and each prints what the route
+answers:
+
+```sh
+oneiron embedding-spaces list
+oneiron embedding-spaces declare ID --width N --accepts text,image [--query-towers text] [--floor F --strong S]
+oneiron embedding-spaces bind text|image|audio [SPACE]   # no SPACE: back to the default
+oneiron embedding-spaces one-space SPACE
+oneiron embedding-spaces retire SPACE
+oneiron embedding-spaces move CANDIDATE [--incumbent SPACE] [--margin F]
+oneiron embedding-spaces move-approve|move-undo|move-abandon CANDIDATE
+oneiron embedding-spaces probes list
+oneiron embedding-spaces probes put --kind text --query Q --family HEX [--target HEX] --author A
+oneiron embedding-spaces probes delete ID
+```
+
+A check runs the server's own `ai.embed` towers, so only a running server checks a move. It can
+take minutes, and `oneiron api raw` waits for it:
+
+```sh
+oneiron api raw POST /v1/owner/embedding-spaces/move/check --data '{"candidate": "SPACE"}'
+```
+
+The SDK verbs `vault.embedding_spaces.list`, `.declare`, `.bind`, `.one_space`, `.retire`,
+`.move`, `.move_check`, `.move_approve`, `.move_undo`, `.move_abandon`, `.probes.list`,
+`.probes.put` and `.probes.delete` do the same under the owner's credential, with the same
+bodies and answers. An embedded vault has no `ai.embed` towers, so it refuses `.move_check`. The
+SDK client waits up to 30 minutes for a check, as for an export.
+
+## Sign a secret's custody with your owner anchor
+
+A portable secret's custody moves between your machines under a signed transition. An install
+that cannot sign as one of your machines can have its current transition signed with the owner
+anchor of your recovery kit instead. The record keeps its generation, status and value, and the
+value is sealed to every machine of yours. The kit is read on this machine only: stop `serve`,
+then pipe the kit's recovery codes in, one per line (with `--with-passphrase`, the kit
+passphrase on the first line, and then one code is enough):
+
+```sh
+oneiron secrets anchor-sign --name NAME < kit.txt
+```
+
+It prints `{"name", "signed"}`. `signed` is false for a record that stays on its device
+(device-bound, cross-vault or "this device only") or a value no machine of yours here can open.
+No route or SDK verb takes the kit.
 
 ## Calling the owner routes
 

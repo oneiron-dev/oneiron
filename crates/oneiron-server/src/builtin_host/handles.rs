@@ -9,26 +9,27 @@ use oneiron::Vault;
 use oneiron::channel_identity_provider::{
     LINE_CHANNEL, LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig,
     LineOfficialAccountPlanTier, SLACK_CHANNEL, SlackSharedPresenceAdapter,
-    SlackSharedPresenceAdapterConfig,
 };
 use oneiron::skill_hub::pack_catalog::{CheckedBuiltinConnection, PackSetupSecret};
 
-use super::webhooks::{SLACK_EVENTS_PATH, SLACK_OAUTH_PATH};
+use super::slack_app::{SlackInstalls, public_origin, slack_app_config};
 
-/// The built-in Slack pack's connection and its request-signing secret.
+/// The built-in Slack pack's connection, its request-signing secret and the
+/// effector the pack declares for it (packs/builtin/slack/PACK.md).
 pub(crate) const SLACK_CONNECTION: &str = "slack-app";
-const SLACK_SIGNING_SECRET: &str = "slack.signing_secret";
+pub(crate) const SLACK_SIGNING_SECRET: &str = "slack.signing_secret";
+pub(crate) const SLACK_SECRET_EFFECTOR: &str = "connector:slack";
 /// The built-in LINE pack's connection and its webhook-signing secret.
 pub(crate) const LINE_CONNECTION: &str = "line-channel";
 const LINE_CHANNEL_SECRET: &str = "line.channel_secret";
-/// The fixed names the served Slack app goes by (Engine ruling 10-17).
-const SLACK_APP_NAME: &str = "Oneiron";
 
 /// The checked built-in channels this host serves.
 #[derive(Default)]
 pub(crate) struct BuiltinHandles {
     slack: RwLock<Option<Arc<SlackHandle>>>,
     line: RwLock<Option<Arc<LineHandle>>>,
+    /// The Slack app installs started by the owner, awaiting Slack's redirect.
+    pub(crate) slack_installs: SlackInstalls,
 }
 
 pub(crate) struct SlackHandle {
@@ -122,9 +123,9 @@ fn slack_handle(
     base: Option<&str>,
     basis: String,
 ) -> Option<SlackHandle> {
-    let Some(base) = base.map(|base| base.trim_end_matches('/')) else {
+    let Some(base) = public_origin(base) else {
         tracing::info!(
-            "the Slack pack is checked, but this host has no oauth_resource_indicator for its app URLs; Slack is not served"
+            "the Slack pack is checked, but this host has no https oauth_resource_indicator for its app URLs; Slack is not served"
         );
         return None;
     };
@@ -133,14 +134,11 @@ fn slack_handle(
         return None;
     };
     let signing_secret = secret(&checked, SLACK_SIGNING_SECRET)?;
-    let config = SlackSharedPresenceAdapterConfig::new(
-        SLACK_APP_NAME,
-        SLACK_APP_NAME,
-        format!("{base}{SLACK_EVENTS_PATH}"),
-        vec![format!("{base}{SLACK_OAUTH_PATH}")],
-    )
-    .map_err(|error| tracing::info!(%error, "the Slack app config is invalid; Slack is not served"))
-    .ok()?;
+    let config = slack_app_config(&base)
+        .map_err(
+            |error| tracing::info!(%error, "the Slack app config is invalid; Slack is not served"),
+        )
+        .ok()?;
     Some(SlackHandle {
         adapter: SlackSharedPresenceAdapter::new(config),
         team_id,

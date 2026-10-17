@@ -21,14 +21,15 @@ pub(crate) use locality::clear_embedding_locality_in_txn;
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput};
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
-    KindSlotBindings,
+    KindSlotBindings, MediaRefused,
 };
 pub(crate) use space::{
     delete_media_vectors_in_txn, delete_text_media_vectors_in_txn, embedding_space_in_txn,
     search_media_space_in_txn,
 };
 pub use space_move::{
-    KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_NOTE_PRODUCER, SPACE_PROBE_DEPTH,
+    KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_FILL_DEADLINE_SECS,
+    SPACE_MOVE_NOTE_PRODUCER, SPACE_MOVE_UNDO_WINDOW_SECS, SPACE_PROBE_DEPTH,
     SPACE_PROBE_MIN_FAMILIES, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome, SpaceMoveState,
     SpaceProbeEncoder, SpaceRef,
 };

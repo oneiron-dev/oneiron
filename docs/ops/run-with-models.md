@@ -158,8 +158,9 @@ extra_roots = ["/etc/oneiron/private-ca.pem"] # optional, absolute
 ```
 
 A declared run's paid keys must sit at T0, so its teacher calls go out this way.
-A `key_secret` provider answers whole replies only for now: a streamed call to it
-is refused before it starts.
+A `key_secret` provider answers whole chat replies only for now: a streamed chat
+call to it is refused before it starts. Its media calls go through the same
+broker (§10).
 
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
@@ -594,7 +595,7 @@ for it: a spent line is refused with `BUDGET_SPENT` (402; MCP kind
 `budget_spent`), and a reranker that refuses, fails or answers out of shape
 with `MODEL_UNAVAILABLE` (503; MCP kind `model_unavailable`). A route whose
 rungs cannot serve (a key variable unset, or a `key_secret` provider: the
-broker sends chat calls only for now) refuses the same way. The request
+broker has no rerank shape yet) refuses the same way. The request
 never names the model, the endpoint or the lease; the server holds them, for
 MCP, HTTP and WebSocket recall alike.
 
@@ -765,8 +766,8 @@ serving that model has `audio_input`. With no manifest, the seat's
 Image, video, speech, transcription and embedding calls have their own seats,
 outside the text tiers: one ladder per operation in `[models.media]`, each rung
 `"<provider>:<model>"` on an OpenAI-compatible provider (`openai-compat` or
-`local-openai-compat`, keyed by `key_env`; the credential broker sends chat
-calls only), or an image or video rung on a `gemini` provider (below). A
+`local-openai-compat`, keyed by `key_env` or `key_secret`), or an image or
+video rung on a `gemini` provider (below). A
 media call is admitted, sent and settled like a text call:
 each rung it reaches gets its own permit on the media meter, an offer refused
 for a limit rests and the call goes to the next rung, and the run's receipts
@@ -794,8 +795,22 @@ rungs = ["local:whisper-large-v3"]
 rungs = ["local:qwen3-embedding"]
 ```
 
+A media rung on a `key_secret` provider sends through the credential broker
+(§2), as a chat call does. The server builds each exchange's exact request,
+and the broker checks it against the exchange's own shape before the key is
+read at the custody door. That covers an image (JSON, or a form with
+references), an edit, speech, a transcription, an embedding, a video's start,
+poll, clip and removal, and the Gemini API's generate, job start, operation
+poll and file. The broker adds the key: Bearer on the OpenAI-compatible paths,
+`x-goog-api-key` on the Gemini API's. A JSON or form request is at most
+16 MiB. Speech, a video clip and a Gemini file stream back in 1 MiB frames,
+up to 512 MiB, and are checked for the key, never rewritten: a reply that
+holds it is cut, and the call fails. Each exchange must finish within the
+provider's `timeout_secs` (120 s by default), so raise it for long clips. A
+Gemini file's one redirect is followed only under the API's own origin.
+
 A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
-key in `key_env` (sent as `x-goog-api-key`). It serves the image and video
+key in `key_env` or `key_secret` (sent as `x-goog-api-key`). It serves the image and video
 seats only. An image is `models/{model}:generateContent` asked for image
 output: the instruction and each reference image go inline, a `size`
 (`"WxH"`) or `width`/`height` becomes the nearest drawn `aspectRatio` and an
@@ -949,6 +964,55 @@ whose provider reports no duration is charged the length of the WAV it was
 sent. These calls are buffered, so live partial transcripts wait for a
 streaming media lease.
 
+### The server's own voice loop (`[models.voice]`)
+
+With `socket` set, `serve` listens there for the sibling process that carries
+a call's audio (Linux; elsewhere the socket is not bound and voice stays
+off). The socket's parent must be an existing owner-only runtime directory.
+The socket is created 0600 and removed when serve stops. One call runs at a
+time; a second connection waits for the first to end.
+
+```toml
+[models.voice]
+socket = "/run/oneiron/voice.sock"
+extraction_prompt_file = "prompts/voice-extraction.md"  # or extraction_prompt
+stock_voice = "alloy"          # or bank_voice = "<voice id>"
+queue_capacity = 64            # media calls queued (default 64)
+call_budget_units = 64000      # each call's line for the host's own calls
+```
+
+A call opens with one JSON line:
+`{"op":"hello","token":"v2.slip...","binding":{"timestamp":..,"nonce":"..","signature":".."},"sample_rate":16000,"channels":1}`.
+- The token and binding proof are the owner's capability slip and a fresh
+  transport proof, the same ones the HTTP API takes in `Authorization` and
+  `x-oneiron-binding`.
+- They pass the same doors at the on-device locality, then the owner door.
+- A bad or missing token closes the socket before any audio. An admitted call
+  is answered `{"op":"accepted"}`.
+
+After that the stream carries:
+- **the transcript ops** (`open`, `partial`, `final`, `close`);
+- **media in:** `pcm` (STANDARD base64 of whole PCM16LE samples, at most about
+  12 KiB raw a frame), `cut`, `speaking`, `roster_changed`, and
+  `drained{generation}` once a `generation_end`'s audio has all played;
+- **media out:** `pcm{generation, sample_rate, data}` (mono PCM16LE),
+  `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice` and
+  `session_ended`.
+
+How a call runs:
+- Each heard final is answered by the chat role as `/ai/chat` answers it: the
+  default agent's instructions, the call's earlier turns and the transcript,
+  with tools off, on the owner's budget line (`[models.chat]
+  turn_budget_units` a turn).
+- Each sentence is spoken on the vault's live TTS route while its safeguard
+  runs.
+- Partials are enriched with the extraction prompt on the runtime's
+  summarizer route, which must name a model that `[models]` serves.
+- The enrichment and the safeguard model run on the call's own line.
+
+A full media queue makes heard audio wait for the next cut and a sentence
+wait for room. A queue that takes nothing for 30 seconds stops the reply.
+
 ### Lazy images and `ask_image`
 
 A read serves each generated image down a ladder. A reader whose request
@@ -975,20 +1039,30 @@ rungs = ["local:qwen3-vl-4b"]
 Its provider needs `image_input` among its capabilities. The answer is
 `{"asset_ref", "text", "receipt"}`.
 
-Add `"contract": {"kind": "box"}` to ask where something is instead
-("where is the mug in `image`?"). The same seat then answers as the decision
-ladder's Local rung (`LocalVisionModel`, a `DecisionModel` that reads
-images): it reads the whole image (a Box ask takes no `region`) and answers
-with a JSON schema shaped like System One's box answer. The answer is
-`{"asset_ref", "typed", "receipt"}`, where `typed` is the typed decision:
-`{"kind": "box", "value": {top, bottom, left, right}}` in 0–1 fractions of
-the image, or `"value": null` when the target is absent, with its
-confidence as `probability` and the decision's receipt (the Local rung's
-pin and the image's evidence version). The ask runs at the Local rung alone,
-on a 60-second clock, and queues no person. Only a Box contract is answered
-here. Each rung served and each pull (view,
-crop, zoom, ask_image) is a `served_form` receipt, so `vault.receipts` shows
-which rung each image got and whether the pixels were pulled afterwards.
+Add `"contract": {"kind": "box"}` (or `"point"`) to ask where something is
+instead ("where is the mug in `image`?"). The same seat then answers as the
+decision ladder's Local rung (`LocalVisionModel`, a `DecisionModel` that
+reads images). It reads the whole image (a Box or Point ask takes no
+`region`) and answers with a JSON schema shaped like System One's box
+answer; a Point is the box's centre. When the house decision read words a
+presence question, the ladder asks it first ("is the target in the
+image?"). A confident no answers "absent" without asking for coordinates.
+An answer still inside the band steps up to the System One seat
+(`[models.decisions.system_one]`) when one is bound.
+
+The answer is `{"asset_ref", "answer", "typed", "presence", "receipt"}`:
+- `answer` is the answer on the contract: `{"kind": "box", "value": {top,
+  bottom, left, right}}` in 0–1 fractions of the image (a Point's `value` is
+  `{x, y}`), `"value": null` when the target is absent, or an abstention.
+- `typed` is the decision that stands, with its confidence as `probability`
+  and its receipt (the rungs' pins and the image's evidence version).
+- `presence` is the presence step, when the coordinates stand on it.
+
+The ask runs on a 60-second clock and queues no person.
+
+Each rung served and each pull (view, crop, zoom, ask_image) is a
+`served_form` receipt, so `vault.receipts` shows which rung each image got and
+whether the pixels were pulled afterwards.
 
 The same seat answers `ai.verdict` over an image: name its view handle as
 `"image"` (the question calls it `image`). The pixels are pulled through the
@@ -1254,9 +1328,24 @@ it, so the pump runs with the Dreamer off. The pump sleeps until the next
 question is due, and a committed write wakes it early (a question's create,
 edit or resume, or a claim write). It also re-reads its due work at least
 once a minute, because an arrival on a unit that is not a claim does not wake
-it. It answers each unit as the question's own principal, reading under that
-principal's grants, and climbs the question's own dial. A ceiling of `human`
-is held at Big, so the pump never queues an owner ask. Each unit has its own
+it. It answers each unit for the question's own principal, reading under
+that principal's grants, and climbs the question's own dial. A dial up to
+`human` asks a person by role (OF-516): the ask goes to the question's
+principal as its responsible actor and can climb to the vault's owners. The
+run is written by the first live holder on that chain, so a question whose
+principal is gone runs as an owner. With no live holder up to the owners, the
+question waits and is tried again later. Each pass also moves every open ask
+whose role has no live holder left to the next role that has one. A role
+holder lists the asks at its role at `GET /v1/core/decisions/asks` and
+answers one at `POST /v1/core/decisions/asks/answer` (`{"seq", "answer"}`).
+The holder is checked again when the answer lands. The same calls are the
+SDK and MCP verbs `self.decisions.asks` and `vault.decisions.asks.answer`.
+`vault.decisions.asks.climb` (`{"seq"}`) passes an open ask up to the next
+role with a live holder. It may be called by a holder of the ask's role, the
+ask's principal or an owner. From the CLI, use
+`oneiron api raw POST /v1/core/facade/<verb> --data -`. The owner can answer any
+of them at `/v1/owner/decisions/asks`. A one-off graph ask still holds
+`human` at Big. Each unit has its own
 clock: the definition's `deadline_ms` (1 to 60000), or 10 seconds when it
 names none.
 
@@ -1286,6 +1375,11 @@ names none.
   every source, image and clip it read. Before the answer lands, the pump
   reads the neighbours and every source again. If any changed, nothing in
   that pass lands.
+- **Arrivals.** With `refresh.on_arrival`, a write to a unit queues that
+  unit, and so does a write to anything its newest answer rests on: a
+  neighbour it read, or a source it names as evidence. Each new answer
+  replaces what the one before it rested on. A unit dropped from the
+  definition drops its watchers.
 - **Failures.** A question that fails is held for five minutes and then runs
   again. An edit or a resume lifts the hold. The server logs the error's
   kind only.
@@ -1319,9 +1413,29 @@ abstains, no proposal is made.
 receipt and the file version it read. Keep's receipt carries the sheet
 answers and paragraph judgments next to the slide judgments.
 
-**Stale answers.** A folder column refuses Keep when a file it read has
-changed since; ask again. Answers never go to the owner's queue: the slide
-door holds its ceiling at Big. On a server the engine's
+**Units that change while an answer waits.** Somebody may edit a row, a
+paragraph or a file after its answer was judged and before Keep. Keep then
+lands only the answers whose units are untouched, carried onto the current
+head, and withdraws the rest. A row is changed when a cell it read, its
+header row or its answer cell changed; a paragraph when its text changed or it
+is gone; a folder file when it has a newer version. Keep's receipt names the
+revision each kept answer was judged against (`judged_version` and its
+evidence hash), and lists each withdrawn answer under `withdrawn_units`, with
+that revision and the version it changed in. If no answer stands, nothing is
+appended and the receipt's reason is `units_withdrawn`.
+
+After a quiet interval the proposer is woken with the changed units. The
+interval is the `artifact_answer_quiet_seconds` policy row, 60 seconds as
+shipped, measured from the last change to what they read. The same question
+is asked again of those units on the head, as the ask's principal, and the
+answers wait as a fresh proposal for Keep (its ref is `reask:<…>`). A unit
+that changes while its proposal still waits is withdrawn and asked again the
+same way. A wake never keeps anything, and a discarded proposal's units are
+not asked again. Only the vault's home node runs the wakes, in the
+standing-question pump. A wake that fails is held for five minutes. Slide
+reviews are not split: a moved head strands the whole review, as before.
+Answers never go to the owner's queue: the slide door holds its ceiling at
+Big. On a server the engine's
 `Memory::artifacts_ask_through` answers these asks. Until its door is in the
 SDK table, `vault.artifacts.review_slides` is the only door that serves one.
 

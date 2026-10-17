@@ -15,6 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use oneiron::embed::{
@@ -72,6 +73,26 @@ pub(crate) enum MediaEmbedRefusal {
     Vault(#[from] oneiron::Error),
 }
 
+impl MediaEmbedRefusal {
+    /// Whether the refusal is of the one document sent, by its content: text
+    /// that is not UTF-8, a rung that read its bytes as an invalid request or
+    /// filtered them, or answered no usable vector for them. Every other
+    /// refusal (no seat, policy, a provider that is down, a budget, a width)
+    /// is the space's, not the document's.
+    fn is_document_refusal(&self) -> bool {
+        matches!(
+            self,
+            Self::NotText
+                | Self::Malformed
+                | Self::Call(LlmError::Fatal(
+                    FatalLlmError::InvalidRequest
+                        | FatalLlmError::ContentFiltered
+                        | FatalLlmError::EmptyResponse
+                ))
+        )
+    }
+}
+
 impl From<MediaEmbedRefusal> for oneiron::Error {
     fn from(refusal: MediaEmbedRefusal) -> Self {
         match refusal {
@@ -115,6 +136,10 @@ pub(crate) struct RuntimeMediaEmbedder {
     ai: AiHandle,
     vault: Arc<oneiron::Vault>,
     egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
+    /// Whether each call names the space's width as `dimensions`: set once
+    /// the rung answers wider than the space, as a matryoshka rung answers
+    /// its native width unless asked.
+    names_width: AtomicBool,
     /// The runtime the synchronous door drives its calls on; a blocking
     /// caller sets it.
     runtime: Option<tokio::runtime::Handle>,
@@ -153,6 +178,7 @@ impl SyncServer {
             ai: self.ai.clone(),
             vault: Arc::clone(&self.vault),
             egress: self.extraction_egress.clone(),
+            names_width: AtomicBool::new(false),
             runtime: None,
         })
     }
@@ -242,11 +268,29 @@ impl SyncServer {
     /// one-space preset included, and each open version move's candidate;
     /// then the moves' probes are topped up ([`Self::author_space_probes`])
     /// and each full candidate is checked ([`Self::check_space_moves`]).
-    /// Blocking.
+    /// First, each swapped-in incumbent past its undo window retires, and each
+    /// open move past its fill deadline with no check closes kept
+    /// ([`oneiron::Vault::expire_unfilled_space_moves`]). Blocking.
     fn backfill_media_pass(
         &self,
         runtime: &tokio::runtime::Handle,
     ) -> Vec<(String, Result<MediaEmbedReport, MediaEmbedRefusal>)> {
+        match self.vault.retire_swapped_incumbents() {
+            Ok(retired) => {
+                for space in retired {
+                    tracing::info!(%space, "embedding space retired: its move's undo window passed");
+                }
+            }
+            Err(error) => tracing::warn!(%error, "swapped-in embedding spaces not retired"),
+        }
+        match self.vault.expire_unfilled_space_moves() {
+            Ok(expired) => {
+                for candidate in expired {
+                    tracing::info!(%candidate, "embedding space move closed: its candidate went unchecked past the fill deadline");
+                }
+            }
+            Err(error) => tracing::warn!(%error, "unfilled embedding space moves not closed"),
+        }
         let (bindings, moves) = match (self.vault.kind_slot_bindings(), self.vault.space_moves()) {
             (Ok(bindings), Ok(moves)) => (bindings, moves),
             (Err(error), _) | (_, Err(error)) => return vec![(String::new(), Err(error.into()))],
@@ -305,7 +349,8 @@ impl RuntimeMediaEmbedder {
 
     /// One part to its vector, as an `ai.embed` call: the vault's inference
     /// policy admits it for this rung, and the rung's ladder sends and
-    /// settles it on the media meter.
+    /// settles it on the media meter. A vector wider than the space asks
+    /// once more, naming the space's width.
     async fn embed_one(&self, part: MediaPart) -> Result<Vec<f32>, MediaEmbedRefusal> {
         let modality = part.modality();
         if !self.inputs.contains(&modality) {
@@ -314,7 +359,32 @@ impl RuntimeMediaEmbedder {
                 modality,
             });
         }
-        let request = self.admit(part)?;
+        let named = self.names_width.load(Ordering::Relaxed);
+        let mut vector = self.embed_call(part.clone(), named).await?;
+        if !named && vector.len() > self.space.dimensions {
+            self.names_width.store(true, Ordering::Relaxed);
+            vector = self.embed_call(part, true).await?;
+        }
+        if vector.len() != self.space.dimensions {
+            return Err(MediaEmbedRefusal::Width {
+                space: self.space.id.clone(),
+                expected: self.space.dimensions,
+                got: vector.len(),
+            });
+        }
+        if vector.iter().any(|value| !value.is_finite()) {
+            return Err(MediaEmbedRefusal::Malformed);
+        }
+        Ok(vector)
+    }
+
+    /// One admitted call's single vector.
+    async fn embed_call(
+        &self,
+        part: MediaPart,
+        name_width: bool,
+    ) -> Result<Vec<f32>, MediaEmbedRefusal> {
+        let request = self.admit(part, name_width)?;
         let response = self
             .ai
             .model_runtime()
@@ -329,22 +399,13 @@ impl RuntimeMediaEmbedder {
         let (Some(vector), None) = (vectors.next(), vectors.next()) else {
             return Err(MediaEmbedRefusal::Malformed);
         };
-        if vector.len() != self.space.dimensions {
-            return Err(MediaEmbedRefusal::Width {
-                space: self.space.id.clone(),
-                expected: self.space.dimensions,
-                got: vector.len(),
-            });
-        }
-        if vector.iter().any(|value| !value.is_finite()) {
-            return Err(MediaEmbedRefusal::Malformed);
-        }
         Ok(vector)
     }
 
     /// The call as `/v1/ai/embed` admits it: the vault's inference policy
-    /// for this rung, and no world the call vouches for.
-    fn admit(&self, part: MediaPart) -> Result<MediaRequest, MediaEmbedRefusal> {
+    /// for this rung, and no world the call vouches for. `name_width` asks
+    /// for the space's width as the call's `dimensions`.
+    fn admit(&self, part: MediaPart, name_width: bool) -> Result<MediaRequest, MediaEmbedRefusal> {
         let purpose = CallPurpose::Other {
             name: format!("ai.{}", AiOperation::Embed.as_str()),
         };
@@ -365,7 +426,14 @@ impl RuntimeMediaEmbedder {
             operation: AiOperation::Embed,
             parts: vec![part],
             references: Vec::new(),
-            params: BTreeMap::new(),
+            params: if name_width {
+                BTreeMap::from([(
+                    "dimensions".to_owned(),
+                    serde_json::json!(self.space.dimensions),
+                )])
+            } else {
+                BTreeMap::new()
+            },
             voice: None,
         };
         let context = oneiron::llm::HostInferenceContext {
@@ -405,19 +473,40 @@ impl MediaEmbedder for RuntimeMediaEmbedder {
     /// One call per input, each driven on the embedder's runtime from the
     /// blocking thread the engine calls on.
     fn embed_media(&self, inputs: &[MediaEmbeddingInput<'_>]) -> oneiron::Result<Vec<Vec<f32>>> {
+        inputs
+            .iter()
+            .map(|input| -> oneiron::Result<Vec<f32>> { Ok(self.embed_input(input)?) })
+            .collect()
+    }
+
+    /// [`Self::embed_media`], with a refusal of one document by its content
+    /// ([`MediaEmbedRefusal::is_document_refusal`]) as that input's outcome.
+    fn embed_each(
+        &self,
+        inputs: &[MediaEmbeddingInput<'_>],
+    ) -> oneiron::Result<Vec<Result<Vec<f32>, String>>> {
+        inputs
+            .iter()
+            .map(|input| match self.embed_input(input) {
+                Ok(vector) => Ok(Ok(vector)),
+                Err(refusal) if refusal.is_document_refusal() => Ok(Err(refusal.to_string())),
+                Err(refusal) => Err(refusal.into()),
+            })
+            .collect()
+    }
+}
+
+impl RuntimeMediaEmbedder {
+    /// One stored input to its vector, driven on the embedder's runtime.
+    fn embed_input(&self, input: &MediaEmbeddingInput<'_>) -> Result<Vec<f32>, MediaEmbedRefusal> {
         let runtime = self
             .runtime
             .as_ref()
             .ok_or(oneiron::Error::InvariantViolation(
                 "a media embedder's synchronous door has no runtime to drive its calls on",
             ))?;
-        inputs
-            .iter()
-            .map(|input| -> oneiron::Result<Vec<f32>> {
-                let part = media_part(input.kind, input.media_type, input.bytes.to_vec())?;
-                Ok(runtime.block_on(self.embed_one(part))?)
-            })
-            .collect()
+        let part = media_part(input.kind, input.media_type, input.bytes.to_vec())?;
+        runtime.block_on(self.embed_one(part))
     }
 }
 

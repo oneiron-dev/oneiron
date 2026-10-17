@@ -20,6 +20,7 @@ mod content;
 #[cfg(feature = "sync")]
 mod content_window;
 mod doors;
+mod kit;
 mod machine;
 mod pads;
 mod page_seal;
@@ -45,6 +46,10 @@ pub use self::content::{
 pub use self::content_window::SealedTake;
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
+pub use self::kit::{
+    ConfirmedWorldKit, IssuedWorldKit, StoredCost, StoredKit, WORLD_KIT_ESCROW, WorldKitRestore,
+    WorldKitStatus,
+};
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::machine::{machine_encryption_key, machine_secret};
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
@@ -66,8 +71,8 @@ pub(crate) use self::session::WorldKeySession;
 pub use self::state::{WorldRecoveryState, recovery_state};
 pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::{
-    NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind,
-    escrow_recipient, passkey_prf_input,
+    NewVaultKeyWrap, VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo,
+    VaultKeyWrapKind, escrow_recipient, passkey_prf_input,
 };
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;

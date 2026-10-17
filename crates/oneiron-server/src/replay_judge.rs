@@ -39,7 +39,7 @@ use serde_json::{Value, json};
 use crate::server::SyncServer;
 
 /// The judge's revision: every verdict it rules names it.
-pub const JUDGE_REVISION: &str = "serve-replay-judge@1";
+pub const JUDGE_REVISION: &str = "serve-replay-judge@2";
 /// One journal row per typed question the judge asked.
 const JOURNAL: &str = "skill:judge:v1:decision:";
 /// Person-time rows, by receipt.
@@ -324,12 +324,37 @@ impl ServeReplayJudge {
             next.insert(
                 format!("axis.{}", axis.name),
                 format!(
-                    "How well do these instructions do on the goal's {} axis, on these replays? Answer from 0 to 1.",
+                    "How well do these instructions do on the goal's {} axis, on these replays? Judge it by that axis's measure and bound when the goal states them. Answer from 0 to 1.",
                     axis.name
                 ),
             );
         }
         *wording = Box::leak(Box::new(next));
+    }
+
+    /// The skill's goal as a judge question reads it: the joined project's
+    /// goal, its why, and each axis's measure and bound. `None` when the
+    /// skill has no goal, its goal joins no project, or the project states
+    /// no goal record.
+    fn goal_brief(&self, skill: &EntityId) -> Result<Option<Value>> {
+        let Ok(goal) = skill_edit_goal(&self.vault, skill) else {
+            return Ok(None);
+        };
+        let Some((project, _)) = goal.project else {
+            return Ok(None);
+        };
+        Ok(self.vault.project_intake_goal(project)?.map(|record| {
+            let axes: Vec<Value> = record
+                .primary_axes
+                .iter()
+                .chain(&record.floor_axes)
+                .chain(&record.cost_axes)
+                .map(
+                    |axis| json!({"name": axis.name, "measure": axis.measure, "bound": axis.bound}),
+                )
+                .collect();
+            json!({"goal": record.goal, "why": record.why, "axes": axes})
+        }))
     }
 
     fn replay(&self, receipt: &str, bytes: usize) -> Result<Value> {
@@ -362,7 +387,8 @@ impl HeldOutReplayNotes for ServeReplayJudge {
     }
 
     /// Each reserved receipt's task and response, cut to share the state;
-    /// never its status, verdict or success.
+    /// never its status, verdict or success. The goal's own words ride
+    /// beside them when the skill's goal joins a project that states them.
     fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<Value> {
         let receipts = case.held_out_receipts;
         let bytes = (MAX_REPLAY_TEXT / receipts.len().max(1) / 2).max(MIN_REPLAY_TEXT);
@@ -370,12 +396,16 @@ impl HeldOutReplayNotes for ServeReplayJudge {
             .iter()
             .map(|receipt| self.replay(receipt, bytes))
             .collect::<Result<Vec<_>>>()?;
-        Ok(json!({
+        let mut state = json!({
             "skill_id": case.skill_id,
             "version": case.version,
             "instructions": cut(case.instructions, MAX_INSTRUCTIONS),
             "replays": replays,
-        }))
+        });
+        if let Some(goal) = self.goal_brief(&case.skill)? {
+            state["goal"] = goal;
+        }
+        Ok(state)
     }
 
     /// Neighbouring receipts' responses, two by two, response only.
@@ -541,7 +571,8 @@ struct Arm {
 
 /// Live arm attribution for one open optimizer proposal: the incumbent arm
 /// is the skill version it revises, the candidate arm the proposal. A pull
-/// takes the newest run not taken yet that loaded the arm's version. It met
+/// takes the newest run its axis has not taken yet that loaded the arm's
+/// version. It met
 /// the pulled axis when it completed, no skill-defect judgment names it, and
 /// the judge decides it met that axis by the axis's measure and bound. Its
 /// person-time is what is recorded on its receipt, unknown when none is.
@@ -551,10 +582,12 @@ pub struct ServeAxisBandit<'a> {
     target: EntityId,
     incumbent: Arm,
     candidate: Arm,
-    /// Each axis of the goal, with its measure and bound where the joined
-    /// project's goal record states them.
+    /// Each axis of the goal, with its measure and bound, and the goal and
+    /// its why, where the joined project's goal record states them.
     criteria: BTreeMap<String, Value>,
-    taken: Mutex<BTreeSet<String>>,
+    /// The runs each axis has pulled, by axis: every routed run is judged
+    /// once on each axis.
+    taken: Mutex<BTreeSet<(String, String)>>,
 }
 
 fn provenance_str(provenance: &rmpv::Value, key: &str) -> Option<String> {
@@ -603,6 +636,7 @@ impl<'a> ServeAxisBandit<'a> {
                 if let Some(criterion) = criteria.get_mut(&axis.name) {
                     *criterion = json!({
                         "name": axis.name, "measure": axis.measure, "bound": axis.bound,
+                        "goal": record.goal, "why": record.why,
                     });
                 }
             }
@@ -661,13 +695,13 @@ impl GoalAxisBandit for ServeAxisBandit<'_> {
             .into_iter()
             .find(|receipt| {
                 receipt.receipt_id.starts_with(ATTEMPT_RECEIPT)
-                    && !taken.contains(&receipt.receipt_id)
+                    && !taken.contains(&(axis.to_owned(), receipt.receipt_id.clone()))
                     && receipt
                         .pack_manifest_skills()
                         .is_some_and(|skills| skills.contains(&arm.loaded))
             })
             .ok_or_else(|| invalid(format!("no live run of {} is left to pull", arm.loaded)))?;
-        taken.insert(run.receipt_id.clone());
+        taken.insert((axis.to_owned(), run.receipt_id.clone()));
         drop(taken);
         let defect = attribution_judgments(vault)?.into_iter().any(|judgment| {
             judgment.verdict == AttributionVerdict::SkillDefect

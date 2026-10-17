@@ -23,6 +23,7 @@ use super::lookup::{
 use super::models::{ModelsConfig, ModelsFile};
 use super::oneironer::{OneironerConfig, OneironerConfigOverride, lookup_oneironer_override};
 use super::recall::{RecallConfigOverride, lookup_recall_override};
+use super::self_heal::SelfHealConfigOverride;
 use super::serve_args::{ServeArgs, runtime_override_from_args};
 use super::server_config::ServeConfig;
 use super::skills::{SkillsConfigOverride, lookup_skills_override};
@@ -289,6 +290,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     config.backup.validate()?;
     config.feedback.validate()?;
     config.failure_signals.validate()?;
+    config.self_heal.validate()?;
     config.recall.validate()?;
     config.skills.validate()?;
     config.keystore.validate()?;
@@ -302,6 +304,12 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     }
     if let Some(gpu) = &config.gpu {
         gpu.validate()?;
+    }
+    if let Some(native_mail) = &config.native_mail {
+        native_mail.validate()?;
+    }
+    if let Some(embedding) = &config.embedding {
+        embedding.validate()?;
     }
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
@@ -505,6 +513,7 @@ struct FileServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     failure_signals: Option<FailureSignalsConfigOverride>,
+    self_heal: Option<SelfHealConfigOverride>,
     recall: Option<RecallConfigOverride>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
@@ -514,6 +523,8 @@ struct FileServeConfig {
     browser: Option<super::BrowserConfig>,
     desktop: Option<super::DesktopConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
+    native_mail: Option<super::NativeMailConfig>,
+    embedding: Option<super::EmbeddingConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -563,6 +574,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             backup: value.backup,
             feedback: value.feedback,
             failure_signals: value.failure_signals,
+            self_heal: value.self_heal,
             recall: value.recall,
             skills: value.skills,
             keystore: value.keystore,
@@ -572,6 +584,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             browser: value.browser,
             desktop: value.desktop,
             gpu: value.gpu,
+            native_mail: value.native_mail,
+            embedding: value.embedding,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -622,6 +636,7 @@ struct PartialServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     failure_signals: Option<FailureSignalsConfigOverride>,
+    self_heal: Option<SelfHealConfigOverride>,
     recall: Option<RecallConfigOverride>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
@@ -635,6 +650,10 @@ struct PartialServeConfig {
     desktop: Option<super::DesktopConfig>,
     /// `[gpu]` is file-only, as `[browser]` is.
     gpu: Option<crate::runtime::GpuPoolConfig>,
+    /// `[native_mail]` is file-only, as `[browser]` is.
+    native_mail: Option<super::NativeMailConfig>,
+    /// `[embedding]` is file-only, as `[models]` is.
+    embedding: Option<super::EmbeddingConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -697,6 +716,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("failure_signals", &self.failure_signals)
+            .field("self_heal", &self.self_heal)
             .field("recall", &self.recall)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)
@@ -706,6 +726,8 @@ impl fmt::Debug for PartialServeConfig {
             .field("browser", &self.browser)
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
+            .field("native_mail", &self.native_mail)
+            .field("embedding", &self.embedding)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -848,6 +870,9 @@ impl PartialServeConfig {
         if let Some(value) = self.failure_signals {
             resolved.failure_signals.apply_override(value);
         }
+        if let Some(value) = self.self_heal {
+            resolved.self_heal.apply_override(value);
+        }
         if let Some(value) = self.keystore {
             resolved.keystore.apply_override(value);
         }
@@ -869,11 +894,17 @@ impl PartialServeConfig {
         if let Some(value) = self.browser {
             resolved.browser = Some(value);
         }
+        if let Some(value) = self.embedding {
+            resolved.embedding = Some(value);
+        }
         if let Some(value) = self.desktop {
             resolved.desktop = Some(value);
         }
         if let Some(value) = self.gpu {
             resolved.gpu = Some(value);
+        }
+        if let Some(value) = self.native_mail {
+            resolved.native_mail = Some(value);
         }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
@@ -942,6 +973,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             backup: None,
             feedback: None,
             failure_signals: None,
+            self_heal: None,
             recall: None,
             skills: None,
             keystore: value
@@ -957,6 +989,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             browser: None,
             desktop: None,
             gpu: None,
+            native_mail: None,
+            embedding: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

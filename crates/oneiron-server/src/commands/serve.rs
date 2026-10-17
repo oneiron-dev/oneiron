@@ -97,6 +97,9 @@ pub(super) async fn serve_with_config(
         .keystore
         .install_on_boot(&vault, &config.vault_path)?;
     super::owner::ensure_page_seal_wrapped(&vault, &config.vault_path)?;
+    if let Some(embedding) = &config.embedding {
+        embedding.apply_to(&vault)?;
+    }
     #[cfg(unix)]
     if let Err(error) = vault.collect_result_bodies(4096) {
         tracing::warn!(%error, "result body collection at start failed");
@@ -246,11 +249,15 @@ pub(super) async fn serve_with_config(
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     workers.push(crate::wire_health::spawn(&sync_server));
     // Due standing questions are answered through the ladder (OF-506).
-    workers.push(crate::decision_graph::spawn(&sync_server));
+    if !ai.bind_question_timer(&sync_server) {
+        workers.push(crate::decision_graph::spawn(&sync_server));
+    }
     // Uncertain identities are decided, or asked of the person (OF-123).
     workers.push(crate::ai_host::identity::spawn(&sync_server));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
     workers.push(crate::ai_host::coach_heal::spawn(&sync_server));
+    // The nightly Coach jobs that need the host's model or rules (OF-420).
+    workers.push(crate::ai_host::coach_host::spawn(&sync_server));
     // Failure signals reach the deployment's publisher (OF-380).
     workers.extend(crate::ai_host::failure_signals::spawn(
         &sync_server,
@@ -263,6 +270,11 @@ pub(super) async fn serve_with_config(
                 .map(zeroize::Zeroizing::new),
         ),
         crate::server::admit_every_pass(),
+    ));
+    // The owner's model-graded detectors read the retrieval telemetry (OF-418).
+    workers.extend(crate::ai_host::self_heal_detectors::spawn(
+        &sync_server,
+        &config.self_heal,
     ));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).
@@ -301,6 +313,13 @@ pub(super) async fn serve_with_config(
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
     #[cfg(unix)]
     let vault_id = super::local_servers::vault_id(sync_server.vault());
+    // The server's own voice loop (OF-410): off unless `[models.voice]`
+    // names its socket.
+    #[cfg(unix)]
+    let voice = crate::voice_host::VoiceBoot::start(
+        &sync_server,
+        config.models.as_ref().map(|models| &models.voice),
+    );
     let mesh_server = Arc::clone(&sync_server);
     let app = build_app(sync_server).layer(cors_layer);
     // The paired-machine mesh listener (OF-535): off unless the host names
@@ -355,6 +374,12 @@ pub(super) async fn serve_with_config(
     }
     if let Some(mesh) = mesh {
         mesh.stop().await;
+    }
+    // A voice call in flight ends through its own teardown before the
+    // models it speaks on stop.
+    #[cfg(unix)]
+    if let Some(voice) = voice {
+        voice.stop().await;
     }
     // A pass or step in flight reaches its own boundary before this returns.
     ai.shutdown().await;

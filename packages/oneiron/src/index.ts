@@ -127,6 +127,19 @@ export class Oneiron {
     return new Oneiron(this.#call(() => this.#client.inRoomTurn(roomRef)))
   }
 
+  /**
+   * The lasting call receipt the last verb's reply stated, as `call:<32hex>`,
+   * whether it answered or refused; `vault.receipts.get` resolves it for the
+   * same actor or the vault's owner.
+   *
+   * Typed returns keep their shape; the ref rides beside them here. `null` for
+   * an embedded handle, before any call, after a call that reached no server,
+   * and for an anonymous off-record call.
+   */
+  lastReceiptRef(): string | null {
+    return this.#client.lastReceiptRef() ?? null
+  }
+
   // BEGIN GENERATED FACADE VERBS
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
@@ -149,6 +162,10 @@ export class Oneiron {
       settle: (input: Facade.IdentityActNowRequest): Facade.IdentityActNow => this.#call(() => this.#client.selfIdentitySettle(input) as Facade.IdentityActNow),
     },
     inbox: {
+      /** Lists one page of notifications delivered to the bound actor, without marking them. */
+      list: (input: Facade.InboxListRequest): Facade.NotificationPage => this.#call(() => this.#client.selfInboxList(input) as Facade.NotificationPage),
+      /** Marks one delivered notification seen or acknowledged for the bound actor. */
+      mark: (input: Facade.InboxMarkRequest): Facade.NotificationRow => this.#call(() => this.#client.selfInboxMark(input) as Facade.NotificationRow),
       concern: Object.assign((input: Facade.ConcernCardRequest): Facade.AgentHealthCardView => this.#call(() => this.#client.selfInboxConcern(input) as Facade.AgentHealthCardView), {
         outcome: (input: Facade.ConcernOutcomeRequest): Facade.ConcernCardSummary => this.#call(() => this.#client.selfInboxConcernOutcome(input) as Facade.ConcernCardSummary),
         move: (input: Facade.ConcernMoveRequest): Facade.ConcernMoveOutcome => this.#call(() => this.#client.selfInboxConcernMove(input) as Facade.ConcernMoveOutcome),
@@ -167,6 +184,9 @@ export class Oneiron {
       fork: (input: Facade.SkillForkRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsFork(input) as Facade.SkillAuthoringReceipt),
       /** Every loadable callable helper skill and its call contract: what it takes and returns. */
       callables: (input: Facade.EmptyRequest = {}): Facade.CallableCardView[] => this.#call(() => this.#client.selfSkillsCallables(input) as Facade.CallableCardView[]),
+    },
+    decisions: {
+      asks: (input: Facade.EmptyRequest = {}): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
     },
   }
   readonly vault = {
@@ -194,6 +214,8 @@ export class Oneiron {
       history: (input: Facade.ClaimRefRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
+      /** Seeds claims through their individual gates, forced proposed, returning one receipt per claim. */
+      seed: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitReceipt[]),
     },
     /**
    * Recalls a memory pack.
@@ -282,9 +304,23 @@ export class Oneiron {
       outcomes: (input: Facade.SharedVaultRequest): Facade.SharedActOutcome[] => this.#call(() => this.#client.vaultSharedOutcomes(input) as Facade.SharedActOutcome[]),
       /** The executed delete-the-vault act, if any. */
       deletion: (input: Facade.EmptyRequest = {}): Facade.SharedVaultDeletion | null => this.#call(() => this.#client.vaultSharedDeletion(input) as Facade.SharedVaultDeletion | null),
+      /** A holder of a pending shared act's objector role objects inside its veto window. */
+      object: (input: Facade.SharedActRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedObject(input) as Facade.PendingAuthorityAct),
+      /** The holder withdraws their objection; past the deadline the last withdrawal releases the act. */
+      withdraw_objection: (input: Facade.SharedActRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedWithdrawObjection(input) as Facade.PendingAuthorityAct),
+      /** The caller's own notices of shared acts started in the vault. */
+      started: (input: Facade.SharedVaultRequest): Facade.PendingActStarted[] => this.#call(() => this.#client.vaultSharedStarted(input) as Facade.PendingActStarted[]),
+      /** The caller's own notices of shared acts whose veto window has passed. */
+      matured: (input: Facade.SharedVaultRequest): Facade.PendingActMatured[] => this.#call(() => this.#client.vaultSharedMatured(input) as Facade.PendingActMatured[]),
+      /** A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing. */
+      erase_ask: (input: Facade.SharedEraseAskRequest): Facade.SharedEraseAsk => this.#call(() => this.#client.vaultSharedEraseAsk(input) as Facade.SharedEraseAsk),
+      /** The erase asks the caller may see: every ask for an Owner, their own for anyone else. */
+      erase_asks: (input: Facade.SharedVaultRequest): Facade.SharedEraseAsk[] => this.#call(() => this.#client.vaultSharedEraseAsks(input) as Facade.SharedEraseAsk[]),
+      /** An Owner closes an open erase ask, as erased (naming its erase act) or declined. */
+      close_erase_ask: (input: Facade.SharedEraseAskCloseRequest): Facade.SharedEraseAsk => this.#call(() => this.#client.vaultSharedCloseEraseAsk(input) as Facade.SharedEraseAsk),
     },
     members: {
-      /** An Admin adds a live person to a shared vault at a non-root role. */
+      /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. */
       add: (input: Facade.SharedMemberAddRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedActExecutionReceipt),
       /** An Admin assigns another non-root role to a member who is not an Owner. */
       change: (input: Facade.SharedMemberRoleRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersChange(input) as Facade.SharedActExecutionReceipt),
@@ -292,9 +328,19 @@ export class Oneiron {
       remove: (input: Facade.SharedMemberRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersRemove(input) as Facade.SharedActExecutionReceipt),
       /** A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead. */
       leave: (input: Facade.SharedVaultRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersLeave(input) as Facade.SharedActExecutionReceipt),
+      /** The caller's own pending invitations into a shared vault. */
+      invitations: (input: Facade.SharedVaultRequest): Facade.SharedInvitation[] => this.#call(() => this.#client.vaultMembersInvitations(input) as Facade.SharedInvitation[]),
+      /** The invitee accepts their own invitation and joins the shared vault at its role. */
+      accept: (input: Facade.SharedInvitationRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAccept(input) as Facade.SharedActExecutionReceipt),
+      /** The invitee declines their own invitation; nothing is granted. */
+      decline: (input: Facade.SharedInvitationRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersDecline(input) as Facade.SharedActExecutionReceipt),
+      /** An Admin with the add_member power takes back a pending invitation. */
+      withdraw_invitation: (input: Facade.SharedInvitationWithdrawRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersWithdrawInvitation(input) as Facade.SharedActExecutionReceipt),
     },
     guests: {
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
+      /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
+      mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
@@ -307,6 +353,45 @@ export class Oneiron {
       log: (input: Facade.EmptyRequest = {}): Facade.LegalHoldEvent[] => this.#call(() => this.#client.vaultLegalHoldsLog(input) as Facade.LegalHoldEvent[]),
       /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
+    },
+    embedding_spaces: {
+      /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
+      list: (input: Facade.EmptyRequest = {}): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesList(input) as Facade.EmbeddingSpacesView),
+      /** Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors. */
+      declare: (input: Facade.EmbeddingSpaceDeclareRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesDeclare(input) as Facade.EmbeddingSpacesView),
+      /** Binds one kind slot to a declared space, or returns it to its default when no space is named. */
+      bind: (input: Facade.EmbeddingSpaceBindRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesBind(input) as Facade.EmbeddingSpacesView),
+      /** Binds every kind slot the space accepts, text included, to that one space. */
+      one_space: (input: Facade.EmbeddingSpaceRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesOneSpace(input) as Facade.EmbeddingSpacesView),
+      /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
+      retire: (input: Facade.EmbeddingSpaceRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesRetire(input) as Facade.EmbeddingSpacesView),
+      /** Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space. */
+      move: (input: Facade.EmbeddingSpaceMoveRequest): Facade.SpaceMove => this.#call(() => this.#client.vaultEmbeddingSpacesMove(input) as Facade.SpaceMove),
+      /** Runs an embedding space move probes now through both spaces and acts on the reading; it can take minutes. */
+      move_check: (input: Facade.EmbeddingSpaceCandidateRequest): Facade.EmbeddingSpaceMoveChecked => this.#call(() => this.#client.vaultEmbeddingSpacesMoveCheck(input) as Facade.EmbeddingSpaceMoveChecked),
+      /** The owner says yes to a full candidate over a check that did not read not worse; it swaps in. */
+      move_approve: (input: Facade.EmbeddingSpaceCandidateRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesMoveApprove(input) as Facade.EmbeddingSpacesView),
+      /** Binds a swapped-in move incumbent again. */
+      move_undo: (input: Facade.EmbeddingSpaceCandidateRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesMoveUndo(input) as Facade.EmbeddingSpacesView),
+      /** Ends an open embedding space move with no swap. */
+      move_abandon: (input: Facade.EmbeddingSpaceCandidateRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesMoveAbandon(input) as Facade.EmbeddingSpacesView),
+      probes: {
+        /** Every stored embedding space probe with its id. */
+        list: (input: Facade.EmptyRequest = {}): Facade.EmbeddingSpaceProbes => this.#call(() => this.#client.vaultEmbeddingSpacesProbesList(input) as Facade.EmbeddingSpaceProbes),
+        /** Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author. */
+        put: (input: Facade.EmbeddingSpaceProbePutRequest): Facade.EmbeddingSpaceProbe => this.#call(() => this.#client.vaultEmbeddingSpacesProbesPut(input) as Facade.EmbeddingSpaceProbe),
+        /** Removes one stored embedding space probe by its id. */
+        delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest): Facade.EmbeddingSpaceProbeDeleted => this.#call(() => this.#client.vaultEmbeddingSpacesProbesDelete(input) as Facade.EmbeddingSpaceProbeDeleted),
+      },
+    },
+    settings: {
+      /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
+      learning: Object.assign((input: Facade.LearningSettingsRequest): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearning(input) as Facade.LearningSettingsView), {
+        /** The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope. */
+        put: (input: Facade.LearningSettingPut): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearningPut(input) as Facade.LearningSettingsView),
+        /** The owner clears one learned-setting row of a key, mode and scope. */
+        clear: (input: Facade.LearningSettingClear): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearningClear(input) as Facade.LearningSettingsView),
+      }),
     },
     lenses: {
       /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
@@ -462,6 +547,12 @@ export class Oneiron {
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       answers: (input: Facade.QuestionAnswersRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.AnswerRecord[]),
     },
+    decisions: {
+      asks: {
+        answer: (input: Facade.DecisionAskAnswerRequest): Facade.DecisionAsk => this.#call(() => this.#client.vaultDecisionsAsksAnswer(input) as Facade.DecisionAsk),
+        climb: (input: Facade.DecisionAskClimbRequest): Facade.ResolvedRole | null => this.#call(() => this.#client.vaultDecisionsAsksClimb(input) as Facade.ResolvedRole | null),
+      },
+    },
     /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
     commit: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitReceipt[]),
     /** Commits one claim through the gate, the same as vault.claims.upsert. */
@@ -497,6 +588,12 @@ export class Oneiron {
     habits: {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
+    },
+    consolidation: {
+      /** Enqueues one consolidation attempt and returns its durable job reference. */
+      enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
+      /** Reads the status of one consolidation attempt by its durable job reference. */
+      status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
     },
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */
