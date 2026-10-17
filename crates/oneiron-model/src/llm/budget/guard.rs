@@ -234,6 +234,12 @@ impl BudgetGuard {
         self.lock_state().read()
     }
 
+    /// The engine-stamped actor a policy-aware guard is bound to, if any.
+    #[must_use]
+    pub fn actor(&self) -> Option<oneiron_contracts::entity_id::EntityId> {
+        self.lock_state().actor
+    }
+
     #[must_use]
     pub fn self_budget(&self) -> BudgetRead {
         self.read()
