@@ -295,12 +295,22 @@ pub(crate) fn embedding_setup_rests_on_sibling(data: &[u8]) -> bool {
     !matches!(EmbeddingSetup::decode(data), Ok(EmbeddingSetup::Space(_)))
 }
 
+/// Which declaration stands when two devices declared one space id at two widths (a call; canon
+/// is silent): the carrier the window's merge keeps, which is the same row on every device. The
+/// declaration here gives way, and its vectors of the other width go with it. `false` refuses
+/// the carrier instead, and each device keeps its own width.
+#[cfg(feature = "sync")]
+const WIDTH_CONFLICT_TAKES_CARRIER: bool = true;
+
 /// Installs one replicated EMBEDDING_SETUP row of this vault into the side tables in `wtxn`,
 /// under the checks its local writer makes. `id` must be the row's own derived id. A binding of
 /// a space not declared here yet, a retirement of a space a slot here still binds, and a row
 /// naming a slot a move here carries wait
 /// ([`ArtifactError::EmbeddingSetupDependencyPending`]); anything else that fails a check is
-/// refused ([`ArtifactError::InvalidEmbeddingSetupBody`]). Nothing is written then.
+/// refused ([`ArtifactError::InvalidEmbeddingSetupBody`]). Nothing is written then. A declaration
+/// at another width than the one here is the carrier every device keeps
+/// ([`WIDTH_CONFLICT_TAKES_CARRIER`]): it waits while an open move here names the space, then
+/// replaces the declaration here and drops its vectors.
 #[cfg(feature = "sync")]
 pub(crate) fn install_replicated_embedding_setup_in_txn(
     store: &impl SideTableDbs,
@@ -331,10 +341,22 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
             if let Some(existing) = embedding_space_in_txn(store, wtxn, &space.id)?
                 && existing.dimensions != space.dimensions
             {
-                return Err(refused_setup(format!(
-                    "embedding space {} is declared here at width {}",
-                    space.id, existing.dimensions
-                )));
+                if !WIDTH_CONFLICT_TAKES_CARRIER {
+                    return Err(refused_setup(format!(
+                        "embedding space {} is declared here at width {}",
+                        space.id, existing.dimensions
+                    )));
+                }
+                // Two devices declared this id at two widths at once. The merge kept this
+                // carrier everywhere, so the declaration here gives way: no vector of its width
+                // stays beside the new one, and the backfill embeds again at this width.
+                if super::space_move::open_move_names_in_txn(store, wtxn, &space.id)? {
+                    return Err(setup_waits(format!(
+                        "an open move here names {}, declared here at width {}",
+                        space.id, existing.dimensions
+                    )));
+                }
+                drop_space_rows_in_txn(store, wtxn, &space.id, &InputKind::ALL.into())?;
             }
             EMBEDDING_SPACE.put(store, wtxn, &space.id.clone(), &space)?;
         }
@@ -991,6 +1013,13 @@ impl Vault {
         self.note_committed_rows(rows);
         #[cfg(not(feature = "sync"))]
         drop(rows);
+    }
+
+    /// A move here ended, once its write committed: a received EMBEDDING_SETUP row that waited
+    /// on it ([`install_replicated_embedding_setup_in_txn`]) is tried again, off this writer.
+    pub(crate) fn embedding_move_ended(&self) {
+        #[cfg(feature = "sync")]
+        self.retry_embedding_setup_rows();
     }
 
     /// Declares (or re-declares) an embedding space. A re-declaration may widen its accepted

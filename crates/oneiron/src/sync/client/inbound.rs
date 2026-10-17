@@ -280,16 +280,19 @@ impl SyncClient {
             window_sub_tags::PROMOTION_GRANTED | window_sub_tags::PROMOTED_INVALIDATE
                 if self.config.residence_mode == SyncResidenceMode::Opened =>
             {
+                let catch_up = self.setup_catch_up(window_key);
                 if !payload.is_empty()
-                    || self
-                        .vault
-                        .sync_state_get(&format!("rp:w:{window_key}"))
-                        .map_err(|e| TransportError::Storage(e.to_string()))?
-                        .is_none()
+                    || (!catch_up
+                        && self
+                            .vault
+                            .sync_state_get(&format!("rp:w:{window_key}"))
+                            .map_err(|e| TransportError::Storage(e.to_string()))?
+                            .is_none())
                 {
                     return Err(TransportError::InvalidPayload("unpromoted window control"));
                 }
-                if sub_tag == window_sub_tags::PROMOTION_GRANTED {
+                // The setup window's catch-up asks for the window only once the home granted it.
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED && !catch_up {
                     return Ok(Vec::new());
                 }
                 let window = self.ensure_window(window_key)?;
@@ -365,6 +368,18 @@ impl SyncClient {
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
                 let doc = &window.doc;
+                // The setup window's catch-up sends nothing up: its vector alone
+                // asks the home for what this device lacks.
+                if self.setup_catch_up(window_key) {
+                    return Ok(vec![
+                        transport::encode_window_sync(
+                            window_key,
+                            window_sub_tags::VV_RESPONSE,
+                            &doc_version_vector(doc),
+                        )
+                        .into_result()?,
+                    ]);
+                }
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
                     return Ok(vec![replacement_request(window_key)?]);
                 };
@@ -463,6 +478,9 @@ impl SyncClient {
                 // local diff. Same fail-closed VV decoding as VV_REQUEST.
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
+                if self.setup_catch_up(window_key) {
+                    return Ok(Vec::new());
+                }
                 let window = self.ensure_window(window_key)?;
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
                     return Ok(vec![replacement_request(window_key)?]);

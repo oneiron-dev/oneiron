@@ -18,7 +18,7 @@ pub use authority_tail::{
 pub use discover::discover_local_window_keys;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
-    local_is_elected_home, resolve_residence_mode, set_device_sync_preference,
+    local_is_elected_home, resolve_residence_mode, set_device_sync_preference, synced_as_replica,
 };
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::record_item_touch_in_txn;
@@ -469,9 +469,10 @@ pub fn promotion_covers_full_window(
 
 /// [`promotion_covers_full_window`] for the machine `destination` names. A
 /// machine of this vault's that proved itself also covers the window's
-/// custody transitions (OF-422), each sealed to the owner's machines, and its
-/// room turn rows (OF-522); the selector copies neither. Any other
-/// destination does not, so a window that carries one is not promoted to it.
+/// custody transitions (OF-422), each sealed to the owner's machines, its
+/// room turn rows (OF-522) and this vault's embedding setup rows (OF-370);
+/// the selector copies none of them. Any other destination does not, so a
+/// window that carries one is not promoted to it.
 pub fn promotion_covers_full_window_for(
     vault: &Vault,
     source: &LoroDoc,
@@ -486,13 +487,15 @@ pub fn promotion_covers_full_window_for(
     // only the content-bearing current state against the grant selector.
     let _ = super::window::export_scrubbed_window_snapshot(vault, window, source)?;
     let selected = granted_window_doc(vault, source, window, scope, selector)?;
-    if matches!(destination, Withhold::Worlds(_) | Withhold::Peer(_)) {
+    let own_machine = matches!(destination, Withhold::Worlds(_) | Withhold::Peer(_));
+    if own_machine {
         for name in [
             super::custody::CUSTODY_MAP,
             super::room_turns::ROOM_TURNS_MAP,
         ] {
             super::loro_support::copy_binary_root_map(source, &selected, name)?;
         }
+        copy_embedding_setup_rows(source, &selected)?;
     }
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
@@ -504,7 +507,8 @@ pub fn promotion_covers_full_window_for(
         }
         admitted = (|| {
             let id = EntityId::from_hex(raw_key)?;
-            let readable_now = readable(id)?;
+            // A setup row is no actor's content: an own machine takes it whatever it reads.
+            let readable_now = readable(id)? || (own_machine && blob.is_some_and(is_setup_row));
             if id.to_hex() != raw_key || blob.is_none() || !readable_now {
                 return Err(Error::sync_protocol(
                     SyncProtocolValidation::DocumentAdmissionDenied,
@@ -514,6 +518,37 @@ pub fn promotion_covers_full_window_for(
         })();
     });
     Ok(admitted.is_ok())
+}
+
+/// Whether `blob` is an EMBEDDING_SETUP row (OF-370).
+fn is_setup_row(blob: &[u8]) -> bool {
+    EntityMetadataHeader::parse(blob)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_EMBEDDING_SETUP)
+}
+
+/// Copies the EMBEDDING_SETUP rows `source` carries, and their births, into
+/// `selected`: this vault's setup reaches its own machines whatever they
+/// opened, while the selector keeps it off a peer or a guest (OF-370).
+fn copy_embedding_setup_rows(source: &LoroDoc, selected: &LoroDoc) -> Result<()> {
+    let mut rows = Vec::new();
+    map_for_each_value_bytes(&source.get_map("entities"), |key, blob| {
+        if let (Ok(id), Some(blob)) = (EntityId::from_hex(key), blob)
+            && is_setup_row(blob)
+        {
+            rows.push((id, key.to_owned(), blob.to_vec()));
+        }
+    });
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let entities = selected.get_map("entities");
+    for (_, key, blob) in &rows {
+        super::loro_support::map_insert_bytes(&entities, key, blob)?;
+    }
+    let owners: Vec<EntityId> = rows.into_iter().map(|(id, _, _)| id).collect();
+    super::row_birth::copy_births(source, selected, &owners)?;
+    selected.commit();
+    Ok(())
 }
 
 /// Root maps used by other sync planes can be lazily created but empty.

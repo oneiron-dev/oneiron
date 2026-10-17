@@ -395,6 +395,7 @@ impl SyncClient {
     ) -> std::result::Result<bool, TransportError> {
         if self.config.residence_mode != super::SyncResidenceMode::Opened
             || self.config.federation_peer.is_some()
+            || self.setup_catch_up(key)
         {
             return Ok(true);
         }
@@ -403,6 +404,23 @@ impl SyncClient {
             .sync_state_get(&format!("rp:w:{key}"))
             .map_err(|e| TransportError::Storage(e.to_string()))?
             .is_some())
+    }
+
+    /// Whether `key` is this vault's embedding setup window on an opened-item
+    /// owner lane that did not promote it (OF-370). Such a device takes the
+    /// setup rows from the home whatever it opened: it asks for the window's
+    /// promotion, and once the home grants it, exchanges vectors for it. It
+    /// sends none of the window's writes back, since the home admits no setup
+    /// row from an opened-item lane; they wait queued, as an unpromoted
+    /// window's do.
+    pub(crate) fn setup_catch_up(&self, key: &str) -> bool {
+        self.config.residence_mode == super::SyncResidenceMode::Opened
+            && self.config.federation_peer.is_none()
+            && key == WindowKey::from_timestamp(crate::embed::EMBEDDING_SETUP_LEARNED_AT).as_str()
+            && self
+                .vault
+                .sync_state_get(&format!("rp:w:{key}"))
+                .is_ok_and(|marker| marker.is_none())
     }
 
     /// Whether this opened-item device promoted `key` to a canonical copy.
@@ -435,7 +453,13 @@ impl SyncClient {
 
     /// Records the last successful sync timestamp (`m:last_sync`, u64 LE
     /// Unix seconds). Called by the connection when status reaches Synced.
+    /// Only an own-device lane records it: the stamp marks this vault a
+    /// replica of its home's ([`crate::sync::residence::synced_as_replica`]),
+    /// which a federation peer's lane does not make it.
     pub fn mark_synced(&self) -> Result<()> {
+        if self.config.federation_peer.is_some() {
+            return Ok(());
+        }
         // Saturate to 0 on pre-epoch wall clock — matches the other
         // SystemTime uses in this module.
         let now_secs = std::time::SystemTime::now()
