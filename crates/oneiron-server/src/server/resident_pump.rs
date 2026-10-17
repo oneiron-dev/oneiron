@@ -16,9 +16,12 @@
 //! The pump wakes on the vault's attempt signal, and on a slow timer for a
 //! run whose backoff or schedule ends with no signal of its own.
 //!
-//! A run binds no agent verb door: a run holds no MCP credential, so a
-//! host-row verb answers `agent_verb_door_unbound` and its run verbs are its
-//! own. It may spawn reader children under its attempt's spend scope.
+//! A run holds no MCP credential, so its door serves one host row:
+//! `tasks.create`, under the run's own agent, with the run's lease as the
+//! TASK's creator (OF-532). Every other host row answers
+//! `agent_verb_door_unbound`, and its run verbs are its own. Its model calls
+//! spend under its attempt's spend scope (OF-533), and it may spawn reader
+//! children under that scope.
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -29,8 +32,11 @@ use oneiron::agent_dispatch::{
     agent_dispatch_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttemptResult};
-use oneiron::claim::CallerLocality;
-use oneiron::code_run::{HostSelfDispatcher, SpawnHostSeat, bind_wait_trap};
+use oneiron::claim::{CallerLocality, ScopedReadActorKey};
+use oneiron::code_run::{
+    AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, HostSelfDispatcher,
+    RunCall, SelfAgentVerbCall, SpawnHostSeat, bind_wait_trap,
+};
 use oneiron::compaction::output::OutputContextEntry;
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
 use oneiron::engine_executor::{
@@ -43,7 +49,10 @@ use oneiron::failure_ladder::{
 use oneiron::llm::{
     DurableStepContext, open_trap, register_wait, trap_for_durable_wait, trap_park_owner,
 };
+use oneiron::memory::{HostWriteOrigin, ProducerRows};
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
+use oneiron::runtime_hooks::InvocationId;
+use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::{DreamerRunnerStore, EntityId, Vault, WriteActor};
 use tokio::sync::broadcast;
 
@@ -296,7 +305,7 @@ fn claim(vault: &Vault, id: AttemptId, of: RunOf) -> oneiron::Result<Option<Clai
         RunOf::Resident(agent) => Ok(dispatcher
             .claim_resident_run(id, LEASE_OWNER, unix_now())?
             .map(|(status, resident)| Claimed {
-                task: resident_task(&status, &resident),
+                task: resident_task(&dispatcher, &status, &resident),
                 agent,
                 qa_thread_ref: resident.home_message_ref,
                 status,
@@ -320,7 +329,7 @@ fn claim(vault: &Vault, id: AttemptId, of: RunOf) -> oneiron::Result<Option<Clai
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
 /// enters again at once, a full window once its compaction can land.
 fn run_bound(
-    vault: &Vault,
+    vault: &Arc<Vault>,
     provider: &dyn McpCodeModeProvider,
     claimed: &Claimed,
     key: &str,
@@ -334,13 +343,16 @@ fn run_bound(
     let config = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
-    // Its reader children spend under the attempt's scope. An unmetered
-    // attempt names the scope it would spend under, which is not open, so
-    // its spawns answer `reader_spawn_unmetered`. The run binds no door, so
+    // Its model calls and its reader children spend under the attempt's
+    // scope. An unmetered attempt's calls stay on the provider's meter, and
+    // it names the scope it would spend under, which is not open, so its
+    // spawns answer `reader_spawn_unmetered`. Its door withholds nothing, so
     // its children's reads withhold nothing, as its own do.
-    let spend = AgentDispatcher::new(vault)
+    let metered = AgentDispatcher::new(vault)
         .spend_scope_for_attempt(status.attempt.id)
-        .map_err(text)?
+        .map_err(text)?;
+    let spend = metered
+        .clone()
         .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
     let seat = seats.seat(run_id, spend, CallerLocality::OnDevice);
     let reactor = tokio::runtime::Builder::new_current_thread()
@@ -357,6 +369,7 @@ fn run_bound(
             actor,
             &config,
             &seat,
+            metered.as_ref(),
             compaction.as_mut(),
             &reactor,
         )?;
@@ -375,24 +388,30 @@ fn run_bound(
 
 /// One entry of the run, as `execute_code` enters its runs, but bound to the
 /// leased attempt: its dispatcher carries the attempt, so `tasks.refuse`
-/// reaches the TASK it realizes, and `seat`, which its reader children spawn
+/// reaches the TASK it realizes, a TASK it creates runs under it, its model
+/// calls spend under `spend`, and `seat`, which its reader children spawn
 /// under.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
 )]
 fn enter_run(
-    vault: &Vault,
+    vault: &Arc<Vault>,
     provider: &dyn McpCodeModeProvider,
     status: &AgentDispatchStatus,
     actor: WriteActor,
     config: &EngineExecutorConfig,
     seat: &SpawnHostSeat,
+    spend: Option<&SpendScopeId>,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
 ) -> Result<EngineExecutorOutcome, String> {
     let bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
+        .with_agent_verb_door(Arc::new(TaskDoor {
+            vault: Arc::clone(vault),
+            actor,
+        }))
         .with_reader_spawn(seat.clone());
     enter_engine_native_run(
         vault,
@@ -402,14 +421,71 @@ fn enter_run(
         format!("agent-run:{}", config.run_id.to_hex()),
         compaction,
         reactor,
+        spend,
     )
     .map_err(text)
 }
 
+/// A pumped run's door onto the SDK verb table: `tasks.create` only, on a
+/// fresh surface under the run's own agent. The origin its dispatcher binds
+/// carries the run's live lease as the TASK's creator (OF-532), so the TASK
+/// runs inside the run's lease tree, project and spend scope; no owner or MCP
+/// credential is borrowed. Every other host row stays unbound.
+struct TaskDoor {
+    vault: Arc<Vault>,
+    actor: WriteActor,
+}
+
+impl AgentVerbDoor for TaskDoor {
+    fn call(
+        &self,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        if call.verb != AgentVerb::TasksCreate {
+            return Ok(Err(AgentVerbRefusal {
+                code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            }));
+        }
+        let producers = ProducerRows::default();
+        let memory = self
+            .vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .with_host_origin(origin.clone())
+            .with_invocation(invocation)
+            .listing_producers(&producers);
+        match oneiron::task_verb::sdk::invoke(&memory, call.verb.as_str(), call.input.clone()) {
+            Ok(output) => Ok(Ok(AgentVerbAnswer {
+                output,
+                rows: Some(producers.take()),
+            })),
+            // A verb hook's stop goes back to the run as the typed stop.
+            Err(error) => match error.hook {
+                Some(stop) => Err(oneiron::Error::from(*stop)),
+                None => Ok(Err(AgentVerbRefusal { code: error.code })),
+            },
+        }
+    }
+
+    /// The run's own calls keep the run's own admission.
+    fn admit_run_call(
+        &self,
+        _call: RunCall,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        Ok(None)
+    }
+}
+
 /// A resident run's task: its frozen definition's instructions, then what
-/// woke it. It reads only the attempt and its binding, so each entry of the
-/// run binds the same text to the run's record.
-fn resident_task(status: &AgentDispatchStatus, resident: &ResidentAgentSpec) -> String {
+/// woke it, then the briefing its wake carries: an inbox wake's message as
+/// its sender wrote it (OF-519). It reads only the attempt and its binding,
+/// so each entry of the run binds the same text to the run's record.
+fn resident_task(
+    dispatcher: &AgentDispatcher<'_>,
+    status: &AgentDispatchStatus,
+    resident: &ResidentAgentSpec,
+) -> String {
     let cause = match &status.attempt.task_ref {
         Some(task) => task_cause(task),
         None => format!(
@@ -418,26 +494,33 @@ fn resident_task(status: &AgentDispatchStatus, resident: &ResidentAgentSpec) -> 
             resident.home_conversation_ref.to_hex()
         ),
     };
-    task_text(status, [cause].into_iter())
+    task_text(
+        status,
+        std::iter::once(cause).chain(briefing(dispatcher, status)),
+    )
 }
 
 /// Another agent's run task: its frozen definition's instructions, then the
-/// briefing its spawn gave it and the TASK it realizes. A briefing the run's
-/// context cannot resolve is left out, and the run reads its own context.
+/// briefing its spawn gave it and the TASK it realizes.
 fn agent_task(dispatcher: &AgentDispatcher<'_>, status: &AgentDispatchStatus) -> String {
-    let briefing = match dispatcher.resolve_attempt_context(status.attempt.id) {
+    task_text(
+        status,
+        briefing(dispatcher, status)
+            .into_iter()
+            .chain(status.attempt.task_ref.as_deref().map(task_cause)),
+    )
+}
+
+/// The briefing the run's dispatch gave it. A briefing the run's context
+/// cannot resolve is left out, and the run reads its own context.
+fn briefing(dispatcher: &AgentDispatcher<'_>, status: &AgentDispatchStatus) -> Option<String> {
+    match dispatcher.resolve_attempt_context(status.attempt.id) {
         Ok(context) => context.briefing.filter(|text| !text.trim().is_empty()),
         Err(error) => {
             tracing::warn!(%error, attempt = ?status.attempt.id, "an agent run's briefing does not resolve");
             None
         }
-    };
-    task_text(
-        status,
-        briefing
-            .into_iter()
-            .chain(status.attempt.task_ref.as_deref().map(task_cause)),
-    )
+    }
 }
 
 fn task_cause(task: &str) -> String {
