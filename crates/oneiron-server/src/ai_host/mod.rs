@@ -31,6 +31,7 @@ mod compaction;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 pub(crate) mod coach_heal;
+mod coach_health;
 mod code_fix;
 mod dreamer;
 mod harness;

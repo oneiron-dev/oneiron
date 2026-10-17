@@ -4,7 +4,8 @@
 //! The recipe is the host's: a TOML file in its prompt package (with the
 //! template files it names) carrying the prompts, a label's row wording, the
 //! single-token label verbalizers, the end-of-generation token and the owner
-//! probe's paired and person questions. No prompt text lives in the server.
+//! probe's paired, person and presence questions. No prompt text lives in the
+//! server.
 //! One read is a pack: each question renders over the same state with its
 //! own text and label rows. A question read jointly with the paired question
 //! (ARCH-0076 `#ask-a-person`: Q1 and Q2 stay joint) renders the joint
@@ -146,6 +147,7 @@ struct RecipeFile {
 struct ProbeFile {
     paired: String,
     person: Option<String>,
+    presence: Option<String>,
 }
 
 /// A host-authored read recipe, checked whole when it loads.
@@ -166,11 +168,14 @@ pub struct DecisionReadRecipe {
     fingerprint: String,
 }
 
-/// The owner probe's paired question and, when set, its person question.
+/// The owner probe's paired question and, when set, its person question and
+/// its presence question (asked before a Box or Point question: is the target
+/// the `locate` state field words in the image?).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProbeQuestions {
     pub paired: String,
     pub person: Option<String>,
+    pub presence: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -374,12 +379,18 @@ impl DecisionReadRecipe {
 impl ProbeFile {
     fn resolve(self) -> anyhow::Result<ProbeQuestions> {
         let blank = |text: &str| text.trim().is_empty();
-        if blank(&self.paired) || self.person.as_deref().is_some_and(blank) {
-            anyhow::bail!("probe.paired must be set, and probe.person, when set, not blank");
+        if blank(&self.paired)
+            || self.person.as_deref().is_some_and(blank)
+            || self.presence.as_deref().is_some_and(blank)
+        {
+            anyhow::bail!(
+                "probe.paired must be set, and probe.person and probe.presence, when set, not blank"
+            );
         }
         Ok(ProbeQuestions {
             paired: self.paired,
             person: self.person,
+            presence: self.presence,
         })
     }
 }
