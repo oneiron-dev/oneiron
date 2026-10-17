@@ -61348,7 +61348,7 @@
   "oneiron-llm-own-server": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OwnServerBackend"
@@ -61356,7 +61356,7 @@
      "path": "src/lib.rs",
      "purpose": "Own-server LlmBackend",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "mod": 1,
       "re-export": 2,
       "struct": 1
@@ -61383,13 +61383,14 @@
      "notable": [
       "LlmNodes",
       "MeshLlmTransport",
+      "MeshPeerTransport",
       "VaultLlmNodes"
      ],
      "path": "src/mesh/client.rs",
      "purpose": "The asking side: the first of the owner's nodes that takes the call runs it; with none, the call waits and…",
      "surface": {
-      "fn": 3,
-      "struct": 2,
+      "fn": 4,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -71322,6 +71323,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/discovered.rs",
+     "purpose": "The models the owner's other nodes offer (OF-575, FIX 3229)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/driven.rs",
      "purpose": "A stream whose items an async producer pushes, polled in place",
      "surface": {
@@ -71451,7 +71462,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ModelRuntime",
@@ -71460,7 +71471,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 20,
       "re-export": 14,
       "struct": 2
@@ -71578,7 +71589,7 @@
      "path": "src/models/router.rs",
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 6,
       "struct": 1
      }
@@ -73622,7 +73633,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 41,
+     "files": 42,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73762,9 +73773,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 52,
+   "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 621,
+   "source_files": 622,
    "test_files": 182
   },
   "oneiron-spawn": {
