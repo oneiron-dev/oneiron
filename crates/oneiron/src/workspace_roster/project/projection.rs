@@ -85,12 +85,18 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         &body.board,
         &body.roster,
         &body.sessions,
-        &body.tasks,
         &body.branches,
         &body.skill_forks,
-        &body.asks,
     ] {
         if list.len() > 4096 || list.iter().collect::<BTreeSet<_>>().len() != list.len() {
+            return Err(invalid());
+        }
+        refs.extend(list);
+    }
+    // TASK-bearing lists grow with use, so no count refuses them (rule 5);
+    // `normalize_project_body` counts them against a threshold row.
+    for list in [&body.tasks, &body.asks] {
+        if list.iter().collect::<BTreeSet<_>>().len() != list.len() {
             return Err(invalid());
         }
         refs.extend(list);
@@ -217,6 +223,17 @@ pub(crate) fn normalize_project_body(
     if body.parents.contains(&id.to_hex()) {
         return Err(invalid());
     }
+    // A project's tasks and asks are kept however many; past the threshold
+    // row the board's check is raised for the project.
+    let mut tasks = crate::scan_check::ScanCount::start(
+        store,
+        txn,
+        crate::scan_check::EngineScan::TaskBoardRows,
+        id.as_bytes(),
+    )?;
+    tasks.rows(body.tasks.len());
+    tasks.rows(body.asks.len());
+    tasks.defer(store);
     body.depth = match crate::gate::project_depth::birth_for_project(store, txn, id)? {
         Some((_, birth)) => birth.depth,
         None if crate::gate::project_depth::implicit_birth_applies(store, txn, posture, id)? => {

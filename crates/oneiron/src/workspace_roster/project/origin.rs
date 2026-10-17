@@ -130,10 +130,16 @@ pub(super) fn validate_binding(
     }
     sole_edge(store, txn, thread, EdgeKind::ChildOf, room)?;
     // A witnessed thread has at least one message carrying its parent turn.
+    // Every inbound message is read, however many (rule 5).
     let mut marker = None;
-    for child in
-        crate::conversation_dag::edge_ids(store, txn, &thread, EdgeKind::PartOf, true, 65536)?
-    {
+    for child in crate::vault::filtered_edge_peers_in(
+        store,
+        txn,
+        crate::ports::EdgeDirection::In,
+        &thread,
+        EdgeKind::PartOf,
+        None,
+    )? {
         let bytes = present(store, txn, child, ENTITY_TYPE_MESSAGE)?;
         if let Some(parent) = marker_ref(&bytes, "room_thread_of")?
             && marker.replace(parent).is_some_and(|prior| prior != parent)
@@ -155,9 +161,14 @@ pub(super) fn validate_binding(
         present(store, txn, cursor, ENTITY_TYPE_TURN)?;
         sole_edge(store, txn, cursor, EdgeKind::ChildOf, room)?;
         let mut reply_to = None;
-        for child in
-            crate::conversation_dag::edge_ids(store, txn, &cursor, EdgeKind::PartOf, true, 65536)?
-        {
+        for child in crate::vault::filtered_edge_peers_in(
+            store,
+            txn,
+            crate::ports::EdgeDirection::In,
+            &cursor,
+            EdgeKind::PartOf,
+            None,
+        )? {
             let bytes = present(store, txn, child, ENTITY_TYPE_MESSAGE)?;
             if marker_ref(&bytes, "room_thread_of")?.is_some_and(|anchor| anchor != parent) {
                 return Err(reject());
