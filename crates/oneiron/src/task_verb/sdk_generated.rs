@@ -998,6 +998,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.questions.backfill",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::QuestionBackfillRequest,
+                >(),
+            ),
+            (
                 "vault.questions.read",
                 crate::code_run::vault_read::request_schema::<crate::receipt::QuestionReadRequest>(
                 ),
@@ -2906,6 +2912,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.questions.backfill" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.questions.read" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3963,6 +3976,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.questions.pause" => {
             let _input: crate::receipt::QuestionPauseRequest = decode(value.clone())?;
         }
+        "vault.questions.backfill" => {
+            let _input: crate::receipt::QuestionBackfillRequest = decode(value.clone())?;
+        }
         "vault.questions.read" => {
             let _input: crate::receipt::QuestionReadRequest = decode(value.clone())?;
         }
@@ -4587,6 +4603,7 @@ pub fn invoke(
         "vault.questions.create" => encode(vault_questions_create(memory, decode(value)?)?),
         "vault.questions.edit" => encode(vault_questions_edit(memory, decode(value)?)?),
         "vault.questions.pause" => encode(vault_questions_pause(memory, decode(value)?)?),
+        "vault.questions.backfill" => encode(vault_questions_backfill(memory, decode(value)?)?),
         "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
         "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
         "vault.decisions.asks.answer" => {
@@ -6441,6 +6458,12 @@ pub fn vault_questions_pause(
     input: crate::receipt::QuestionPauseRequest,
 ) -> MemoryResult<crate::receipt::QuestionPaused> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.pause", &input)
+}
+pub fn vault_questions_backfill(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionBackfillRequest,
+) -> MemoryResult<crate::llm::decision::questions::ScheduledBackfill> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.backfill", &input)
 }
 pub fn vault_questions_read(
     memory: &Memory<'_>,

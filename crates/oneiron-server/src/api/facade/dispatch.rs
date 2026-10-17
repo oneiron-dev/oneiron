@@ -4277,6 +4277,30 @@ async fn vault_questions_pause(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_questions_backfill(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.questions.backfill")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.questions.backfill", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.questions.backfill", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_questions_backfill(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_questions_read(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -5970,6 +5994,7 @@ pub(crate) async fn call_verb(
         "vault.questions.create" => vault_questions_create(server, call, input).await,
         "vault.questions.edit" => vault_questions_edit(server, call, input).await,
         "vault.questions.pause" => vault_questions_pause(server, call, input).await,
+        "vault.questions.backfill" => vault_questions_backfill(server, call, input).await,
         "vault.questions.read" => vault_questions_read(server, call, input).await,
         "vault.questions.answers" => vault_questions_answers(server, call, input).await,
         "vault.decisions.asks.answer" => vault_decisions_asks_answer(server, call, input).await,
