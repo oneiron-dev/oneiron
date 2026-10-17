@@ -135,21 +135,8 @@ impl HostSelfDispatcher<'_> {
         {
             return Ok(None);
         }
-        let Some(output) = self
-            .storage
-            .get_code_run_replay_record(&found.owner)?
-            .and_then(|record| {
-                record
-                    .outputs
-                    .into_iter()
-                    .find(|output| output.path == found.path && output.handle == found.handle)
-            })
-        else {
-            return Ok(None);
-        };
-        let mut card = crate::code_run::result_card(&self.storage, found.owner, &output, None)?;
-        card["task"] = serde_json::json!(task.to_hex());
-        Ok(Some(card))
+        self.storage
+            .summary_output_card(found.owner, &found.path, &found.handle, task)
     }
 }
 
