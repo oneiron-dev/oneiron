@@ -3725,7 +3725,7 @@
       "description": "Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it.",
       "input": "crate::task_verb::sdk::ConnectorCallStatusRequest",
       "output": "crate::task_verb::sdk::ConnectorCallStatus",
-      "call": "crate::task_verb::sdk::connector_call_status(memory, input)?",
+      "call": "crate::task_verb::sdk::connector_call_status_read(memory, input)?",
       "scope": "Read",
       "section": false
     },

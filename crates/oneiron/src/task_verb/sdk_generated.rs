@@ -7837,7 +7837,7 @@ pub fn connector_call_status(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ConnectorCallStatusRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ConnectorCallStatus> {
-    crate::task_verb::sdk::connector_call_status(memory, input)
+    crate::task_verb::sdk::connector_call_status_read(memory, input)
 }
 pub fn self_browser_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,

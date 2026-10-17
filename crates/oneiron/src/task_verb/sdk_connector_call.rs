@@ -333,7 +333,7 @@ pub enum ConnectorCallStatus {
 /// # Errors
 ///
 /// A malformed ref; not found; storage errors.
-pub fn connector_call_status(
+pub fn connector_call_status_read(
     memory: &Memory<'_>,
     input: ConnectorCallStatusRequest,
 ) -> MemoryResult<ConnectorCallStatus> {
