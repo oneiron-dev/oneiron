@@ -1561,6 +1561,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_decisions_asks_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.decisions.asks.answer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_decisions_asks_climb(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.decisions.asks.climb", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_decisions_asks(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.decisions.asks", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn connector_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("connector.list", input)
