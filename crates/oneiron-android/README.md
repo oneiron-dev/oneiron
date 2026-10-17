@@ -1,6 +1,6 @@
 # Android embedded engine
 
-`EmbeddedVault` owns the same `oneiron::Vault` core through four JNI hooks.
+`EmbeddedVault` owns the same `oneiron::Vault` core through its JNI hooks.
 The Kotlin object owns the native handle, serializes calls, and releases it in
 `close()`. There is no native process-global vault registry. Engine refusals
 become `IllegalStateException`; a missing entity alone returns `null`.
@@ -30,9 +30,37 @@ own; that instrumentation test is the only on-device check.
 Canon: `oneiron/core/oneiron-arch-0019-oneiron-db-v1.md` (embedded
 same-core deployment); the generated docs mirror remains read-only.
 
+## Embedded engine
+
+`EmbeddedEngine` runs the full server `oneiron serve` runs inside the app's
+process (OF-237), next to the plain `EmbeddedVault(path)`, which stays a vault
+with no server. The native library carries it only when built with
+`--features engine` (`cargo build -p oneiron-android --features engine`); the
+default build, the one the Android workflow makes, is the plain vault alone. Its config is the one `oneiron serve --config <configFile>`
+resolves for the path, with `dimensions` when it is not 0; a `memoryBytes` or
+`cpuMillisPerSecond` of 0 is unbounded. The app implements `AppHost`:
+`keychain(name)` returns the secret's bytes or `null`, `scheduleWake(atUnixMs)`
+arms or clears (`null`) the app's timer, and `ready()` reports the server up.
+
+```kotlin
+val engine = EmbeddedEngine(context.filesDir.resolve("memory").absolutePath, host)
+val reply = engine.request("GET", "/.well-known/oneiron", listOf("authorization" to bearer.toByteArray()))
+engine.vault().use { vault -> vault.get("0102030405060708090a0b0c0d0e0f10") }
+engine.stop()  // backgrounding: drain, stop every worker, keep the vault open
+engine.wake()  // the timer fired: serve again over the same vault, run what is due
+engine.close()
+```
+
+`request` is one buffered HTTP/1.1 exchange: headers pass through (bring your
+own auth), a 4xx/5xx is a reply, and `/ws`, other upgrades and a reply body
+over 64 MiB throw. `vault()` shares the engine's open vault and never reopens
+the path. Every engine method blocks: call it from an app thread, never from
+an `AppHost` callback (the engine calls those on its own threads, and a call
+back into it throws), and call `close()` before letting it go.
+
 ## Native-host Kotlin proof
 
-The adapter is also plain JVM Kotlin. Compile `kotlin/src/main/kotlin/org/oneiron/EmbeddedVault.kt`
+The adapter is also plain JVM Kotlin. Compile `kotlin/src/main/kotlin/org/oneiron/*.kt`
 and `kotlin/tools/JniSmoke.kt` with `kotlinc -include-runtime -d smoke.jar`. Run:
 
 ```sh
