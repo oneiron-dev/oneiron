@@ -466,14 +466,15 @@ pub(super) fn validate_epoch_boundary(prior: Option<PriorEpoch>, turn_start: u64
 ///
 /// The DURABLE entities are the counter: a crash between two compactions can
 /// never desynchronize an epoch number from the rows that justify it, because
-/// there is no separate mutable counter to desynchronize.
+/// the only other input, the floor a removed epoch leaves, is written in the
+/// transaction that removes it.
 ///
 /// Rows whose body is not an epoch-summary record are SKIPPED, not refused: an
 /// ordinary witness SUMMARY is a different kind of row that happens to share
 /// the type byte, and it carries no epoch to compare. An identifiable malformed
 /// epoch candidate for this session is refused rather than losing its lineage.
-/// A withdrawn epoch counts by the keyframe it keeps, so numbering never
-/// restarts under a scrubbed one.
+/// A withdrawn epoch counts by the keyframe it keeps, and a purged or demoted
+/// one by the session's epoch floor, so numbering never restarts under either.
 pub(super) fn prior_epoch_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -520,10 +521,12 @@ pub(super) fn prior_epoch_in_txn(
             "conflicting summaries at the highest compaction epoch",
         ));
     }
-    Ok(best.map(|(keyframe, _)| PriorEpoch {
-        epoch: keyframe.epoch,
-        turn_end: keyframe.turn_end,
-    }))
+    // A removed epoch keeps its place through the floor it left (OF-013).
+    let row = best.map(|(keyframe, _)| (keyframe.epoch, keyframe.turn_end));
+    let floor = super::epoch_floor::epoch_floor_in_txn(store, rtxn, session_ref)?;
+    Ok(row
+        .max(floor)
+        .map(|(epoch, turn_end)| PriorEpoch { epoch, turn_end }))
 }
 
 /// Mints ONE session-kind SUMMARY entity for a finished compaction.

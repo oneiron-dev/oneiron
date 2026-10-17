@@ -81,6 +81,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::SHORT_ID_COUNTER,
     &side_table::PORTS_ID_FLOOR,
     &side_table::PORTS_CLOCK_FLOOR,
+    &side_table::COMPACTION_EPOCH_FLOOR,
     // Fences and masks already written; none is added.
     &side_table::DELETION_ROW_FENCE,
     &side_table::DELETION_HARD_DELETE_MARKER,

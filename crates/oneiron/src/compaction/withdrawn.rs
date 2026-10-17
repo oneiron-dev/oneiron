@@ -171,6 +171,16 @@ pub(crate) fn withdrawn_keyframe_envelope(envelope: &[u8]) -> Result<Option<Vec<
     Ok(Some(out))
 }
 
+/// The keyframe stored row `envelope` (its header, then its body) keeps when
+/// it is an epoch summary, whole, beside a pointer or withdrawn; `None` for
+/// any other row.
+pub(super) fn stored_keyframe(envelope: &[u8]) -> Option<WithdrawnKeyframe> {
+    crate::batch::EntityMetadataHeader::parse(envelope)
+        .filter(|header| header.entity_type == ENTITY_TYPE_SUMMARY)
+        .and_then(|_| envelope.get(crate::batch::ENTITY_METADATA_HEADER_LEN..))
+        .and_then(WithdrawnKeyframe::of_stored)
+}
+
 /// What erasure leaves of stored row `envelope` (its header, then its body):
 /// an epoch summary keeps its keyframe, as a withdrawn one does, so epoch
 /// numbering never restarts under an erased epoch; any other row keeps its
