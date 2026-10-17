@@ -1,6 +1,5 @@
 //! Write-once executor identity for a skill-bearing attempt's terminal receipt.
 
-use super::encoding::encode_record;
 use super::validate::{validate_lease_owner, validate_transition_lease};
 use super::{AttemptId, AttemptQueue, AttemptRecord, AttemptState, decode_record};
 use crate::error::{Error, Result};
@@ -131,9 +130,10 @@ impl AttemptQueue<'_> {
         validate_lease_owner(lease_owner)?;
         validate_transition_lease(&record, lease_owner, attempt_count, "set_executor_model")?;
         record.executor_model = Some(model.to_owned());
+        let encoded = self.encode_in_txn(txn, &mut record)?;
         self.store
             .attempt_records
-            .put(txn, id.as_bytes(), &encode_record(&record)?)?;
+            .put(txn, id.as_bytes(), &encoded)?;
         Ok(record)
     }
 }

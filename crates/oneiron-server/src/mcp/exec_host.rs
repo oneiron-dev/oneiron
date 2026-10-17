@@ -4,7 +4,7 @@ use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
 use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
@@ -203,9 +203,23 @@ pub trait McpCodeModeProvider: Send + Sync {
         self.runtime()
     }
     /// The backend one reader child's model calls go through, each spent on
-    /// `meter`, its own child scope's guard. `None`: the provider has no
-    /// metered backend to give, and the child does not run.
+    /// `meter`: its own child scope's guard, or [`Self::host_meter`]. `None`:
+    /// the provider has no metered backend to give, and the child does not
+    /// run.
     fn reader_backend(&self, _meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
+    /// The meter the host runs a run's own model calls on when the run
+    /// spends under no scope (served code mode's shared guard): the reader
+    /// children of such a run spend on it too. `None`: the provider has none
+    /// to lend, and such a child does not run.
+    fn host_meter(&self) -> Option<BudgetGuard> {
+        None
+    }
+    /// The input window, in tokens, of the model reader children and
+    /// summaries run on; `None` when the host knows none, and a seat names
+    /// [`oneiron::code_run::DEFAULT_READER_WINDOW_TOKENS`].
+    fn reader_window_tokens(&self) -> Option<u64> {
         None
     }
     /// The executor configuration for this run, in the vault it lives in.
@@ -389,11 +403,16 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 return Err(changed());
             }
             let guard = ActiveRun::acquire(active, request.run_id)?;
-            // The run's children spend under its launch's root scope, on a
-            // clock one window from its first spawn.
-            let reader_seat = reader_seats.as_ref().and_then(|lent| {
-                crate::server::run_launch_scope(request.run_id)
-                    .map(|spend| lent.seat(request.run_id, spend, request.actor.locality()))
+            // The run spends under no scope, so its children spend on the
+            // host's meter, as its own calls do, on a clock one window from
+            // its first spawn.
+            let reader_seat = reader_seats.as_ref().map(|lent| {
+                lent.seat(
+                    request.run_id,
+                    None,
+                    request.actor.locality(),
+                    provider.reader_window_tokens(),
+                )
             });
             // Past the bound the run waits its credential's turn. The permit
             // moves into the worker below, so a caller who hangs up frees
@@ -509,6 +528,7 @@ fn run_engine_native_code_mode(
         compaction,
         &reactor,
         None,
+        None,
     )
     .map_err(|error| match error {
         EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
@@ -561,6 +581,9 @@ impl From<String> for EngineRunError {
 /// makes its model calls on a meter that scope bounds, and what they used is
 /// booked on the scope once the entry ends, whatever it answered. With none,
 /// the calls run on the provider's own meter.
+///
+/// A planned child (`plan`: the receipt its spawn froze, OF-541) is born on
+/// the seat its plan picked (`planned_seat`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
@@ -571,6 +594,7 @@ pub(crate) fn enter_engine_native_run(
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
     spend: Option<&SpendScopeId>,
+    plan: Option<&SpawnPlanReceipt>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
     let Some(scope) = spend else {
@@ -583,6 +607,7 @@ pub(crate) fn enter_engine_native_run(
             warm_scope,
             compaction,
             reactor,
+            plan,
         );
     };
     let dispatcher = AgentDispatcher::new(vault);
@@ -600,11 +625,22 @@ pub(crate) fn enter_engine_native_run(
         warm_scope,
         compaction,
         reactor,
+        plan,
     );
     dispatcher
         .record_guard_spend(scope, guard.read().used_units)
         .map_err(binding)?;
     entered
+}
+
+/// The model a planned child's seat is born on (OF-541): the one its plan
+/// picked, so the child runs the model its receipt states. The seat pool
+/// admits that model alone, so a host that cannot seat it refuses the
+/// birth rather than seat another. The plan's effort is not pinned: it
+/// follows the plan's care, and the seat's own ladder picks the effort
+/// that model takes. An unplanned run pins nothing.
+fn planned_seat(plan: Option<&SpawnPlanReceipt>) -> Option<oneiron::ModelId> {
+    plan.map(|plan| plan.plan.model.clone())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -617,6 +653,7 @@ fn enter_on(
     warm_scope: String,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
+    plan: Option<&SpawnPlanReceipt>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
     let mut runtime = provider.runtime();
@@ -644,7 +681,7 @@ fn enter_on(
             required: Vec::new(),
             min_context_tokens: 1,
             locality: config.model_locality,
-            override_model: None,
+            override_model: planned_seat(plan),
             override_effort: None,
         };
         Some(

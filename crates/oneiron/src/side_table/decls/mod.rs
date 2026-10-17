@@ -8,11 +8,15 @@
 //! the codec. `Named` is the codec; entries on a legacy codec (`LegacyJson`, `LegacyCompact`,
 //! `Raw`) keep the bytes they had and move with the next storage ABI bump. The key note on each
 //! entry spells what follows the prefix.
+//!
+//! An entry may end with what its rows carry, a [`SidePayload`] (OF-067). A table classed
+//! `Authored` is admitted at every write by the side-row wall; an entry with no class is written
+//! as given. The class changes no stored byte.
 
-use super::{CodecName, SideDb, SideTableDecl};
+use super::{CodecName, SideDb, SidePayload, SideTableDecl};
 
 macro_rules! side_tables {
-    ($list:ident; $($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident;)+) => {
+    ($list:ident; $($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)?;)+) => {
         $(
             $(#[$doc])*
             pub(crate) static $name: SideTableDecl = SideTableDecl {
@@ -20,11 +24,22 @@ macro_rules! side_tables {
                 db: SideDb::$db,
                 prefix: $prefix,
                 codec: CodecName::$codec,
+                payload: side_payload!($($payload)?),
             };
         )+
 
         /// One file's declarations, in prefix order.
         static $list: &[&SideTableDecl] = &[$(&$name),+];
+    };
+}
+
+/// An entry's class: [`SidePayload::Unclassed`] when it names none.
+macro_rules! side_payload {
+    () => {
+        SidePayload::Unclassed
+    };
+    ($payload:ident) => {
+        SidePayload::$payload
     };
 }
 

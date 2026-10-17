@@ -256,10 +256,11 @@ pub(crate) fn bound_rpc(
     bound_rpc_reply(server, auth, request).map(|reply| reply.frames)
 }
 
-/// [`rpc_reply`] from the app tier's synchronous RPC door, through the
-/// blocking bridge ([`rpc::blocking`]) until L03's owner loop completes calls
-/// off the loop. The facade's server and host doors take the served handle,
-/// which this door finds through the socket's hub.
+/// [`rpc_reply`] from a synchronous test door, through the blocking bridge
+/// ([`rpc::blocking`]); a socket's owner loop awaits [`rpc_reply`] off the
+/// loop. The facade's server and host doors take the served handle, which
+/// this door finds through the socket's hub.
+#[cfg(test)]
 pub(crate) fn bound_rpc_reply(
     server: &crate::server::SyncServer,
     auth: &CoreAuth,
