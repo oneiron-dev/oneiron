@@ -52,9 +52,10 @@ impl HostSelfDispatcher<'_> {
                     .with_context_spec(ContextSpec::default().with_briefing(briefing.clone()));
             }
             let spawned = self.dispatch_agents_spawn(SelfAgentSpawnCall {
-                target: AgentDispatchTarget::Custom(agent),
+                target: Some(AgentDispatchTarget::Custom(agent)),
                 context,
                 intent_key: member_spawn_key(&input, member),
+                ask: None,
             })?;
             let (attempt_ref, proposal_ref) = match spawned {
                 SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref }) => {

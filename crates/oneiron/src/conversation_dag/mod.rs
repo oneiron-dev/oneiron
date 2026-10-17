@@ -15,7 +15,8 @@ pub(crate) mod topology;
 pub(crate) use admission::stored_body_pin_for_test;
 pub(crate) use admission::{
     guard_record_put, guard_room_membership_delete, guard_room_turn_delete, keep_membership_pin,
-    pin_membership, pin_typed_record, room_turn_owner, validate_local_membership,
+    pin_membership, pin_typed_record, record_is_append_only_in_txn, room_turn_owner,
+    validate_local_membership,
 };
 #[cfg(feature = "sync")]
 pub(crate) use admission::{validate_received_edge, validate_received_parent_value};
@@ -42,7 +43,9 @@ pub(crate) use graph::{
     actor_in_txn, conversation_of, edge_ids, is_sub_session_record, is_thread_record,
     keeps_dag_topology, parent as retained_parent, record_has_dag_topology, require_type,
 };
-pub(crate) use quote::{QuotedReply, carries_quote};
+pub(crate) use participation::{erased_thread_room_in_txn, offer_turns_in_txn};
+pub(crate) use quote::{ProvenRoomQuote, QuotedReply, carries_quote};
+pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
     QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,
 };
