@@ -2201,6 +2201,41 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRun => {
                 "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner."
             }
+            Self::SelfDesktopOpen => {
+                "Opens an app of the run's own desktop guest by app:name and observes its window."
+            }
+            Self::SelfDesktopObserve => "Observes the current window of the run's desktop guest.",
+            Self::SelfDesktopFind => "Finds the window rows whose role and name match.",
+            Self::SelfDesktopClick => "Clicks one window target and observes the result.",
+            Self::SelfDesktopClickAt => {
+                "Clicks a point of a held screenshot, mapped onto the window."
+            }
+            Self::SelfDesktopType => "Types text into one window target and observes the result.",
+            Self::SelfDesktopSelect => {
+                "Sets the value of a combo box or list target by its option label."
+            }
+            Self::SelfDesktopKey => {
+                "Presses one key, with modifiers, on a window target or the window's focus."
+            }
+            Self::SelfDesktopHotkey => "Presses a key combination in the current window.",
+            Self::SelfDesktopScroll => "Scrolls a window target, or the window, by steps.",
+            Self::SelfDesktopWaitFor => "Waits until some window row matches a role and name.",
+            Self::SelfDesktopExpect => {
+                "Checks that a window row is present or absent, and holds a given value."
+            }
+            Self::SelfDesktopScreenshot => {
+                "Takes a screenshot of the window the session holds, by image ref and never captioned."
+            }
+            Self::SelfDesktopView => "Reads back a held image by its ref.",
+            Self::SelfDesktopCrop => "Crops a held image to a rectangle.",
+            Self::SelfDesktopZoom => "Zooms into a rectangle of a held image.",
+            Self::SelfDesktopBatch => {
+                "Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails."
+            }
+            Self::SelfDesktopWindows => "Lists the desktop guest's windows, or one app's.",
+            Self::SelfDesktopWindow => {
+                "Moves the session onto another desktop window and observes it."
+            }
             Self::VaultCommit => {
                 "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."
             }
