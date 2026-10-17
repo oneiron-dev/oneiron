@@ -5819,6 +5819,7 @@
       "ConstraintAgentCapability",
       "ConstraintContinuation",
       "ConstraintDeflect",
+      "ConstraintFrontConfig",
       "ConstraintFrontCopy",
       "ConstraintFrontOutcome",
       "ConstraintSlotReply",
@@ -5829,8 +5830,8 @@
      "surface": {
       "const": 2,
       "enum": 2,
-      "fn": 1,
-      "struct": 5
+      "fn": 5,
+      "struct": 6
      }
     },
     {
@@ -37882,7 +37883,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EvaluationRequest",
@@ -37932,7 +37933,7 @@
      "path": "src/saved_query/filter.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 5,
       "struct": 1
@@ -48081,6 +48082,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ShapeChannelBinding",
+      "ShapeChannelCustody",
+      "ShapeChannelFulfillment",
+      "ShapeChannelProvision",
+      "ShapeMailScope",
+      "ShapeSelfHeld"
+     ],
+     "path": "src/vault_shape/channel.rs",
+     "purpose": "How a declared channel identity is held, bound and fulfilled, as a seed writes it (ARCH-0063)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ShapeGrantBound"
      ],
      "path": "src/vault_shape/grant.rs",
@@ -48135,7 +48155,7 @@
       "const": 2,
       "enum": 3,
       "fn": 3,
-      "re-export": 5,
+      "re-export": 7,
       "struct": 3
      }
     },
@@ -48169,6 +48189,19 @@
       "crate-vis": 3,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShapeSkillSource"
+     ],
+     "path": "src/vault_shape/skill.rs",
+     "purpose": "Where a declared skill comes from, as a seed writes it (ARCH-0053)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1
      }
     },
     {
@@ -52247,7 +52280,7 @@
     "saved_query": {
      "files": 14,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
@@ -52574,7 +52607,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 7,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52637,9 +52670,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 153,
+   "over_bar": 154,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3186,
+   "source_files": 3188,
    "test_files": 903
   },
   "oneiron-android": {
@@ -63417,7 +63450,17 @@
      "path": "src/api/booking/free_text.rs",
      "purpose": "A booking page's free-text constraint (ONE-1816), parsed on the cheap seat…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/booking/front.rs",
+     "purpose": "ONE-1816 / ARCH-0062 §5: a published page's interactive constraint front",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -69981,7 +70024,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/saved_query_sweep.rs",
-     "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the…",
+     "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…",
      "surface": {
       "crate-vis": 1
      }
@@ -70995,7 +71038,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 288,
+     "files": 289,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71286,7 +71329,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the…"
+     "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
      "files": 29,
@@ -71361,7 +71404,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 571,
+   "source_files": 572,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -72150,9 +72193,14 @@
       "ShapeApplyRequest",
       "ShapeCeiling",
       "ShapeChange",
+      "ShapeChannelBinding",
+      "ShapeChannelCustody",
+      "ShapeChannelFulfillment",
+      "ShapeChannelProvision",
       "ShapeGrantBound",
       "ShapeItemClass",
       "ShapeItemState",
+      "ShapeMailScope",
       "ShapeMemberRole",
       "ShapePlan",
       "ShapePlanItem",
@@ -72164,6 +72212,8 @@
       "ShapeRead",
       "ShapeRow",
       "ShapeSeed",
+      "ShapeSelfHeld",
+      "ShapeSkillSource",
       "ShapeTarget",
       "ShareCreateRequest",
       "ShareCreated",
@@ -72338,8 +72388,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 228,
-      "struct": 576
+      "enum": 234,
+      "struct": 577
      }
     },
     {
