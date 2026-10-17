@@ -19,11 +19,17 @@ impl CredentialResolver for NoCredentials {
         Err(failure("foreign credential service unbound"))
     }
 }
+/// Runs one foreign step on `backend`. A cancel ends the backend's own
+/// guest (its process group or container, never another's), and the
+/// cancelled run's result and proposals are dropped before admission; the
+/// session's manifest is recorded either way (FIX 600).
 pub(super) fn run(
     runtime: &mut WasmtimeComponentRuntime,
     step: JsCodeModeStep<'_>,
     mut backend: Box<dyn MicroVmBackend>,
+    cancel: &StepCancellation,
 ) -> Result<JsCodeModeStepOutcome> {
+    cancel.check()?;
     let relay = runtime
         .foreign_egress
         .as_ref()
@@ -53,24 +59,31 @@ pub(super) fn run(
         CredentialAllowlist::new(),
     )?;
     let budget = runtime.budget.foreign_budget;
-    let result = adapter.run(&image, budget);
-    if let Some(manifest) = adapter.session_manifest() {
-        relay
+    let result = adapter.run_cancellable(&image, budget, cancel);
+    let recorded = match adapter.session_manifest() {
+        Some(manifest) => relay
             .record_session(&manifest)
-            .map_err(|e| Error::InvalidConfig(e.to_string()))?;
-    }
+            .map_err(|e| Error::InvalidConfig(e.to_string())),
+        None => Ok(()),
+    };
+    // A cancelled run is dropped here, whatever it returned: nothing it
+    // proposed reaches the host.
+    cancel.check()?;
+    recorded?;
     let exit = result?;
     if exit.status != 0 {
         return Err(failure("foreign step failed in isolated backend"));
     }
     let proposals = adapter.collect_overlay_proposals()?;
     for proposal in proposals {
+        cancel.check()?;
         runtime
             .adapter
             .as_mut()
             .ok_or(failure("foreign proposal collector unbound"))?
             .propose_write(proposal.write().clone())?;
     }
+    cancel.check()?;
     let output = exit
         .result_json
         .ok_or(failure("isolated guest returned no step result"))?;
