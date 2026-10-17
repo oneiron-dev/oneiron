@@ -24,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mesh/mod.rs` | src | s | 1 struct · 1 const · 1 re-export · 22 crate-vis | Offer | Organ calls between the owner's nodes (OF-575, owner ruling MESH) |
 | `src/mesh/serve.rs` | src | s | 1 struct · 2 fn | OrganService | The serving side of a mesh organ call: this node's host runs another owner node's call as its own, and sends… |
 | `src/outcome.rs` | src | s | 2 struct · 1 crate-vis | OrganOutcome, OrganOutput | What an organ call proposed, checked by the host that ran it: on this machine, or on another of the owner's… |
-| `src/pin.rs` | src | s | 1 fn | — | Organs installed from a pinned hub binary (OF-575): the pack names the binary by blake3, the bytes are… |
+| `src/pin.rs` | src | s | 2 fn | — | Organs installed from a pinned hub binary (OF-575): the pack names the binary by blake3, the bytes are… |
 | `src/process.rs` | src | L | 21 crate-vis | — | One live organ process: spawn, handshake, a reader thread, calls |
 | `src/receipt.rs` | src | s | 6 struct · 1 enum · 3 crate-vis | AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered | The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes |
 | `src/regions.rs` | src | s | 5 crate-vis | — | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |

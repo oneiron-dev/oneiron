@@ -475,6 +475,9 @@ side_tables! {
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.
     COMMITMENT_SERIES_PROJECT: VaultMeta b"commitment_series_project:v1:" Raw;
+    /// The place a removed epoch summary held in its session's count: the highest removed epoch
+    /// and the turn it ended at, no words (OF-013). Key: id16(session).
+    COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;
     /// The connector key a stamped slate is bound to (16-byte key id). Key: id16(slate).
     CONNECTOR_GRANT_SLATE_BINDING: VaultMeta b"connector.grant_slate.binding.v1/" Raw;
     /// Typed per-tool grant slate draft plus any authenticated-owner overrides. Key: id16.

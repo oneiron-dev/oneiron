@@ -1,7 +1,9 @@
 //! `/v1/owner/conflicts`: the contradictions the vault holds open, and the
 //! owner's settlement of one (OF-023, ARCH-0003 `dr:H0636-4`). Keeping a
 //! member supersedes the others with it; holding both leaves every member
-//! active; dismissing answers the marker and changes no member.
+//! active; dismissing answers the marker and changes no member. The owner
+//! also lets the Dreamer settle them through its ladder, on one subject or
+//! the whole vault; it holds no such Grant until the owner grants one.
 
 use std::sync::Arc;
 
@@ -11,7 +13,7 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::EdgeActorClass;
-use oneiron::dreamer_consolidation::{ConflictSettlement, OpenConflict};
+use oneiron::dreamer_consolidation::{ConflictReviewScope, ConflictSettlement, OpenConflict};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -28,6 +30,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/conflicts", get(list))
         .route("/conflicts/settle", post(settle))
+        .route("/conflicts/review", post(grant_review))
+        .route("/conflicts/review/revoke", post(revoke_review))
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +73,27 @@ struct SettleConflict {
     /// The member `keep` keeps, as 32 hex.
     #[serde(default)]
     keep: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewScope {
+    /// `subject` or `vault`.
+    scope: String,
+    /// The one subject `subject` covers, as 32 hex.
+    #[serde(default)]
+    subject: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReviewGranted {
+    grant_ref: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReviewRevoked {
+    /// False when no such Grant was live.
+    revoked: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -182,4 +207,69 @@ async fn settle(
     })
     .await?;
     Ok(Json(settled))
+}
+
+fn review_scope(request: &ReviewScope) -> OwnerResult<ConflictReviewScope> {
+    match (request.scope.as_str(), request.subject.as_deref()) {
+        ("subject", Some(subject)) => {
+            Ok(ConflictReviewScope::Subject(entity_id("subject", subject)?))
+        }
+        ("vault", None) => Ok(ConflictReviewScope::Vault),
+        _ => Err(OwnerError::Invalid(
+            "scope is subject with the subject, or vault".to_owned(),
+        )),
+    }
+}
+
+/// `POST /v1/owner/conflicts/review`: lets the Dreamer settle, through its
+/// decision ladder, the open conflicts on one subject or on every subject in
+/// the vault. A conflict its ladder leaves stays here for the owner.
+async fn grant_review(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ReviewScope>, JsonRejection>,
+) -> OwnerReply<ReviewGranted> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let locality = auth.locality();
+    let granted = blocking(move || -> OwnerResult<ReviewGranted> {
+        let scope = review_scope(&request)?;
+        let vault = server.vault();
+        let actor = owner.revalidate(vault)?;
+        let dreamer = vault.dreamer_authority()?;
+        let grant_ref = vault
+            .memory(actor, EdgeActorClass::Human)
+            .at(locality)
+            .grant_conflict_review(&owner, dreamer, scope)
+            .map_err(memory_refused)?;
+        Ok(ReviewGranted { grant_ref })
+    })
+    .await?;
+    Ok(Json(granted))
+}
+
+/// `POST /v1/owner/conflicts/review/revoke`: ends the Dreamer's review Grant
+/// on exactly that scope. Ending the whole vault's leaves a subject's own.
+async fn revoke_review(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ReviewScope>, JsonRejection>,
+) -> OwnerReply<ReviewRevoked> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let locality = auth.locality();
+    let revoked = blocking(move || -> OwnerResult<ReviewRevoked> {
+        let scope = review_scope(&request)?;
+        let vault = server.vault();
+        let actor = owner.revalidate(vault)?;
+        let dreamer = vault.dreamer_authority()?;
+        let revoked = vault
+            .memory(actor, EdgeActorClass::Human)
+            .at(locality)
+            .revoke_conflict_review(&owner, dreamer, scope)
+            .map_err(memory_refused)?;
+        Ok(ReviewRevoked { revoked })
+    })
+    .await?;
+    Ok(Json(revoked))
 }
