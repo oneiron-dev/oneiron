@@ -8,8 +8,8 @@ use crate::receipt::SessionLocalReceiptLog;
 use crate::session_overlay::OverlayKeyspace;
 
 use super::registry::{
-    OffRecordSessionEntry, OffRecordSessionEntryState, live_session_entry, session_entry_state,
-    vet_off_record_session_ref,
+    OffRecordSessionEntry, OffRecordSessionEntryState, SessionStart, live_session_entry,
+    session_entry_state, vet_off_record_session_ref,
 };
 use super::session::OffRecordSessionVault;
 use super::types::{
@@ -71,7 +71,7 @@ impl Vault {
             backend,
             budget_bytes,
             OffRecordMode::OffRecord,
-            room,
+            room.map_or(SessionStart::Alone(None), |(room, by)| SessionStart::InRoom(room, by)),
             &self.store.clock,
         )
     }
@@ -79,19 +79,24 @@ impl Vault {
     /// Enters an immutable anonymous session. Only explicit session-bound
     /// reads are available. Operations requiring stored content or audit
     /// evidence refuse without writing; close leaves no transcript to delete.
+    /// It names no entering actor, so its no-record exception keeps the
+    /// unchecked rule (see [`Self::off_record_session_is_anonymous_for`]).
     pub fn enter_anonymous_session(
         &self,
         session_ref: &str,
         backend: OffRecordBackendClass,
     ) -> Result<OffRecordSessionRecord> {
-        let entry = self.enter_anonymous_session_entry(session_ref, backend)?;
+        let entry = self.enter_anonymous_session_entry(session_ref, backend, None)?;
         Ok(session_entry_state(&entry)?.record.clone())
     }
 
+    /// `entered_by` is the actor the entering door verified, kept on the
+    /// record as the one caller the stretch's no-record exception serves.
     pub(super) fn enter_anonymous_session_entry(
         &self,
         session_ref: &str,
         backend: OffRecordBackendClass,
+        entered_by: Option<crate::EntityId>,
     ) -> Result<Arc<OffRecordSessionEntry>> {
         if !self.config.off_record_enabled {
             return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
@@ -103,7 +108,7 @@ impl Vault {
             backend,
             0,
             OffRecordMode::Anonymous,
-            None,
+            SessionStart::Alone(entered_by),
             &self.store.clock,
         )
     }
@@ -119,18 +124,53 @@ impl Vault {
         Ok(self.store.off_record_sessions.record(session_ref))
     }
 
-    /// Whether a call naming `session_ref` runs inside an anonymous
-    /// off-record session, which keeps nothing (ARCH-0052): the live registry
-    /// holds that session in [`OffRecordMode::Anonymous`]. A session the
-    /// registry cannot be asked about counts as anonymous, so a call that
-    /// might be one records nothing. The one signal OF-538's call receipts
-    /// and OF-063's reference-refusal receipts both read.
+    /// Whether the call `actor` makes naming `session_ref` runs inside an
+    /// anonymous off-record session `actor` is verified in, so it keeps
+    /// nothing (ARCH-0052): the one signal OF-538's call receipts and
+    /// OF-063's reference-refusal receipts both read, judged afresh each
+    /// time either decides to write nothing. `actor` is the request's own,
+    /// `None` for a request bound to no actor.
+    ///
+    /// The live registry must hold the session in [`OffRecordMode::Anonymous`],
+    /// and `actor` must be in it (OF-063; a call, canon silent): on its
+    /// room's roster now, by the room bind (`bind_for`, which checks the
+    /// roster before the name), or, for a stretch entered alone, the actor
+    /// its entering door recorded (`entered_by`). A caller naming another's
+    /// anonymous session is in none, so its call and refusal receipts are
+    /// written as anywhere else.
+    ///
+    /// A stretch entered alone through a door that named no actor
+    /// ([`Self::enter_anonymous_session`],
+    /// `OffRecordSessionVault::enter_anonymous`, the embedded anonymous chat)
+    /// has no caller to prove, so it keeps the unchecked rule: any call
+    /// naming it records nothing. A session the registry cannot be asked
+    /// about counts as anonymous, so a call that might be one records
+    /// nothing.
     #[must_use]
-    pub fn off_record_session_is_anonymous(&self, session_ref: &str) -> bool {
-        match self.off_record_session(session_ref.trim()) {
-            Ok(Some(record)) => record.mode == OffRecordMode::Anonymous,
-            Ok(None) => false,
-            Err(_) => true,
+    pub fn off_record_session_is_anonymous_for(
+        &self,
+        session_ref: &str,
+        actor: Option<crate::EntityId>,
+    ) -> bool {
+        let session_ref = session_ref.trim();
+        let record = match self.off_record_session(session_ref) {
+            Ok(Some(record)) => record,
+            Ok(None) => return false,
+            Err(_) => return true,
+        };
+        if record.mode != OffRecordMode::Anonymous {
+            return false;
+        }
+        if record.room.is_some() {
+            return actor.is_some_and(|actor| {
+                self.off_record_session_vault()
+                    .bind_for(session_ref, actor)
+                    .is_ok()
+            });
+        }
+        match record.entered_by {
+            Some(entered_by) => actor.is_some_and(|actor| *actor.as_bytes() == entered_by),
+            None => true,
         }
     }
 

@@ -296,7 +296,11 @@ async fn facade_call_receipt(
     let Ok(auth) = CoreAuth::from_request_parts(&mut parts, &server).await else {
         return next.run(Request::from_parts(parts, body)).await;
     };
-    let anonymous = call_receipt::in_anonymous_session(&server, &parts.headers);
+    // OF-063: the no-record exception serves only a caller verified in the
+    // session, judged on arrival and again before the receipt is written.
+    let actor = call_receipt::request_actor(&auth);
+    let session_headers = parts.headers.clone();
+    let anonymous = call_receipt::in_anonymous_session(&server, &session_headers, actor);
     let verb = parts.uri.path().trim_start_matches('/').to_owned();
     // The handler reads these same bytes. A body past the facade's limit
     // reaches it empty and is refused there as malformed, as it was before.
@@ -343,6 +347,8 @@ async fn facade_call_receipt(
             code: format!("HTTP_{}", status.as_u16()),
         },
     };
+    let anonymous =
+        anonymous || call_receipt::in_anonymous_session(&server, &session_headers, actor);
     let (actor_ref, actor_class) = call_receipt::call_actor(&auth);
     let stamp = call_receipt::record(
         &server,

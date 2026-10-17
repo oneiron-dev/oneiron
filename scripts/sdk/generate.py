@@ -942,6 +942,14 @@ def outputs():
             return 'let position = facade_landing(&server, &headers, &auth)?;'
         if admission.get('lane_record_scope'):
             return 'auth.require_lane_record_scope()?;'
+        # A read whose engine door filters its projection row by row through
+        # the credential's own scoped read carries the credential's worlds
+        # and facets (OF-250); any other narrowing, and any record or channel
+        # caveat, still fails closed.
+        if admission.get('projection_record_scope'):
+            return ('{ let (worlds, facets) = auth.verified_slip().map_or((oneiron::federation::ScopeAxis::All, oneiron::federation::ScopeAxis::All), '
+                    '|proof| (proof.scope().worlds.clone(), proof.scope().facets.clone())); '
+                    'auth.require_record_scope_carried(worlds, facets)?; }')
         if admission.get('unrestricted_record_scope'):
             return 'auth.require_unrestricted_record_scope()?;'
         # Any other door reads or writes around the lane, so it refuses a facet
