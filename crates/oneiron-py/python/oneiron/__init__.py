@@ -677,6 +677,7 @@ class Oneiron:
             """One of the bound actor's saved weave digests, or the newest, under the current read policy."""
             return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
         def lens(self, spec):
+            """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
             return json.loads(_translate(lambda: self._client.vault_weave_lens(json.dumps(spec))))
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs":
@@ -1122,6 +1123,9 @@ class Oneiron:
         def oracle(self, request: dict[str, Any]) -> dict[str, Any]:
             """Records the deck oracle's receipt for its export profile."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_oracle(json.dumps(request, allow_nan=False))))
+        def preview(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The asked slides of a deck's head, drawn by the host's review renderer (provisional)."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_preview(json.dumps(request, allow_nan=False))))
     class _VaultCodeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

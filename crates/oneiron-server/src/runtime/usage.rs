@@ -177,7 +177,7 @@ impl VaultUsage {
                     } else {
                         UsageEventType::Service
                     },
-                    role: None,
+                    role: facts.seat.clone(),
                     occurred_at: Some(receipt.occurred_at),
                     agent_id: None,
                     service: model.is_none().then(|| facts.subject.clone()),
