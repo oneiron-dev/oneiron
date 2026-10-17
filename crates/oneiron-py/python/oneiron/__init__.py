@@ -674,7 +674,7 @@ class Oneiron:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
             return json.loads(_translate(lambda: self._client.vault_weave_report(json.dumps(spec))))
         def digest(self, spec):
-            """One of the bound actor's saved weave digests, or the newest, under the current read policy."""
+            """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
             return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
         def lens(self, spec):
             """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""

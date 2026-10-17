@@ -211,10 +211,10 @@ export_facade! {
     let output = client.vault_weave_report(&input)?;
     crate::codec::lift_record("vault.weave.report", &output)
 };
-"vault.weave.digest" => fn vault_weave_digest(&self, input: WeaveDigestRequest) -> Option<WeaveDigestView> = |client| {
+"vault.weave.digest" => fn vault_weave_digest(&self, input: WeaveDigestRequest) -> WireJson = |client| {
     let input: oneiron::claim::WeaveDigestRequest = crate::codec::lower_record("vault.weave.digest", input)?;
     let output = client.vault_weave_digest(&input)?;
-    crate::codec::lift_record("vault.weave.digest", &output)
+    crate::codec::encode("vault.weave.digest", &output)
 };
 "vault.weave.lens" => fn vault_weave_lens(&self, input: WeaveReportRequest) -> WireJson = |client| {
     let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.lens", input)?;

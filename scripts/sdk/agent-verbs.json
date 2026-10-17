@@ -868,10 +868,11 @@
     },
     {
       "name": "vault.weave.digest",
-      "description": "One of the bound actor's saved weave digests, or the newest, under the current read policy.",
+      "description": "One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none.",
       "input": "crate::claim::WeaveDigestRequest",
       "output": "Option<crate::claim::WeaveDigestView>",
       "call": "memory.weave_digest(None, &input)?",
+      "host_door": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false

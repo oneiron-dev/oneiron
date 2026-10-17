@@ -998,19 +998,17 @@ async fn vault_weave_digest(
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.digest")?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "vault.weave.digest",
-        value,
-        &producers,
+    oneiron::task_verb::sdk::validate_input("vault.weave.digest", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.weave.digest", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_weave_digest(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
 }
 async fn vault_weave_lens(
     server: &Arc<SyncServer>,

@@ -595,7 +595,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.kv.search": { description: "Exact prefix and equality search over the caller's keys, ordered by namespace then key.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.kv.namespaces": { description: "The caller's distinct live namespaces, with exact segment prefix and suffix matching.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.weave.report": { description: "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.weave.digest": { description: "One of the bound actor's saved weave digests, or the newest, under the current read policy.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.weave.digest": { description: "One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.weave.lens": { description: "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.weave.link.wrong": { description: "A person labels a link in their own lens as wrong; the label teaches the loops and the link stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.put": { description: "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1003,7 +1003,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       weave: {
         /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
         report: (input: Facade.WeaveReportRequest, options?: O): FacadeReturns<"vault.weave.report">[K] => invoke("vault.weave.report", input, options, newInvocation()),
-        /** One of the bound actor's saved weave digests, or the newest, under the current read policy. */
+        /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
         digest: (input: Facade.WeaveDigestRequest, options?: O): FacadeReturns<"vault.weave.digest">[K] => invoke("vault.weave.digest", input, options, newInvocation()),
         /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
         lens: (input: Facade.WeaveReportRequest, options?: O): FacadeReturns<"vault.weave.lens">[K] => invoke("vault.weave.lens", input, options, newInvocation()),

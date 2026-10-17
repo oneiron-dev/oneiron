@@ -145,21 +145,28 @@ async fn lens(
 
 /// `GET /v1/owner/weave/digest[?scheduled_for=]`: the owner's digest. The
 /// due period renders now, under this proof; then the named period, or the
-/// newest, is read under the current policy.
+/// newest, is read under the current policy. Its lens is a card whose frame
+/// this server holds for the credential's events on it.
 async fn digest(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Query(request): Query<WeaveDigestRequest>,
 ) -> OwnerReply<Option<WeaveDigestView>> {
     let owner = owner(&auth, &server)?;
-    let locality = auth.locality();
     let view = blocking(move || -> OwnerResult<Option<WeaveDigestView>> {
         let vault = server.vault();
         let actor = owner.revalidate(vault)?;
         vault
             .memory(actor, EdgeActorClass::Human)
-            .at(locality)
-            .weave_digest(Some(&owner), &request)
+            .at(auth.locality())
+            .weave_digest_framed(Some(&owner), &request)
+            .and_then(|framed| {
+                framed
+                    .map(|framed| {
+                        crate::api::facade::host_doors::hold_weave_digest(&server, &auth, framed)
+                    })
+                    .transpose()
+            })
             .map_err(memory_refused)
     })
     .await?;

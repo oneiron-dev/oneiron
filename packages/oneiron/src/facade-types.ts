@@ -2,7 +2,7 @@
 // of scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 // Census: 262 facade rows, 992 declarations.
 // Inputs: 218 of 262 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-// Results: 211 of 262 fully typed, 41 typed down to an opaque serde_json::Value leaf, 10 with a shape the generator could not read
+// Results: 211 of 262 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 // Opaque serde_json::Value leaves: 67; unread shapes: 2.
 /** `oneiron::edit_distance::publisher::vocab::IssueCategory` */
 export type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"
@@ -534,6 +534,8 @@ export type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[] 
 export type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveDigestRequest` */
 export type WeaveDigestRequest = { scheduled_for?: number | null }
+/** `oneiron::lens::generated_ui::genui_catalog::GeneratedUiCatalog` */
+export type GeneratedUiCatalog = "lens_atom_kit"
 /** `oneiron::lens::atom::atom_scalars::LensText` */
 export type LensText = string
 /** `oneiron::lens::atom::atom_leaves::LensTextSpan` */
@@ -634,16 +636,6 @@ export type LensAtom = LensAtomWire
 export type SelfUiBindableProperty = "checked" | "selected" | "value" | "text"
 /** `oneiron::lens::generated_ui::genui_state::SelfUiBinding` */
 export type SelfUiBinding = { stateKey: string; property: SelfUiBindableProperty }
-/** `oneiron::lens::atom::atom_node::LensNode` */
-export type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] }
-/** `oneiron::lens::generated_ui::genui_envelope::GeneratedLens` */
-export type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode }
-/** `oneiron::claim::scoped_read::weave_lens::WeaveLensRefusal` */
-export type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number }
-/** `oneiron::claim::scoped_read::weave_serve::WeaveDigestView` */
-export type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: GeneratedLens | null; lens_refused?: WeaveLensRefusal | null }
-/** `oneiron::lens::generated_ui::genui_catalog::GeneratedUiCatalog` */
-export type GeneratedUiCatalog = "lens_atom_kit"
 /** `oneiron::lens::generated_ui::genui_render::GeneratedUiNode` */
 export type GeneratedUiNode = { id: string; parent?: string | null; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; childRefs?: string[] }
 /** `oneiron::lens::generated_ui::genui_state::GeneratedUiActionTier` */
@@ -660,8 +652,16 @@ export type GeneratedUiArchiveReason = "completed" | "expired" | "dismissed" | "
 export type GeneratedUiCardLifecycle = { phase: GeneratedUiCardPhase; revision: number; archiveReason?: GeneratedUiArchiveReason | null }
 /** `oneiron::lens::generated_ui::genui_render::GeneratedUiRender` */
 export type GeneratedUiRender = { protocolVersion: number; catalog: GeneratedUiCatalog; cardId: string; root: string; nodes: GeneratedUiNode[]; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot; lifecycle: GeneratedUiCardLifecycle }
+/** `oneiron::lens::atom::atom_node::LensNode` */
+export type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] }
+/** `oneiron::lens::generated_ui::genui_envelope::GeneratedLens` */
+export type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode }
 /** `oneiron::lens::mediation::hosted_render::LensFrameCard` */
 export type LensFrameCard = { card_id: string; render: GeneratedUiRender; lens: GeneratedLens }
+/** `oneiron::claim::scoped_read::weave_lens::WeaveLensRefusal` */
+export type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number }
+/** `oneiron::claim::scoped_read::weave_serve::WeaveDigestView` */
+export type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: LensFrameCard | null; lens_refused?: WeaveLensRefusal | null }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveWrongLinkRequest` */
 export type WeaveWrongLinkRequest = { source_ref: string; kind: string; target_ref: string }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveLinkCorrectionView` */
