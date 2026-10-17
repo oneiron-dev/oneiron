@@ -186,6 +186,45 @@ impl<'a> FacadeCall<'a> {
     pub(super) const fn drain(&self) -> Option<&VerbAskDrainPermit> {
         self.drain.as_ref()
     }
+
+    /// This call owned whole, for a row that runs on a blocking thread
+    /// (OF-533).
+    pub(super) fn owned(&self) -> OwnedFacadeCall {
+        OwnedFacadeCall {
+            auth: self.auth.clone(),
+            room_turn: self.room_turn,
+            invocation: self.invocation,
+            session: self.session,
+            session_ref: self.session_ref.map(str::to_owned),
+            drain: self.drain.clone(),
+        }
+    }
+}
+
+/// A [`FacadeCall`] that owns its credential and session text, so it can
+/// cross to a blocking thread. Every carried field stays as the transport
+/// carried it: a malformed one is still refused where the row reads it.
+pub(super) struct OwnedFacadeCall {
+    auth: CoreAuth,
+    room_turn: Carried<EntityId>,
+    invocation: Carried<InvocationId>,
+    session: Carried<EntityId>,
+    session_ref: Option<String>,
+    drain: Option<VerbAskDrainPermit>,
+}
+
+impl OwnedFacadeCall {
+    /// The call again, borrowed from this one.
+    pub(super) fn call(&self) -> FacadeCall<'_> {
+        FacadeCall {
+            auth: &self.auth,
+            room_turn: self.room_turn,
+            invocation: self.invocation,
+            session: self.session,
+            session_ref: self.session_ref.as_deref(),
+            drain: self.drain.clone(),
+        }
+    }
 }
 
 /// What one facade call answered: the verb's result, and the rows it was

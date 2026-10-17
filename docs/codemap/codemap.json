@@ -14345,6 +14345,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/fanout.rs",
+     "purpose": "The fan-out launches that wait on the owner, as TASKS lead rows (OF-393): a held launch's pause row with the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -14538,7 +14548,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 9,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -18459,7 +18469,7 @@
      "surface": {
       "const": 18,
       "crate-vis": 8,
-      "fn": 9,
+      "fn": 10,
       "trait": 1
      }
     },
@@ -23161,7 +23171,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 61,
+      "crate-vis": 62,
       "re-export": 8
      }
     },
@@ -26272,7 +26282,7 @@
      "path": "src/learning_setting.rs",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
-      "const": 12,
+      "const": 15,
       "crate-vis": 4,
       "enum": 2,
       "fn": 10,
@@ -39275,13 +39285,15 @@
      "kind": "src",
      "notable": [
       "ExportBody",
+      "ExportBodyFile",
       "ExportValue"
      ],
      "path": "src/serialize/export_value.rs",
      "purpose": "Credential-safe, type-preserving MessagePack values for whole-vault JSON",
      "surface": {
-      "crate-vis": 4,
-      "enum": 2
+      "crate-vis": 10,
+      "enum": 2,
+      "struct": 1
      }
     },
     {
@@ -39500,7 +39512,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/serialize/vault_archive.rs",
-     "purpose": "Writes the whole-vault archive (OF-222) from the credential-nulled document value: every JSONL row and every…",
+     "purpose": "Writes the whole-vault archive (OF-222) from the credential-nulled document value: every JSONL row is cut…",
      "surface": {
       "crate-vis": 1
      }
@@ -45968,7 +45980,7 @@
      "surface": {
       "crate-vis": 22,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -48273,7 +48285,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ShapeApplier",
@@ -48286,7 +48298,7 @@
      "purpose": "Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has",
      "surface": {
       "enum": 2,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -48329,7 +48341,17 @@
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/manifest.rs",
+     "purpose": "A policy manifest as a seed writes it (DEC-0005): its entity id and its exact MessagePack body, as hex",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -51743,7 +51765,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52821,9 +52843,9 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
@@ -52884,9 +52906,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 160,
+   "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3201,
+   "source_files": 3203,
    "test_files": 903
   },
   "oneiron-android": {
@@ -55095,7 +55117,7 @@
      "surface": {
       "const": 11,
       "enum": 7,
-      "fn": 9,
+      "fn": 10,
       "re-export": 5,
       "struct": 35,
       "trait": 2
@@ -57345,6 +57367,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/structure/slides/app_props.rs",
+     "purpose": "The app properties (`docProps/app.xml`) a slide's removal would leave stale (FIX 2377): the slide…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -57371,7 +57403,7 @@
      "path": "src/edit/structure/slides/mod.rs",
      "purpose": "Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -57878,7 +57910,7 @@
      "purpose": "The add-part and remove-part doors",
      "surface": {
       "crate-vis": 5,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -58049,7 +58081,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58128,7 +58160,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 65,
+   "source_files": 66,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -63512,6 +63544,16 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_offer.rs",
+     "purpose": "The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -64536,7 +64578,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -70751,14 +70793,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SeatUsage",
       "UsageLedger"
      ],
      "path": "src/usage/ledger.rs",
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 3,
-      "struct": 1
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -70884,7 +70928,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VoiceMediaBindings",
@@ -70984,7 +71028,7 @@
      "path": "src/voice_host/wire.rs",
      "purpose": "The voice wire's media ops (OF-410)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "struct": 1
      }
     },
@@ -71397,7 +71441,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71756,7 +71800,7 @@
     "voice_host": {
      "files": 14,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     },
@@ -71789,9 +71833,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 44,
+   "over_bar": 45,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 583,
+   "source_files": 584,
    "test_files": 182
   },
   "oneiron-spawn": {
