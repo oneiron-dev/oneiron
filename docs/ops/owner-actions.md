@@ -695,6 +695,9 @@ each failure in the vault with the candidate added to the failing agent's instru
 the fixed or not-fixed result leaves, as `publisher.<id>@<first 16 hex of the pin>`. Nothing
 fetches or installs it. A file that no longer matches its pin stops the server at start. At most
 8 candidates, 16 KiB each; a new candidate is tried on failures from then on, not on old ones.
+`GET /v1/owner/coach/code-fixes?limit=<n>` lists the Coach's code-fix work, newest first: each
+failure case's heal route, its class, the invented example's verdict and each candidate's fixed
+or not-fixed result. It holds no text of the failure.
 
 The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
 `https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
@@ -708,6 +711,7 @@ The counts come from the Coach's detectors. Each diagnostic they raise counts on
 recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
 `other` with its detector named. Your own refusal of a single consent ask is never counted. A
 diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
+Counts wait in the vault, across restarts, until the publisher takes them.
 
 ## Model-graded self-heal detectors
 
@@ -827,14 +831,16 @@ oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
 `issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
 `file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
 `security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
-recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`. Nothing
-is published yet: the kit is pending. Put each piece where its home says, then `confirm` with two
-of them, or with one and the passphrase. That re-entry is the proof you saved them. Confirm makes
-the kit's root live on this machine and marks every earlier kit replaced. When this machine's
-keystore opens the vault key, confirm also seals it to the root as the escrow wrap `world-kit`. A
-replaced kit's pieces still open their own old root;
-replacing a kit does not revoke it. `this-machine` is refused until a keystore slot can hold a
-piece.
+recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`.
+`file-on:<machine>` with this machine's own id counts as `file-here`, and `other-machine:<machine>`
+with it is refused. Nothing is published yet: the kit is pending. Put each piece where its home
+says, then `confirm` with two of them, or with one and the passphrase. That re-entry is the proof
+you saved them. Confirm makes the kit's root live on this machine and marks every earlier kit
+replaced. When the vault has a key, confirm also seals it to the root as the escrow wrap
+`world-kit`, replacing the earlier kit's. It opens the key with this machine's keystore, and a key
+that stays locked refuses the confirm before anything changes. A replaced kit's pieces still open
+their own old root; replacing a kit does not revoke it. `this-machine` is refused until a keystore
+slot can hold a piece.
 
 `status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
 private world's state. `covered` means only that the world's current key has a wrap to the pinned
@@ -844,6 +850,7 @@ run only from the CLI, so no piece crosses HTTP.
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
 world's settings. A kit opened with one piece and the passphrase is not verified on its own:
 pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
+A kit this vault still lists as pending is refused: `confirm` it instead.
 
 On a new host, the kit also opens a backup through the `world-kit` wrap. `--vault-id` is the id
 `status` prints:
@@ -953,6 +960,15 @@ The app's policy actions have host verbs too. Each runs the same action as
 
 The two inference verbs need the caller's Auto ceiling. Each answers with the action's
 `outcome`. A retry with the same idempotency key gets the first call's answer.
+
+Two app writes are verbs as well, so a button and an agent make them the same way:
+- `vault.messages.react` with `{"message", "by", "glyph", "occurred_at"?, "remove"?}` puts or
+  removes your own reaction. `POST /v1/core/messages/{message}/reactions` runs it as an action
+  of your credential, and the request's `Idempotency-Key` becomes the action's key. A connector
+  host's `external` provider reaction needs an owner-grade credential.
+- `vault.artifacts.create` with `{"name", "media_type", "content_base64", "run_ref"?,
+  "made_by"?}` creates an artifact with its first version. `POST /v1/core/artifacts` runs the
+  same door.
 
 ## Widen proposals
 
@@ -1066,6 +1082,13 @@ locality. A space whose `@where` names no provider serving its rung embeds nothi
   With the text slot bound, a text query embeds through that space's text tower in the context
   pack, the Context Board, `/v1/core/query` and recall (HTTP, WebSocket and MCP), and its list
   holds every kind of item the space holds. `/api/search/semantic` still reads the text index.
+  A `media` query (`{"space", "mime", "bytes_b64", "kinds"}`) seeds a search on its own: the
+  server embeds the bytes into that space through the `ai.embed` rung its id names and searches
+  that space's list. The context pack and the Context Board over HTTP, `/v1/core/query`, the
+  native MCP context pack, and `vault.recall` on every SDK take it. Recall refuses it at light
+  effort and in call mode, and refuses `kinds`. A client with no server (an embedded handle)
+  answers `MODEL_UNAVAILABLE` (`EMBEDDER_UNAVAILABLE` on the native context pack) and never
+  searches without the media.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
 - **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
   `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
