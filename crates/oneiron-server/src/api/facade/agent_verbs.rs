@@ -241,4 +241,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.notes.create", post(facade_route))
         .route("/vault.notes.from_entity", post(facade_route))
         .route("/vault.notes.edit", post(facade_route))
+        .route("/vault.notes.seal", post(facade_route))
+        .route("/vault.notes.lifecycle", post(facade_route))
 }
