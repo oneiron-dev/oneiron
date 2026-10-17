@@ -5,7 +5,9 @@
 //! ladder's full decision comes back for the engine to land, keeping its
 //! receipt. The standing pump answers each due standing question here, for
 //! the question's own principal under the question's own dial, criteria
-//! and call clock, on the vault's home node only. A dial up to the person
+//! and call clock, on the vault's home node only. A question whose posture
+//! is stricter than the vault's is answered without the rungs that send
+//! unit text off the host where it forbids that. A dial up to the person
 //! asks the question's responsible role, its principal, and the ask climbs
 //! to the vault's owners (OF-516); each pass also climbs every open ask no
 //! live actor holds. It sleeps until the next question falls due and wakes
@@ -19,11 +21,14 @@ use oneiron::llm::decision::questions::{
 };
 use oneiron::llm::decision::{
     AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
-    DecisionProvider, DecisionQuestion, DecisionRung, LocatedDecision, Reversibility,
-    TypedDecision,
+    DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, LocatedDecision,
+    Reversibility, TypedDecision,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
-use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
+use oneiron::{
+    DreamerRunnerStore, EdgeActorClass, EntityId, Error, HostingPrivacyPosture, Result, Vault,
+    WriteActor,
+};
 
 use crate::ai_host::LocalVisionModel;
 use crate::decision_verdict::vision_rung;
@@ -53,6 +58,8 @@ pub(crate) struct LadderGraphAnswerer<'s> {
     criteria: QuestionCriteria,
     /// A Local-vision seat is bound and the dial spans its rung.
     vision: bool,
+    /// The question's posture, when it is stricter than the vault's.
+    posture: Option<HostingPrivacyPosture>,
 }
 
 impl<'s> LadderGraphAnswerer<'s> {
@@ -114,6 +121,7 @@ impl<'s> LadderGraphAnswerer<'s> {
             dial,
             budget,
             criteria: QuestionCriteria::default(),
+            posture: None,
         }
     }
 
@@ -122,6 +130,38 @@ impl<'s> LadderGraphAnswerer<'s> {
         self.criteria = criteria;
         self
     }
+
+    /// The answerer under the question's own `posture` where it is stricter
+    /// than the vault's; `None` holds the vault's, which its rungs keep.
+    pub(crate) fn with_posture(mut self, posture: Option<HostingPrivacyPosture>) -> Self {
+        let vault = self.server.vault().privacy_posture();
+        self.posture = posture
+            .map(|posture| stricter(vault, posture))
+            .filter(|posture| *posture != vault);
+        self
+    }
+
+    /// `ladder` without the rungs that send unit text off the host, where
+    /// the question's posture forbids that.
+    fn postured<'l>(&self, ladder: DecisionLadder<'l>) -> DecisionLadder<'l> {
+        match self.posture {
+            Some(posture) => {
+                ladder.under_posture(posture, self.server.decision_host().remote_opt_in())
+            }
+            None => ladder,
+        }
+    }
+}
+
+/// The stricter of two postures: RELAY keeps unit text on the host,
+/// SELF-HOST sends it off only on an opt-in, MANAGED sends it.
+fn stricter(a: HostingPrivacyPosture, b: HostingPrivacyPosture) -> HostingPrivacyPosture {
+    let rank = |posture| match posture {
+        HostingPrivacyPosture::Hosted => 0,
+        HostingPrivacyPosture::SelfHostLocal => 1,
+        HostingPrivacyPosture::Relay => 2,
+    };
+    if rank(b) > rank(a) { b } else { a }
 }
 
 impl GraphAnswerer for LadderGraphAnswerer<'_> {
@@ -170,10 +210,7 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
     /// A rung inside the dial hears audio: the Big rung over a model its
     /// binding says hears it.
     fn reads_audio(&self) -> bool {
-        self.server
-            .decision_host()
-            .ladder()
-            .ladder()
+        self.postured(self.server.decision_host().ladder().ladder())
             .first_media_reader(self.dial.first, self.dial.ceiling, false, true)
             .is_some()
     }
@@ -183,7 +220,9 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
     /// start at the first rung in the dial that hears them. A unit with
     /// both starts at a rung that reads both, or abstains: no rung is
     /// handed one of the two alone. A rung above that cannot read the
-    /// call's media is skipped.
+    /// call's media is skipped. Under a stricter posture a text call starts
+    /// at the first rung the posture leaves in the dial, or at the person
+    /// when the dial reaches one; with neither it abstains.
     fn decide(
         &mut self,
         question: &DecisionQuestion,
@@ -215,16 +254,21 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
             ladder.local = Some(rung as &dyn DecisionProvider);
         }
         ladder.ask_to = self.ask_to.as_ref();
-        if !(images.is_empty() && audio.is_empty()) {
-            let Some(first) = ladder.first_media_reader(
+        let ladder = self.postured(ladder);
+        let text = images.is_empty() && audio.is_empty();
+        if !text || self.posture.is_some() {
+            match ladder.first_media_reader(
                 dial.first,
                 dial.ceiling,
                 !images.is_empty(),
                 !audio.is_empty(),
-            ) else {
-                return Ok(None);
-            };
-            dial.first = first;
+            ) {
+                Some(first) => dial.first = first,
+                None if text && dial.ceiling == DecisionRung::Human => {
+                    dial.first = DecisionRung::Human;
+                }
+                None => return Ok(None),
+            }
         }
         let decision = ladder.run_media(
             question,
@@ -403,7 +447,8 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             record.definition.dial,
             record.definition.deadline(),
         )
-        .with_criteria(record.definition.criteria.clone()))
+        .with_criteria(record.definition.criteria.clone())
+        .with_posture(record.definition.posture))
     })?;
     for failure in &batch.failures {
         tracing::warn!(
