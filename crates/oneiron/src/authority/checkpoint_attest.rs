@@ -59,8 +59,8 @@ fn encode_err() -> Error {
 /// A root key as a row key: a suite byte, then the key bytes.
 fn root_row_key(root: &AuthorityKey) -> Vec<u8> {
     let (suite, bytes): (u8, &[u8]) = match root {
-        AuthorityKey::Ed25519(bytes) => (1, bytes),
-        AuthorityKey::P256(bytes) => (2, bytes),
+        AuthorityKey::Ed25519(bytes) => (1, bytes.as_slice()),
+        AuthorityKey::P256(bytes) => (2, bytes.as_slice()),
     };
     let mut key = vec![suite];
     key.extend_from_slice(bytes);
