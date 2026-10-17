@@ -67,6 +67,10 @@ pub const COACH_RESEARCH_SELECT_FACET: &str = "coach.research_select";
 /// fading runs no new evidence reached, and the coordination re-derivation
 /// of every labeled or projected run.
 pub const COACH_LEARNING_SWEEP_FACET: &str = "coach.learning_sweep";
+/// Contribution checks (ARCH-0037 #lineage-credit): each sampled credited
+/// run's skill measured on matched forks through the host's replay capsule
+/// (see [`super::ContributionReplayHost`]).
+pub const COACH_CONTRIBUTION_CHECK_FACET: &str = "coach.contribution_check";
 /// Issues (ARCH-0066 #coach, OF-418): the blocked reports agents filed, each
 /// asked which fix its agent needs and filed as a proposed heal. A report
 /// wakes it at once; the nightly pass wakes it again while reports wait.
@@ -115,13 +119,14 @@ const HOST_FACETS: [&str; 8] = [
     COACH_TYPE_TREE_UPKEEP_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 9] = [
+const MAINTENANCE_FACETS: [&str; 10] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
     COACH_TRAINING_OFFERS_FACET,
     COACH_RESEARCH_SELECT_FACET,
     COACH_LEARNING_SWEEP_FACET,
+    COACH_CONTRIBUTION_CHECK_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
     super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
     COACH_ROOM_UPKEEP_FACET,
