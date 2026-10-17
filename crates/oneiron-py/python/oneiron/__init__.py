@@ -190,6 +190,17 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
+    def last_receipt_ref(self) -> str | None:
+        """The lasting call receipt the last verb's reply stated, as ``call:<32hex>``.
+
+        It is stated whether the call answered or refused, and
+        ``vault.receipts.get`` resolves it for the same actor or the vault's
+        owner. Typed returns keep their shape; the ref rides beside them here.
+        ``None`` for an embedded handle, before any call, after a call that
+        reached no server, and for an anonymous off-record call.
+        """
+        return self._client.last_receipt_ref()
+
     # BEGIN GENERATED FACADE VERBS
     def report(self, spec):
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
@@ -256,6 +267,9 @@ class Oneiron:
         @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs":
             return Oneiron._SelfSkillsVerbs(self._client)
+        @property
+        def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
+            return Oneiron._SelfDecisionsVerbs(self._client)
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -289,6 +303,12 @@ class Oneiron:
     class _SelfInboxVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def list(self, spec):
+            """Lists one page of notifications delivered to the bound actor, without marking them."""
+            return json.loads(_translate(lambda: self._client.self_inbox_list(json.dumps(spec))))
+        def mark(self, spec):
+            """Marks one delivered notification seen or acknowledged for the bound actor."""
+            return json.loads(_translate(lambda: self._client.self_inbox_mark(json.dumps(spec))))
         @property
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs":
             return Oneiron._SelfInboxConcernVerbs(self._client)
@@ -319,6 +339,11 @@ class Oneiron:
         def callables(self, spec=None):
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
             return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps({} if spec is None else spec))))
+    class _SelfDecisionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def asks(self, spec=None):
+            return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps({} if spec is None else spec))))
     class _VaultVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -426,6 +451,9 @@ class Oneiron:
         @property
         def questions(self) -> "Oneiron._VaultQuestionsVerbs":
             return Oneiron._VaultQuestionsVerbs(self._client)
+        @property
+        def decisions(self) -> "Oneiron._VaultDecisionsVerbs":
+            return Oneiron._VaultDecisionsVerbs(self._client)
         def commit(self, input: dict[str, Any]) -> Any:
             """Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."""
             return json.loads(_translate(lambda: self._client.vault_commit(json.dumps(input, allow_nan=False))))
@@ -463,6 +491,9 @@ class Oneiron:
         def habits(self) -> "Oneiron._VaultHabitsVerbs":
             return Oneiron._VaultHabitsVerbs(self._client)
         @property
+        def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
+            return Oneiron._VaultConsolidationVerbs(self._client)
+        @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
     class _VaultPeopleVerbs:
@@ -492,6 +523,9 @@ class Oneiron:
         def admit(self, input: dict[str, Any]) -> Any:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
             return json.loads(_translate(lambda: self._client.vault_claims_admit(json.dumps(input, allow_nan=False))))
+        def seed(self, input: dict[str, Any]) -> Any:
+            """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
+            return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
     class _VaultReceiptsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -617,6 +651,27 @@ class Oneiron:
         def deletion(self, spec=None):
             """The executed delete-the-vault act, if any."""
             return json.loads(_translate(lambda: self._client.vault_shared_deletion(json.dumps({} if spec is None else spec))))
+        def object(self, spec):
+            """A holder of a pending shared act's objector role objects inside its veto window."""
+            return json.loads(_translate(lambda: self._client.vault_shared_object(json.dumps(spec))))
+        def withdraw_objection(self, spec):
+            """The holder withdraws their objection; past the deadline the last withdrawal releases the act."""
+            return json.loads(_translate(lambda: self._client.vault_shared_withdraw_objection(json.dumps(spec))))
+        def started(self, spec):
+            """The caller's own notices of shared acts started in the vault."""
+            return json.loads(_translate(lambda: self._client.vault_shared_started(json.dumps(spec))))
+        def matured(self, spec):
+            """The caller's own notices of shared acts whose veto window has passed."""
+            return json.loads(_translate(lambda: self._client.vault_shared_matured(json.dumps(spec))))
+        def erase_ask(self, spec):
+            """A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing."""
+            return json.loads(_translate(lambda: self._client.vault_shared_erase_ask(json.dumps(spec))))
+        def erase_asks(self, spec):
+            """The erase asks the caller may see: every ask for an Owner, their own for anyone else."""
+            return json.loads(_translate(lambda: self._client.vault_shared_erase_asks(json.dumps(spec))))
+        def close_erase_ask(self, spec):
+            """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
+            return json.loads(_translate(lambda: self._client.vault_shared_close_erase_ask(json.dumps(spec))))
     class _VaultMembersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -998,6 +1053,19 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_questions_read(json.dumps(spec))))
         def answers(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_answers(json.dumps(spec))))
+    class _VaultDecisionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def asks(self) -> "Oneiron._VaultDecisionsAsksVerbs":
+            return Oneiron._VaultDecisionsAsksVerbs(self._client)
+    class _VaultDecisionsAsksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def answer(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_decisions_asks_answer(json.dumps(spec))))
+        def climb(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_decisions_asks_climb(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1031,6 +1099,15 @@ class Oneiron:
         def checkin(self, input: dict[str, Any]) -> Any:
             """Appends one immutable check-in under a Habit TASK."""
             return json.loads(_translate(lambda: self._client.vault_habits_checkin(json.dumps(input, allow_nan=False))))
+    class _VaultConsolidationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def enqueue(self, spec):
+            """Enqueues one consolidation attempt and returns its durable job reference."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_enqueue(json.dumps(spec))))
+        def status(self, spec):
+            """Reads the status of one consolidation attempt by its durable job reference."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
     class _VaultNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

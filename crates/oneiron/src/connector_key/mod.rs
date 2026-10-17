@@ -53,8 +53,9 @@ pub use self::record::{
 };
 pub use self::setup::{
     BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK,
-    PACK_CONNECTION_ACTOR_CLASS, PackConnectionCheck, PackConnectionEvidence,
-    PackConnectionVerifier, ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
+    NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS, PackConnectionCheck,
+    PackConnectionEvidence, PackConnectionVerifier, ProviderConnectionChecks,
+    SLACK_AUTH_TEST_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 

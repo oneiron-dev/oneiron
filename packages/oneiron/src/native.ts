@@ -33,6 +33,8 @@ selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
 selfIdentityAnswer(input: unknown): unknown
 selfIdentitySettle(input: unknown): unknown
+selfInboxList(input: unknown): unknown
+selfInboxMark(input: unknown): unknown
 selfInboxConcern(input: unknown): unknown
 selfInboxConcernOutcome(input: unknown): unknown
 selfInboxConcernMove(input: unknown): unknown
@@ -84,6 +86,13 @@ vaultMembersInvitations(input: unknown): unknown
 vaultMembersAccept(input: unknown): unknown
 vaultMembersDecline(input: unknown): unknown
 vaultMembersWithdrawInvitation(input: unknown): unknown
+vaultSharedObject(input: unknown): unknown
+vaultSharedWithdrawObjection(input: unknown): unknown
+vaultSharedStarted(input: unknown): unknown
+vaultSharedMatured(input: unknown): unknown
+vaultSharedEraseAsk(input: unknown): unknown
+vaultSharedEraseAsks(input: unknown): unknown
+vaultSharedCloseEraseAsk(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
@@ -190,6 +199,9 @@ vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
+vaultDecisionsAsksAnswer(input: unknown): unknown
+vaultDecisionsAsksClimb(input: unknown): unknown
+selfDecisionsAsks(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
 vaultCommit(input: unknown): unknown
@@ -212,6 +224,9 @@ vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
+vaultConsolidationEnqueue(input: unknown): unknown
+vaultConsolidationStatus(input: unknown): unknown
+vaultClaimsSeed(input: unknown): unknown
 connectorOutboundSchedule(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
@@ -220,6 +235,7 @@ vaultNotesEdit(input: unknown): unknown
 
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
+  lastReceiptRef(): string | null
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

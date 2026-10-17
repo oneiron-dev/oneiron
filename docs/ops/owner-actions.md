@@ -694,6 +694,39 @@ participates, the vault keeps a standing grant on that channel for the sender, s
 you; turning participation off revokes it. A record leaves the vault only once the publisher took
 it: a failed send keeps it for the next one.
 
+The counts come from the Coach's detectors. Each diagnostic they raise counts once, ever: a missed
+recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
+`other` with its detector named. Your own refusal of a single consent ask is never counted. A
+diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
+
+## Model-graded self-heal detectors
+
+Canon ships no detector wording, so no model-graded detector runs until you write one. Each
+`[self_heal.detectors.<family>]` table is one detector over the retrieval telemetry:
+
+```toml
+[self_heal.detectors.recall_gaps]
+class = "retrieval_miss"   # the diagnostic class a finding carries (not agent_health)
+tier = "t3"                # t3 (default), t2 or session
+prompt = "…"               # what it looks for
+rubric = "…"               # how a positive is told from a negative
+consecutive = 3            # runs a window needs; for t2, positives in a row that raise
+window_secs = 3600         # one window of time; for session, how long a conversation is quiet
+```
+
+Every five minutes the server reads the newest 1,024 runs and asks each detector's question of
+each window it has not graded yet, up to 8 windows a pass, on the decision ladder's local and big
+rungs (never a person). `t3` judges each completed window of time at once. `t2` asks once per
+run. `session` judges one conversation's runs once it has been quiet for `window_secs`. A raised
+window becomes a proposed diagnostic: nothing is repaired. Changing a prompt or rubric grades
+windows again.
+
+`GET /v1/owner/self-heal/findings?family=<family>` lists one detector's raised `t3` findings,
+newest first, each with your label. `POST /v1/owner/self-heal/findings/label` with
+`{"family", "event", "positive"}` labels one finding; a label never changes. Once a family has
+`consecutive` positive labels and one negative, a `t2` detector of that family asks with the
+labeled findings.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the
@@ -767,6 +800,47 @@ Every unlock but this device's needs `--trust`: a host holding no signer seed ha
 to trust a backup on, and a backup's own head is never trusted. Where no vault is at the
 configured path, the restore makes it there, unlocks its key the same way and wraps it to this
 install's keystore. Where one is, it restores over it as above, or rehearses with `--rehearse`.
+
+## The world recovery kit
+
+The world kit carries your recovery root: the key every private world's key is also wrapped to.
+It is a fixed 2 of 3: any two pieces open it, and one piece alone, or the passphrase alone, opens
+nothing. No piece ever lives on the host. Run these on a stopped vault:
+
+```sh
+oneiron recovery-kit issue --home paper --home password-manager --home passphrase --out /Volumes/KEY/kit
+oneiron recovery-kit confirm --piece /Volumes/KEY/kit/piece-1.txt --piece /Volumes/KEY/kit/piece-2.txt
+oneiron recovery-kit status
+oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
+```
+
+`issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
+`file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
+`security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
+recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`. Nothing
+is published yet: the kit is pending. Put each piece where its home says, then `confirm` with two
+of them, or with one and the passphrase. That re-entry is the proof you saved them. Confirm makes
+the kit's root live on this machine and marks every earlier kit replaced. When this machine's
+keystore opens the vault key, confirm also seals it to the root as the escrow wrap `world-kit`. A
+replaced kit's pieces still open their own old root;
+replacing a kit does not revoke it. `this-machine` is refused until a keystore slot can hold a
+piece.
+
+`status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
+private world's state. `covered` means only that the world's current key has a wrap to the pinned
+root. A running server shows the same at `GET /v1/owner/recovery-kit`; issue, confirm and restore
+run only from the CLI, so no piece crosses HTTP.
+
+`restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
+world's settings. A kit opened with one piece and the passphrase is not verified on its own:
+pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
+
+On a new host, the kit also opens a backup through the `world-kit` wrap. `--vault-id` is the id
+`status` prints:
+
+```sh
+oneiron restore BACKUP --unlock kit --vault-id <hex> --piece piece-1.txt --piece piece-2.txt --trust signer.json
+```
 
 ## Contact disclosure
 

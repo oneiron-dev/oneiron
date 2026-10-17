@@ -127,6 +127,19 @@ export class Oneiron {
     return new Oneiron(this.#call(() => this.#client.inRoomTurn(roomRef)))
   }
 
+  /**
+   * The lasting call receipt the last verb's reply stated, as `call:<32hex>`,
+   * whether it answered or refused; `vault.receipts.get` resolves it for the
+   * same actor or the vault's owner.
+   *
+   * Typed returns keep their shape; the ref rides beside them here. `null` for
+   * an embedded handle, before any call, after a call that reached no server,
+   * and for an anonymous off-record call.
+   */
+  lastReceiptRef(): string | null {
+    return this.#client.lastReceiptRef() ?? null
+  }
+
   // BEGIN GENERATED FACADE VERBS
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
@@ -149,6 +162,10 @@ export class Oneiron {
       settle: (input: Facade.IdentityActNowRequest): Facade.IdentityActNow => this.#call(() => this.#client.selfIdentitySettle(input) as Facade.IdentityActNow),
     },
     inbox: {
+      /** Lists one page of notifications delivered to the bound actor, without marking them. */
+      list: (input: Facade.InboxListRequest): Facade.NotificationPage => this.#call(() => this.#client.selfInboxList(input) as Facade.NotificationPage),
+      /** Marks one delivered notification seen or acknowledged for the bound actor. */
+      mark: (input: Facade.InboxMarkRequest): Facade.NotificationRow => this.#call(() => this.#client.selfInboxMark(input) as Facade.NotificationRow),
       concern: Object.assign((input: Facade.ConcernCardRequest): Facade.AgentHealthCardView => this.#call(() => this.#client.selfInboxConcern(input) as Facade.AgentHealthCardView), {
         outcome: (input: Facade.ConcernOutcomeRequest): Facade.ConcernCardSummary => this.#call(() => this.#client.selfInboxConcernOutcome(input) as Facade.ConcernCardSummary),
         move: (input: Facade.ConcernMoveRequest): Facade.ConcernMoveOutcome => this.#call(() => this.#client.selfInboxConcernMove(input) as Facade.ConcernMoveOutcome),
@@ -167,6 +184,9 @@ export class Oneiron {
       fork: (input: Facade.SkillForkRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsFork(input) as Facade.SkillAuthoringReceipt),
       /** Every loadable callable helper skill and its call contract: what it takes and returns. */
       callables: (input: Facade.EmptyRequest = {}): Facade.CallableCardView[] => this.#call(() => this.#client.selfSkillsCallables(input) as Facade.CallableCardView[]),
+    },
+    decisions: {
+      asks: (input: Facade.EmptyRequest = {}): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
     },
   }
   readonly vault = {
@@ -194,6 +214,8 @@ export class Oneiron {
       history: (input: Facade.ClaimRefRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
+      /** Seeds claims through their individual gates, forced proposed, returning one receipt per claim. */
+      seed: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitReceipt[]),
     },
     /**
    * Recalls a memory pack.
@@ -282,6 +304,20 @@ export class Oneiron {
       outcomes: (input: Facade.SharedVaultRequest): Facade.SharedActOutcome[] => this.#call(() => this.#client.vaultSharedOutcomes(input) as Facade.SharedActOutcome[]),
       /** The executed delete-the-vault act, if any. */
       deletion: (input: Facade.EmptyRequest = {}): Facade.SharedVaultDeletion | null => this.#call(() => this.#client.vaultSharedDeletion(input) as Facade.SharedVaultDeletion | null),
+      /** A holder of a pending shared act's objector role objects inside its veto window. */
+      object: (input: Facade.SharedActRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedObject(input) as Facade.PendingAuthorityAct),
+      /** The holder withdraws their objection; past the deadline the last withdrawal releases the act. */
+      withdraw_objection: (input: Facade.SharedActRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedWithdrawObjection(input) as Facade.PendingAuthorityAct),
+      /** The caller's own notices of shared acts started in the vault. */
+      started: (input: Facade.SharedVaultRequest): Facade.PendingActStarted[] => this.#call(() => this.#client.vaultSharedStarted(input) as Facade.PendingActStarted[]),
+      /** The caller's own notices of shared acts whose veto window has passed. */
+      matured: (input: Facade.SharedVaultRequest): Facade.PendingActMatured[] => this.#call(() => this.#client.vaultSharedMatured(input) as Facade.PendingActMatured[]),
+      /** A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing. */
+      erase_ask: (input: Facade.SharedEraseAskRequest): Facade.SharedEraseAsk => this.#call(() => this.#client.vaultSharedEraseAsk(input) as Facade.SharedEraseAsk),
+      /** The erase asks the caller may see: every ask for an Owner, their own for anyone else. */
+      erase_asks: (input: Facade.SharedVaultRequest): Facade.SharedEraseAsk[] => this.#call(() => this.#client.vaultSharedEraseAsks(input) as Facade.SharedEraseAsk[]),
+      /** An Owner closes an open erase ask, as erased (naming its erase act) or declined. */
+      close_erase_ask: (input: Facade.SharedEraseAskCloseRequest): Facade.SharedEraseAsk => this.#call(() => this.#client.vaultSharedCloseEraseAsk(input) as Facade.SharedEraseAsk),
     },
     members: {
       /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. */
@@ -515,6 +551,12 @@ export class Oneiron {
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       answers: (input: Facade.QuestionAnswersRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.AnswerRecord[]),
     },
+    decisions: {
+      asks: {
+        answer: (input: Facade.DecisionAskAnswerRequest): Facade.DecisionAsk => this.#call(() => this.#client.vaultDecisionsAsksAnswer(input) as Facade.DecisionAsk),
+        climb: (input: Facade.DecisionAskClimbRequest): Facade.ResolvedRole | null => this.#call(() => this.#client.vaultDecisionsAsksClimb(input) as Facade.ResolvedRole | null),
+      },
+    },
     /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
     commit: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitReceipt[]),
     /** Commits one claim through the gate, the same as vault.claims.upsert. */
@@ -550,6 +592,12 @@ export class Oneiron {
     habits: {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
+    },
+    consolidation: {
+      /** Enqueues one consolidation attempt and returns its durable job reference. */
+      enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
+      /** Reads the status of one consolidation attempt by its durable job reference. */
+      status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
     },
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */

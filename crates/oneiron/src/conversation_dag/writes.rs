@@ -5,11 +5,13 @@ use super::graph::{
     require_type,
 };
 use super::migration::migrate_in_txn;
+use super::policy::{self, AppendFailure};
 use super::{AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest};
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
+use crate::memory::{Memory, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 use heed::RwTxn;
@@ -410,9 +412,25 @@ pub(super) fn set_head_in_txn(
 }
 
 impl Vault {
-    /// Appends one immutable TURN and atomically updates topology and membership.
-    pub fn append_dag_record(&self, input: &AppendRecord) -> Result<AppendedRecord> {
-        self.with_write_txn_grouped(|txn| append_in_txn(self, txn, input, None, false))
+    /// Appends one immutable TURN and atomically updates topology and
+    /// membership. `writer` is the caller's bound surface, the byline `input`
+    /// names (OF-063): every typed ref the append names (conversation,
+    /// parent, reply target, quoted MESSAGE and its TURN, session and
+    /// recipients) must read for it in the append's own transaction. The
+    /// first that does not aborts the whole append, is receipted, and is
+    /// refused as an invented reference naming its field.
+    pub fn append_dag_record(
+        &self,
+        writer: &Memory<'_>,
+        input: &AppendRecord,
+    ) -> MemoryResult<AppendedRecord> {
+        let lane = policy::open_append(self, writer, policy::APPEND_ROW, input)?;
+        let refs = policy::append_references(input, None);
+        let appended = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
+            policy::require_append_references_in_txn(self, &lane, txn, input, &refs)?;
+            Ok(append_in_txn(self, txn, input, None, false)?)
+        });
+        policy::settle_append(writer, policy::APPEND_ROW, appended)
     }
 
     /// Explicit fork selection. Rewrites canonical marks on both old and new paths.
