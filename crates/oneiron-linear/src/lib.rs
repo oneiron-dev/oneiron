@@ -13,7 +13,7 @@ mod journal;
 mod source;
 
 pub use dispatch::VaultLinearOutboundDoor;
-pub use egress::{LinearHostEgress, LinearOutboundDoor};
+pub use egress::{LinearHostEgress, LinearMutation, LinearOutboundDoor};
 pub use http::{GraphQlCall, GraphQlExecutor, GraphQlTransportError, HttpLinearClient};
 pub use source::{LinearHostChangeSource, LinearTrackerConfig};
 

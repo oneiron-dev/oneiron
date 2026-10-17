@@ -501,6 +501,45 @@ pub trait LinearEgress {
     ) -> LinearSyncResult<LinearIssueChange> {
         Err(LinearSyncError::RemoteChanged)
     }
+
+    /// Creates exactly the issue `effect` names, admitted for both the host
+    /// scheduler and the TASK revision's verified writer (OF-427). By default
+    /// the pair is admitted here, each distinct connector key charged once,
+    /// before [`Self::create_issue`]. An egress whose recorded outbound door
+    /// admits that same pair inside its own admission overrides this, so one
+    /// remote mutation is charged once.
+    ///
+    /// # Errors
+    /// [`LinearSyncError::AuthorizationDenied`] when the binding or either
+    /// actor refuses; otherwise as [`Self::create_issue`].
+    fn create_issue_admitted(
+        &mut self,
+        vault: &crate::Vault,
+        effect: &super::LinearEffectRequest,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        vault.authorize_linear_effect(effect)?;
+        self.create_issue(effect.operation_id, effect.task_ref, &effect.fields)
+    }
+
+    /// The conditional update `effect` names, admitted as in
+    /// [`Self::create_issue_admitted`].
+    ///
+    /// # Errors
+    /// [`LinearSyncError::AuthorizationDenied`] when the binding or either
+    /// actor refuses; otherwise as [`Self::update_issue_conditional`].
+    fn update_issue_conditional_admitted(
+        &mut self,
+        vault: &crate::Vault,
+        effect: &super::LinearEffectRequest,
+        expected_remote: &BTreeMap<String, [u8; 32]>,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        let issue = effect
+            .issue
+            .as_ref()
+            .ok_or(LinearSyncError::AuthorizationDenied)?;
+        vault.authorize_linear_effect(effect)?;
+        self.update_issue_conditional(effect.operation_id, issue, expected_remote, &effect.fields)
+    }
 }
 
 /// Writer provenance stamped only by the verified TASK facade after its

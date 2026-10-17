@@ -1,7 +1,11 @@
 //! Outbound mutation mapping; host door enforces policy and replay custody.
 
+use std::collections::BTreeMap;
+
+use oneiron::linear_sync::LinearEffectRequest;
 use oneiron::{
-    EntityId, LinearEgress, LinearIssueChange, LinearIssueRef, LinearSyncResult, MirroredTaskFields,
+    EntityId, LinearEgress, LinearIssueChange, LinearIssueRef, LinearSyncError, LinearSyncResult,
+    MirroredTaskFields, Vault,
 };
 use serde_json::{Value, json};
 
@@ -20,11 +24,29 @@ pub(crate) const UPDATE: &str = "mutation OneironUpdateIssue($id: String!, $inpu
 /// A process-local HashMap or an `Idempotency-Key` header is insufficient.
 pub trait LinearOutboundDoor {
     /// Executes the mutation only after the host's external-effect policy
-    /// admits it. A denial or uncertain delivery returns a transport error.
+    /// admits `mutation` for both the scheduler and the TASK revision's
+    /// verified writer. A denial or uncertain delivery returns a transport
+    /// error.
     ///
     /// # Errors
     /// Returns a transport error on denied, failed or ambiguous delivery.
-    fn dispatch(&mut self, operation_id: [u8; 32], call: &GraphQlCall) -> LinearSyncResult<Value>;
+    fn dispatch(
+        &mut self,
+        mutation: &LinearMutation<'_>,
+        call: &GraphQlCall,
+    ) -> LinearSyncResult<Value>;
+}
+
+/// The mirror mutation behind one door call: what the vault checks against
+/// the TASK's current mirror operation before it admits the call.
+pub struct LinearMutation<'a> {
+    pub operation_id: [u8; 32],
+    /// The TASK a create mirrors. `None` for an update: the door resolves
+    /// the TASK from the issue's link.
+    pub task_ref: Option<EntityId>,
+    /// `None` for a create; the linked issue for an update.
+    pub issue: Option<&'a LinearIssueRef>,
+    pub fields: &'a MirroredTaskFields,
 }
 
 /// Maps the engine's computed idempotency key and field set to GraphQL. The
@@ -62,11 +84,11 @@ impl<D> LinearHostEgress<D> {
 impl<D: LinearOutboundDoor> LinearHostEgress<D> {
     fn write(
         &mut self,
-        operation_id: [u8; 32],
+        mutation: &LinearMutation<'_>,
         call: &GraphQlCall,
         field: &str,
     ) -> LinearSyncResult<LinearIssueChange> {
-        let response = self.door.dispatch(operation_id, call)?;
+        let response = self.door.dispatch(mutation, call)?;
         let result = data(&response, field)?;
         if result.get("success").and_then(Value::as_bool) != Some(true) {
             return Err(invalid("Linear mutation was not successful"));
@@ -82,7 +104,7 @@ impl<D: LinearOutboundDoor> LinearEgress for LinearHostEgress<D> {
     fn create_issue(
         &mut self,
         operation_id: [u8; 32],
-        _task_ref: EntityId,
+        task_ref: EntityId,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
         let mut input = self.input(fields)?;
@@ -91,7 +113,13 @@ impl<D: LinearOutboundDoor> LinearEgress for LinearHostEgress<D> {
             query: CREATE,
             variables: json!({"input": input}),
         };
-        self.write(operation_id, &call, "issueCreate")
+        let mutation = LinearMutation {
+            operation_id,
+            task_ref: Some(task_ref),
+            issue: None,
+            fields,
+        };
+        self.write(&mutation, &call, "issueCreate")
     }
 
     fn update_issue(
@@ -107,10 +135,44 @@ impl<D: LinearOutboundDoor> LinearEgress for LinearHostEgress<D> {
             query: UPDATE,
             variables: json!({"id": issue.issue_id, "input": self.input(fields)?}),
         };
-        let updated = self.write(operation_id, &call, "issueUpdate")?;
+        let mutation = LinearMutation {
+            operation_id,
+            task_ref: None,
+            issue: Some(issue),
+            fields,
+        };
+        let updated = self.write(&mutation, &call, "issueUpdate")?;
         if updated.issue.issue_id != issue.issue_id {
             return Err(invalid("Linear update returned another issue"));
         }
         Ok(updated)
+    }
+
+    /// The door admits this exact create for both actors inside its recorded
+    /// outbound admission, so no separate admission runs here.
+    fn create_issue_admitted(
+        &mut self,
+        _vault: &Vault,
+        effect: &LinearEffectRequest,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        if effect.issue.is_some() {
+            return Err(LinearSyncError::AuthorizationDenied);
+        }
+        self.create_issue(effect.operation_id, effect.task_ref, &effect.fields)
+    }
+
+    /// As [`Self::create_issue_admitted`]: an update reaches the wire only
+    /// through the door, which admits it there.
+    fn update_issue_conditional_admitted(
+        &mut self,
+        _vault: &Vault,
+        effect: &LinearEffectRequest,
+        expected_remote: &BTreeMap<String, [u8; 32]>,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        let issue = effect
+            .issue
+            .as_ref()
+            .ok_or(LinearSyncError::AuthorizationDenied)?;
+        self.update_issue_conditional(effect.operation_id, issue, expected_remote, &effect.fields)
     }
 }
