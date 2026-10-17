@@ -34,7 +34,7 @@ use super::cooldown::{
 };
 use super::driven::Driven;
 use super::forward::{Ended, forward};
-use super::media::{HeldJob, MediaAnswer, MediaRung, RungVoices};
+use super::media::{HeldJob, MediaAnswer, MediaRung, RetryHint, RungVoices};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
 use super::status::RungHealth;
@@ -265,6 +265,40 @@ impl OfferLadder {
     pub(super) fn scoped(mut self, scope: SeatScope) -> Self {
         self.scope = scope;
         self
+    }
+
+    /// The offers of the rungs that could serve `request` (FIX 3194): each
+    /// rung whose row serves it that holds its banked voice, or for a stock
+    /// or raw voice the first such rung alone, as the walk sends it.
+    pub(super) fn media_retry(
+        &self,
+        request: &MediaRequest,
+        voices: Option<&RungVoices>,
+    ) -> RetryHint {
+        let first = if names_voice(request) {
+            self.rungs
+                .iter()
+                .position(|rung| serves_media(rung, request))
+        } else {
+            None
+        };
+        let offers = self
+            .rungs
+            .iter()
+            .enumerate()
+            .filter(|&(index, rung)| {
+                serves_media(rung, request)
+                    && match voices {
+                        Some(voices) => voices.holds(&rung.model),
+                        None => first.is_none_or(|first| first == index),
+                    }
+            })
+            .map(|(_, rung)| (rung.offer.binding.clone(), rung.wire_model.clone()))
+            .collect();
+        RetryHint {
+            offers,
+            rests: Some(Arc::clone(&self.rests)),
+        }
     }
 
     /// A host-injected backend serving `request`'s model as one offer. The
@@ -954,6 +988,21 @@ impl OfferLadder {
     ) -> LlmResult<(LlmResponse, ModelId)> {
         let budget = Duration::from_secs(self.rests.max_wait_secs());
         self.generate_from(run, request, selector, &|| true, budget, true)
+            .await
+    }
+
+    /// [`Self::generate_within`], with the model of the rung that answered,
+    /// the owner's fallback included: the model a decision's receipt names
+    /// (FIX 2730), on the caller's own deadline.
+    pub async fn generate_served_within(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        wait_budget: Duration,
+    ) -> LlmResult<(LlmResponse, ModelId)> {
+        self.generate_from(run, request, selector, may_send, wait_budget, true)
             .await
     }
 

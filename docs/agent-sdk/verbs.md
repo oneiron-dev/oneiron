@@ -278,6 +278,7 @@ both bindings and their export-census tests in one change.
 - `vault.habits.checkin`
 - `vault.claims.admit`
 - `vault.artifacts.create`
+- `vault.esign.create`
 - `vault.conversations.create`
 - `vault.conversations.turns.create`
 - `vault.conversations.records.append`

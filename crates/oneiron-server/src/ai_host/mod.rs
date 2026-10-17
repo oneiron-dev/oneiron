@@ -116,6 +116,9 @@ pub struct AiHandle {
     /// Dreamer's passes ask their typed questions through it, and the
     /// workflow pump rules on a wave cut's fan-out through it.
     decisions: Arc<OnceLock<DecisionHost>>,
+    /// The host syncs as a device of another home (`[device_sync]`): it
+    /// defers to the elected home and never claims it.
+    device: bool,
 }
 
 impl AiHandle {
@@ -157,6 +160,7 @@ impl AiHandle {
             inbound: Arc::new(AtomicU64::new(unix_now())),
             summaries: false,
             decisions: Arc::default(),
+            device: false,
         }
     }
 
@@ -216,6 +220,13 @@ impl AiHandle {
     #[must_use]
     pub fn rerank_budget_units(&self) -> u64 {
         self.rerank_budget_units
+    }
+
+    /// Whether the host syncs as a device of another home (`[device_sync]`),
+    /// so its home-gated work defers to the elected home.
+    #[must_use]
+    pub(crate) fn device(&self) -> bool {
+        self.device
     }
 
     /// Admits a call of `role` against the vault's live model policy: its
@@ -557,6 +568,7 @@ impl AiHost {
             ));
         }
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
+        handle.device = device;
         let mut host = Self {
             handle: handle.clone(),
             dreamer: None,

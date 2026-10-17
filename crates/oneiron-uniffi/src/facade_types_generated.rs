@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 308 facade rows, 1100 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 276.
+// UniFFI census: 309 facade rows, 1118 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 277.
 // WireJson rows: none.
-// WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
+// WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -5882,6 +5882,25 @@ pub enum AuthorityAuditOrder {
     EntryRefAscending,
 }
 
+/// `oneiron::receipt::authority_audit::ColdAuthorityAuditRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ColdAuthorityAuditRow {
+    #[serde(rename = "entry_ref")]
+    pub entry_ref: String,
+    #[serde(rename = "entry_hash")]
+    pub entry_hash: String,
+    #[serde(rename = "checkpoint")]
+    pub checkpoint: String,
+    #[serde(rename = "signer_key")]
+    pub signer_key: String,
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "parents")]
+    pub parents: Vec<String>,
+    #[serde(rename = "fold_valid")]
+    pub fold_valid: bool,
+}
+
 /// `oneiron::receipt::authority_audit::AuthorityAuditPage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AuthorityAuditPage {
@@ -5897,6 +5916,12 @@ pub struct AuthorityAuditPage {
     pub order: AuthorityAuditOrder,
     #[serde(rename = "scanned")]
     pub scanned: u64,
+    #[serde(
+        rename = "cold_attested",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cold_attested: Option<Vec<ColdAuthorityAuditRow>>,
 }
 
 /// `oneiron::task_verb::sdk_mesh::MeshPathReceiptsRequest`.
@@ -7390,6 +7415,8 @@ pub struct WeaveReceipt {
     pub claim: String,
     #[serde(rename = "claim_approval")]
     pub claim_approval: ClaimApprovalStatus,
+    #[serde(rename = "gate_decision")]
+    pub gate_decision: String,
     #[serde(rename = "at")]
     pub at: u64,
 }
@@ -15670,6 +15697,245 @@ pub struct ArtifactCreateRequest {
     pub made_by: Option<crate::WireJson>,
 }
 
+/// `oneiron::blob_artifact::esign::model::DocumentKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DocumentKind {
+    #[serde(rename = "document")]
+    Document,
+    #[serde(rename = "template")]
+    Template,
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignItem {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "original_version")]
+    pub original_version: u64,
+}
+
+/// `oneiron::blob_artifact::esign::model::RecipientRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RecipientRole {
+    #[serde(rename = "signer")]
+    Signer,
+    #[serde(rename = "approver")]
+    Approver,
+    #[serde(rename = "viewer")]
+    Viewer,
+    #[serde(rename = "cc")]
+    Cc,
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignRecipient`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignRecipient {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "email")]
+    pub email: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "role")]
+    pub role: RecipientRole,
+    #[serde(rename = "order")]
+    pub order: u32,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(
+        rename = "principal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub principal_ref: Option<String>,
+    #[serde(rename = "automated")]
+    pub automated: bool,
+    #[serde(
+        rename = "natural_person",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub natural_person: Option<String>,
+}
+
+/// `oneiron::blob_artifact::esign::model::FieldGeometry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FieldGeometry {
+    #[serde(rename = "page")]
+    pub page: u32,
+    #[serde(rename = "x_percent")]
+    pub x_percent: f64,
+    #[serde(rename = "y_percent")]
+    pub y_percent: f64,
+    #[serde(rename = "width_percent")]
+    pub width_percent: f64,
+    #[serde(rename = "height_percent")]
+    pub height_percent: f64,
+}
+
+/// `oneiron::blob_artifact::esign::model::FieldMeta`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum FieldMeta {
+    #[serde(rename = "signature")]
+    Signature,
+    #[serde(rename = "initials")]
+    Initials,
+    #[serde(rename = "name")]
+    Name,
+    #[serde(rename = "email")]
+    Email,
+    #[serde(rename = "date")]
+    Date,
+    #[serde(rename = "text")]
+    Text {
+        #[serde(rename = "max_bytes")]
+        max_bytes: u32,
+    },
+    #[serde(rename = "checkbox")]
+    Checkbox,
+    #[serde(rename = "select")]
+    Select {
+        #[serde(rename = "options")]
+        options: Vec<String>,
+    },
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignField`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignField {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "item")]
+    pub item: u32,
+    #[serde(rename = "recipient")]
+    pub recipient: String,
+    #[serde(rename = "required")]
+    pub required: bool,
+    #[serde(rename = "geometry")]
+    pub geometry: FieldGeometry,
+    #[serde(rename = "meta")]
+    pub meta: FieldMeta,
+}
+
+/// `oneiron::blob_artifact::esign::lifecycle::EsignNoticeSwitches`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignNoticeSwitches {
+    #[serde(rename = "invite")]
+    pub invite: bool,
+    #[serde(rename = "pending")]
+    pub pending: bool,
+    #[serde(rename = "completed")]
+    pub completed: bool,
+    #[serde(rename = "rejection")]
+    pub rejection: bool,
+    #[serde(rename = "void")]
+    pub void: bool,
+    #[serde(rename = "expiry")]
+    pub expiry: bool,
+}
+
+/// `oneiron::blob_artifact::esign::lifecycle::EsignLifecycleRules`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignLifecycleRules {
+    #[serde(rename = "expiry_after_seconds")]
+    pub expiry_after_seconds: u64,
+    #[serde(rename = "first_reminder_after_seconds")]
+    pub first_reminder_after_seconds: u64,
+    #[serde(rename = "repeat_reminder_every_seconds")]
+    pub repeat_reminder_every_seconds: u64,
+    #[serde(rename = "reminder_cap_seconds")]
+    pub reminder_cap_seconds: u64,
+    #[serde(rename = "notices")]
+    pub notices: EsignNoticeSwitches,
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignDocument`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignDocument {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u8,
+    #[serde(rename = "kind")]
+    pub kind: DocumentKind,
+    #[serde(rename = "title")]
+    pub title: String,
+    #[serde(rename = "sequential")]
+    pub sequential: bool,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "items")]
+    pub items: Vec<EsignItem>,
+    #[serde(rename = "recipients")]
+    pub recipients: Vec<EsignRecipient>,
+    #[serde(rename = "fields")]
+    pub fields: Vec<EsignField>,
+    #[serde(rename = "full_trail_appendix")]
+    pub full_trail_appendix: bool,
+    #[serde(rename = "lifecycle", default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<EsignLifecycleRules>,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+}
+
+/// `oneiron::blob_artifact::esign::door::EsignCreateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignCreateRequest {
+    #[serde(rename = "document_ref")]
+    pub document_ref: String,
+    #[serde(rename = "draft")]
+    pub draft: EsignDocument,
+}
+
+/// `oneiron::blob_artifact::esign::model::DocumentStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DocumentStatus {
+    #[serde(rename = "draft")]
+    Draft,
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "voided")]
+    Voided,
+    #[serde(rename = "expired")]
+    Expired,
+}
+
+/// `oneiron::blob_artifact::esign::door::EsignDraftView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EsignDraftView {
+    #[serde(rename = "document_ref")]
+    pub document_ref: String,
+    #[serde(rename = "status")]
+    pub status: DocumentStatus,
+    #[serde(rename = "title")]
+    pub title: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(
+        rename = "project_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_ref: Option<String>,
+    #[serde(rename = "recipients")]
+    pub recipients: Vec<String>,
+    #[serde(rename = "fields")]
+    pub fields: u64,
+}
+
 /// `oneiron::core_write::shape::CoreWriteTextField`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreWriteTextField {
@@ -16091,6 +16357,25 @@ pub struct XlsxArea {
     pub lock: XlsxLock,
 }
 
+/// `oneiron_docedit::xlsx_body::XlsxTable`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct XlsxTable {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "first")]
+    pub first: crate::WireJson,
+    #[serde(rename = "last")]
+    pub last: crate::WireJson,
+    #[serde(rename = "header_rows")]
+    pub header_rows: u32,
+    #[serde(rename = "totals_rows")]
+    pub totals_rows: u32,
+    #[serde(rename = "columns")]
+    pub columns: Vec<String>,
+    #[serde(rename = "worksheet")]
+    pub worksheet: bool,
+}
+
 /// `oneiron::office_body::verbs::XlsxSheetView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxSheetView {
@@ -16100,6 +16385,8 @@ pub struct XlsxSheetView {
     pub cells: Vec<BodyCell>,
     #[serde(rename = "locked")]
     pub locked: Vec<XlsxArea>,
+    #[serde(rename = "tables")]
+    pub tables: Vec<XlsxTable>,
 }
 
 /// `oneiron::office_body::xlsx::BodyName`.
@@ -16237,12 +16524,60 @@ pub enum XlsxNumberFormat {
     },
 }
 
+/// `oneiron_docedit::xlsx_styles::XlsxAlignment`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxAlignment {
+    #[serde(
+        rename = "horizontal",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub horizontal: Option<String>,
+    #[serde(rename = "vertical", default, skip_serializing_if = "Option::is_none")]
+    pub vertical: Option<String>,
+    #[serde(rename = "wrap_text", default, skip_serializing_if = "Option::is_none")]
+    pub wrap_text: Option<bool>,
+    #[serde(
+        rename = "shrink_to_fit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub shrink_to_fit: Option<bool>,
+    #[serde(rename = "indent", default, skip_serializing_if = "Option::is_none")]
+    pub indent: Option<u32>,
+    #[serde(rename = "rotation", default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<u32>,
+    #[serde(
+        rename = "reading_order",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reading_order: Option<u32>,
+}
+
+/// `oneiron_docedit::xlsx_styles::XlsxProtection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxProtection {
+    #[serde(rename = "locked", default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    #[serde(rename = "hidden", default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+}
+
 /// `oneiron_docedit::xlsx_styles::XlsxFormat`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct XlsxFormat {
     #[serde(rename = "base")]
     pub base: u32,
+    #[serde(
+        rename = "cell_style",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cell_style: Option<String>,
     #[serde(rename = "font", default, skip_serializing_if = "Option::is_none")]
     pub font: Option<XlsxFont>,
     #[serde(rename = "fill", default, skip_serializing_if = "Option::is_none")]
@@ -16255,6 +16590,14 @@ pub struct XlsxFormat {
         skip_serializing_if = "Option::is_none"
     )]
     pub number_format: Option<XlsxNumberFormat>,
+    #[serde(rename = "alignment", default, skip_serializing_if = "Option::is_none")]
+    pub alignment: Option<XlsxAlignment>,
+    #[serde(
+        rename = "protection",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub protection: Option<XlsxProtection>,
 }
 
 /// `oneiron::office_body::xlsx::BodyFormat`.
@@ -17197,6 +17540,17 @@ pub struct ProposalAsk {
     pub at: u64,
 }
 
+/// `oneiron::office_body::consent::ProposalAskRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProposalAskRefusal {
+    #[serde(rename = "forks")]
+    pub forks: Vec<String>,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
 /// `oneiron::office_body::consent::OfficeBodyProposal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyProposal {
@@ -17212,6 +17566,12 @@ pub struct OfficeBodyProposal {
     pub settlement: Option<ProposalSettlement>,
     #[serde(rename = "asks", default, skip_serializing_if = "Option::is_none")]
     pub asks: Option<Vec<ProposalAsk>>,
+    #[serde(
+        rename = "ask_refused",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ask_refused: Option<ProposalAskRefusal>,
 }
 
 /// `oneiron::office_body::consent::SettleVerdict`.
@@ -17368,6 +17728,8 @@ pub struct XlsxSheet {
     pub cells: Vec<XlsxCell>,
     #[serde(rename = "locked")]
     pub locked: Vec<XlsxArea>,
+    #[serde(rename = "tables")]
+    pub tables: Vec<XlsxTable>,
 }
 
 /// `oneiron_docedit::xlsx_body::XlsxName`.

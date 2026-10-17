@@ -68,12 +68,16 @@ pub(super) struct StepOutput {
     pub(super) confession: Option<Vec<ObjectiveConfession>>,
 }
 
-/// The objectives a step is asked to confess against: the one its task names,
+/// The objectives a step is asked to confess against: the caller's, verbatim,
+/// when the dispatch carries them; else the one its task names,
 /// whitespace folded, when it fits a seal objective. The spawn's planned need
 /// comes first, then the step's briefing, then the definition's `desc` when
 /// that is what the step was asked. A task too long for one objective asks
 /// no confession: an objective is never cut or made up.
 fn step_objectives(step: &AgentDispatchStatus, request: Option<&str>) -> Vec<String> {
+    if let Some(objectives) = &step.input.objectives {
+        return objectives.clone();
+    }
     step.input
         .plan
         .as_ref()
