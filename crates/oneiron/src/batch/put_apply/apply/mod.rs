@@ -17,7 +17,6 @@ use super::{
     validate_skill_body_overwrite,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, RecordError, RegistryError, Result};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
@@ -157,6 +156,10 @@ pub(in crate::batch) fn apply_put(
     // Registered maintenance kinds with pinned body schemas get the same
     // fail-closed treatment on every path that can admit their type byte.
     // Bodies of all other type bytes stay opaque at the storage layer.
+    //
+    // PERSON holds identity and a FACET is a scenario mask: the one local
+    // identity-body refusal runs once here, ahead of the per-kind arms.
+    crate::batch::validate_local_identity_body(entity_type, data)?;
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
     let mut hub_origin_marker = None;
@@ -334,16 +337,6 @@ pub(in crate::batch) fn apply_put(
         new_agent_definition = Some(decoded);
     } else if entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
         crate::agent_def::workflow::validate_workflow_put(store, wtxn, &id, data, replicated)?;
-    } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
-        return Err(Error::InvalidClaimBody(
-            "CompanionRecord storage retired; use PERSON/FACET",
-        ));
-    } else if entity_type == crate::registry::ENTITY_TYPE_FACET
-        && crate::companion::is_identity_facet_body(data)
-    {
-        return Err(Error::InvalidClaimBody(
-            "retired companion-shaped FACET; use PERSON identity and scenario masks",
-        ));
     } else if entity_type == ENTITY_TYPE_TASK {
         // The role's TREE invariants are not judged here: `ChildOf` nesting
         // belongs to the batch's one final-state gate

@@ -7,16 +7,10 @@ the two are semantically isomorphic.
 Timestamps are Unix SECONDS everywhere and are never converted. Blob content is
 `bytes`; base64 is a native-boundary implementation detail and appears nowhere
 in these stubs.
-
-Every other verb's input and result is typed by `Facade`, the wire declarations
-`scripts/sdk/generate.py` reads from the Rust types each verb-table row names
-(`facade_types.pyi`, generated; never edit it by hand).
 """
 
 import os
 from typing import Any, Literal, NotRequired, TypedDict, overload
-
-from . import facade_types as Facade
 
 __all__ = ["Oneiron", "OneironError"]
 
@@ -89,8 +83,6 @@ class MemoryItem(TypedDict):
     world: str | None
     facet: str | None
     salience: float | None
-    # A conversation record's current reactions, one grouped line per glyph.
-    reactions: NotRequired[list[str]]
     cited_messages: NotRequired[list[CitedMessage]]
     conversation_id: NotRequired[str]
 
@@ -100,8 +92,6 @@ class CitedMessage(TypedDict):
 
 class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
-    # The census stopped at its scan cap or deadline, so a world past it may be missing.
-    census_capped: NotRequired[bool]
 
 class TemporalHint(TypedDict):
     phrase: str
@@ -119,8 +109,6 @@ class RetrievalMeta(TypedDict):
     claims_returned: int
     deep_pending: bool | None
     temporal_hints: NotRequired[list[TemporalHint]]
-    # What the rerank stage of a high, xhigh or max recall did.
-    rerank: NotRequired[Facade.RerankReport]
     limit_clamped: NotRequired[bool]
 
 class MemoryPack(TypedDict):
@@ -130,8 +118,6 @@ class MemoryPack(TypedDict):
     # Always equal to the engine's MEMORY_PACK_VERSION, and to this package's major.
     pack_version: int
     rendered: str | None
-    # The bound actor's requested/ceiling/applied receipt for every read in the pack.
-    narrowing: Facade.ScopedReadReceipt
 
 class FacadeReceipt(TypedDict):
     receipt_ref: str
@@ -362,6 +348,10 @@ class Oneiron:
         def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
         @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
+        @property
+        def graph(self) -> "Oneiron._VaultGraphVerbs": ...
+        @property
+        def questions(self) -> "Oneiron._VaultQuestionsVerbs": ...
         def commit(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
             """Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."""
         def remember(self, input: Facade.ClaimInput) -> Facade.CommitReceipt:
@@ -420,6 +410,7 @@ class Oneiron:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
         def digest(self, spec: Facade.WeaveDigestRequest) -> Facade.WeaveDigestView | None:
             """One of the bound actor's saved weave digests, or the newest, under the current read policy."""
+        def lens(self, spec: Facade.WeaveReportRequest) -> Facade.GeneratedLens: ...
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs": ...
     class _VaultWeaveLinkVerbs:
@@ -504,6 +495,8 @@ class Oneiron:
     class _VaultSharesVerbs:
         def create(self, spec: Facade.ShareCreateRequest) -> Facade.ShareCreated:
             """The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."""
+        def revoke(self, spec: Facade.ShareRevokeRequest) -> Facade.ShareRevokeReceipt: ...
+        def view(self, spec: Facade.ShareViewRequest) -> Facade.ScopedReadResult[Facade.SharedBriefView | None]: ...
     class _VaultHooksVerbs:
         def replay(self, spec: Facade.HooksReplayRequest) -> list[Facade.HookReplayRow]:
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
@@ -615,6 +608,14 @@ class Oneiron:
             """A workspace's work_companion policy, readable by every member it governs."""
         def set(self, spec: Facade.WorkCompanionSetRequest) -> Facade.WorkCompanionPolicy:
             """The owner sets a workspace's work_companion policy in person."""
+    class _VaultGraphVerbs:
+        def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
+    class _VaultQuestionsVerbs:
+        def create(self, spec: Facade.QuestionCreateRequest) -> Facade.QuestionRecord: ...
+        def edit(self, spec: Facade.QuestionEditRequest) -> Facade.QuestionRecord: ...
+        def pause(self, spec: Facade.QuestionPauseRequest) -> Facade.QuestionPaused: ...
+        def read(self, spec: Facade.QuestionReadRequest) -> Facade.QuestionRecord | None: ...
+        def answers(self, spec: Facade.QuestionAnswersRequest) -> list[Facade.AnswerRecord]: ...
     class _VaultWritesVerbs:
         def pending(self, input: Facade.ReceiptsRequest) -> list[Facade.PendingWrite]:
             """Gated writes parked for consent, newest first."""

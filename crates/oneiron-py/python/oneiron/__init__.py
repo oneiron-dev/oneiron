@@ -393,6 +393,12 @@ class Oneiron:
         @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
+        @property
+        def graph(self) -> "Oneiron._VaultGraphVerbs":
+            return Oneiron._VaultGraphVerbs(self._client)
+        @property
+        def questions(self) -> "Oneiron._VaultQuestionsVerbs":
+            return Oneiron._VaultQuestionsVerbs(self._client)
         def commit(self, input: dict[str, Any]) -> Any:
             """Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."""
             return json.loads(_translate(lambda: self._client.vault_commit(json.dumps(input, allow_nan=False))))
@@ -501,6 +507,8 @@ class Oneiron:
         def digest(self, spec):
             """One of the bound actor's saved weave digests, or the newest, under the current read policy."""
             return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
+        def lens(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_weave_lens(json.dumps(spec))))
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs":
             return Oneiron._VaultWeaveLinkVerbs(self._client)
@@ -645,6 +653,10 @@ class Oneiron:
         def create(self, spec):
             """The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."""
             return json.loads(_translate(lambda: self._client.vault_shares_create(json.dumps(spec))))
+        def revoke(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shares_revoke(json.dumps(spec))))
+        def view(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shares_view(json.dumps(spec))))
     class _VaultHooksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -849,6 +861,24 @@ class Oneiron:
         def set(self, spec):
             """The owner sets a workspace's work_companion policy in person."""
             return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_set(json.dumps(spec))))
+    class _VaultGraphVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def ask(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_graph_ask(json.dumps(spec))))
+    class _VaultQuestionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_create(json.dumps(spec))))
+        def edit(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_edit(json.dumps(spec))))
+        def pause(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_pause(json.dumps(spec))))
+        def read(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_read(json.dumps(spec))))
+        def answers(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_answers(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

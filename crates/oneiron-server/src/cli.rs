@@ -24,7 +24,8 @@ pub use owner_args::{
 };
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
-    LegalHoldsCommand,
+    LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyArgs, VaultKeyCommand,
+    VaultKeyNamedArgs,
 };
 pub use wake_args::{WakeArgs, WakeCommand};
 
@@ -90,6 +91,10 @@ pub enum Command {
     /// value is read from stdin.
     #[command(subcommand)]
     Secrets(SecretsCommand),
+    /// A stopped vault's data key: its wraps (password, passkey, escrow,
+    /// device), this install's checkpoint signer and a passkey's PRF input.
+    #[command(subcommand)]
+    VaultKey(VaultKeyCommand),
     /// Import your own history into a stopped vault (ChatGPT and Claude.ai
     /// exports, Claude Code and Codex sessions, a Copilot or Cursor hook
     /// transcript, a folder of markdown notes), or preview, approve or decline
@@ -853,6 +858,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
         Command::Secrets(command) => commands::secrets(command),
+        Command::VaultKey(command) => commands::vault_key(command),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),

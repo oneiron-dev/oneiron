@@ -315,6 +315,7 @@ impl Memory<'_> {
             WitnessTurn {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn.to_hex()),
+                quote: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),
                     author,

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 153 facade rows, 560 declarations.
-Inputs: 131 of 153 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 127 of 153 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 162 facade rows, 587 declarations.
+Inputs: 140 of 162 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 136 of 162 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
 """
 
@@ -303,6 +303,10 @@ class TaskCreateReceipt(TypedDict):
 class TaskUpdateReceipt(TypedDict):
     task_ref: EntityId
     acked: bool
+class QuoteSpan(TypedDict):
+    message: EntityId
+    start: int
+    end: int
 WitnessAuthor = Literal["user", "companion", "system"]
 class WitnessMessage(TypedDict):
     id: NotRequired[str | None]
@@ -315,6 +319,7 @@ class WitnessMessage(TypedDict):
 class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
+    quote: NotRequired[QuoteSpan | None]
     messages: list[WitnessMessage]
     occurred_at: int
 class ClaimInput(TypedDict):
@@ -1197,7 +1202,10 @@ class SharedVaultChangeMemberLeftBody(TypedDict):
     member: str
 class SharedVaultChangeMemberLeft(TypedDict):
     member_left: SharedVaultChangeMemberLeftBody
-SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft
+SharedVaultChangeOwnerRecoveredBody = TypedDict("SharedVaultChangeOwnerRecoveredBody", {"from": str, "to": str})
+class SharedVaultChangeOwnerRecovered(TypedDict):
+    owner_recovered: SharedVaultChangeOwnerRecoveredBody
+SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered
 class ExportDiaryRead(TypedDict):
     agent: str
     diaries: int
@@ -1437,6 +1445,7 @@ class ShareCreateRequest(TypedDict):
     include_unscoped: NotRequired[bool]
     expires_at: NotRequired[int | None]
     travel: NotRequired[TravelChoice | None]
+    mention: NotRequired[MentionProvenance | None]
 class ShareCreated(TypedDict):
     share_id: str
     recipient: str
@@ -1444,6 +1453,33 @@ class ShareCreated(TypedDict):
     created_at: int
     expires_at: NotRequired[int | None]
     travel: TravelChoice
+class ShareRevokeRequest(TypedDict):
+    share_ref: str
+class ShareRevokeReceipt(TypedDict):
+    share_ref: str
+    status: str
+    revoked_at: NotRequired[int | None]
+class ShareViewNarrowing(TypedDict):
+    world_refs: NotRequired[list[str]]
+    facet_refs: NotRequired[list[str]]
+    include_unscoped: NotRequired[bool]
+class ShareViewRequest(TypedDict):
+    share_ref: str
+    narrowing: NotRequired[ShareViewNarrowing | None]
+class SharedBriefCitation(TypedDict):
+    claim_ref: str
+    stale: bool
+    drifted: bool
+    redacted: bool
+    confidence: NotRequired[float | None]
+    lifecycle: NotRequired[str | None]
+    quote: NotRequired[str | None]
+BornWith = dict[str, str]
+class SharedBriefView(TypedDict):
+    share_ref: str
+    html: str
+    citations: list[SharedBriefCitation]
+    born_with: BornWith
 class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
@@ -1518,7 +1554,6 @@ class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
     travel: NotRequired[TravelChoice | None]
-BornWith = dict[str, str]
 class ArtifactExportFile(TypedDict):
     artifact_ref: str
     version: int
@@ -2618,6 +2653,101 @@ class AiVerdict(TypedDict):
     outcome: NotRequired[RoutineOutcome | None]
     screenshot: NotRequired[bool]
     until_ms: NotRequired[int | None]
+DecisionClass = Literal["retrieval", "contradiction", "triage", "judgment", "useful_upstream", "preference", "provenance"]
+class AnswerContractNoul(TypedDict):
+    kind: Literal["noul"]
+class AnswerContractChoice(TypedDict):
+    kind: Literal["choice"]
+    options: list[str]
+class AnswerContractScore(TypedDict):
+    kind: Literal["score"]
+    min: float
+    max: float
+class AnswerContractBox(TypedDict):
+    kind: Literal["box"]
+AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox
+DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
+class GraphAskSelection(TypedDict):
+    entity_type: int
+    limit: int
+class GraphAskRequest(TypedDict):
+    question: DecisionQuestion
+    units: NotRequired[list[EntityId]]
+    select: NotRequired[GraphAskSelection | None]
+    ceiling: NotRequired[DecisionRung | None]
+    unit_deadline_ms: NotRequired[int | None]
+class TypedDecision(TypedDict):
+    answer: DecisionAnswer
+    probability: NotRequired[float | None]
+    evidence: list[str]
+    in_band: bool
+    receipt: DecisionReceipt
+    human_ask: NotRequired[HumanAskReason | None]
+class AnswerRecord(TypedDict):
+    claim: str
+    unit: str
+    decision: TypedDecision
+    frontier: list[int]
+    source_kind: int
+    answered_at: int
+class GraphAskDeclined(TypedDict):
+    unit: EntityId
+    decision: TypedDecision
+class GraphAskOutcomeDone(TypedDict):
+    state: Literal["done"]
+    answers: list[AnswerRecord]
+    abstained: list[EntityId]
+    declined: list[GraphAskDeclined]
+class GraphAskOutcomeFailed(TypedDict):
+    state: Literal["failed"]
+    failed_unit: NotRequired[EntityId | None]
+    code: str
+    message: str
+    answers: list[AnswerRecord]
+    abstained: list[EntityId]
+GraphAskOutcome = GraphAskOutcomeDone | GraphAskOutcomeFailed
+class DecisionDial(TypedDict):
+    first: DecisionRung
+    ceiling: DecisionRung
+    band: DecisionBand
+QuestionActivation = Literal["one_off", "standing"]
+class RefreshPolicy(TypedDict):
+    on_arrival: bool
+    every_seconds: NotRequired[int | None]
+class QuestionDefinition(TypedDict):
+    question: DecisionQuestion
+    adapter: str
+    units: list[str]
+    recipe: str
+    profile: str
+    dial: DecisionDial
+    activation: QuestionActivation
+    refresh: RefreshPolicy
+    delivery: str
+    learning: bool
+    binding: NotRequired[OutcomeBinding | None]
+class QuestionCreateRequest(TypedDict):
+    definition: QuestionDefinition
+class QuestionRecord(TypedDict):
+    schema_version: int
+    principal: str
+    definition: QuestionDefinition
+    created_at: int
+class QuestionEditRequest(TypedDict):
+    id: EntityId
+    expected_version: int
+    definition: QuestionDefinition
+class QuestionPauseRequest(TypedDict):
+    id: EntityId
+    paused: bool
+class QuestionPaused(TypedDict):
+    id: EntityId
+    paused: bool
+class QuestionReadRequest(TypedDict):
+    id: EntityId
+    version: NotRequired[int | None]
+class QuestionAnswersRequest(TypedDict):
+    id: EntityId
 class ConnectorListRequest(TypedDict):
     query: NotRequired[str | None]
 class ConnectorEntry(TypedDict):

@@ -228,6 +228,7 @@ export class Oneiron {
       report: (input: Facade.WeaveReportRequest): Facade.WeaveReportView => this.#call(() => this.#client.vaultWeaveReport(input) as Facade.WeaveReportView),
       /** One of the bound actor's saved weave digests, or the newest, under the current read policy. */
       digest: (input: Facade.WeaveDigestRequest): Facade.WeaveDigestView | null => this.#call(() => this.#client.vaultWeaveDigest(input) as Facade.WeaveDigestView | null),
+      lens: (input: Facade.WeaveReportRequest): Facade.GeneratedLens => this.#call(() => this.#client.vaultWeaveLens(input) as Facade.GeneratedLens),
       link: {
         /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
         wrong: (input: Facade.WeaveWrongLinkRequest): Facade.WeaveLinkCorrectionView => this.#call(() => this.#client.vaultWeaveLinkWrong(input) as Facade.WeaveLinkCorrectionView),
@@ -317,6 +318,8 @@ export class Oneiron {
     shares: {
       /** The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels. */
       create: (input: Facade.ShareCreateRequest): Facade.ShareCreated => this.#call(() => this.#client.vaultSharesCreate(input) as Facade.ShareCreated),
+      revoke: (input: Facade.ShareRevokeRequest): Facade.ShareRevokeReceipt => this.#call(() => this.#client.vaultSharesRevoke(input) as Facade.ShareRevokeReceipt),
+      view: (input: Facade.ShareViewRequest): Facade.ScopedReadResult<Facade.SharedBriefView | null> => this.#call(() => this.#client.vaultSharesView(input) as Facade.ScopedReadResult<Facade.SharedBriefView | null>),
     },
     hooks: {
       /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
@@ -439,6 +442,16 @@ export class Oneiron {
         /** The owner sets a workspace's work_companion policy in person. */
         set: (input: Facade.WorkCompanionSetRequest): Facade.WorkCompanionPolicy => this.#call(() => this.#client.vaultWorkspaceWorkCompanionSet(input) as Facade.WorkCompanionPolicy),
       },
+    },
+    graph: {
+      ask: (input: Facade.GraphAskRequest): Facade.GraphAskOutcome => this.#call(() => this.#client.vaultGraphAsk(input) as Facade.GraphAskOutcome),
+    },
+    questions: {
+      create: (input: Facade.QuestionCreateRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsCreate(input) as Facade.QuestionRecord),
+      edit: (input: Facade.QuestionEditRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsEdit(input) as Facade.QuestionRecord),
+      pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
+      read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
+      answers: (input: Facade.QuestionAnswersRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.AnswerRecord[]),
     },
     /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
     commit: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitReceipt[]),
