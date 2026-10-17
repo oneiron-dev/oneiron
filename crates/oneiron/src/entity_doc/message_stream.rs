@@ -89,7 +89,7 @@ pub(crate) fn append_message_stream_in_txn(
     if delta.is_empty() {
         return Ok(());
     }
-    crate::batch::secret_scan::scan_metadata_field(delta)?;
+    crate::batch::secret_scan::scan_content_in_txn(&vault.store, txn, delta.as_bytes())?;
     if !ENTITY_DOC_HEAD.contains(&vault.store, txn, &HexId(*entity))? {
         // Atomic MESSAGEs move their original text into birth exactly once.
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, entity)?
