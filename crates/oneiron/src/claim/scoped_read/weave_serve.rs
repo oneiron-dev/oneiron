@@ -5,14 +5,16 @@
 //! proof reads the owner lens.
 use super::{
     ClaimReadStatus, ScopedRead, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence,
-    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLensPlan, WeaveLensRefusal,
-    WeaveLensRender, WeaveLinkCorrection, WeaveLiveLens, WeaveReader, WeaveReport,
-    WeaveScheduleHold, WeaveSectionKind, WeaveSectionSpec,
+    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLensRefusal, WeaveLensRender,
+    WeaveLinkCorrection, WeaveLiveLens, WeaveReader, WeaveReport, WeaveScheduleHold,
+    WeaveSectionKind, WeaveSectionSpec,
 };
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::lens::GeneratedLens;
+use crate::lens::{
+    GeneratedUiSurfaceCapabilities, HostedLensRender, LensFrameCard, LensRenderFrame,
+};
 use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
 use crate::provenance::EdgeRef;
 use serde::{Deserialize, Serialize};
@@ -174,6 +176,8 @@ pub struct WeaveReportView {
 
 /// One saved digest period, with the receipt saved with it, and its lens
 /// once the generate step has rendered the period, or why it rendered none.
+/// The lens is a card lowered for the whole atom kit; a server holds its
+/// frame for the opener's events on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WeaveDigestView {
     pub scheduled_for: u64,
@@ -181,9 +185,42 @@ pub struct WeaveDigestView {
     pub sections: Vec<WeaveSectionView>,
     pub narrowing: ScopedReadReceipt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lens: Option<GeneratedLens>,
+    pub lens: Option<LensFrameCard>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lens_refused: Option<WeaveLensRefusal>,
+}
+
+/// One saved period as its host serves it: the view, and its render as a
+/// card beside the frame that minted its rows' backing refs (OF-181).
+/// Host-only: a caller is handed the view [`Self::lower`] makes.
+#[derive(Debug)]
+pub struct WeaveDigestFramed {
+    /// The period with no lens yet.
+    pub view: WeaveDigestView,
+    pub lens: Option<HostedLensRender>,
+}
+
+impl WeaveDigestFramed {
+    /// The view with its lens lowered once for the whole atom kit, and the
+    /// lens's frame for a host to hold. A lens that does not lower is left
+    /// out, as one that no longer composes is; the period still serves.
+    #[must_use]
+    pub fn lower(self) -> (WeaveDigestView, Option<LensRenderFrame>) {
+        let mut view = self.view;
+        let frame = self.lens.and_then(|hosted| {
+            match hosted.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit()) {
+                Ok((frame, card)) => {
+                    view.lens = Some(card);
+                    Some(frame)
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "weave lens did not lower");
+                    None
+                }
+            }
+        });
+        (view, frame)
+    }
 }
 
 /// Who a schedule is for, on the owner's wire.
@@ -339,43 +376,35 @@ impl Memory<'_> {
 
     /// `vault.weave.lens`, after its generate step: re-reads the live report
     /// under the bound actor's current read and composes `answer`, the
-    /// step's plan, over it. The plan was written over what the first read
-    /// admitted, so a report that changed meanwhile is refused, as is a plan
-    /// that does not cite each of its items exactly once.
-    pub fn weave_lens_finish(
+    /// step's plan, over it, as a card beside the frame that minted its
+    /// backing refs; its host keeps the frame for the card's events. The
+    /// plan was written over what the first read admitted, so a report that
+    /// changed meanwhile answers `None` and the host asks again from a fresh
+    /// read. A plan that does not cite each item exactly once is refused.
+    pub fn weave_lens_finish_framed(
         &self,
         owner: Option<&AuthenticatedOwner>,
         request: &WeaveReportRequest,
         live: WeaveLiveLens,
         answer: &str,
         model: &str,
-    ) -> MemoryResult<GeneratedLens> {
+    ) -> MemoryResult<Option<HostedLensRender>> {
         let reader = self.weave_reader(owner)?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let report = read
             .weave_report(reader, &Self::weave_recipe(request)?)?
             .value;
         if report != live.report {
-            return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_INVALID_STATE,
-                "the weave report changed while its lens rendered",
-                &["Ask for the lens again."],
-            ));
+            return Ok(None);
         }
-        let plan: WeaveLensPlan = serde_json::from_str(answer.trim()).map_err(|_| {
-            MemoryError::new(
-                crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
-                "the model's answer is not a weave lens plan",
-                &["Ask for the lens again."],
-            )
-        })?;
-        if plan.validate(&report).is_err() {
-            return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
-                "the model's plan does not cite each report item exactly once",
-                &["Ask for the lens again."],
-            ));
-        }
+        let plan =
+            super::weave_lens::weave_lens_answer_plan(answer, &report).map_err(|reason| {
+                MemoryError::new(
+                    crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                    format!("the model's weave lens plan was refused: {reason}"),
+                    &["Ask for the lens again."],
+                )
+            })?;
         let render = WeaveLensRender {
             plan,
             skill_ref: live.skill_ref,
@@ -383,13 +412,13 @@ impl Memory<'_> {
             model: model.to_owned(),
             rendered_at: self.vault().store.clock.now_recorded_at(),
         };
-        let lens = super::weave_lens::compose_weave_lens(&read, &report, &render)?;
+        let lens = super::weave_lens::compose_weave_lens_framed(&read, reader, &report, &render)?;
         // The render is kept, and the one before it settles on the skill's
         // corrections axis; neither gates the lens.
         if let Err(error) = self.vault().keep_live_weave_lens(reader, &report, &render) {
             tracing::warn!(?error, "the live weave lens render was not kept");
         }
-        Ok(lens)
+        Ok(Some(lens))
     }
 
     /// The live report for `reader` under the bound actor's read.
@@ -412,14 +441,28 @@ impl Memory<'_> {
             .collect()
     }
 
-    /// `vault.weave.digest`: one of the bound actor's saved digests, under
-    /// the current read policy. An owner opening its digest renders the due
-    /// period first: the timer cannot, holding no owner proof.
+    /// `vault.weave.digest` where no host keeps the frame: the period of
+    /// [`Self::weave_digest_framed`], its lens lowered for the whole atom
+    /// kit. The lens card's events need a server, which holds its frame.
     pub fn weave_digest(
         &self,
         owner: Option<&AuthenticatedOwner>,
         request: &WeaveDigestRequest,
     ) -> MemoryResult<Option<WeaveDigestView>> {
+        Ok(self
+            .weave_digest_framed(owner, request)?
+            .map(|framed| framed.lower().0))
+    }
+
+    /// One of the bound actor's saved digests, under the current read
+    /// policy, with its lens as a card beside its frame. An owner opening
+    /// its digest renders the due period first: the timer cannot, holding
+    /// no owner proof.
+    pub fn weave_digest_framed(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        request: &WeaveDigestRequest,
+    ) -> MemoryResult<Option<WeaveDigestFramed>> {
         let reader = self.weave_reader(owner)?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         if owner.is_some() {
@@ -430,7 +473,7 @@ impl Memory<'_> {
             None => read.read_latest_weave_digest(reader)?,
         };
         stored
-            .map(|stored| self.weave_digest_view(&read, stored))
+            .map(|stored| self.weave_digest_view(&read, reader, stored))
             .transpose()
     }
 
@@ -450,26 +493,40 @@ impl Memory<'_> {
         Ok(WeaveLinkCorrectionView::from_correction(&filed))
     }
 
+    /// `vault.weave.owner.link.wrong`: the owner lens card's wrong control,
+    /// filed under the owner reader with `owner` as its proof.
+    pub fn weave_owner_wrong_link(
+        &self,
+        owner: &AuthenticatedOwner,
+        request: &WeaveWrongLinkRequest,
+    ) -> MemoryResult<WeaveLinkCorrectionView> {
+        self.weave_wrong_link(Some(owner), owner, request)
+    }
+
     /// A saved period's view. Its render composes under `read`, the
     /// opener's own read; a render that no longer composes is left out and
     /// the period's data still serves.
     fn weave_digest_view(
         &self,
         read: &ScopedRead<'_>,
+        reader: WeaveReader<'_>,
         stored: StoredWeaveDigest,
-    ) -> MemoryResult<WeaveDigestView> {
+    ) -> MemoryResult<WeaveDigestFramed> {
         let lens = stored.lens.as_ref().and_then(|render| {
-            super::weave_lens::compose_weave_lens(read, &stored.report.value, render)
+            super::weave_lens::compose_weave_lens_framed(read, reader, &stored.report.value, render)
                 .inspect_err(|error| tracing::warn!(?error, "weave lens did not compose"))
                 .ok()
         });
-        Ok(WeaveDigestView {
-            scheduled_for: stored.scheduled_for,
-            rendered_at: stored.rendered_at,
-            sections: self.weave_sections(&stored.report.value)?,
-            narrowing: stored.report.receipt,
+        Ok(WeaveDigestFramed {
+            view: WeaveDigestView {
+                scheduled_for: stored.scheduled_for,
+                rendered_at: stored.rendered_at,
+                sections: self.weave_sections(&stored.report.value)?,
+                narrowing: stored.report.receipt,
+                lens: None,
+                lens_refused: stored.lens_refused,
+            },
             lens,
-            lens_refused: stored.lens_refused,
         })
     }
 
