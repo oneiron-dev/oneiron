@@ -34,6 +34,8 @@ use super::loro_support;
 
 #[cfg(feature = "test-hooks")]
 pub use self::admission::put_selector_test_federation_grant;
+#[cfg(feature = "sync")]
+pub(in crate::sync) use self::admission::validate_sync_identity_body;
 pub(crate) use self::admission::{AdmittedUpdate, admit_staged_window_update};
 pub use self::admission::{FederationAdmissionRole, admit_federated_window_update};
 pub(in crate::sync) use self::admission::{
