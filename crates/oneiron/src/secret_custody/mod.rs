@@ -106,7 +106,7 @@ pub use self::reveal::{
     SecretRevealState,
 };
 pub(crate) use self::reveal::{
-    RevealAsker, RevealAuthority, SecretRevealWait, parse_secret_handle, reveal_value_in_txn,
+    RevealAsker, RevealAuthority, parse_secret_handle, reveal_value_in_txn,
 };
 pub(crate) use self::transition::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_transitions,
