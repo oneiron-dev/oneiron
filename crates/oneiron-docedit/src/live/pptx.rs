@@ -16,10 +16,22 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Model identity for slides, shapes and paragraphs. The root is `NodeId(0)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct NodeId(pub u64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
     Root,
@@ -59,7 +71,9 @@ pub struct NodeBinding {
 }
 
 /// Own (never inherited) geometry, in EMU and 60,000ths of a degree.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct GeometryProps {
     pub offset: Option<(i64, i64)>,
     pub extent: Option<(i64, i64)>,
@@ -90,7 +104,7 @@ pub struct DeckNode {
 }
 
 /// The native content a live-born node carries to the export projector.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NodePayload {
     /// A raster asset by its engine identity; the export's resolver supplies
@@ -120,7 +134,7 @@ pub enum NodePayload {
 }
 
 /// The classic chart families a live-born chart is written as.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChartKind {
     Bar,
@@ -128,7 +142,7 @@ pub enum ChartKind {
     Pie,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChartSeries {
     pub name: String,
     pub values: Vec<Option<serde_json::Number>>,
@@ -137,7 +151,7 @@ pub struct ChartSeries {
 /// One glued connector end: the node and its geometry's connection site
 /// index. Glue to a node that is not on the connector's slide at export is
 /// dropped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConnectorEnd {
     pub node: NodeId,
     pub site: u32,
@@ -156,7 +170,7 @@ impl NodePayload {
 
 /// One run of a paragraph. Formatting rides as run-property marks; scheme
 /// colour and hyperlinks stay atomic values on the run that carries them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Run {
     pub text: String,
     pub bold: Option<bool>,
@@ -167,7 +181,7 @@ pub struct Run {
 }
 
 /// A paragraph with a stable identity, kept across text edits to its runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Paragraph {
     pub id: NodeId,
     pub level: u8,
@@ -181,7 +195,7 @@ impl Paragraph {
 }
 
 /// One rich-text body per text shape.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TextBody {
     pub paragraphs: Vec<Paragraph>,
 }
@@ -461,7 +475,7 @@ fn own<T: Clone>(value: &crate::deck::Value<T>) -> Option<T> {
 /// is reported because it also changes relationship context. A creation
 /// names the identity it makes, so replaying it onto another head (a fork's
 /// merge, a concurrent peer) makes the same node; `None` mints one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeckOp {
     AddSlide {
@@ -1219,7 +1233,7 @@ pub fn preflight(head: &LiveDeck, fork: &DeckFork) -> Result<PreflightReport, Li
 
 /// The three ruled approve-all scopes. A finer scope is a later addition
 /// and does not delay these.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApproveScope {
     /// The named actor's bundle.
@@ -1242,7 +1256,7 @@ impl ApproveScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Landing {
     Merge,

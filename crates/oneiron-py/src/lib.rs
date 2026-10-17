@@ -2177,6 +2177,76 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_artifacts_body_deck_review(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.body.deck.review")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.deck.review", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_body_deck_merge(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.body.deck.merge")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.deck.merge", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_body_deck_export(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.body.deck.export")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.deck.export", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_body_deck_gate(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.body.deck.gate")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.deck.gate", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_body_deck_oracle(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.body.deck.oracle")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.deck.oracle", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_append(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.artifacts.append")?;
         let output = py

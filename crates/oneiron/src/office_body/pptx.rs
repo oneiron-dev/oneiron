@@ -25,8 +25,13 @@
 //! operations replay onto the head as the same nodes.
 
 mod doc;
+mod verbs;
 
 pub(super) use doc::{birth, validate};
+pub use verbs::{
+    DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest,
+    DeckGateView, DeckNodeView, DeckOracleRequest, DeckReviewView,
+};
 
 use super::{
     EXPORTS, FORKS, ForkState, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyFork,

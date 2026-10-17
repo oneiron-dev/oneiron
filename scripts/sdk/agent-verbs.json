@@ -4025,7 +4025,7 @@
     },
     {
       "name": "vault.artifacts.body.read",
-      "description": "Reads a DOCX or XLSX live body as typed blocks or cells, at its head or at an earlier frontier of its history.",
+      "description": "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history.",
       "refs": [
         "/artifact_ref"
       ],
@@ -4051,7 +4051,7 @@
         "docs": {
           "remote": "    /// Reads a DOCX or XLSX live body, at its head or an earlier frontier.\n",
           "ts": "/** Reads a DOCX or XLSX live body, at its head or an earlier frontier. */",
-          "py": "Reads a DOCX or XLSX live body, at its head or an earlier frontier."
+          "py": "Reads a live body, at its head or an earlier frontier."
         }
       }
     },
@@ -4089,7 +4089,7 @@
     },
     {
       "name": "vault.artifacts.body.edit",
-      "description": "A person's typed DOCX or XLSX operations on the live body, read against a base frontier (the head by default) and merged into the head.",
+      "description": "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head.",
       "refs": [
         "/artifact_ref",
         "/made_by/inputs/*/row",
@@ -4158,7 +4158,7 @@
     },
     {
       "name": "vault.artifacts.body.fork.edit",
-      "description": "The opener's typed DOCX or XLSX operations on its open fork of a live body.",
+      "description": "The opener's typed DOCX, XLSX or deck operations on its open fork of a live body.",
       "refs": [
         "/artifact_ref",
         "/fork_ref",
@@ -4294,7 +4294,7 @@
     },
     {
       "name": "vault.artifacts.body.export",
-      "description": "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator.",
+      "description": "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export.",
       "refs": [
         "/artifact_ref",
         "/made_by/inputs/*/row",
@@ -4357,6 +4357,156 @@
           "remote": "    /// The workbook an XLSX export would land now, recalculated.\n",
           "ts": "/** The workbook an XLSX export would land now, recalculated. */",
           "py": "The workbook an XLSX export would land now, recalculated."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.deck.review",
+      "description": "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names.",
+      "refs": [
+        "/artifact_ref",
+        "/fork_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyForkRequest",
+      "output": "crate::office_body::DeckReviewView",
+      "call": "memory.artifacts_body_deck_review(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// A deck fork's merge preflight against the live head.\n",
+          "ts": "/** A deck fork's merge preflight against the live head. */",
+          "py": "A deck fork's merge preflight against the live head."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.deck.merge",
+      "description": "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses.",
+      "refs": [
+        "/artifact_ref",
+        "/fork_ref"
+      ],
+      "input": "crate::office_body::DeckForkMergeRequest",
+      "output": "crate::office_body::LandingReceipt",
+      "call": "memory.artifacts_body_deck_merge(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// A person lands a reviewed deck fork.\n",
+          "ts": "/** A person lands a reviewed deck fork. */",
+          "py": "A person lands a reviewed deck fork."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.deck.export",
+      "description": "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::office_body::DeckExportRequest",
+      "output": "crate::office_body::DeckExportView",
+      "call": "memory.artifacts_body_deck_export(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Projects a deck, landing it as the next version when its export gate is open.\n",
+          "ts": "/** Projects a deck, landing it as the next version when its export gate is open. */",
+          "py": "Projects a deck, landing it as the next version when its export gate is open."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.deck.gate",
+      "description": "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector.",
+      "input": "crate::office_body::DeckGateRequest",
+      "output": "crate::office_body::DeckGateView",
+      "call": "memory.artifacts_body_deck_gate(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The deck export gate for a profile.\n",
+          "ts": "/** The deck export gate for a profile. */",
+          "py": "The deck export gate for a profile."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.deck.oracle",
+      "description": "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened.",
+      "input": "crate::office_body::DeckOracleRequest",
+      "output": "crate::office_body::DeckGateView",
+      "call": "memory.artifacts_body_deck_oracle(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Records the deck oracle's receipt for its export profile.\n",
+          "ts": "/** Records the deck oracle's receipt for its export profile. */",
+          "py": "Records the deck oracle's receipt for its export profile."
         }
       }
     },
