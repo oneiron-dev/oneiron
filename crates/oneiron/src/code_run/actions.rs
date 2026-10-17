@@ -279,7 +279,7 @@ impl ActionRegistry {
     }
     /// Offers the run rows that act on their caller's live agent run
     /// (`tasks.refuse`, `self.agents.spawn`, `self.team.start`,
-    /// `self.team.record`, and the leader's `self.leader.advice` and
+    /// `self.team.record`, `self.team.submit`, and the leader's `self.leader.advice` and
     /// `self.leader.pattern` on the planner the host lends beside it) under
     /// their own names, as the memory rows are offered. Each runs only when the host binds the run's lease
     /// ([`ActionHostBinding::live_run`]), read live, so the call is the run's

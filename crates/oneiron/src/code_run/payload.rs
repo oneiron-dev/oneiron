@@ -141,6 +141,18 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
                     .map_err(|_| invalid_code_run_replay("team call does not encode"))?,
             ),
         )]),
+        // Its own `verb` key keeps a submit apart from a start or a record
+        // under the one Team effect.
+        SelfCall::TeamSubmit(input) => request_map(vec![
+            ("verb", Value::from("submit")),
+            (
+                "call",
+                Value::from(
+                    serde_json::to_string(input)
+                        .map_err(|_| invalid_code_run_replay("team submit does not encode"))?,
+                ),
+            ),
+        ]),
         SelfCall::TasksWaitSet(call) => request_map(vec![(
             "call",
             Value::from(
@@ -365,6 +377,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("json", Value::from(json.as_str())),
         ]),
         SelfDispatchOutcome::Team(answer) => json_outcome("team", answer)?,
+        SelfDispatchOutcome::TeamSubmitted(answer) => json_outcome("team_submitted", answer)?,
     })
 }
 
@@ -404,6 +417,9 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
             entries,
         )?)),
         "team" => Ok(SelfDispatchOutcome::Team(decode_json_outcome(entries)?)),
+        "team_submitted" => Ok(SelfDispatchOutcome::TeamSubmitted(decode_json_outcome(
+            entries,
+        )?)),
         "task_wait_set" => Ok(SelfDispatchOutcome::TaskWaitSet(decode_json_outcome(
             entries,
         )?)),

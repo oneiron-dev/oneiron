@@ -85,6 +85,9 @@ pub enum SelfCall {
     /// `self.team.start` and `self.team.record` (OF-540): a pattern-skill
     /// run's own team. The leader is the bound attempt.
     Team(crate::team::SelfTeamCall),
+    /// `self.team.submit` (OF-540): the bound leader submits one pinned
+    /// output of its team for the owner's acceptance review.
+    TeamSubmit(super::TeamSubmitInput),
     /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
     TasksWaitSet(super::reader::TaskWaitSetCall),
     /// `summarize(r, {effort?, group?, defer?})`: one summary of the run's
@@ -131,7 +134,7 @@ impl SelfCall {
             Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
             Self::Summarize(_) => SelfEffect::Summarize,
             Self::Leader(_) => SelfEffect::Leader,
-            Self::Team(_) => SelfEffect::Team,
+            Self::Team(_) | Self::TeamSubmit(_) => SelfEffect::Team,
         }
     }
 
@@ -662,6 +665,8 @@ pub enum SelfDispatchOutcome {
     Leader(String),
     /// A team run's start or receipt (OF-540).
     Team(crate::team::TeamRunAnswer),
+    /// A team output submitted for the owner's review (OF-540).
+    TeamSubmitted(super::TeamSubmitAnswer),
 }
 
 /// `self.skills.call(...)`: the skill and the arguments its call contract
