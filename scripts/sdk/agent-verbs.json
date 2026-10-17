@@ -1025,6 +1025,17 @@
       "section": false
     },
     {
+      "name": "vault.guests.mint_slip",
+      "description": "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device.",
+      "input": "crate::task_verb::sdk::GuestSlipMintRequest",
+      "output": "crate::task_verb::sdk::GuestSlipMinted",
+      "call": "crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.authority.handoff_alarms",
       "description": "Every saved authority handoff fork alarm, for the owner.",
       "input": "EmptyRequest",
@@ -3381,6 +3392,20 @@
       "scope": "Write",
       "context": "run",
       "effect": "TasksRefuse"
+    },
+    {
+      "name": "self.leader.advice",
+      "input": "crate::code_run::LeaderAdviceInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "Leader"
+    },
+    {
+      "name": "self.leader.pattern",
+      "input": "crate::code_run::LeaderPatternInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "Leader"
     },
     {
       "name": "self.skills.call",

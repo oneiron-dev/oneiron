@@ -160,6 +160,9 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::Summarize(_) if self.effect != SelfEffect::Summarize => Err(
                 invalid_code_run_replay("summary answer belongs to another effect"),
             ),
+            SelfDispatchOutcome::Leader(_) if self.effect != SelfEffect::Leader => Err(
+                invalid_code_run_replay("leader answer belongs to another effect"),
+            ),
             SelfDispatchOutcome::Team(_) if self.effect != SelfEffect::Team => Err(
                 invalid_code_run_replay("team answer belongs to another effect"),
             ),

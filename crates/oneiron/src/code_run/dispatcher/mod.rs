@@ -34,6 +34,7 @@ pub(crate) use self::envelope::check_write_gate_against_vault;
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
 use self::human_speech::HumanWaitDispatchTarget;
+pub use self::leader::HostPlannerBinding;
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
 pub(crate) use self::reader_spawn::ReaderChildBinding;
 
@@ -86,6 +87,9 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) reader_spawn: Option<crate::code_run::SpawnHostSeat>,
     /// The reader child's job this run is, when it is one.
     pub(super) reader_child: Option<ReaderChildBinding>,
+    /// The host's planner (OF-541, OF-389): what a planned spawn and the
+    /// leader's calls read. Host configuration; no guest call reaches it.
+    pub(super) planner: Option<HostPlannerBinding<'a>>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -203,6 +207,7 @@ impl<'a> HostSelfDispatcher<'a> {
             parked_hooks: RefCell::new(Vec::new()),
             reader_spawn: None,
             reader_child: None,
+            planner: None,
         })
     }
 
@@ -464,6 +469,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::ReaderReport(call) => self.dispatch_reader_report(call),
             SelfCall::TasksWaitSet(call) => self.dispatch_task_wait_set(call, site),
             SelfCall::Summarize(call) => self.dispatch_summarize(*call, site),
+            SelfCall::Leader(call) => self.dispatch_leader(call),
             SelfCall::Team(call) => self.dispatch_team(call),
         }
     }

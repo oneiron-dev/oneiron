@@ -594,6 +594,16 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 args: args.args,
             })
         }
+        RunVerb::SelfLeaderAdvice => {
+            let args: crate::code_run::LeaderAdviceInput = decode(input)?;
+            SelfCall::Leader(crate::code_run::SelfLeaderCall::Advice { top: args.top })
+        }
+        RunVerb::SelfLeaderPattern => {
+            let args: crate::code_run::LeaderPatternInput = decode(input)?;
+            SelfCall::Leader(crate::code_run::SelfLeaderCall::Pattern {
+                skill: EntityId::from_hex(&args.skill)?,
+            })
+        }
         RunVerb::SelfSpawn => {
             let args: crate::code_run::ReaderSpawnInput = decode(input)?;
             SelfCall::ReaderSpawn(Box::new(crate::code_run::SelfReaderSpawnCall {
@@ -752,6 +762,11 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         SelfDispatchOutcome::ReaderReport(receipt) => json!({ "output": receipt }),
         SelfDispatchOutcome::TaskWaitSet(result) => json!({ "output": result }),
         SelfDispatchOutcome::Summarize(reply) => json!({ "output": reply.output() }),
+        SelfDispatchOutcome::Leader(json) => {
+            let output: Value =
+                serde_json::from_str(json).map_err(|_| failure("leader answer is not JSON"))?;
+            json!({ "output": output })
+        }
         SelfDispatchOutcome::Team(answer) => json!({ "output": answer }),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));

@@ -38,7 +38,9 @@ pub use self::codec::{
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
 };
 pub(crate) use self::dispatcher::{ExecutorCallSite, check_write_gate_against_vault};
-pub use self::dispatcher::{GatedActorWrite, HostSelfDispatcher, SELF_MEMORY_SEARCH_MAX_RESULTS};
+pub use self::dispatcher::{
+    GatedActorWrite, HostPlannerBinding, HostSelfDispatcher, SELF_MEMORY_SEARCH_MAX_RESULTS,
+};
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
@@ -97,15 +99,16 @@ pub use self::types::{
     SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
     SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason,
-    SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult,
+    SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfLeaderCall, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult, SelfSkillCall,
-    SelfSkillCallResult, SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult,
+    SelfSkillCallResult, SelfSpawnAsk, SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult,
     SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
 };
 pub use run_verbs::{
-    JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
-    MemoryTimeRange, ReaderSpawnInput, SkillCallInput, SummarizeInput, SummarizeInputEffort,
+    JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, MemoryClaimInput, MemoryEdgeInput,
+    MemorySearchInput, MemorySupersedeInput, MemoryTimeRange, ReaderSpawnInput, SkillCallInput,
+    SummarizeInput, SummarizeInputEffort,
     TaskRefuseDomain, TaskRefuseInput, TaskWaitSetRequest,
 };
 pub use types::{

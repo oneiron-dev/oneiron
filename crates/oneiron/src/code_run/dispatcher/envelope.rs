@@ -306,6 +306,9 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // A summary's model call reads only the run's own results, and its
         // text stays a result of the run's route.
         SelfEffect::Summarize => false,
+        // The leader's advice and pattern are her vault's own skills, read
+        // on her lease.
+        SelfEffect::Leader => false,
         // A team's members are the run's own children and its receipt a
         // vault row: nothing of it leaves the vault.
         SelfEffect::Team => false,
