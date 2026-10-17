@@ -782,6 +782,12 @@ impl OneironClient {
                 "vault.artifacts.body.fork.discard" => remote_agent_verb_output::<
                     oneiron::office_body::OfficeBodyFork,
                 >(client, verb, &input),
+                "vault.artifacts.body.proposal.read" => remote_agent_verb_output::<
+                    oneiron::office_body::OfficeBodyProposal,
+                >(client, verb, &input),
+                "vault.artifacts.body.proposal.settle" => remote_agent_verb_output::<
+                    oneiron::office_body::OfficeBodyProposal,
+                >(client, verb, &input),
                 "vault.artifacts.body.export" => remote_agent_verb_output::<
                     oneiron::office_body::OfficeBodyExportView,
                 >(client, verb, &input),
@@ -1268,7 +1274,9 @@ impl OneironClient {
     /// server admits them on a line of its own and reranks on its `[models]`
     /// reranker, or runs them unreranked and says so when it has none.
     /// `media` is embedded by the server into its declared space; embedded,
-    /// it returns `MODEL_UNAVAILABLE`.
+    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,
+    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded
+    /// and remote alike; out of range it returns `BAD_REQUEST`.
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -1283,6 +1291,7 @@ impl OneironClient {
         as_of: Option<u64>,
         deadline_ms: Option<u64>,
         media: Option<oneiron::code_run::vault_read::ContextPackMediaQuery>,
+        query_affect: Option<oneiron::task_verb::sdk::QueryAffect>,
     ) -> Result<oneiron::memory::MemoryPack, MemoryError> {
         let input = oneiron::task_verb::sdk::RecallRequest {
             query: query.to_owned(),
@@ -1293,7 +1302,7 @@ impl OneironClient {
             as_of,
             deadline_ms,
             media,
-            ..Default::default()
+            query_affect,
         };
         oneiron::memory::caps::check_query(&input.query)?;
         oneiron::memory::caps::check_limit_nonzero(
@@ -3872,7 +3881,7 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.body.fork.diff", value)
     }
-    /// A person lands a reviewed fork.
+    /// Lands one reviewed fork on an answer.
     pub fn vault_artifacts_body_fork_merge(
         &self,
         input: &oneiron::office_body::OfficeBodyForkMergeRequest,
@@ -3897,6 +3906,32 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.body.fork.discard", value)
+    }
+    /// An office proposal: its members, answers and settlement.
+    pub fn vault_artifacts_body_proposal_read(
+        &self,
+        input: &oneiron::office_body::OfficeBodyProposalRequest,
+    ) -> Result<oneiron::office_body::OfficeBodyProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.proposal.read", value)
+    }
+    /// Accepts or rejects an office proposal's reviewed forks.
+    pub fn vault_artifacts_body_proposal_settle(
+        &self,
+        input: &oneiron::office_body::OfficeBodyProposalSettleRequest,
+    ) -> Result<oneiron::office_body::OfficeBodyProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.proposal.settle", value)
     }
     /// Exports the live body as the artifact's next version.
     pub fn vault_artifacts_body_export(

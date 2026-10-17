@@ -80,7 +80,13 @@ const SECRET_REVEAL_CONTENT_KIND: &str = "secret_reveal";
 
 /// The version of the engine's disclosure line, bound into the once digest:
 /// a change of wording is a different ask.
-const DISCLOSURE_VERSION: &str = "secret_reveal.disclosure.v1";
+const DISCLOSURE_VERSION: &str = "secret_reveal.disclosure.v2";
+
+/// What the disclosure line names when no host named the agent's model
+/// provider (an external HTTP or MCP agent, or a model no ladder served).
+/// One constant, so a ruling changes one line.
+pub const UNKNOWN_PROVIDER_DISCLOSURE: &str =
+    "this agent's model provider, which this host does not know";
 
 /// Domain of the digest an owner's answer authorizes.
 const ONCE_DIGEST_DOMAIN: &[u8] = b"oneiron.secret_reveal.once.v1";
@@ -332,8 +338,9 @@ pub enum HandleReveal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RevealAsker {
     agent: EntityId,
-    /// No host names the model provider to the engine yet; the disclosure
-    /// line then names "the model provider this agent runs on".
+    /// The model provider the host's ladder served the agent's turn from;
+    /// `None` when no host named one, and the disclosure line then says the
+    /// provider is unknown ([`UNKNOWN_PROVIDER_DISCLOSURE`]).
     provider: Option<String>,
     project: Option<EntityId>,
     run: Option<String>,
@@ -347,6 +354,12 @@ impl RevealAsker {
             project,
             run,
         }
+    }
+
+    /// This asker with the model provider its host named, if any.
+    pub(crate) fn with_provider(mut self, provider: Option<&str>) -> Self {
+        self.provider = provider.map(str::to_owned);
+        self
     }
 
     fn connection(&self) -> String {
@@ -651,8 +664,8 @@ fn disclosure_line(what: &str, connection: &str, provider: Option<&str>) -> Stri
             "{what} through {connection} to {provider}; {provider} and its logs then hold it."
         ),
         None => format!(
-            "{what} through {connection} to the model provider this agent runs on; that \
-             provider and its logs then hold it."
+            "{what} through {connection} to {UNKNOWN_PROVIDER_DISCLOSURE}; that provider and \
+             its logs then hold it."
         ),
     }
 }

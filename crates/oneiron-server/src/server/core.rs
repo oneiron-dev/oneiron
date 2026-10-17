@@ -112,6 +112,9 @@ pub struct SyncServer {
     /// Runs the reader children code runs spawn, on the code host once one
     /// is bound, and keeps their clock (ARCH-0079 #reader-forks).
     pub(crate) reader_runner: Arc<super::ReaderRunner>,
+    /// The live agent runs a harness may act for over HTTP (OF-181): each
+    /// runner's lease proof, its attached credential and its guard.
+    pub(crate) live_runs: Arc<super::LiveRuns>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -400,6 +403,7 @@ impl SyncServer {
             mcp_registry,
             mcp_code_host: None,
             reader_runner,
+            live_runs: Arc::default(),
             browser_guest: None,
             desktop_guest: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
