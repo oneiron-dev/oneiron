@@ -29,7 +29,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
 use crate::learning::{TeamEvent, project_run_coordination, team_events_from_attempts};
-use crate::learning_setting::{SettingSpec, setting_value_scoped_in_txn};
+use crate::learning_setting::{SettingSpec, setting_value_in_scope_in_txn};
 use crate::llm::run_admission::LeaseUnit;
 use crate::llm::{DreamerTrapKind, OpenTrapWait, open_trap_waits};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
@@ -452,8 +452,8 @@ impl DialBook {
     }
 }
 
-/// The dials one project and task type resolve to. A type row matches its
-/// node at any tree version.
+/// The dials one project and task type resolve to: goal, project, task type,
+/// then vault rows (OF-542). A type row matches its node at any tree version.
 fn read_dials(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -465,7 +465,7 @@ fn read_dials(
         tree_version: 0,
     });
     let value = |spec: &SettingSpec| {
-        setting_value_scoped_in_txn(&vault.store, rtxn, spec, project, type_ref.as_ref())
+        setting_value_in_scope_in_txn(vault, rtxn, spec, project, type_ref.as_ref())
     };
     Ok(Dials {
         review: value(&HEALTH_REVIEW)? >= 0.5,
