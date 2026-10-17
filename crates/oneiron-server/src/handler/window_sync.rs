@@ -67,6 +67,16 @@ pub(super) async fn handle_window_sync(
     }
 
     if sub_tag == window_sub_tags::PROMOTION_REQUEST {
+        // Every opened-item machine of this vault asks for the embedding setup window (OF-370),
+        // whatever it opened. A home that holds no such window, or does not grant it to this
+        // machine, answers nothing, and the machine asks again on its next connection.
+        let setup = key == WindowKey::from_timestamp(oneiron::embed::EMBEDDING_SETUP_LEARNED_AT);
+        if setup
+            && protocol::is_residence_version(conn_state.protocol_version)
+            && !read_window_list(&server.root_doc).contains(&key)
+        {
+            return Ok(());
+        }
         if !protocol::is_residence_version(conn_state.protocol_version)
             || payload.len() > 4096
             || !read_window_list(&server.root_doc).contains(&key)
@@ -83,14 +93,20 @@ pub(super) async fn handle_window_sync(
             .await
             .map_err(|e| ProtocolError::Persistence(e.to_string()))?;
         let doc = window.doc.clone();
-        authorize_promoted_window(
-            server,
-            require_bound_app_auth(server, conn_state)?,
-            conn_state.peer_machine(server.vault()),
-            &key,
-            &selector,
-            &doc,
-        )?;
+        let authorized = require_bound_app_auth(server, conn_state).and_then(|auth| {
+            authorize_promoted_window(
+                server,
+                auth,
+                conn_state.peer_machine(server.vault()),
+                &key,
+                &selector,
+                &doc,
+            )
+        });
+        if setup && authorized.is_err() {
+            return Ok(());
+        }
+        authorized?;
         // The baseline is the root of the snapshot the home would serve this promotion, never a
         // version the device states. A second promotion can only raise it.
         let floor =

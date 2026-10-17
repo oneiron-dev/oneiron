@@ -22,7 +22,7 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{
     BudgetLine, HostAccount, LeaseUnit, RunAdmission, RunDeclaration, RunReceiptSink,
 };
-use oneiron::{BudgetGuard, ModelId, ModelLocality};
+use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
 use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
 use oneiron_llm_openai::{OpenAiCompatBackend, OpenAiCompatConfig};
 
@@ -74,7 +74,7 @@ pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 pub use hosted_speech::HostedCloner;
-pub(crate) use http::mark_cloud_node;
+pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::ServedOffer;
@@ -305,6 +305,12 @@ impl ModelRuntime {
                                 ladder.model().clone(),
                                 model_family(&model, provider).map(str::to_owned),
                             );
+                            if let Ok(entry) = catalog_entry(&model, provider) {
+                                router.chat_entry(LlmCatalogEntry {
+                                    model: ladder.model().clone(),
+                                    ..entry
+                                });
+                            }
                         }
                         router.insert(ladder.model().clone(), provider.locality, ladder);
                     }
@@ -403,6 +409,7 @@ impl ModelRuntime {
                 }
                 None
             });
+        router.name_aliases(&config.aliases);
         Self {
             seats,
             router: (!router.is_empty()).then(|| Arc::new(router)),
