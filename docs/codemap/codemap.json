@@ -43286,7 +43286,7 @@
      "path": "src/store/gate_decision/types.rs",
      "purpose": "Gate-decision ledger record shapes, id type, and version and bound consts",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3,
       "struct": 4
      }
@@ -64749,7 +64749,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
       "crate-vis": 25,
-      "fn": 21,
+      "fn": 22,
       "re-export": 1,
       "struct": 2
      }
