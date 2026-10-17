@@ -72,7 +72,7 @@ pub struct ShapePlanSummary {
 
 impl ShapePlanSummary {
     /// The count over `items`.
-    pub fn of<'a>(items: impl IntoIterator<Item = &'a ShapePlanItem>) -> Self {
+    pub fn of(items: impl IntoIterator<Item = &ShapePlanItem>) -> Self {
         let mut summary = Self::default();
         for item in items {
             summary.changes += 1;
