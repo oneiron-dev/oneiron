@@ -607,31 +607,6 @@ def mcp_input_dispatch(row):
     body += 'mcp_agent_verb_output(output, source)'
     return f'{json.dumps(name)} => {{\n{body} }},\n'
 
-def mcp_door_admission():
-    'The authority check each row\'s own door runs ahead of its pre chain (OF-580).'
-    # As the REST facade's `facade_hooks_pre` runs it: a full-vault row's owner
-    # admission, and a host door's `door_admits`. A hook never fires on a call
-    # the door then refuses; the door asks again for the proof it acts under.
-    arms = ''
-    for row in mcp_rows():
-        if not row.get('admission', {}).get('owner_grade'): continue
-        arms += (f'{json.dumps(row["name"])} => {{\n'
-                 'let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
-                 'if !auth.is_owner_grade() { return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires owner authority")); }\n'
-                 'let proof = auth.verified_slip().ok_or_else(|| McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority"))?;\n'
-                 'let admitted = if proof.claims().holder_ref == "host" { server.vault.admit_host_owner_export(proof) } else { memory.admit_export(Some(proof)) };\n'
-                 'admitted.map_err(mcp_facade_error)?;\n}\n')
-    doors = [json.dumps(row['name']) for row in mcp_rows() if row.get('host_door')]
-    if doors:
-        arms += (' | '.join(doors) + ' => {\n'
-                 'let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
-                 'crate::api::facade::host_door_admits(server, auth, tool).map_err(mcp_facade_error)?;\n}\n')
-    if not arms: return ''
-    return ('// Each row\'s own door checks its authority before the pre chain, as\n'
-            '// the REST facade\'s does, so a hook never fires on a call the door\n'
-            '// refuses (OF-580). The row asks again for the proof it acts under.\n'
-            'match tool {\n' + arms + '_ => {}\n}\n')
-
 def mcp_dispatch():
     invalid = 'let invalid = || McpGatewayError::new(-32602, "tool_args_invalid", "invalid typed agent-verb argument");\n'
     result = '''/// A `tools/call` of one generated verb: its arguments assemble the verb's typed
@@ -678,8 +653,7 @@ pub(crate) async fn execute_agent_verb_input(
 /// [`execute_agent_verb_input`], its surface listing in `producers` the rows
 /// its reads pick. Every MCP and code-mode row crosses its verb hooks here,
 /// once (ARCH-0080 §3), under the invocation the call carried or a fresh
-/// one: the row's door checks its authority, then the pre chain runs before
-/// the row and the post chain over its result.
+/// one: the pre chain before the row, the post chain over its result.
 async fn execute_agent_verb_listing(
         server: &Arc<SyncServer>,
         tool: &str,
@@ -705,9 +679,7 @@ async fn execute_agent_verb_listing(
     let invocation = actor.invocation.unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
     let memory = crate::api::credential_memory(&server.vault, actor.auth.as_ref(), actor.actor_ref, actor.actor_class).at(actor.locality()).with_birth_position(position).listing_producers(producers).with_invocation(invocation);
     let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
-'''
-    result += mcp_door_admission()
-    result += '''    let hooks = crate::api::facade::row_hooks_pre(server, actor.actor_ref, actor.actor_class, Some(invocation), tool, input).await.map_err(mcp_facade_error)?;
+    let hooks = crate::api::facade::row_hooks_pre(server, actor.actor_ref, actor.actor_class, Some(invocation), tool, input).await.map_err(mcp_facade_error)?;
     let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
     Ok((output, source, carrier, epoch))

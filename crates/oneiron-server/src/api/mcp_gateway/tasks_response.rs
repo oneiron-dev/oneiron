@@ -1525,8 +1525,7 @@ pub(crate) async fn execute_agent_verb_input(
 /// [`execute_agent_verb_input`], its surface listing in `producers` the rows
 /// its reads pick. Every MCP and code-mode row crosses its verb hooks here,
 /// once (ARCH-0080 §3), under the invocation the call carried or a fresh
-/// one: the row's door checks its authority, then the pre chain runs before
-/// the row and the post chain over its result.
+/// one: the pre chain before the row, the post chain over its result.
 async fn execute_agent_verb_listing(
     server: &Arc<SyncServer>,
     tool: &str,
@@ -1586,87 +1585,6 @@ async fn execute_agent_verb_listing(
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
     };
-    // Each row's own door checks its authority before the pre chain, as
-    // the REST facade's does, so a hook never fires on a call the door
-    // refuses (OF-580). The row asks again for the proof it acts under.
-    match tool {
-        "vault.export" => {
-            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
-            if !auth.is_owner_grade() {
-                return Err(McpGatewayError::new(
-                    -32020,
-                    "forbidden",
-                    "full-vault export requires owner authority",
-                ));
-            }
-            let proof = auth.verified_slip().ok_or_else(|| {
-                McpGatewayError::new(
-                    -32020,
-                    "forbidden",
-                    "full-vault export requires verified owner authority",
-                )
-            })?;
-            let admitted = if proof.claims().holder_ref == "host" {
-                server.vault.admit_host_owner_export(proof)
-            } else {
-                memory.admit_export(Some(proof))
-            };
-            admitted.map_err(mcp_facade_error)?;
-        }
-        "self.memory.diary.query"
-        | "vault.weave.lens"
-        | "vault.weave.link.wrong"
-        | "vault.packs.put"
-        | "vault.packs.setup.prepare"
-        | "vault.packs.setup.get"
-        | "vault.packs.setup.answer"
-        | "vault.packs.setup.verify"
-        | "vault.authority.audit"
-        | "vault.shared.propose_delete"
-        | "vault.shared.propose_transfer"
-        | "vault.shared.propose_remove_owner"
-        | "vault.shared.execute"
-        | "vault.shared.receipt"
-        | "vault.shared.outcomes"
-        | "vault.shared.deletion"
-        | "vault.members.add"
-        | "vault.members.change"
-        | "vault.members.remove"
-        | "vault.members.leave"
-        | "vault.guests.revoke"
-        | "vault.authority.handoff_alarms"
-        | "vault.authority.handoff_alarms.acknowledge"
-        | "vault.legal_holds.place"
-        | "vault.legal_holds.widen"
-        | "vault.legal_holds.list"
-        | "vault.legal_holds.log"
-        | "vault.legal_holds.lift_and_erase"
-        | "vault.lenses.activate"
-        | "vault.lenses.deactivate"
-        | "vault.shares.revoke"
-        | "vault.shares.view"
-        | "vault.hooks.replay"
-        | "vault.artifacts.review_slides"
-        | "ai.options"
-        | "ai.image"
-        | "ai.speech"
-        | "ai.transcribe"
-        | "ai.embed"
-        | "ai.video"
-        | "ai.video.poll"
-        | "ai.video.cancel"
-        | "ai.verdict"
-        | "vault.graph.ask"
-        | "vault.questions.create"
-        | "vault.questions.edit"
-        | "vault.questions.pause"
-        | "vault.questions.read"
-        | "vault.questions.answers" => {
-            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
-            crate::api::facade::host_door_admits(server, auth, tool).map_err(mcp_facade_error)?;
-        }
-        _ => {}
-    }
     let hooks = crate::api::facade::row_hooks_pre(
         server,
         actor.actor_ref,
