@@ -1496,7 +1496,7 @@ class Oneiron:
             """A workspace's work_companion policy, readable by every member it governs."""
             return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_get(json.dumps(spec))))
         def set(self, spec):
-            """The owner sets a workspace's work_companion policy in person."""
+            """The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."""
             return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_set(json.dumps(spec))))
     class _VaultGraphVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -1598,7 +1598,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def create(self, spec):
-            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
+            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""
             return json.loads(_translate(lambda: self._client.tasks_create(json.dumps(spec))))
         def wave(self, spec):
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
@@ -1606,6 +1606,9 @@ class Oneiron:
         def update(self, spec):
             """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
             return json.loads(_translate(lambda: self._client.tasks_update(json.dumps(spec))))
+        def accept(self, spec):
+            """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
+            return json.loads(_translate(lambda: self._client.tasks_accept(json.dumps(spec))))
         def answer(self, handle, word):
             """Admits one person's word on an ask; the word is evidence, never approval."""
             return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))
@@ -1628,7 +1631,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def options(self, spec):
-            """The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left."""
+            """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
         def image(self, spec):
             """One image out of the host's image model; reference images make it an edit."""
