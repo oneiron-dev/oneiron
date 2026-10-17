@@ -20,6 +20,7 @@ mod content;
 #[cfg(feature = "sync")]
 mod content_window;
 mod doors;
+mod kit;
 mod machine;
 mod pads;
 mod reassert;
@@ -44,6 +45,10 @@ pub use self::content::{
 pub use self::content_window::SealedTake;
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
+pub use self::kit::{
+    ConfirmedWorldKit, IssuedWorldKit, StoredCost, StoredKit, WORLD_KIT_ESCROW, WorldKitRestore,
+    WorldKitStatus,
+};
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::machine::{machine_encryption_key, machine_secret};
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
