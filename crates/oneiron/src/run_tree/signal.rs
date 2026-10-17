@@ -518,7 +518,7 @@ impl RunTreeAdapter<'_> {
         txn: &mut heed::RwTxn<'_>,
         record: &mut crate::attempt_queue::AttemptRecord,
     ) -> Result<()> {
-        let raw = crate::attempt_queue::encode_signal_record(self.vault, txn, record)?;
+        let raw = crate::attempt_queue::encode_admitted_signal_record(self.vault, txn, record)?;
         self.vault
             .store
             .attempt_records
