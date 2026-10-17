@@ -15,6 +15,7 @@ pub(crate) mod feedback;
 pub(crate) mod graph_fs;
 pub(crate) mod healer;
 pub(crate) mod history;
+pub(crate) mod house;
 pub(crate) mod imports;
 pub(crate) mod location;
 pub(crate) mod note_imports;
