@@ -292,6 +292,8 @@ class Oneiron:
             """Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."""
         @property
         def grants(self) -> "Oneiron._SelfGrantsVerbs": ...
+        def use(self, spec: Facade.SecretUseRequest) -> Facade.SecretUseAnswer:
+            """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
         @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs": ...
         @property

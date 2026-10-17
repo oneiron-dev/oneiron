@@ -90,6 +90,12 @@ pub struct HostSelfDispatcher<'a> {
     /// The host's planner (OF-541, OF-389): what a planned spawn and the
     /// leader's calls read. Host configuration; no guest call reaches it.
     pub(super) planner: Option<HostPlannerBinding<'a>>,
+    /// The model provider the host's ladder says answered the run's last
+    /// turn, whose program is the one running (OF-560). Host-internal: only
+    /// [`Self::observe_model_provider`] sets it, from the served receipt,
+    /// and every verb call's origin carries it. `None` when no ladder
+    /// stamped the turn.
+    pub(super) model_provider: RefCell<Option<String>>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -208,6 +214,7 @@ impl<'a> HostSelfDispatcher<'a> {
             reader_spawn: None,
             reader_child: None,
             planner: None,
+            model_provider: RefCell::new(None),
         })
     }
 
@@ -290,6 +297,18 @@ impl<'a> HostSelfDispatcher<'a> {
             self.external_effect_seen.set(true);
         }
         self.observe_parked_hooks(bridge_calls);
+    }
+
+    /// The HOST calls this with each turn's answer before its program runs:
+    /// the provider its ladder served the turn from, or `None` when no ladder
+    /// stamped it. Each verb call the program makes carries it on its origin.
+    pub(crate) fn observe_model_provider(&self, provider: Option<&str>) {
+        *self.model_provider.borrow_mut() = provider.map(str::to_owned);
+    }
+
+    /// The provider [`Self::observe_model_provider`] last recorded.
+    pub(super) fn model_provider(&self) -> Option<String> {
+        self.model_provider.borrow().clone()
     }
 
     /// The bound session ref, or `None` for a canonical run.

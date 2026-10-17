@@ -118,6 +118,7 @@ pub enum AgentVerb {
     Reveal,
     RevealWait,
     RevealDescribe,
+    SelfUse,
     VaultSharesCreate,
     VaultSharesRevoke,
     VaultSharesView,
@@ -391,6 +392,7 @@ impl AgentVerb {
         Self::Reveal,
         Self::RevealWait,
         Self::RevealDescribe,
+        Self::SelfUse,
         Self::VaultSharesCreate,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
@@ -671,6 +673,7 @@ impl AgentVerb {
             Self::Reveal => "reveal",
             Self::RevealWait => "reveal.wait",
             Self::RevealDescribe => "reveal.describe",
+            Self::SelfUse => "self.use",
             Self::VaultSharesCreate => "vault.shares.create",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
@@ -943,6 +946,7 @@ impl AgentVerb {
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1223,6 +1227,7 @@ impl AgentVerb {
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1528,6 +1533,7 @@ impl AgentVerb {
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1751,6 +1757,7 @@ impl AgentVerb {
                 | Self::VaultLensesDeactivate
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultArtifactsReleaseWait
@@ -1974,6 +1981,7 @@ impl AgentVerb {
             Self::Reveal => &["spec"],
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
+            Self::SelfUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -2248,6 +2256,7 @@ impl AgentVerb {
             Self::Reveal => &["spec"],
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
+            Self::SelfUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -2726,6 +2735,9 @@ impl AgentVerb {
             }
             Self::RevealDescribe => {
                 "What a secret handle names, where it was found and what a reveal of it would do now; never the value."
+            }
+            Self::SelfUse => {
+                "Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."
             }
             Self::VaultSharesCreate => {
                 "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."

@@ -606,6 +606,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.use",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SecretUseRequest,
+                >(),
+            ),
+            (
                 "vault.shares.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ShareCreateRequest,
@@ -2195,6 +2201,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.use" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.shares.create" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3438,6 +3451,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "reveal.describe" => {
             let _input: crate::task_verb::sdk::RevealDescribeRequest = decode(value.clone())?;
         }
+        "self.use" => {
+            let _input: crate::task_verb::sdk::SecretUseRequest = decode(value.clone())?;
+        }
         "vault.shares.create" => {
             let _input: crate::task_verb::sdk::ShareCreateRequest = decode(value.clone())?;
         }
@@ -4125,6 +4141,7 @@ pub fn invoke(
         "reveal" => encode(reveal(memory, decode(value)?)?),
         "reveal.wait" => encode(reveal_wait(memory, decode(value)?)?),
         "reveal.describe" => encode(reveal_describe(memory, decode(value)?)?),
+        "self.use" => encode(self_use(memory, decode(value)?)?),
         "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
         "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
@@ -5426,6 +5443,12 @@ pub fn reveal_describe(
     input: crate::task_verb::sdk::RevealDescribeRequest,
 ) -> MemoryResult<crate::task_verb::sdk::RevealHandleCard> {
     crate::task_verb::sdk::describe_secret_as_caller(memory, input)
+}
+pub fn self_use(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SecretUseRequest,
+) -> MemoryResult<crate::task_verb::sdk::SecretUseAnswer> {
+    crate::task_verb::sdk::use_secret_as_caller(memory, input)
 }
 pub fn vault_shares_create(
     memory: &Memory<'_>,

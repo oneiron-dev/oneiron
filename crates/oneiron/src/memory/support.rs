@@ -469,6 +469,10 @@ pub struct HostWriteOrigin {
     /// The running agent attempt the dispatcher bound as the call's TASK
     /// creator (OF-532), read from its live lease, never from the guest.
     task_host: Option<crate::task_verb::HostBinding>,
+    /// The model provider the host's ladder served the calling program's
+    /// turn from (OF-560), read from the served receipt, never from the
+    /// guest. `None` when no ladder stamped the turn.
+    model_provider: Option<String>,
 }
 
 impl HostWriteOrigin {
@@ -476,7 +480,20 @@ impl HostWriteOrigin {
         Self {
             envelope,
             task_host: None,
+            model_provider: None,
         }
+    }
+
+    /// This origin with the provider the run's last turn was served from.
+    pub(crate) fn with_model_provider(mut self, provider: Option<String>) -> Self {
+        self.model_provider = provider;
+        self
+    }
+
+    /// The model provider the host bound, if any.
+    #[must_use]
+    pub fn model_provider(&self) -> Option<&str> {
+        self.model_provider.as_deref()
     }
 
     /// This origin with the run's TASK creator binding, if it has one.
@@ -854,6 +871,17 @@ impl Memory<'_> {
         }
         self.host_origin = Some(origin);
         self
+    }
+
+    /// The model provider the host's origin names for this call (OF-560):
+    /// the one its ladder served the calling program's turn from. `None` for
+    /// a caller no host-run model drives, such as an external HTTP or MCP
+    /// agent.
+    #[must_use]
+    pub fn model_provider(&self) -> Option<&str> {
+        self.host_origin
+            .as_ref()
+            .and_then(HostWriteOrigin::model_provider)
     }
 
     /// Whether a host bound this surface to generated code's origin. Such a

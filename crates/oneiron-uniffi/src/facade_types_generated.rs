@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 231 facade rows, 667 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 191.
+// UniFFI census: 232 facade rows, 671 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 192.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -5104,6 +5104,61 @@ pub struct RevealHandleCard {
     pub grant_ref: Option<String>,
     #[serde(rename = "refusal", default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_secret_use::SecretUseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretUseRequest {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "operation")]
+    pub operation: String,
+    #[serde(rename = "arguments", default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<crate::WireJson>,
+}
+
+/// `oneiron::task_verb::sdk_secret_use::SecretUseStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SecretUseStatus {
+    #[serde(rename = "answered")]
+    Answered,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "withheld")]
+    Withheld,
+}
+
+/// `oneiron::task_verb::sdk_secret_use::SecretUseRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretUseRecord {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "generation")]
+    pub generation: u32,
+    #[serde(rename = "effector")]
+    pub effector: String,
+    #[serde(rename = "operation")]
+    pub operation: String,
+    #[serde(rename = "decision")]
+    pub decision: String,
+    #[serde(rename = "used_at")]
+    pub used_at: u64,
+}
+
+/// `oneiron::task_verb::sdk_secret_use::SecretUseAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretUseAnswer {
+    #[serde(rename = "status")]
+    pub status: SecretUseStatus,
+    #[serde(rename = "result", default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<crate::WireJson>,
+    #[serde(rename = "failure", default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    #[serde(rename = "receipt")]
+    pub receipt: SecretUseRecord,
 }
 
 /// `oneiron::share_travel::BornWithField`.
