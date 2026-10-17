@@ -492,6 +492,34 @@ export class Oneiron {
       create: (input: Facade.ArtifactCreateRequest): Facade.ArtifactView | null => this.#call(() => this.#client.vaultArtifactsCreate(input) as Facade.ArtifactView | null),
       /** Registers one blob artifact; its bytes ride vault.artifacts.append. */
       put: (input: Facade.BlobArtifactInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultArtifactsPut(input) as Facade.EntityRefReceipt),
+      body: {
+        /** Imports one office version as the artifact's live body. */
+        import: (request: Facade.OfficeBodyImportRequest): Facade.OfficeBodyHead => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyImport(keyedJson(request))) as Facade.OfficeBodyHead; return result }),
+        /** An artifact's live body head, or null. */
+        head: (request: Facade.OfficeBodyArtifactRequest): Facade.OfficeBodyHead | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyHead(keyedJson(request))) as Facade.OfficeBodyHead | null; return result === null ? null : result }),
+        /** Reads a DOCX or XLSX live body, at its head or an earlier frontier. */
+        read: (request: Facade.OfficeBodyReadRequest): Facade.OfficeBodyView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyRead(keyedJson(request))) as Facade.OfficeBodyView; return result }),
+        /** Every commit receipt of a live body, in commit order. */
+        commits: (request: Facade.OfficeBodyArtifactRequest): Facade.TextCommitReceipt[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyCommits(keyedJson(request))) as Facade.TextCommitReceipt[]; return result.map(item => item) }),
+        /** A person's typed operations on the live body. */
+        edit: (request: Facade.OfficeBodyEditRequest): Facade.OfficeBodyEdit => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyEdit(keyedJson(request))) as Facade.OfficeBodyEdit; return result }),
+        fork: {
+          /** Opens a fork of the live body for machine work. */
+          open: (request: Facade.OfficeBodyForkOpenRequest): Facade.OfficeBodyFork => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkOpen(keyedJson(request))) as Facade.OfficeBodyFork; return result }),
+          /** The opener's typed operations on its fork. */
+          edit: (request: Facade.OfficeBodyForkEditRequest): Facade.OfficeBodyEdit => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkEdit(keyedJson(request))) as Facade.OfficeBodyEdit; return result }),
+          /** A fork's three-way diff against the live head. */
+          diff: (request: Facade.OfficeBodyForkRequest): Facade.OfficeBodyDiff => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkDiff(keyedJson(request))) as Facade.OfficeBodyDiff; return result }),
+          /** A person lands a reviewed fork. */
+          merge: (request: Facade.OfficeBodyForkMergeRequest): Facade.OfficeBodyDiff => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkMerge(keyedJson(request))) as Facade.OfficeBodyDiff; return result }),
+          /** Abandons an open fork's unlanded work. */
+          discard: (request: Facade.OfficeBodyForkRequest): Facade.OfficeBodyFork => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkDiscard(keyedJson(request))) as Facade.OfficeBodyFork; return result }),
+        },
+        /** Exports the live body as the artifact's next version. */
+        export: (request: Facade.OfficeBodyExportVerbRequest): Facade.OfficeBodyExportView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyExport(keyedJson(request))) as Facade.OfficeBodyExportView; return result }),
+        /** The workbook an XLSX export would land now, recalculated. */
+        preview: (request: Facade.OfficeBodyArtifactRequest): Facade.XlsxPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyPreview(keyedJson(request))) as Facade.XlsxPreview; return result }),
+      },
       /** Appends one version of bytes to a blob artifact's append-only chain. */
       append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionView => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionView),
       /** Reads one version of a blob artifact's bytes. */
@@ -678,6 +706,10 @@ export class Oneiron {
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
       edit: (input: Facade.EditNoteRequest): Facade.NoteEditOutcome => this.#call(() => this.#client.vaultNotesEdit(input) as Facade.NoteEditOutcome),
+      /** Seals one NOTE: its document freezes, and a later edit opens a fork. */
+      seal: (request: Facade.NoteRefRequest): Facade.NoteSeal => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSeal(keyedJson(request))) as Facade.NoteSeal; return result }),
+      /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal. */
+      lifecycle: (request: Facade.NoteRefRequest): Facade.NoteLifecycleView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesLifecycle(keyedJson(request))) as Facade.NoteLifecycleView; return result }),
     },
   }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
@@ -739,6 +771,10 @@ export class Oneiron {
     list: (input: Facade.ConnectorListRequest): Facade.ConnectorEntry[] => this.#call(() => this.#client.connectorList(input) as Facade.ConnectorEntry[]),
     /** One catalogued connector by name, removed ones included. */
     status: (input: Facade.ConnectorNameRequest): Facade.ConnectorView | null => this.#call(() => this.#client.connectorStatus(input) as Facade.ConnectorView | null),
+    /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
+    call: (input: Facade.ConnectorCallRequest): Facade.ConnectorCallReply => this.#call(() => this.#client.connectorCall(input) as Facade.ConnectorCallReply),
+    /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
+    schema: (input: Facade.ConnectorSchemaRequest): Facade.ConnectorSchemaReply => this.#call(() => this.#client.connectorSchema(input) as Facade.ConnectorSchemaReply),
     outbound: {
       /** Schedules one send through a granted outbound connector, gated and held for delivery. */
       schedule: (input: Facade.OutboundScheduleRequest): Facade.OutboundIntentReceipt => this.#call(() => this.#client.connectorOutboundSchedule(input) as Facade.OutboundIntentReceipt),

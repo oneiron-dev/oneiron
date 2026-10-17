@@ -3047,6 +3047,32 @@
       "section": false
     },
     {
+      "name": "connector.call",
+      "description": "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data.",
+      "input": "crate::outbound_consent::ConnectorCallRequest",
+      "output": "crate::task_verb::sdk::ConnectorCallReply",
+      "call": "crate::task_verb::sdk::connector_call_host_only(memory, &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "connector.schema",
+      "description": "One catalogued connector tool's approved input schema, as the caller's own grant resolves it.",
+      "input": "crate::task_verb::sdk::ConnectorSchemaRequest",
+      "output": "crate::task_verb::sdk::ConnectorSchemaReply",
+      "call": "crate::task_verb::sdk::connector_schema_read(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "self.browser.open",
       "description": "Opens a URL in the run's own browser session and observes the page.",
       "input": "oneiron_browser::OpenInput",
@@ -3902,6 +3928,411 @@
       }
     },
     {
+      "name": "vault.artifacts.body.import",
+      "description": "Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document.",
+      "refs": [
+        "/artifact_ref",
+        "/made_by/inputs/*/row",
+        "/made_by/trigger/task",
+        "/made_by/trigger/ask",
+        "/made_by/trigger/skill"
+      ],
+      "input": "crate::office_body::OfficeBodyImportRequest",
+      "output": "crate::office_body::OfficeBodyHead",
+      "call": "memory.artifacts_body_import(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Imports one office version as the artifact's live body.\n",
+          "ts": "/** Imports one office version as the artifact's live body. */",
+          "py": "Imports one office version as the artifact's live body."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.head",
+      "description": "An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyArtifactRequest",
+      "output": "Option<crate::office_body::OfficeBodyHead>",
+      "call": "memory.artifacts_body_head(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// An artifact's live body head, or null.\n",
+          "ts": "/** An artifact's live body head, or null. */",
+          "py": "An artifact's live body head, or null."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.read",
+      "description": "Reads a DOCX or XLSX live body as typed blocks or cells, at its head or at an earlier frontier of its history.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyReadRequest",
+      "output": "crate::office_body::OfficeBodyView",
+      "call": "memory.artifacts_body_read(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Reads a DOCX or XLSX live body, at its head or an earlier frontier.\n",
+          "ts": "/** Reads a DOCX or XLSX live body, at its head or an earlier frontier. */",
+          "py": "Reads a DOCX or XLSX live body, at its head or an earlier frontier."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.commits",
+      "description": "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyArtifactRequest",
+      "output": "Vec<crate::provenance::text_commit::TextCommitReceipt>",
+      "call": "memory.artifacts_body_commits(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Every commit receipt of a live body, in commit order.\n",
+          "ts": "/** Every commit receipt of a live body, in commit order. */",
+          "py": "Every commit receipt of a live body, in commit order."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.edit",
+      "description": "A person's typed DOCX or XLSX operations on the live body, read against a base frontier (the head by default) and merged into the head.",
+      "refs": [
+        "/artifact_ref",
+        "/made_by/inputs/*/row",
+        "/made_by/trigger/task",
+        "/made_by/trigger/ask",
+        "/made_by/trigger/skill"
+      ],
+      "input": "crate::office_body::OfficeBodyEditRequest",
+      "output": "crate::office_body::OfficeBodyEdit",
+      "call": "memory.artifacts_body_edit(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// A person's typed operations on the live body.\n",
+          "ts": "/** A person's typed operations on the live body. */",
+          "py": "A person's typed operations on the live body."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.fork.open",
+      "description": "Opens a fork of the live body at its head for machine work, in an optional run.",
+      "refs": [
+        "/artifact_ref",
+        "/run_root_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyForkOpenRequest",
+      "output": "crate::office_body::OfficeBodyFork",
+      "call": "memory.artifacts_body_fork_open(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Opens a fork of the live body for machine work.\n",
+          "ts": "/** Opens a fork of the live body for machine work. */",
+          "py": "Opens a fork of the live body for machine work."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.fork.edit",
+      "description": "The opener's typed DOCX or XLSX operations on its open fork of a live body.",
+      "refs": [
+        "/artifact_ref",
+        "/fork_ref",
+        "/made_by/inputs/*/row",
+        "/made_by/trigger/task",
+        "/made_by/trigger/ask",
+        "/made_by/trigger/skill"
+      ],
+      "input": "crate::office_body::OfficeBodyForkEditRequest",
+      "output": "crate::office_body::OfficeBodyEdit",
+      "call": "memory.artifacts_body_fork_edit(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The opener's typed operations on its fork.\n",
+          "ts": "/** The opener's typed operations on its fork. */",
+          "py": "The opener's typed operations on its fork."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.fork.diff",
+      "description": "A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show.",
+      "refs": [
+        "/artifact_ref",
+        "/fork_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyForkRequest",
+      "output": "crate::office_body::OfficeBodyDiff",
+      "call": "memory.artifacts_body_fork_diff(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// A fork's three-way diff against the live head.\n",
+          "ts": "/** A fork's three-way diff against the live head. */",
+          "py": "A fork's three-way diff against the live head."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.fork.merge",
+      "description": "A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses.",
+      "refs": [
+        "/artifact_ref",
+        "/fork_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyForkMergeRequest",
+      "output": "crate::office_body::OfficeBodyDiff",
+      "call": "memory.artifacts_body_fork_merge(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// A person lands a reviewed fork.\n",
+          "ts": "/** A person lands a reviewed fork. */",
+          "py": "A person lands a reviewed fork."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.fork.discard",
+      "description": "Abandons an open fork's unlanded work and returns its record.",
+      "refs": [
+        "/artifact_ref",
+        "/fork_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyForkRequest",
+      "output": "crate::office_body::OfficeBodyFork",
+      "call": "memory.artifacts_body_fork_discard(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Abandons an open fork's unlanded work.\n",
+          "ts": "/** Abandons an open fork's unlanded work. */",
+          "py": "Abandons an open fork's unlanded work."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.export",
+      "description": "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator.",
+      "refs": [
+        "/artifact_ref",
+        "/made_by/inputs/*/row",
+        "/made_by/trigger/task",
+        "/made_by/trigger/ask",
+        "/made_by/trigger/skill"
+      ],
+      "input": "crate::office_body::OfficeBodyExportVerbRequest",
+      "output": "crate::office_body::OfficeBodyExportView",
+      "call": "memory.artifacts_body_export(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Exports the live body as the artifact's next version.\n",
+          "ts": "/** Exports the live body as the artifact's next version. */",
+          "py": "Exports the live body as the artifact's next version."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.preview",
+      "description": "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyArtifactRequest",
+      "output": "crate::office_body::XlsxPreview",
+      "call": "memory.artifacts_body_preview(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The workbook an XLSX export would land now, recalculated.\n",
+          "ts": "/** The workbook an XLSX export would land now, recalculated. */",
+          "py": "The workbook an XLSX export would land now, recalculated."
+        }
+      }
+    },
+    {
       "name": "vault.artifacts.append",
       "description": "Appends one version of bytes to a blob artifact's append-only chain.",
       "uniffi": {
@@ -4127,6 +4558,66 @@
         "request": true
       },
       "section": false
+    },
+    {
+      "name": "vault.notes.seal",
+      "description": "Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays.",
+      "refs": ["/note_ref"],
+      "input": "crate::note::NoteRefRequest",
+      "output": "crate::note::NoteSeal",
+      "call": "memory.seal_note(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Seals one NOTE: its document freezes, and a later edit opens a fork.\n",
+          "ts": "/** Seals one NOTE: its document freezes, and a later edit opens a fork. */",
+          "py": "Seals one NOTE: its document freezes, and a later edit opens a fork."
+        }
+      }
+    },
+    {
+      "name": "vault.notes.lifecycle",
+      "description": "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one.",
+      "refs": ["/note_ref"],
+      "input": "crate::note::NoteRefRequest",
+      "output": "crate::note::NoteLifecycleView",
+      "call": "memory.note_lifecycle(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Where one NOTE stands (active, sealed, archived or tombstoned) and its seal.\n",
+          "ts": "/** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal. */",
+          "py": "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal."
+        }
+      }
     },
     {
       "name": "self.fold",
