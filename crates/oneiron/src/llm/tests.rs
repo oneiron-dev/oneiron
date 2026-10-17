@@ -271,6 +271,7 @@ fn sample_envelope() -> CallEnvelope {
             vault_policy: Some(ModelTierRef("cheap".to_owned())),
             purpose_default: Some(ModelTierRef("tiny".to_owned())),
             global_default: ModelTierRef("standard".to_owned()),
+            seat: None,
         },
         response_format: ResponseFormat::Json {
             schema: json!({
