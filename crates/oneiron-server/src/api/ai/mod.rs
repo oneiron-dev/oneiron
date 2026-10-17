@@ -18,12 +18,15 @@ use crate::server::SyncServer;
 
 pub(crate) mod chat;
 mod media;
+mod options;
 mod vision;
 mod voices;
 mod waves;
 
 // The facade's `ai.speech` door binds its voice as this wire does (OF-410).
 pub(crate) use media::{VoiceRefusal, bind_voice};
+// Every `ai.options` door lists through one projection (FIX 2942).
+pub(crate) use options::caller_options;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
