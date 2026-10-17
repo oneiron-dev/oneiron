@@ -5,7 +5,9 @@
 
 use rmpv::Value;
 
-use super::{AgentHealthCounter, Attempts, Dispatches, Finding, entity, settled, task_of};
+use super::{
+    AgentHealthCounter, Attempts, DialBook, Dispatches, Finding, entity, settled, task_of,
+};
 use crate::attempt_queue::AttemptState;
 use crate::code_run::SelfEffect;
 use crate::self_heal::AgentHealthSignal;
@@ -18,7 +20,7 @@ pub(super) fn run_loop_findings(
     vault: &Vault,
     dispatched: &Dispatches,
     attempts: &Attempts,
-    repeats: u64,
+    book: &DialBook,
     since: u64,
 ) -> Result<Vec<Finding>> {
     let mut out = Vec::new();
@@ -36,6 +38,7 @@ pub(super) fn run_loop_findings(
         let Some(run) = vault.get_code_run_replay_record(&attempt)? else {
             continue;
         };
+        let repeats = book.of(Some(dispatch)).loop_repeats;
         let calls = &run.bridge_calls;
         let mut start = 0;
         while start < calls.len() {
