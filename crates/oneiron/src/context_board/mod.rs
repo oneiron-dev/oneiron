@@ -13,10 +13,10 @@ mod fanout;
 pub use explain::{GateExplanation, MemoryExplanation};
 pub use fanout::fanout_action_rows;
 mod people;
-pub(crate) use people::ensure_agent_person;
 pub use people::{
     PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,
 };
+pub(crate) use people::{ensure_agent_person, ensure_agent_person_in_txn};
 mod inbox;
 pub use inbox::assemble_inbox_section;
 mod observations;

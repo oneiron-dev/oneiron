@@ -4,7 +4,7 @@ use super::base::SyncClient;
 use super::federated::map_federated_admission_err;
 use crate::sync::WindowKey;
 use crate::sync::federation_burst::{DeferredWork, FederationPeer, WorkKind};
-use crate::sync::selector::{FederationAdmissionRole, admit_peer_window_update};
+use crate::sync::selector::{FederationAdmissionRole, admit_peer_window_update_as};
 use crate::sync::transport::TransportError;
 
 impl SyncClient {
@@ -42,15 +42,20 @@ impl SyncClient {
             }
         };
         let key = WindowKey::try_new(&work.window).ok_or(TransportError::InvalidWindowKey)?;
+        // The peer's standing is read again too (FIX 360). No standing
+        // refuses the update and leaves its row held, as a lapsed grant does.
+        let standing = peer
+            .membership(&self.vault)
+            .map_err(map_federated_admission_err)?;
         // The grant and the local claim gate are read again at the actual
         // admission door. Stored raw bytes are not trusted replay authority.
         // Admission authors deterministic local op ids from these exact bytes.
-        let admitted = match admit_peer_window_update(
+        let admitted = match admit_peer_window_update_as(
             &self.vault,
             &key,
             &work.payload,
             role,
-            peer.principal(),
+            (peer.principal(), standing),
         ) {
             Ok(admitted) => admitted,
             Err(error) => {
