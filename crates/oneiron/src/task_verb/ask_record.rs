@@ -40,7 +40,6 @@ const ASK_ORIGIN: SideTable<(), EntityId, side_table::Raw> =
 
 const GROUP: &str = "tasks.ask_group";
 const ANSWER: &str = "tasks.ask_answer";
-const MAX_MEMBERS: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -359,10 +358,7 @@ pub(super) fn read_group(
         return Ok(None);
     };
     entity(&group.owner)?;
-    if group.base_policy_version != 1
-        || group.members.is_empty()
-        || group.members.len() > MAX_MEMBERS
-    {
+    if group.base_policy_version != 1 || group.members.is_empty() {
         return Err(invalid());
     }
     let mut tasks = std::collections::BTreeSet::new();
@@ -381,10 +377,7 @@ pub(super) fn put_group(
     id: EntityId,
     group: &AskGroup,
 ) -> Result<()> {
-    if group.base_policy_version != 1
-        || group.members.is_empty()
-        || group.members.len() > MAX_MEMBERS
-    {
+    if group.base_policy_version != 1 || group.members.is_empty() {
         return Err(invalid());
     }
     put(vault, txn, id, GROUP, group, group.created_at)
