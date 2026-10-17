@@ -614,6 +614,7 @@ fn document_item(view: &EntityView) -> MemoryItem {
         reactions: Vec::new(),
         cited_messages: Vec::new(),
         conversation_id: None,
+        record: Some(crate::lens::RecordRef::from_view(view)),
     }
 }
 

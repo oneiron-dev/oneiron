@@ -11,7 +11,7 @@ impl Memory<'_> {
             markdown,
             WriteActor::new(self.actor, self.actor_class),
         )?;
-        self.entity_ref_receipt(&id)
+        self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)
     }
     pub fn edit_note(&self, note_ref: &str, edit: &NoteEdit) -> MemoryResult<NoteEditOutcome> {
         let id = self.resolve_ref(note_ref)?;
@@ -29,6 +29,6 @@ impl Memory<'_> {
             kind,
             WriteActor::new(self.actor, self.actor_class),
         )?;
-        self.entity_ref_receipt(&id)
+        self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)
     }
 }

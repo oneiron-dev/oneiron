@@ -67,6 +67,11 @@ pub struct EntityRefReceipt {
     /// Facade write marker (`put:<hex>`); structural puts produce no gate
     /// decision at base.
     pub receipt_ref: String,
+    /// The written entity as a typed record ref (OF-063), built from the id
+    /// and kind the writing door holds, with no read; `None` from a door that
+    /// does not name the kind it wrote.
+    #[serde(default)]
+    pub record: Option<crate::lens::RecordRef>,
 }
 /// One habit check-in append (B2 migrator group).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -131,4 +136,10 @@ pub struct BlobVersionView {
     pub claim_ref: String,
     /// Unix seconds.
     pub created_at: u64,
+    /// The BLOB_ARTIFACT as a typed record ref (OF-063), with no read.
+    #[serde(default)]
+    pub artifact: Option<crate::lens::RecordRef>,
+    /// The version's LEDGER claim as a typed record ref, with no read.
+    #[serde(default)]
+    pub claim: Option<crate::lens::RecordRef>,
 }

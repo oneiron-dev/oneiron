@@ -120,7 +120,7 @@ impl Memory<'_> {
             )?;
             Ok(())
         })?;
-        self.entity_ref_receipt(&note_id)
+        self.entity_ref_receipt_of(&note_id, crate::registry::ENTITY_TYPE_NOTE)
     }
 
     /// Admits one imported-evidence claim through the registered ingest
@@ -193,10 +193,17 @@ impl Memory<'_> {
         let receipt_ref = self
             .latest_decision_ref_for(&id)?
             .unwrap_or_else(|| format!("claim:{}", id.to_hex()));
+        let short = self.short_ref_of(&id)?;
         Ok(CommitReceipt {
-            claim_short_id: self.short_ref_or_hex(&id)?,
+            claim: Some(crate::lens::RecordRef::from_id(
+                crate::registry::ENTITY_TYPE_CLAIM,
+                &id,
+                short.as_deref(),
+            )),
+            claim_short_id: short.unwrap_or_else(|| id.to_hex()),
             approval: final_approval,
             superseded_short_id: None,
+            superseded: None,
             receipt_ref,
         })
     }

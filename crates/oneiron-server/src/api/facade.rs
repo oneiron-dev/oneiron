@@ -309,11 +309,17 @@ fn facade_invocation_id(headers: &HeaderMap) -> Result<Option<InvocationId>, Fac
         })
 }
 
-/// `memory` bound to the invocation the request names, if it names one.
+/// `memory` bound to the invocation the request names, if it names one,
+/// and to the off-record session it names (OF-063: inside an anonymous one a
+/// reference refusal writes no receipt, as its call writes none, OF-538).
 fn facade_invocation<'v>(
     memory: oneiron::Memory<'v>,
     headers: &HeaderMap,
 ) -> Result<oneiron::Memory<'v>, FacadeApiError> {
+    let memory = match call_receipt::request_session_ref(headers) {
+        Some(session_ref) => memory.in_off_record_session(session_ref),
+        None => memory,
+    };
     Ok(match facade_invocation_id(headers)? {
         Some(invocation) => memory.with_invocation(invocation),
         None => memory,

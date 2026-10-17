@@ -268,6 +268,11 @@ pub struct MemoryItem {
     /// the reader may read that conversation. `None` for every other item.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
+    /// The item's record as a typed record ref (OF-063), built from the view
+    /// the reader's read admitted, with no other read. It carries no
+    /// revision pin: [`Self::reference`] still names the revision read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<crate::lens::RecordRef>,
 }
 
 /// A MESSAGE a TURN item quotes: the words a query matched, as they were said.

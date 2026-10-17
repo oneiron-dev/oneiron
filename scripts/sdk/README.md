@@ -34,13 +34,17 @@ the row (HTTP facade, MCP, code mode, SDK) meets the check once. Declare citatio
 only: a write's own target and create-or-get ids are the engine's own lookup, and free
 text is never parsed for refs. Only a plain memory row takes `refs`.
 `prose_links` (OF-063 prose links: Engine ruling 10-17) lists a row's text slots, read for
-Markdown links `[label](oneiron://<ref>)` (code spans and fences skipped, bounded in count
-and length) by `gate::record_references::admit_prose_links` before the engine call. A
+Markdown links `[label](oneiron://<ref>)` (code spans, fences, indented code and raw HTML
+skipped, bounded in count and length) by `gate::record_references::admit_prose_links` before
+the engine call. A
 pointer may end at an opaque value, whose every string is read, and `*[key=value]` takes
 only the array items whose `key` is that string, which declares them AI-written (otherwise
 the writer's class decides). An AI-written link that does not resolve for its writer never
 refuses or rewrites the text: it writes the same `reference_refusal` receipt with outcome
-`unlinked`. Readers turn text into typed spans with `vault.refs.links`, each link resolved
+`unlinked`, before the engine call (an attempt receipt), and none inside an anonymous
+off-record session. Witnessed turns (`vault.witness`, `vault.rooms.speak` and every other
+witness door) declare no `prose_links`: the witness program reads each companion message
+once itself. Readers turn text into typed spans with `vault.refs.links`, each link resolved
 under their own read through `vault.refs.resolve`; one they cannot read is its plain label.
 Prose links are display only and never feed a grant, scope or authority path.
 `vault.witness` and `vault.claims.upsert` retain their size checks. `vault.recall`
