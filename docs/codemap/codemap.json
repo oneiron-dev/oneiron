@@ -16851,7 +16851,7 @@
      "path": "src/deletion/legal_hold/mod.rs",
      "purpose": "Legal hold doors (OF-470, design B; owner ruling 2026-10-17: \"B, and that stuff is for cloud only + we…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 14,
       "re-export": 1
      }
