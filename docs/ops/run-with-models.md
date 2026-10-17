@@ -376,11 +376,14 @@ proposals, with the cleanup view to restore any of them. Each proposal and
 your accept or reject count in the healer oversight receipts
 (`/v1/owner/healer/oversight`).
 
-The Coach's nightly room upkeep (`coach.room_upkeep`) reads only the rooms
-a grant lets the Coach read, and there only turn refs and times, never words.
-A room whose readable turns moved since its last pass gets its summary
-declared on the scope-summary path, when the Coach reads the room's whole
-conversation; the Dreamer writes the summary and nothing is posted. A thread
+The Coach's nightly room upkeep (`coach.room_upkeep`) needs no grant: the
+Coach is born with a read of room refs and turn times only, over the rooms
+and turns the Dreamer reads, and never reads a turn's words or a member's
+text. Its own read still reads nothing a grant does not name, and narrowing
+the Dreamer's policy rows narrows this reach with them. A room whose turns
+moved since its last pass gets its summary declared on the scope-summary
+path, when the Dreamer reads the room's whole conversation; the Dreamer
+writes the summary under its own read and nothing is posted. A thread
 with open TASKs that has been quiet for a day gets one Proposed
 `coach.room_upkeep.nudge` finding, addressed to the room's host, in the owner
 run tray. The Coach never speaks in a room; a nudge is the host's to voice.

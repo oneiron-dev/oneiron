@@ -71,6 +71,9 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     let optimizer = factory
         .skill_optimizer(vault, &guard)
         .map_err(PassRunError::PreAdmission)?;
+    let contribution_host = factory
+        .contribution_replay_host(vault, &guard)
+        .map_err(PassRunError::PreAdmission)?;
     let mut driver = DreamerWakeDriver::new(vault, pass_budget_id.to_owned(), deadline)
         .with_budget_guard(guard.clone());
     if let Some(author) = config.milestones.clone() {
@@ -78,6 +81,9 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     }
     if let Some(optimizer) = &optimizer {
         driver = driver.with_skill_optimizer(optimizer.optimizer());
+    }
+    if let Some(host) = &contribution_host {
+        driver = driver.with_contribution_host(&**host);
     }
     let executors = if scope == DreamerConsolidationScope::Macro {
         let buckets = oneiron::DreamerRunnerStore::new(vault)

@@ -2,17 +2,20 @@
 //! uses on a link, claim, project or budget row in their own report, the live report rendered into its
 //! lens on this server's model, and a saved digest whose lens card's frame
 //! this server holds. The generated HTTP facade handler and the MCP
-//! dispatcher both call these through `host_doors`.
+//! dispatcher both call these through `host_doors`. Each answers beside the
+//! rows its reads listed (`host_door_lists`).
 use std::sync::Arc;
 
 use oneiron::claim::{
     WeaveDigestFramed, WeaveDigestRequest, WeaveDigestView, WeaveItemCorrectionView,
     WeaveLinkCorrectionView, WeaveReportRequest, WeaveWrongItemRequest, WeaveWrongLinkRequest,
 };
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::lens::LensFrameCard;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, credential_listing, off_runtime_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -25,25 +28,16 @@ pub(crate) async fn vault_weave_link_wrong(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: WeaveWrongLinkRequest,
-) -> MemoryResult<WeaveLinkCorrectionView> {
+) -> Listed<WeaveLinkCorrectionView> {
     const VERB: &str = "vault.weave.link.wrong";
-    let proof = super::shared_act_doors::person(server, auth, VERB)?;
-    let (actor, class) = super::facade_actor(auth).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} labels a link in the credential's own lens"),
-            &["Present your own verified human credential."],
-        )
-    })?;
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-            .at(auth.locality())
-            .weave_wrong_link(None, &proof, &input)
+    let (proof, caller) = match person_lens(server, auth, VERB, "labels a link") {
+        Ok(bound) => bound,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.weave_wrong_link(None, &proof, &input)
     })
     .await
-    .map_err(|_| internal(VERB))?
 }
 
 /// `vault.weave.owner.link.wrong`: the owner labels a link it sees in the
@@ -54,27 +48,24 @@ pub(crate) async fn vault_weave_owner_link_wrong(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: WeaveWrongLinkRequest,
-) -> MemoryResult<WeaveLinkCorrectionView> {
+) -> Listed<WeaveLinkCorrectionView> {
     const VERB: &str = "vault.weave.owner.link.wrong";
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} labels a link in the owner lens"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+    let owner = match owner_lens(server, auth, VERB, "labels a link") {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
     let server = Arc::clone(server);
     let locality = auth.locality();
-    tokio::task::spawn_blocking(move || {
+    off_runtime_listing(VERB, move |producers| {
         let vault = server.vault();
         let actor = owner.revalidate(vault)?;
         vault
-            .memory(actor, oneiron::EdgeActorClass::Human)
+            .memory(actor, EdgeActorClass::Human)
             .at(locality)
+            .listing_producers(producers)
             .weave_owner_wrong_link(&owner, &input)
     })
     .await
-    .map_err(|_| internal(VERB))?
 }
 
 /// `vault.weave.item.wrong`: a live person labels a claim, project or
@@ -85,25 +76,16 @@ pub(crate) async fn vault_weave_item_wrong(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: WeaveWrongItemRequest,
-) -> MemoryResult<WeaveItemCorrectionView> {
+) -> Listed<WeaveItemCorrectionView> {
     const VERB: &str = "vault.weave.item.wrong";
-    let proof = super::shared_act_doors::person(server, auth, VERB)?;
-    let (actor, class) = super::facade_actor(auth).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} labels an item in the credential's own lens"),
-            &["Present your own verified human credential."],
-        )
-    })?;
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-            .at(auth.locality())
-            .weave_wrong_item(None, &proof, &input)
+    let (proof, caller) = match person_lens(server, auth, VERB, "labels an item") {
+        Ok(bound) => bound,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.weave_wrong_item(None, &proof, &input)
     })
     .await
-    .map_err(|_| internal(VERB))?
 }
 
 /// `vault.weave.owner.item.wrong`: the owner labels a claim, project or
@@ -113,27 +95,59 @@ pub(crate) async fn vault_weave_owner_item_wrong(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: WeaveWrongItemRequest,
-) -> MemoryResult<WeaveItemCorrectionView> {
+) -> Listed<WeaveItemCorrectionView> {
     const VERB: &str = "vault.weave.owner.item.wrong";
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} labels an item in the owner lens"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+    let owner = match owner_lens(server, auth, VERB, "labels an item") {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
     let server = Arc::clone(server);
     let locality = auth.locality();
-    tokio::task::spawn_blocking(move || {
+    off_runtime_listing(VERB, move |producers| {
         let vault = server.vault();
         let actor = owner.revalidate(vault)?;
         vault
-            .memory(actor, oneiron::EdgeActorClass::Human)
+            .memory(actor, EdgeActorClass::Human)
             .at(locality)
+            .listing_producers(producers)
             .weave_owner_wrong_item(&owner, &input)
     })
     .await
-    .map_err(|_| internal(VERB))?
+}
+
+/// A live person's own proof and principal, for a label `act` in their own
+/// lens. An agent's credential carries no person proof.
+fn person_lens(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+    act: &str,
+) -> MemoryResult<(AuthenticatedOwner, (EntityId, EdgeActorClass))> {
+    let proof = super::shared_act_doors::person(server, auth, verb)?;
+    let caller = super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} {act} in the credential's own lens"),
+            &["Present your own verified human credential."],
+        )
+    })?;
+    Ok((proof, caller))
+}
+
+/// The owner's live proof, for a label `act` in the owner lens.
+fn owner_lens(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+    act: &str,
+) -> MemoryResult<AuthenticatedOwner> {
+    crate::api::owner_routes::owner(auth, server).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} {act} in the owner lens"),
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })
 }
 
 /// `vault.weave.lens`: the credential's own live weave report, rendered
@@ -146,16 +160,19 @@ pub(crate) async fn vault_weave_lens(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: WeaveReportRequest,
-) -> MemoryResult<LensFrameCard> {
+) -> Listed<LensFrameCard> {
     const VERB: &str = "vault.weave.lens";
-    let (actor, class) = super::facade_actor(auth).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} renders the credential's own lens"),
-            &["Present a person's or an agent's own credential."],
-        )
-    })?;
-    crate::ai_host::render_live_weave_lens(
+    let (actor, class) = match super::facade_actor(auth) {
+        Ok(caller) => caller,
+        Err(_) => {
+            return refused(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!("{VERB} renders the credential's own lens"),
+                &["Present a person's or an agent's own credential."],
+            ));
+        }
+    };
+    crate::ai_host::render_live_weave_lens_listing(
         server,
         crate::ai_host::WeaveLensCaller::Credential {
             auth: auth.clone(),
@@ -176,29 +193,28 @@ pub(crate) async fn vault_weave_digest(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: WeaveDigestRequest,
-) -> MemoryResult<Option<WeaveDigestView>> {
+) -> Listed<Option<WeaveDigestView>> {
     const VERB: &str = "vault.weave.digest";
-    let (actor, class) = super::facade_actor(auth).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} reads the credential's own digest"),
-            &["Present a person's or an agent's own credential."],
-        )
-    })?;
-    let framed = {
-        let server = Arc::clone(server);
-        let auth = auth.clone();
-        tokio::task::spawn_blocking(move || {
-            crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-                .at(auth.locality())
-                .weave_digest_framed(None, &input)
-        })
-        .await
-        .map_err(|_| internal(VERB))??
+    let caller = match super::facade_actor(auth) {
+        Ok(caller) => caller,
+        Err(_) => {
+            return refused(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!("{VERB} reads the credential's own digest"),
+                &["Present a person's or an agent's own credential."],
+            ));
+        }
     };
-    framed
-        .map(|framed| hold_weave_digest(server, auth, framed))
-        .transpose()
+    let (framed, listed) = credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.weave_digest_framed(None, &input)
+    })
+    .await;
+    let answer = framed.and_then(|framed| {
+        framed
+            .map(|framed| hold_weave_digest(server, auth, framed))
+            .transpose()
+    });
+    (answer, listed)
 }
 
 /// A served period, its lens lowered and the lens's frame held for `auth`'s

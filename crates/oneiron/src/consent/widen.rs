@@ -634,4 +634,21 @@ impl Vault {
             .map(|row| validate_row(row, reference).map(|row| row.proposal))
             .transpose()
     }
+
+    /// How the widen proposal `reference` was settled: its terminal verdict
+    /// (`accepted` once the owner minted it) and that answer's gate decision
+    /// id. `None` while it is unanswered, or when no such proposal is filed.
+    pub fn widen_proposal_settlement(&self, reference: &str) -> Result<Option<(String, [u8; 16])>> {
+        validate_reference_shape(reference)?;
+        let txn = self.store.env.read_txn()?;
+        let Some(row) = WIDEN_PROPOSALS.get(&self.store, &txn, &reference.to_owned())? else {
+            return Ok(None);
+        };
+        let row = validate_row(row, reference)?;
+        let resolved = row.resolved;
+        Ok(row
+            .settlement
+            .filter(|_| resolved)
+            .map(|settlement| (settlement.verdict, settlement.decision_id)))
+    }
 }
