@@ -185,7 +185,9 @@ pub use self::judge_swap::{
     JudgeSwapReceipt, JudgeSwapReport, JudgeSwapSettledBy, JudgeTieBreaker, judge_incumbent,
     judge_swap_policy, judge_swap_receipts, pick_judge_swap_case, set_judge_swap_policy,
 };
-pub(crate) use self::judge_swap::{run_judge_swap, swap_case_ask};
+pub(crate) use self::judge_swap::{
+    judge_retest_flips, retest_flip_ask, run_judge_swap, swap_case_ask,
+};
 pub use self::labels::{
     JudgeAsk, JudgeAskReason, JudgeLabel, ask_judge_disagreement, ask_judge_uncertainty,
     judge_digest_minutes, judge_label_anchor, record_judge_pick, set_judge_digest_minutes,
@@ -208,9 +210,9 @@ pub use self::tradeoff_route::{
     TradeoffRouteReport,
 };
 pub use gate::{
-    AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind, GoalAxisScore,
-    GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR, HeldOutReplayCase,
-    HeldOutReplayNotes, HeldOutVerdict, HonestyReplay, HonestyReplayObservation,
+    AnchorLabelScore, AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind,
+    GoalAxisScore, GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,
+    HeldOutReplayCase, HeldOutReplayNotes, HeldOutVerdict, HonestyReplay, HonestyReplayObservation,
     JevTradeoffVerdict, JudgeMeasurements, PreferredResponse, ProjectGoalRevisionProposal,
     SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME,
     SkillEditCycle, SkillEditDisposition, SkillEditGoal, SkillEditPreflight, SkillTradeoffAsk,
