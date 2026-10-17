@@ -65,7 +65,11 @@ use crate::mcp::{
     EngineRunError, McpCodeModeProvider, ScopeMeter, engine_run_seat, enter_engine_native_run,
 };
 
-const LEASE_OWNER: &str = "oneiron-server-agent-runs";
+/// The pump's lease owner, and the owner of the park a run stopped by a
+/// provider outage holds (FIX 3194), which a provider's recovery resumes.
+pub(crate) const LEASE_OWNER: &str = "oneiron-server-agent-runs";
+/// The reason a run stopped by a provider outage parks under.
+const OUTAGE_PARK_REASON: &str = "agent_run_provider_unavailable";
 /// The park a run waiting on a durable signal holds its lease under, owned
 /// by the trap its wait's reply wakes; a restart is not that signal, so
 /// recovery keeps the lease.
@@ -318,10 +322,12 @@ impl SyncServer {
             runtime,
         );
         // OF-181: the run settles under its live-run guard, and leaves the
-        // host's live runs unless it parked on a durable wait.
-        let waits = ran
-            .as_ref()
-            .is_ok_and(|outcome| matches!(outcome.status, EngineExecutorStatus::Waiting(_)));
+        // host's live runs unless it parked on a durable wait or a provider
+        // outage (FIX 3194).
+        let waits = match &ran {
+            Ok(outcome) => matches!(outcome.status, EngineExecutorStatus::Waiting(_)),
+            Err(error) => error.provider_outage().is_some(),
+        };
         let run = EntityId::from_bytes(*id.as_bytes()).ok();
         if let Err(error) = self.live_runs.settle(run, waits, || {
             settle(vault, self.decision_host(), &claimed, ran)
@@ -707,8 +713,9 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
         .join("\n\n")
 }
 
-/// Settles the run's attempt: complete, parked on its wait, or failed; a
-/// run whose model call failed for a reason that passes is tried again.
+/// Settles the run's attempt: complete, parked on its wait or on a provider
+/// outage, or failed; a run whose model call failed for a reason that passes
+/// is tried again.
 fn settle(
     vault: &Vault,
     decisions: &DecisionHost,
@@ -747,6 +754,20 @@ fn settle(
                 "agent_run_unfinished"
             }
         },
+        // A host door's model call no provider answered (FIX 3194): the
+        // same attempt parks, its lease and spend scope held, and the run
+        // goes on from its next step once a provider recovers.
+        Err(error) if error.provider_outage().is_some() => {
+            tracing::info!(%error, attempt = ?attempt.id, "an agent run parks on a provider outage");
+            DreamerRunnerStore::new(vault).park_attempt(ParkDreamerAttempt {
+                attempt_id: attempt.id,
+                reason: OUTAGE_PARK_REASON.to_owned(),
+                cause: DreamerParkCause::ProviderUnavailable,
+                park_owner: LEASE_OWNER.to_owned(),
+                now,
+            })?;
+            return Ok(());
+        }
         Err(error) => {
             tracing::warn!(%error, attempt = ?attempt.id, "an agent run failed");
             // A run held on its payer-needed ask (OF-531) passes as one that
