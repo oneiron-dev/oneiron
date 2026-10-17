@@ -2219,6 +2219,196 @@
       "section": false
     },
     {
+      "name": "self.desktop.open",
+      "input": "oneiron_browser::OpenInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.open(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.observe",
+      "input": "oneiron_browser::ObserveInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.observe(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.find",
+      "input": "oneiron_browser::FindInput",
+      "output": "oneiron_browser::FindOutput",
+      "call": "driver.find(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.click",
+      "input": "oneiron_browser::ClickInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.click(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.click_at",
+      "input": "oneiron_browser::PointInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.click_at(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.type",
+      "input": "oneiron_browser::TypeInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.type_text(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.select",
+      "input": "oneiron_browser::SelectInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.select(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.key",
+      "input": "oneiron_browser::KeyInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.press_key(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.hotkey",
+      "input": "oneiron_browser::HotkeyInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.hotkey(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.scroll",
+      "input": "oneiron_browser::ScrollInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.scroll(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.wait_for",
+      "input": "oneiron_browser::WaitForInput",
+      "output": "oneiron_browser::WaitForOutput",
+      "call": "driver.wait_for(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.expect",
+      "input": "oneiron_browser::ExpectInput",
+      "output": "oneiron_browser::ExpectOutput",
+      "call": "driver.expect(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.screenshot",
+      "input": "oneiron_browser::ScreenshotInput",
+      "output": "oneiron_browser::ScreenshotOutput",
+      "call": "driver.screenshot(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.view",
+      "input": "oneiron_browser::ViewInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.view(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.crop",
+      "input": "oneiron_browser::CropInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.crop(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.zoom",
+      "input": "oneiron_browser::ZoomInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.zoom(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.batch",
+      "input": "oneiron_browser::BatchInput",
+      "output": "oneiron_browser::BatchOutput",
+      "call": "driver.batch(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.windows",
+      "input": "oneiron_browser::WindowsInput",
+      "output": "oneiron_browser::WindowsOutput",
+      "call": "driver.windows(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.window",
+      "input": "oneiron_browser::WindowInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.window(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "vault.commit",
       "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {

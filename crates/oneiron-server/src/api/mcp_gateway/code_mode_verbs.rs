@@ -26,6 +26,11 @@
 //!
 //! The vault's replay library (OF-598) rides the run's browser: the session
 //! checks and replays a solved run's program, and the vault files it.
+//!
+//! A desktop row (`self.desktop.*`) takes the same door to the run's own
+//! desktop guest, a Linux desktop the `[desktop]` section names, under the
+//! same pack, grants and decider. Its screenshots answer an `ai.verdict`
+//! as the browser's do.
 
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
 use super::admission::{mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb};
@@ -49,11 +54,13 @@ use oneiron::task_verb::sdk::{
     AgentVerb, AiVerdict, AiVerdictRequest, AiVerdictReversibility, RunVerb,
 };
 use oneiron_browser::{
-    BrowserError, BrowserGuest, BrowserSession, EFFECT_CLASSES, LibraryCard, PressMode,
-    RoutineAnswer, RoutineAsk, RoutineDecider, RoutineReply, SendPolicy, WorkflowLibrary,
-    WorkflowProgram, WorkflowProof,
+    BrowserDriver, BrowserError, BrowserGuest, BrowserSession, DesktopGuest, DesktopSession,
+    EFFECT_CLASSES, GuestLimits, LibraryCard, PressMode, RoutineAnswer, RoutineAsk,
+    RoutineDecider, RoutineReply, SendPolicy, WorkflowLibrary, WorkflowProgram, WorkflowProof,
 };
+use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// The verb door one `execute_code` run binds, under that call's connector.
@@ -66,6 +73,8 @@ pub(crate) struct McpCodeModeVerbs {
     served: std::sync::Mutex<Vec<oneiron::EntityId>>,
     /// This run's browser, when the host has a `[browser]` guest to give it.
     browser: Option<RunBrowser>,
+    /// This run's desktop, when the host has a `[desktop]` guest to give it.
+    desktop: Option<RunDesktop>,
 }
 
 /// One run's browser guest. It starts on the first call that needs it, is
@@ -75,6 +84,113 @@ struct RunBrowser {
     session: Mutex<Option<BrowserSession>>,
     vault: Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
+}
+
+/// One run's desktop guest, held as the run's browser is.
+struct RunDesktop {
+    guest: DesktopGuest,
+    session: Mutex<Option<DesktopSession>>,
+    vault: Arc<oneiron::Vault>,
+    run_id: oneiron::EntityId,
+}
+
+/// A run's guest session as the door drives it: its verbs, whether its
+/// sandbox was abandoned, and what its container proved.
+trait RunGuestSession: BrowserDriver {
+    fn abandoned(&self) -> bool;
+    fn manifest(&self) -> &SessionManifest;
+}
+
+impl RunGuestSession for BrowserSession {
+    fn abandoned(&self) -> bool {
+        Self::abandoned(self)
+    }
+
+    fn manifest(&self) -> &SessionManifest {
+        Self::manifest(self)
+    }
+}
+
+impl RunGuestSession for DesktopSession {
+    fn abandoned(&self) -> bool {
+        Self::abandoned(self)
+    }
+
+    fn manifest(&self) -> &SessionManifest {
+        Self::manifest(self)
+    }
+}
+
+/// Starts one run's guest from a pinned image through the engine's tier
+/// selector, behind the run's egress proxy, and receipts its manifest.
+fn start_run_guest(
+    vault: &Arc<oneiron::Vault>,
+    run_id: oneiron::EntityId,
+    runtime: &Path,
+    image: &str,
+    limits: GuestLimits,
+    fixture: Option<&PathBuf>,
+    entry: &str,
+) -> Result<(SessionTransport, Arc<dyn EgressRelay>), BrowserError> {
+    use oneiron::code_sandbox::{SandboxGuestTier, microvm::select_backend_for_session};
+    use oneiron_container::{GuestSeccomp, GuestSpec, ImageRef};
+    let unavailable = |e: String| BrowserError::Unavailable(e);
+    let backend =
+        select_backend_for_session(SandboxGuestTier::Untrusted, runtime.to_path_buf(), image)
+            .map_err(|e| unavailable(e.to_string()))?;
+    let spec = GuestSpec {
+        image: ImageRef::pinned(image).map_err(|e| unavailable(e.to_string()))?,
+        user: (10001, 10001),
+        limits,
+        seccomp: GuestSeccomp::EngineFence,
+        read_only_mounts: fixture
+            .iter()
+            .map(|p| ((*p).clone(), PathBuf::from("/srv/fixture")))
+            .collect(),
+    };
+    let relay: Arc<dyn EgressRelay> = Arc::new(
+        oneiron::code_sandbox::egress::OpenEgressProxy::new(
+            Arc::clone(vault),
+            run_id,
+            oneiron::code_sandbox::egress::EgressConfig::from_env()
+                .map_err(|e| unavailable(e.to_string()))?,
+        )
+        .with_fixture(fixture.cloned()),
+    );
+    let transport = backend
+        .start_session(&spec, &[entry.into()], Arc::clone(&relay))
+        .map_err(|e| unavailable(e.to_string()))?;
+    vault
+        .append_sandbox_manifest_receipt(run_id, &transport.manifest)
+        .map_err(|e| unavailable(e.to_string()))?;
+    Ok((transport, relay))
+}
+
+/// One verb call on a run's guest session: an abandoned sandbox lands its
+/// receipt and refuses, and an answer carries the session's manifest.
+fn drive_run_guest<S: RunGuestSession>(
+    vault: &oneiron::Vault,
+    run_id: oneiron::EntityId,
+    driver: &mut S,
+    verb: AgentVerb,
+    input: Value,
+) -> Result<Value, BrowserError> {
+    let result = oneiron::task_verb::sdk::invoke_browser(driver, verb.as_str(), input);
+    if driver.abandoned() {
+        vault
+            .append_sandbox_abandon_receipt(run_id, driver.manifest())
+            .map_err(|e| BrowserError::Unavailable(e.to_string()))?;
+        return Err(BrowserError::Abandoned);
+    }
+    let mut output = result?;
+    if let Some(output) = output.as_object_mut() {
+        output.insert(
+            "session_manifest".into(),
+            serde_json::to_value(driver.manifest())
+                .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+        );
+    }
+    Ok(output)
 }
 
 /// The press policy the vault's standing action grants set for one run's
@@ -264,69 +380,50 @@ impl RunBrowser {
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
-            use oneiron::code_sandbox::{SandboxGuestTier, microvm::select_backend_for_session};
-            use oneiron_container::{GuestSeccomp, GuestSpec, ImageRef};
-            let unavailable = |e: String| BrowserError::Unavailable(e);
-            let backend = select_backend_for_session(
-                SandboxGuestTier::Untrusted,
-                self.guest.runtime.clone(),
+            let (transport, relay) = start_run_guest(
+                &self.vault,
+                self.run_id,
+                &self.guest.runtime,
                 &self.guest.image,
-            )
-            .map_err(|e| unavailable(e.to_string()))?;
-            let spec = GuestSpec {
-                image: ImageRef::pinned(&self.guest.image)
-                    .map_err(|e| unavailable(e.to_string()))?,
-                user: (10001, 10001),
-                limits: self.guest.limits,
-                seccomp: GuestSeccomp::EngineFence,
-                read_only_mounts: self
-                    .guest
-                    .fixture
-                    .iter()
-                    .map(|p| (p.clone(), std::path::PathBuf::from("/srv/fixture")))
-                    .collect(),
-            };
-            let relay: Arc<dyn oneiron_container::EgressRelay> = Arc::new(
-                oneiron::code_sandbox::egress::OpenEgressProxy::new(
-                    Arc::clone(&self.vault),
-                    self.run_id,
-                    oneiron::code_sandbox::egress::EgressConfig::from_env()
-                        .map_err(|e| unavailable(e.to_string()))?,
-                )
-                .with_fixture(self.guest.fixture.clone()),
-            );
-            let transport = backend
-                .start_session(
-                    &spec,
-                    &["/usr/local/bin/oneiron-browser-guest".into()],
-                    Arc::clone(&relay),
-                )
-                .map_err(|e| unavailable(e.to_string()))?;
-            self.vault
-                .append_sandbox_manifest_receipt(self.run_id, &transport.manifest)
-                .map_err(|e| unavailable(e.to_string()))?;
+                self.guest.limits,
+                self.guest.fixture.as_ref(),
+                "/usr/local/bin/oneiron-browser-guest",
+            )?;
             let started = BrowserSession::attach(&self.guest, transport, relay)?;
             *session = Some(started);
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
         driver.set_decider(Box::new(decider));
         driver.set_library(Box::new(library));
-        let result = oneiron::task_verb::sdk::invoke_browser(driver, verb.as_str(), input);
-        if driver.abandoned() {
-            self.vault
-                .append_sandbox_abandon_receipt(self.run_id, driver.manifest())
-                .map_err(|e| BrowserError::Unavailable(e.to_string()))?;
-            return Err(BrowserError::Abandoned);
+        drive_run_guest(&self.vault, self.run_id, driver, verb, input)
+    }
+}
+
+impl RunDesktop {
+    fn call(
+        &self,
+        verb: AgentVerb,
+        input: Value,
+        decider: LadderDecider,
+    ) -> Result<Value, BrowserError> {
+        let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+        if session.is_none() {
+            // The desktop's own apps reach the network through the same
+            // engine proxy, at the guest's fenced sockets.
+            let (transport, _relay) = start_run_guest(
+                &self.vault,
+                self.run_id,
+                &self.guest.runtime,
+                &self.guest.image,
+                self.guest.limits,
+                None,
+                "/usr/local/bin/oneiron-desktop-guest",
+            )?;
+            *session = Some(DesktopSession::attach(&self.guest, transport)?);
         }
-        let mut output = result?;
-        if let Some(output) = output.as_object_mut() {
-            output.insert(
-                "session_manifest".into(),
-                serde_json::to_value(driver.manifest())
-                    .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
-            );
-        }
-        Ok(output)
+        let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
+        driver.set_decider(Box::new(decider));
+        drive_run_guest(&self.vault, self.run_id, driver, verb, input)
     }
 }
 
@@ -346,6 +443,16 @@ impl McpCodeModeVerbs {
                 let mut guest = guest.clone();
                 guest.policy = browser_send_policy(server);
                 RunBrowser {
+                    guest,
+                    session: Mutex::new(None),
+                    vault: Arc::clone(&server.vault),
+                    run_id,
+                }
+            }),
+            desktop: server.desktop_guest().map(|guest| {
+                let mut guest = guest.clone();
+                guest.policy = browser_send_policy(server);
+                RunDesktop {
                     guest,
                     session: Mutex::new(None),
                     vault: Arc::clone(&server.vault),
@@ -381,7 +488,14 @@ impl McpCodeModeVerbs {
                 code: error.code().to_owned(),
             }
         };
-        let Some(browser) = self.browser.as_ref() else {
+        // A desktop row drives the run's desktop; every other row its browser.
+        let desktop = call.verb.as_str().starts_with("self.desktop.");
+        let run_id = if desktop {
+            self.desktop.as_ref().map(|desktop| desktop.run_id)
+        } else {
+            self.browser.as_ref().map(|browser| browser.run_id)
+        };
+        let Some(run_id) = run_id else {
             return Ok(Err(browser_refused(BrowserError::Unbound)));
         };
         let memory = crate::api::credential_memory(
@@ -410,13 +524,20 @@ impl McpCodeModeVerbs {
             },
             runtime: self.runtime.clone(),
             origin: origin.clone(),
-            run_id: browser.run_id,
+            run_id,
         };
-        let library = VaultLibrary {
-            vault: Arc::clone(&self.server.vault),
-            by: self.actor.actor_ref,
+        let called = match (&self.desktop, &self.browser) {
+            (Some(run), _) if desktop => run.call(call.verb, hooks.args.clone(), decider),
+            (_, Some(run)) if !desktop => {
+                let library = VaultLibrary {
+                    vault: Arc::clone(&self.server.vault),
+                    by: self.actor.actor_ref,
+                };
+                run.call(call.verb, hooks.args.clone(), decider, library)
+            }
+            _ => Err(BrowserError::Unbound),
         };
-        let output = match browser.call(call.verb, hooks.args.clone(), decider, library) {
+        let output = match called {
             Ok(output) => output,
             Err(error) => return Ok(Err(browser_refused(error))),
         };
@@ -436,33 +557,51 @@ impl McpCodeModeVerbs {
         }
     }
 
-    /// The screenshot this run's browser holds under the `blake3:` ref an
-    /// `ai.verdict` input names, when it holds one.
+    /// The screenshot this run's browser or desktop holds under the
+    /// `blake3:` ref an `ai.verdict` input names, when one holds it.
     fn held_image(&self, input: &Value) -> Option<HeldImage> {
         let handle = input
             .get("image")
             .and_then(Value::as_str)
             .filter(|handle| handle.starts_with(HELD_PREFIX))?;
-        let browser = self.browser.as_ref()?;
-        let session = browser
+        if let Some(browser) = self.browser.as_ref() {
+            let session = browser
+                .session
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(png) = session.as_ref().and_then(|s| s.image(handle)) {
+                return Some(HeldImage::new(browser.run_id, handle, png.to_vec()));
+            }
+        }
+        let desktop = self.desktop.as_ref()?;
+        let session = desktop
             .session
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let png = session.as_ref()?.image(handle)?.to_vec();
-        Some(HeldImage::new(browser.run_id, handle, png))
+        Some(HeldImage::new(desktop.run_id, handle, png))
     }
 
     pub(crate) fn manifests(&self) -> Vec<Value> {
-        self.browser
+        let browser = self
+            .browser
             .as_ref()
             .and_then(|b| b.session.lock().ok())
             .and_then(|session| {
                 session
                     .as_ref()
                     .and_then(|s| serde_json::to_value(s.manifest()).ok())
-            })
-            .into_iter()
-            .collect()
+            });
+        let desktop = self
+            .desktop
+            .as_ref()
+            .and_then(|d| d.session.lock().ok())
+            .and_then(|session| {
+                session
+                    .as_ref()
+                    .and_then(|s| serde_json::to_value(s.manifest()).ok())
+            });
+        browser.into_iter().chain(desktop).collect()
     }
 
     /// The rows this run's verb calls listed as served.
