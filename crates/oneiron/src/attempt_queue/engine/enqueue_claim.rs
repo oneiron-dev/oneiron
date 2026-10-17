@@ -6,8 +6,7 @@ use crate::Vault;
 use crate::attempt_queue::annotation_hold::AnnotationHold;
 use crate::attempt_queue::cancel::AttemptCancelState;
 use crate::attempt_queue::encoding::{
-    DedupeIndexKeys, READY_KEY_LEN, decode_ready_key, decode_record, ready_at,
-    ready_key,
+    DedupeIndexKeys, READY_KEY_LEN, decode_ready_key, decode_record, ready_at, ready_key,
 };
 use crate::attempt_queue::types::{
     AttemptId, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, EnqueueAttempt,

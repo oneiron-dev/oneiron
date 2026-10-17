@@ -255,7 +255,9 @@ pub(crate) fn admit_side_row(
     }
     match &parts {
         [SidePart::Body(body)] => Ok(Some(laid_out(body))),
-        _ => Err(Error::InvariantViolation("a masked side row is no longer a body")),
+        _ => Err(Error::InvariantViolation(
+            "a masked side row is no longer a body",
+        )),
     }
 }
 
@@ -346,8 +348,9 @@ fn stand_in_text(text: &str) -> String {
 
 /// `sc` and digits: a custody handle.
 fn bare_handle(text: &str) -> bool {
-    text.strip_prefix("sc")
-        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
+    text.strip_prefix("sc").is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
 }
 
 /// The record a custody origin names for a row no entity holds: derived from

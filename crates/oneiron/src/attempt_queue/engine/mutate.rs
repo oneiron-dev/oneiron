@@ -9,8 +9,7 @@ use crate::attempt_queue::cancel::{
     force_cancel_record, validate_force_authority,
 };
 use crate::attempt_queue::encoding::{
-    DedupeIndexKeys, decode_record, lease_expired, ready_at, ready_key,
-    waiting_on_backoff,
+    DedupeIndexKeys, decode_record, lease_expired, ready_at, ready_key, waiting_on_backoff,
 };
 use crate::attempt_queue::telemetry::{emit_attempt_queue_cleanup_span, invalid_transition};
 use crate::attempt_queue::types::{
