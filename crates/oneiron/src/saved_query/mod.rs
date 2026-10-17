@@ -91,10 +91,10 @@ pub use self::filter::{
     ClaimComparison, EvidenceDependencies, FilterAst, MatcherSpec, filter_dependencies,
     parse_filter_ast, validate_per_entity_decidable,
 };
-pub(crate) use self::lifecycle::load_saved_query;
 pub use self::lifecycle::{
     archive_saved_query, create_saved_query, read_saved_query, update_saved_query,
 };
+pub(crate) use self::lifecycle::{load_saved_query, load_saved_query_in_txn};
 pub use self::membership::{
     MembershipCause, MembershipCommitOutcome, MembershipEvent, MembershipTransition,
     MembershipWritePlan, commit_membership_plan, derived_member_value, membership_events,

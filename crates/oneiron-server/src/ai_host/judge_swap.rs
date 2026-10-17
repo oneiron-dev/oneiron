@@ -86,7 +86,7 @@ impl JudgeShadowHost for JournalShadow<'_> {
         let Some(row) = rows.get(&case.case_ref) else {
             return Ok(None);
         };
-        let decisions = self.judge.decisions();
+        let decisions = self.judge.configured_decisions();
         let decision = decisions.ladder.run(
             &row.question,
             decisions.principal,

@@ -374,6 +374,8 @@ class Oneiron:
         @property
         def kv(self) -> "Oneiron._VaultKvVerbs": ...
         @property
+        def campaign(self) -> "Oneiron._VaultCampaignVerbs": ...
+        @property
         def weave(self) -> "Oneiron._VaultWeaveVerbs": ...
         @property
         def packs(self) -> "Oneiron._VaultPacksVerbs": ...
@@ -502,6 +504,18 @@ class Oneiron:
         def delete(self, request: KeyValueAddress) -> KeyValueDeleteReceipt: ...
         def search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
         def namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
+    class _VaultCampaignVerbs:
+        @property
+        def program(self) -> "Oneiron._VaultCampaignProgramVerbs": ...
+    class _VaultCampaignProgramVerbs:
+        def create(self, spec: Facade.CreateCampaignProgramRequest) -> Facade.CampaignProgramRecord:
+            """Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."""
+        def read(self, spec: Facade.CampaignProgramReadRequest) -> Facade.CampaignProgramReadResult:
+            """One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now."""
+        def update(self, spec: Facade.UpdateCampaignProgramRequest) -> Facade.CampaignProgramRecord:
+            """Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops."""
+        def archive(self, spec: Facade.ArchiveCampaignProgramRequest) -> Facade.CampaignProgramRecord:
+            """Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."""
     class _VaultWeaveVerbs:
         def report(self, spec: Facade.WeaveReportRequest) -> Facade.WeaveReportView:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
@@ -513,15 +527,25 @@ class Oneiron:
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs": ...
         @property
         def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveItemVerbs": ...
     class _VaultWeaveLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."""
     class _VaultWeaveOwnerVerbs:
         @property
         def link(self) -> "Oneiron._VaultWeaveOwnerLinkVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveOwnerItemVerbs": ...
     class _VaultWeaveOwnerLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."""
+    class _VaultWeaveOwnerItemVerbs:
+        def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
+            """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
+    class _VaultWeaveItemVerbs:
+        def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
+            """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
     class _VaultPacksVerbs:
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
