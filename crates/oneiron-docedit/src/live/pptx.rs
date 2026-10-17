@@ -10,16 +10,28 @@
 
 use super::LiveError;
 use crate::deck::{DeckView, ShapeKind, ShapeView, TextView};
-use crate::edit::IdMarks;
+use crate::edit::{AssetRef, ConnectorPreset, IdMarks, Preset};
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Model identity for slides, shapes and paragraphs. The root is `NodeId(0)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct NodeId(pub u64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
     Root,
@@ -59,7 +71,9 @@ pub struct NodeBinding {
 }
 
 /// Own (never inherited) geometry, in EMU and 60,000ths of a degree.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct GeometryProps {
     pub offset: Option<(i64, i64)>,
     pub extent: Option<(i64, i64)>,
@@ -79,11 +93,84 @@ pub struct DeckNode {
     pub geometry: GeometryProps,
     /// Placeholder kind/index as read (`p:ph`), for export evidence.
     pub placeholder: Option<(String, u32)>,
+    /// A live-born shape's preset geometry; `None` is a rectangle. An
+    /// imported element keeps its own in the retained markup.
+    #[serde(default)]
+    pub preset: Option<Preset>,
+    /// What a live-born picture, graphic frame or connector is written from.
+    /// An imported element's retained markup is its payload.
+    #[serde(default)]
+    pub payload: Option<NodePayload>,
+}
+
+/// The native content a live-born node carries to the export projector.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NodePayload {
+    /// A raster asset by its engine identity; the export's resolver supplies
+    /// the admitted record and bytes, which must hash to the reference.
+    Picture { image: AssetRef },
+    /// A native table: a header row of column names, then rows of cell text
+    /// (`None` is an empty cell), one cell per column.
+    Table {
+        header: Vec<String>,
+        rows: Vec<Vec<Option<String>>>,
+    },
+    /// A classic chart over its embedded workbook: one category per point,
+    /// each series one value per category (`None` is a missing point).
+    Chart {
+        family: ChartKind,
+        categories: Vec<String>,
+        series: Vec<ChartSeries>,
+    },
+    /// A connector, each end glued to a node on its slide or free.
+    Connector {
+        preset: ConnectorPreset,
+        #[serde(default)]
+        start: Option<ConnectorEnd>,
+        #[serde(default)]
+        end: Option<ConnectorEnd>,
+    },
+}
+
+/// The classic chart families a live-born chart is written as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChartKind {
+    Bar,
+    Line,
+    Pie,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ChartSeries {
+    pub name: String,
+    pub values: Vec<Option<serde_json::Number>>,
+}
+
+/// One glued connector end: the node and its geometry's connection site
+/// index. Glue to a node that is not on the connector's slide at export is
+/// dropped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConnectorEnd {
+    pub node: NodeId,
+    pub site: u32,
+}
+
+impl NodePayload {
+    /// The node kind this payload belongs to.
+    pub fn kind(&self) -> NodeKind {
+        match self {
+            Self::Picture { .. } => NodeKind::Picture,
+            Self::Table { .. } | Self::Chart { .. } => NodeKind::GraphicFrame,
+            Self::Connector { .. } => NodeKind::Connector,
+        }
+    }
 }
 
 /// One run of a paragraph. Formatting rides as run-property marks; scheme
 /// colour and hyperlinks stay atomic values on the run that carries them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Run {
     pub text: String,
     pub bold: Option<bool>,
@@ -94,7 +181,7 @@ pub struct Run {
 }
 
 /// A paragraph with a stable identity, kept across text edits to its runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Paragraph {
     pub id: NodeId,
     pub level: u8,
@@ -108,7 +195,7 @@ impl Paragraph {
 }
 
 /// One rich-text body per text shape.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TextBody {
     pub paragraphs: Vec<Paragraph>,
 }
@@ -165,6 +252,8 @@ impl LiveDeck {
                 binding: None,
                 geometry: GeometryProps::default(),
                 placeholder: None,
+                preset: None,
+                payload: None,
             },
         );
         let slide_parts: BTreeSet<&str> = view
@@ -189,6 +278,8 @@ impl LiveDeck {
                     }),
                     geometry: GeometryProps::default(),
                     placeholder: None,
+                    preset: None,
+                    payload: None,
                 },
             );
             deck.nodes
@@ -227,6 +318,8 @@ impl LiveDeck {
                             .placeholder
                             .as_ref()
                             .map(|ph| (ph.kind.clone(), ph.idx)),
+                        preset: None,
+                        payload: None,
                     },
                 );
                 if let Some(text) = &shape.text {
@@ -382,13 +475,15 @@ fn own<T: Clone>(value: &crate::deck::Value<T>) -> Option<T> {
 /// is reported because it also changes relationship context. A creation
 /// names the identity it makes, so replaying it onto another head (a fork's
 /// merge, a concurrent peer) makes the same node; `None` mints one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeckOp {
     AddSlide {
         #[serde(default)]
         id: Option<NodeId>,
     },
+    /// A live-born node; a shape may name its preset, and a picture,
+    /// graphic frame or connector carries the payload it is written from.
     AddNode {
         #[serde(default)]
         id: Option<NodeId>,
@@ -396,6 +491,10 @@ pub enum DeckOp {
         kind: NodeKind,
         name: Option<String>,
         index: Option<usize>,
+        #[serde(default)]
+        preset: Option<Preset>,
+        #[serde(default)]
+        payload: Option<NodePayload>,
     },
     RemoveNode {
         node: NodeId,
@@ -515,6 +614,8 @@ impl LiveDeck {
                         binding: None,
                         geometry: GeometryProps::default(),
                         placeholder: None,
+                        preset: None,
+                        payload: None,
                     },
                 );
                 self.nodes
@@ -530,8 +631,21 @@ impl LiveDeck {
                 kind,
                 name,
                 index,
+                preset,
+                payload,
             } => {
                 self.check_parent(*parent, *kind)?;
+                if preset.is_some() && *kind != NodeKind::Shape {
+                    return Err(LiveError::Invalid("only a shape takes a preset"));
+                }
+                if payload
+                    .as_ref()
+                    .is_some_and(|payload| payload.kind() != *kind)
+                {
+                    return Err(LiveError::Invalid(
+                        "the payload does not belong to the node kind",
+                    ));
+                }
                 let id = self.take(*id)?;
                 self.nodes.insert(
                     id,
@@ -543,6 +657,8 @@ impl LiveDeck {
                         binding: None,
                         geometry: GeometryProps::default(),
                         placeholder: None,
+                        preset: *preset,
+                        payload: payload.clone(),
                     },
                 );
                 let children = &mut self
@@ -1117,7 +1233,7 @@ pub fn preflight(head: &LiveDeck, fork: &DeckFork) -> Result<PreflightReport, Li
 
 /// The three ruled approve-all scopes. A finer scope is a later addition
 /// and does not delay these.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApproveScope {
     /// The named actor's bundle.
@@ -1140,7 +1256,7 @@ impl ApproveScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Landing {
     Merge,

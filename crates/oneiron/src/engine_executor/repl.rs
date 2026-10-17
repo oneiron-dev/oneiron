@@ -191,6 +191,10 @@ impl EngineNativeExecutor<'_> {
             let request_hash = request.canonical_hash()?;
             let response = self.backend.generate(request, self.lease).await?;
             self.post_turn_hooks(turn, &response)?;
+            // The provider that answered is the one this turn's program
+            // speaks for: each verb call it makes carries the name (OF-560).
+            self.gated_write
+                .observe_model_provider(response.usage.served_provider());
             // The reply as the provider gave it, kept apart from the program
             // healed out of it: evidence, never executed.
             record_reply_evidence(
@@ -527,8 +531,11 @@ impl EngineNativeExecutor<'_> {
         let seq = completed_step_count(record)?
             .checked_sub(1)
             .ok_or(Error::CorruptedIndex("executor replay wait without a step"))?;
-        let reply: serde_json::Value = serde_json::from_str(&delivery.reply)
+        let mut reply: serde_json::Value = serde_json::from_str(&delivery.reply)
             .map_err(|_| Error::CorruptedIndex("code-run wait delivery"))?;
+        if wait.effect == SelfEffect::Summarize {
+            reply = self.storage.delivered_summary_reply(reply)?;
+        }
         let mut sink = self.storage.code_run_output_sink()?;
         write_json(
             &mut sink,
@@ -555,7 +562,7 @@ impl EngineNativeExecutor<'_> {
         }
         let generation = self
             .storage
-            .put_code_run_replay_record_if_generation_with_heal(record, expected, None)?;
+            .put_code_run_wait_resume_record(record, expected, key)?;
         self.storage.clear_wait(key)?;
         Ok(Some(generation))
     }

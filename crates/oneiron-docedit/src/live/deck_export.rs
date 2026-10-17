@@ -6,9 +6,10 @@
 //! randomness. Live nodes and retained elements correspond by binding, never
 //! by import order: a binding names its slide part and native id. Structure
 //! goes first, in a fixed order: live-born slides, cross-slide moves (a copy
-//! that carries its relationships), live-born shapes and groups, reparents,
-//! removals (with their animation cascade), slide removals, the slide order
-//! and each container's sibling order. Own geometry and text follow.
+//! that carries its relationships), live-born shapes, groups, pictures and
+//! graphic frames, then live-born connectors, reparents, removals (with their
+//! animation cascade), slide removals, the slide order and each container's
+//! sibling order. Own geometry and text follow.
 //!
 //! Imported native ids are preserved. New ids are allocated only for nodes
 //! that have none, in stable model-identity order within each native scope
@@ -19,30 +20,51 @@
 //!
 //! The outcome carries every node's binding in the exported package; once
 //! the export lands, [`LiveDeck::rebind`] adopts them so the next export
-//! projects over the new retained bytes. A live-born picture, graphic frame
-//! or connector carries no native payload and refuses. Until
-//! [`Gate::is_open`], blob versions remain authoritative and exports are
-//! proposal artifacts.
+//! projects over the new retained bytes. A live-born node is written from
+//! what it carries: a shape from its preset, a picture over a new media part
+//! from the asset its payload names (the caller's [`Assets`] supply the
+//! bytes, which must hash to the reference), a table or chart through the
+//! native writer, and a connector glued to the nodes its ends name once they
+//! are bound on its slide. Until [`Gate::is_open`], blob versions remain
+//! authoritative and exports are proposal artifacts.
 
 use super::LiveError;
 use super::pptx::{
-    LiveDeck, NodeBinding, NodeId, NodeKind, PreflightReport, RelationshipChange, RenderPair,
-    RenderSide, SlideRender, TextBody, geometry_of, slide_of, text_body,
+    ChartKind, ConnectorEnd, DeckNode, LiveDeck, NodeBinding, NodeId, NodeKind, NodePayload,
+    PreflightReport, RelationshipChange, RenderPair, RenderSide, SlideRender, TextBody,
+    geometry_of, slide_of, text_body,
 };
 use crate::deck::{DeckView, ShapeView};
+use crate::design_plan::{AssetKind, Cell, Column, ColumnKind, Dataset, Rect};
+use crate::edit::transaction::StepAssetKind;
+use crate::edit::xml::next_part;
 use crate::edit::{
-    Effect, IdMarks, NewGroup, NewShape, Preset, RunProps, StructureEdit, Target, ValueEdit, Xfrm,
-    edit, structure_patch,
+    AssetRef, Assets, ConnectorPreset, Digest, EditRefusal, Effect, IdMarks, NewConnector,
+    NewGroup, NewPicture, NewShape, NoAssets, Picture, Preset, RunProps, StructureEdit, Target,
+    ValueEdit, Xfrm, edit, structure_patch,
 };
+use crate::graphic::{AssetRecord, GraphicLimits};
+use crate::native_patch::{ChartFamily, Frame, NativeEdit, native_patch};
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/2";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/3";
 
-/// A live-born shape with no own extent: one inch square.
+/// A live-born shape (or a free connector) with no own extent: one inch
+/// square.
 const DEFAULT_EXTENT: (i64, i64) = (914_400, 914_400);
+/// A live-born picture with no own extent is placed at its own aspect ratio
+/// inside this box: three inches square.
+const PICTURE_BOX: (i64, i64) = (2_743_200, 2_743_200);
+/// A live-born table with no own extent: two inches per column and 0.4 inch
+/// per row, the header row included.
+const TABLE_CELL: (i64, i64) = (1_828_800, 365_760);
+/// A live-born chart with no own extent: six inches by four.
+const CHART_EXTENT: (i64, i64) = (5_486_400, 3_657_600);
+/// The one sheet of a live-born chart's embedded workbook.
+const CHART_SHEET: &str = "Sheet1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportProfile {
@@ -202,12 +224,48 @@ fn frame(deck: &LiveDeck, group: NodeId) -> Option<((i64, i64), (i64, i64))> {
     Some(((left, top), (right - left, bottom - top)))
 }
 
-/// Project `deck` at its current version over its retained `package`.
+/// Assets resolved ahead of a projection and held in memory: what a caller
+/// reads in its own transaction for every live-born picture its decks name.
+#[derive(Debug, Default)]
+pub struct HeldAssets {
+    held: Vec<(AssetRef, AssetRecord, Vec<u8>)>,
+}
+
+impl HeldAssets {
+    /// Every asset a live-born picture in `decks` names, through `from`. One
+    /// that does not resolve stays out, and its export refuses.
+    pub fn resolve(from: &dyn Assets, decks: &[&LiveDeck]) -> Self {
+        let mut held: Vec<(AssetRef, AssetRecord, Vec<u8>)> = Vec::new();
+        for node in decks.iter().flat_map(|deck| deck.nodes.values()) {
+            if node.binding.is_none()
+                && let Some(NodePayload::Picture { image }) = &node.payload
+                && !held.iter().any(|(asset, ..)| asset == image)
+                && let Some((record, bytes)) = from.resolve(image)
+            {
+                held.push((image.clone(), record, bytes));
+            }
+        }
+        Self { held }
+    }
+}
+
+impl Assets for HeldAssets {
+    fn resolve(&self, asset: &AssetRef) -> Option<(AssetRecord, Vec<u8>)> {
+        self.held
+            .iter()
+            .find(|(held, ..)| held == asset)
+            .map(|(_, record, bytes)| (record.clone(), bytes.clone()))
+    }
+}
+
+/// Project `deck` at its current version over its retained `package`;
+/// `assets` supply the bytes of its live-born pictures.
 pub fn project(
     deck: &LiveDeck,
     package: &Package,
     document: &str,
     profile: &ExportProfile,
+    assets: &dyn Assets,
 ) -> Result<ExportOutcome, LiveError> {
     let key = ExportKey {
         document: document.to_owned(),
@@ -373,60 +431,23 @@ pub fn project(
         }
     }
 
-    // 3. Live-born shapes and groups, in model-identity order, topmost in
-    // their slide's shape tree; the reparent pass puts them in place.
-    for (id, node) in &deck.nodes {
-        if matches!(node.kind, NodeKind::Root | NodeKind::Slide) || work.at.contains_key(id) {
-            continue;
+    // 3. Live-born shapes, groups, pictures and graphic frames, in
+    // model-identity order, topmost in their slide's shape tree; then the
+    // live-born connectors, so every node their ends name is bound. The
+    // reparent pass puts them in place.
+    for connectors in [false, true] {
+        for (id, node) in &deck.nodes {
+            if matches!(node.kind, NodeKind::Root | NodeKind::Slide)
+                || (node.kind == NodeKind::Connector) != connectors
+                || work.at.contains_key(id)
+            {
+                continue;
+            }
+            let part = home.get(id).cloned().ok_or(LiveError::UnknownNode)?;
+            let added = born(&mut work, deck, *id, &part, assets)?;
+            work.raise_shape(&part, added);
+            work.at.insert(*id, (part, added));
         }
-        let part = home.get(id).cloned().ok_or(LiveError::UnknownNode)?;
-        let (high, seed) = (work.shape_mark(&part), work.seed(*id, "shape"));
-        let effects = match node.kind {
-            NodeKind::Shape => {
-                let name = node.name.clone().unwrap_or_else(|| "Shape".to_owned());
-                work.structure(&StructureEdit::AddShape {
-                    slide: &part,
-                    shape: NewShape {
-                        preset: Preset::Rect,
-                        name: &name,
-                        offset: node.geometry.offset.unwrap_or((0, 0)),
-                        extent: node.geometry.extent.unwrap_or(DEFAULT_EXTENT),
-                        high_water: high,
-                        seed: &seed,
-                    },
-                })?
-            }
-            NodeKind::Group => {
-                let name = node.name.clone().unwrap_or_else(|| "Group".to_owned());
-                let (offset, extent) = frame(deck, *id).ok_or(LiveError::Invalid(
-                    "a live-born group has no frame: give it or a member an offset and extent",
-                ))?;
-                work.structure(&StructureEdit::AddGroup {
-                    slide: &part,
-                    group: NewGroup {
-                        name: &name,
-                        offset,
-                        extent,
-                        high_water: high,
-                        seed: &seed,
-                    },
-                })?
-            }
-            _ => {
-                return Err(LiveError::Invalid(
-                    "a live-born picture, graphic frame or connector carries no native payload",
-                ));
-            }
-        };
-        let added = effects
-            .iter()
-            .find_map(|effect| match effect {
-                Effect::ShapeAdded { id, .. } => Some(*id),
-                _ => None,
-            })
-            .ok_or(LiveError::Invalid("the shape verb added no shape"))?;
-        work.raise_shape(&part, added);
-        work.at.insert(*id, (part, added));
     }
 
     // 4. Reparents, outermost first, so a parent group is in place before
@@ -675,6 +696,301 @@ pub fn project(
     })
 }
 
+/// Write the live-born node `id` topmost in `part`'s shape tree; its new
+/// native id.
+fn born(
+    work: &mut Work,
+    deck: &LiveDeck,
+    id: NodeId,
+    part: &str,
+    assets: &dyn Assets,
+) -> Result<u32, LiveError> {
+    let node = &deck.nodes[&id];
+    let (high, seed) = (work.shape_mark(part), work.seed(id, "shape"));
+    let named = |fallback: &str| node.name.clone().unwrap_or_else(|| fallback.to_owned());
+    let offset = node.geometry.offset.unwrap_or((0, 0));
+    let effects = match (node.kind, &node.payload) {
+        (NodeKind::Shape, _) => {
+            let name = named("Shape");
+            work.structure(&StructureEdit::AddShape {
+                slide: part,
+                shape: NewShape {
+                    preset: node.preset.unwrap_or(Preset::Rect),
+                    name: &name,
+                    offset,
+                    extent: node.geometry.extent.unwrap_or(DEFAULT_EXTENT),
+                    high_water: high,
+                    seed: &seed,
+                },
+            })?
+        }
+        (NodeKind::Group, _) => {
+            let name = named("Group");
+            let (offset, extent) = frame(deck, id).ok_or(LiveError::Invalid(
+                "a live-born group has no frame: give it or a member an offset and extent",
+            ))?;
+            work.structure(&StructureEdit::AddGroup {
+                slide: part,
+                group: NewGroup {
+                    name: &name,
+                    offset,
+                    extent,
+                    high_water: high,
+                    seed: &seed,
+                },
+            })?
+        }
+        (NodeKind::Picture, Some(NodePayload::Picture { image })) => {
+            let (record, bytes) = assets.resolve(image).ok_or(LiveError::Invalid(
+                "a live-born picture's asset does not resolve",
+            ))?;
+            if Digest::of(&bytes) != image.hash
+                || record.content_hash != image.hash.0
+                || record.artifact != image.artifact
+                || record.version != image.version
+            {
+                return Err(LiveError::Invalid(
+                    "a live-born picture's asset bytes do not match its reference",
+                ));
+            }
+            let name = named("Picture");
+            work.structure(&StructureEdit::AddPicture {
+                slide: part,
+                picture: NewPicture {
+                    name: &name,
+                    picture: Picture {
+                        record: &record,
+                        bytes: &bytes,
+                        requested: match image.kind {
+                            StepAssetKind::Factual => AssetKind::Factual,
+                            StepAssetKind::Illustration => AssetKind::Illustration,
+                        },
+                        limits: GraphicLimits::default(),
+                    },
+                    offset,
+                    extent: node.geometry.extent.unwrap_or(PICTURE_BOX),
+                    fit: node.geometry.extent.is_none(),
+                    high_water: high,
+                    seed: &seed,
+                },
+            })?
+        }
+        (NodeKind::GraphicFrame, Some(payload)) => return native_frame(work, node, part, payload),
+        (NodeKind::Connector, payload) => {
+            let (preset, start, end) = match payload {
+                Some(NodePayload::Connector { preset, start, end }) => (*preset, *start, *end),
+                _ => (ConnectorPreset::Straight, None, None),
+            };
+            // Glue to a node bound on this slide; any other glue is dropped.
+            let glue = |end: Option<ConnectorEnd>| {
+                let end = end?;
+                let kind = deck.nodes.get(&end.node)?.kind;
+                let (at, native) = work.at.get(&end.node)?;
+                (at == part && !matches!(kind, NodeKind::Slide | NodeKind::Group))
+                    .then_some((*native, end.site))
+            };
+            let glued = (glue(start), glue(end));
+            let (offset, extent, (flip_h, flip_v)) =
+                match (node.geometry.offset, node.geometry.extent) {
+                    (Some(offset), Some(extent)) => (offset, extent, (false, false)),
+                    _ => span(deck, start, end).unwrap_or((
+                        offset,
+                        node.geometry.extent.unwrap_or(DEFAULT_EXTENT),
+                        (false, false),
+                    )),
+                };
+            let name = named("Connector");
+            work.structure(&StructureEdit::AddConnector {
+                slide: part,
+                connector: NewConnector {
+                    preset,
+                    name: &name,
+                    offset,
+                    extent,
+                    flip_h,
+                    flip_v,
+                    start: glued.0,
+                    end: glued.1,
+                    high_water: high,
+                    seed: &seed,
+                },
+            })?
+        }
+        (NodeKind::Picture, None) => {
+            return Err(LiveError::Invalid("a live-born picture names no image"));
+        }
+        (NodeKind::GraphicFrame, None) => {
+            return Err(LiveError::Invalid(
+                "a live-born graphic frame carries no table or chart",
+            ));
+        }
+        (NodeKind::Picture, Some(_)) | (NodeKind::Root | NodeKind::Slide, _) => {
+            return Err(LiveError::Invalid(
+                "the payload does not belong to the node kind",
+            ));
+        }
+    };
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::ShapeAdded { id, .. } => Some(*id),
+            _ => None,
+        })
+        .ok_or(LiveError::Invalid("the shape verb added no shape"))
+}
+
+/// A connector's frame from its ends' centres, when both name top-level
+/// nodes with own frames: the box between them, flipped to run from the
+/// start to the end.
+fn span(
+    deck: &LiveDeck,
+    start: Option<ConnectorEnd>,
+    end: Option<ConnectorEnd>,
+) -> Option<((i64, i64), (i64, i64), (bool, bool))> {
+    let centre = |end: Option<ConnectorEnd>| {
+        let node = deck.nodes.get(&end?.node)?;
+        if deck.nodes.get(&node.parent?)?.kind != NodeKind::Slide {
+            return None;
+        }
+        let ((x, y), (cx, cy)) = (node.geometry.offset?, node.geometry.extent?);
+        Some((x.checked_add(cx / 2)?, y.checked_add(cy / 2)?))
+    };
+    let ((x0, y0), (x1, y1)) = (centre(start)?, centre(end)?);
+    let extent = (x1.checked_sub(x0)?.abs(), y1.checked_sub(y0)?.abs());
+    Some(((x0.min(x1), y0.min(y1)), extent, (x1 < x0, y1 < y0)))
+}
+
+/// Write a live-born table or chart through the native writer, topmost in
+/// `part`'s shape tree under the next id above the slide's mark; its id.
+fn native_frame(
+    work: &mut Work,
+    node: &DeckNode,
+    part: &str,
+    payload: &NodePayload,
+) -> Result<u32, LiveError> {
+    let id = work
+        .shape_mark(part)
+        .checked_add(1)
+        .ok_or(EditRefusal::IdSpaceExhausted)?;
+    let (x, y) = node.geometry.offset.unwrap_or((0, 0));
+    let column = |name: &str, kind| Column {
+        name: name.to_owned(),
+        kind,
+        unit: None,
+        format: None,
+    };
+    let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+    let dataset = |columns: Vec<Column>, rows: Vec<Vec<Cell>>| Dataset {
+        id: String::new(),
+        columns,
+        rows,
+        missing: None,
+        sources: Vec::new(),
+        merges: Vec::new(),
+    };
+    let report = match payload {
+        NodePayload::Table { header, rows } => {
+            let data = dataset(
+                header
+                    .iter()
+                    .map(|name| column(name, ColumnKind::Text))
+                    .collect(),
+                rows.iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|cell| cell.clone().map_or(Cell::Missing, Cell::Text))
+                            .collect()
+                    })
+                    .collect(),
+            );
+            let (cx, cy) = node.geometry.extent.unwrap_or((
+                TABLE_CELL.0.saturating_mul(count(header.len())),
+                TABLE_CELL
+                    .1
+                    .saturating_mul(count(rows.len()).saturating_add(1)),
+            ));
+            let name = node.name.clone().unwrap_or_else(|| "Table".to_owned());
+            native_patch(
+                &mut work.next,
+                &NativeEdit::CreateTable {
+                    frame: Frame {
+                        slide: part,
+                        id,
+                        name: &name,
+                        bounds: Rect { x, y, cx, cy },
+                        placeholder: None,
+                    },
+                    dataset: &data,
+                    merges: &[],
+                },
+            )?
+        }
+        NodePayload::Chart {
+            family,
+            categories,
+            series,
+        } => {
+            let mut columns = vec![column("", ColumnKind::Text)];
+            columns.extend(
+                series
+                    .iter()
+                    .map(|line| column(&line.name, ColumnKind::Number)),
+            );
+            let rows = categories
+                .iter()
+                .enumerate()
+                .map(|(at, category)| {
+                    let mut row = vec![Cell::Text(category.clone())];
+                    row.extend(series.iter().map(|line| {
+                        line.values
+                            .get(at)
+                            .and_then(|value| value.as_ref()?.as_f64())
+                            .map_or(Cell::Missing, Cell::Number)
+                    }));
+                    row
+                })
+                .collect();
+            let data = dataset(columns, rows);
+            let (cx, cy) = node.geometry.extent.unwrap_or(CHART_EXTENT);
+            let name = node.name.clone().unwrap_or_else(|| "Chart".to_owned());
+            let chart = next_part(&work.next, "ppt/charts/chart", ".xml")?;
+            let workbook = next_part(
+                &work.next,
+                "ppt/embeddings/Microsoft_Excel_Worksheet",
+                ".xlsx",
+            )?;
+            native_patch(
+                &mut work.next,
+                &NativeEdit::CreateChart {
+                    frame: Frame {
+                        slide: part,
+                        id,
+                        name: &name,
+                        bounds: Rect { x, y, cx, cy },
+                        placeholder: None,
+                    },
+                    family: match family {
+                        ChartKind::Bar => ChartFamily::Bar,
+                        ChartKind::Line => ChartFamily::Line,
+                        ChartKind::Pie => ChartFamily::Pie,
+                    },
+                    dataset: &data,
+                    chart: &chart,
+                    workbook: &workbook,
+                    sheet: CHART_SHEET,
+                },
+            )?
+        }
+        NodePayload::Picture { .. } | NodePayload::Connector { .. } => {
+            return Err(LiveError::Invalid(
+                "the payload does not belong to the node kind",
+            ));
+        }
+    };
+    work.changed.extend(report.changed_parts);
+    Ok(id)
+}
+
 /// The live run marks over the package's runs: a live run whose declared
 /// marks the package's characters under it do not read is written as one
 /// `SetRunProps` over its range, which splits package runs at its edges.
@@ -846,9 +1162,10 @@ pub fn attach_evidence(
     package: &Package,
     document: &str,
     profile: &ExportProfile,
+    assets: &dyn Assets,
 ) -> Result<(), LiveError> {
-    let held = project(head, package, document, profile)?;
-    let merged = project(&report.candidate, package, document, profile)?;
+    let held = project(head, package, document, profile, assets)?;
+    let merged = project(&report.candidate, package, document, profile, assets)?;
     let open = |outcome: &ExportOutcome| -> Result<Package, LiveError> {
         Ok(Package::open(&outcome.bytes, package.limits())?)
     };
@@ -911,7 +1228,7 @@ pub fn attach_evidence(
 
 /// One step of the eight-step import-then-export check. A timeout or an
 /// unrun oracle is inconclusive, never a pass.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StepOutcome {
     Passed,
@@ -922,7 +1239,7 @@ pub enum StepOutcome {
 
 /// The hashed oracle evidence one profile passed under. PowerPoint, macOS
 /// and font versions are recorded on every receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OracleReceipt {
     pub profile: String,
     pub powerpoint_version: String,
@@ -984,7 +1301,7 @@ pub fn roundtrip_check(
     profile: &ExportProfile,
 ) -> Result<RoundtripReport, LiveError> {
     let deck = LiveDeck::import(package)?;
-    let outcome = project(&deck, package, "roundtrip", profile)?;
+    let outcome = project(&deck, package, "roundtrip", profile, &NoAssets)?;
     let baseline_preserved = outcome.noop && outcome.bytes == original_bytes;
     let reopened = Package::open(&outcome.bytes, package.limits())?;
     let closure = DeckView::read(&reopened);
