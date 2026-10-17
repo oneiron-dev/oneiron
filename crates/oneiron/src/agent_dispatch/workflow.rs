@@ -94,6 +94,7 @@ impl AgentDispatcher<'_> {
             budget: spawn.budget,
             spend: spawn.spend.as_ref().map(|spend| spend.scope.clone()),
             room: spawn.room,
+            objectives: spawn.objectives.clone(),
         };
         Ok((definition, intent))
     }

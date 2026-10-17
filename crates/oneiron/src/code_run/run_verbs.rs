@@ -152,6 +152,10 @@ pub struct AgentSpawnInput {
     /// The direct child project the child works in, hex; the parent's when
     /// absent.
     pub project: Option<String>,
+    /// What the child is to achieve, one line each, kept verbatim and in
+    /// order (OF-544); its confession answers each. Absent, the runner
+    /// infers its own.
+    pub objectives: Option<Vec<String>>,
 }
 
 /// One spawn field as the parent sets it (ARCH-0079 #seed-pin): a seed is
@@ -243,6 +247,7 @@ impl AgentSpawnInput {
                 .as_deref()
                 .map(crate::EntityId::from_hex)
                 .transpose()?,
+            objectives: self.objectives,
             ..AgentSpawnContext::default()
         };
         let ask = super::SelfSpawnAsk {

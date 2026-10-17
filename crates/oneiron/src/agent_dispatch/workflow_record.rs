@@ -81,6 +81,10 @@ pub(super) struct WorkflowIntent {
     /// The room its leaves work in (OF-531).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room: Option<crate::workspace_roster::RoomWork>,
+    /// The objectives the caller assigned (OF-544), frozen into each leaf.
+    /// A retry naming another list is another intent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objectives: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]

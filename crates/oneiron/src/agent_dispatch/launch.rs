@@ -332,7 +332,7 @@ impl AgentDispatcher<'_> {
         let agent_count = u64::try_from(nodes.len()).unwrap_or(u64::MAX);
         let terms = self.spend_terms_in_txn(txn, tree, budget, expected.units, &unit)?;
         let (over_available, more_would_buy) = terms.shortfall(
-            expected.units,
+            expected,
             &unit,
             "launch",
             &format!("{agent_count} agent(s)"),
@@ -461,15 +461,18 @@ pub(super) struct SpendTerms {
 }
 
 impl SpendTerms {
-    /// Whether `expected_units` exceeds what may be spent now, and one line
-    /// on what more budget would buy. Stated, never refused.
+    /// Whether `expected.units` exceeds what may be spent now, and one line
+    /// on what more budget would buy: the native cap headroom, and the
+    /// expected dollars when a USD quote prices them. Stated, never refused.
     pub(super) fn shortfall(
         &self,
-        expected_units: u64,
+        expected: ExpectedSpend,
         unit: &LeaseUnit,
         what: &str,
         items: &str,
     ) -> (bool, Option<String>) {
+        let expected_units = expected.units;
+        let dollars = expected.dollar_clause();
         let carve_short = self.cap.as_ref().filter(|view| {
             view.hard && view.scope.is_some() && view.cap_units > view.available_units
         });
@@ -483,11 +486,11 @@ impl SpendTerms {
                 view.cap_units - view.available_units,
             )),
             (None, Some(most)) if over_available => Some(format!(
-                "{} more {} would cover the expected {} for {items}; {} can be spent now",
+                "{} more {} would give {items} cap headroom{dollars}; {} {} can be spent now",
                 expected_units - most,
                 unit.as_str(),
-                expected_units,
                 most,
+                unit.as_str(),
             )),
             _ => None,
         };

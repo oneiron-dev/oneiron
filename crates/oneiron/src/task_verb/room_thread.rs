@@ -398,9 +398,77 @@ pub(crate) fn thread_tasks(
     Ok(result)
 }
 
-/// The open TASKs bound to `roots`' threads, each with its thread root, for
-/// the engine's room upkeep: the TASK facts [`thread_tasks`] folds, read in
-/// `txn` through no reader's lane. Whether a reader may read each one is the
+/// What an open TASK waits on, read in `txn` by the rules [`thread_tasks`]
+/// projects a wait with: a human assignee's follow-up cursor, an ask's
+/// notice ladder, a held task's actor, each with the TASK's cutoff. `None`
+/// for work that waits on no one.
+fn open_task_wait(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    body: &super::consult_result::TaskVerbBody,
+) -> crate::Result<Option<crate::workspace_roster::RoomThreadWait>> {
+    use crate::workspace_roster::{RoomThreadWait, RoomWaitKind};
+    let until = body.ttl.map(|ttl| ttl.deadline_at);
+    let assignee = body.assignee.unwrap_or(TaskAssignee::Dreamer);
+    if let TaskAssignee::Human { actor_ref } = assignee {
+        let next_nudge = crate::human_task::human_followup_record_in_txn(vault, txn, id)?
+            .filter(|row| row.assignee_ref == actor_ref)
+            .and_then(|row| row.next_due_at)
+            .filter(|at| until.is_none_or(|cutoff| *at <= cutoff));
+        return Ok(Some(RoomThreadWait {
+            task: id,
+            kind: RoomWaitKind::HumanTask,
+            who: actor_ref,
+            since: body.created_at,
+            next_nudge,
+            until,
+        }));
+    }
+    let ask = body.task_kind() == super::TaskKind::Consult;
+    let held = matches!(
+        body.state,
+        Some(super::TaskExecutionState::Interrupted { .. })
+    );
+    if !ask && !held {
+        return Ok(None);
+    }
+    // A held task waits from when it was held, as its entity row dates it.
+    let since = if held {
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+            .ok_or(Error::EntityNotFound)?;
+        crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?
+            .occurred_start
+    } else {
+        body.created_at
+    };
+    let next_nudge = if ask {
+        super::ask_record::ask_notice_at_in(vault, txn, id, 0)?
+            .map(|(notice, cutoff)| notice.map_or(cutoff, |at| at.min(cutoff)))
+    } else {
+        None
+    };
+    Ok(Some(RoomThreadWait {
+        task: id,
+        kind: if held {
+            RoomWaitKind::Hold
+        } else {
+            RoomWaitKind::Ask
+        },
+        who: assignee
+            .entity_ref()
+            .unwrap_or(EntityId::from_hex(&body.owner_ref)?),
+        since,
+        next_nudge,
+        until,
+    }))
+}
+
+/// The open TASKs bound to `roots`' threads, each with its thread root and
+/// what it waits on ([`open_task_wait`]), for the engine's room upkeep: the
+/// TASK facts [`thread_tasks`] folds, read in `txn` through no reader's lane.
+/// Whether a reader may read each one, and the actor it waits on, is the
 /// caller's to judge; `count` is the census the caller raises.
 pub(crate) fn open_thread_tasks_in(
     vault: &crate::Vault,
@@ -410,7 +478,13 @@ pub(crate) fn open_thread_tasks_in(
     members: &[EntityId],
     now: u64,
     count: &mut crate::scan_check::ScanCount,
-) -> crate::Result<Vec<(EntityId, EntityId)>> {
+) -> crate::Result<
+    Vec<(
+        EntityId,
+        EntityId,
+        Option<crate::workspace_roster::RoomThreadWait>,
+    )>,
+> {
     let mut open = Vec::new();
     if roots.is_empty() && bindings.is_empty() {
         return Ok(open);
@@ -460,7 +534,7 @@ pub(crate) fn open_thread_tasks_in(
         {
             continue;
         }
-        open.push((id, thread));
+        open.push((id, thread, open_task_wait(vault, txn, id, &body)?));
     }
     Ok(open)
 }
