@@ -47896,7 +47896,7 @@
      "purpose": "The vault-handle doors for this install's own keys: installing the keystore, loading this install's signing…",
      "surface": {
       "crate-vis": 4,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -56322,6 +56322,20 @@
      "path": "src/apple.rs",
      "purpose": "Apple: the data-protection keychain, one generic-password item per slot",
      "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecureEnclaveKeychain"
+     ],
+     "path": "src/apple_enclave.rs",
+     "purpose": "Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES…",
+     "surface": {
       "fn": 1,
       "struct": 1
      }
@@ -56344,6 +56358,7 @@
      "kind": "src",
      "notable": [
       "DeviceKeystore",
+      "KeystoreAssurance",
       "KeystoreError",
       "KeystoreLocality",
       "KeystoreSlot",
@@ -56353,9 +56368,9 @@
      "purpose": "This-device-only key slots for one install",
      "surface": {
       "const": 1,
-      "enum": 3,
-      "fn": 5,
-      "re-export": 3,
+      "enum": 4,
+      "fn": 7,
+      "re-export": 5,
       "struct": 1,
       "trait": 1,
       "type": 1
@@ -56373,6 +56388,19 @@
       "fn": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowsDpapiKeystore"
+     ],
+     "path": "src/windows.rs",
+     "purpose": "Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
     }
    ],
    "modules": {
@@ -56382,6 +56410,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Apple: the data-protection keychain, one generic-password item per slot"
+    },
+    "apple_enclave": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES…"
     },
     "file": {
      "files": 1,
@@ -56396,11 +56431,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here"
+    },
+    "windows": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine…"
     }
    },
    "over_bar": 0,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 4,
+   "source_files": 6,
    "test_files": 0
   },
   "oneiron-linear": {
