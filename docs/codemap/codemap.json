@@ -18480,7 +18480,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DreamerRunContext",
@@ -52440,7 +52440,7 @@
     "dreamer_promotion": {
      "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
@@ -53446,7 +53446,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 172,
+   "over_bar": 173,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3245,
    "test_files": 902
@@ -58235,15 +58235,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "DoceditError"
+      "DoceditError",
+      "DocxAnchorBlock"
      ],
      "path": "src/lib.rs",
      "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "mod": 14,
-      "re-export": 5
+      "re-export": 5,
+      "struct": 1
      }
     },
     {
