@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 262 facade rows, 993 declarations.
-Inputs: 218 of 262 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 211 of 262 fully typed, 41 typed down to an opaque serde_json::Value leaf, 10 with a shape the generator could not read
+Census: 267 facade rows, 1004 declarations.
+Inputs: 223 of 267 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 216 of 267 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 67; unread shapes: 2.
 """
 
@@ -1377,6 +1377,59 @@ class KeyValueNamespaces(TypedDict):
     max_depth: NotRequired[int | None]
     limit: NotRequired[int]
     offset: NotRequired[int]
+class CampaignProgramOutboundSpec(TypedDict):
+    call_seq: int
+    verb: str
+    payload: str
+    idempotency_supported: bool
+class CampaignProgramStepSpec(TypedDict):
+    step_ref: str
+    channel: str
+    sender_ref: str
+    basis_evidence: str
+    outbound: NotRequired[CampaignProgramOutboundSpec | None]
+class CampaignProgramAudienceSpec(TypedDict):
+    query_ref: str
+    entry_step_ref: str
+class CreateCampaignProgramRequest(TypedDict):
+    schema_version: NotRequired[int]
+    campaign_ref: str
+    name: str
+    steps: NotRequired[list[CampaignProgramStepSpec]]
+    audience: NotRequired[CampaignProgramAudienceSpec | None]
+CampaignProgramLifecycle = Literal["active", "archived"]
+class CampaignProgramDefinitionView(TypedDict):
+    schema_version: int
+    owner_actor: str
+    campaign_ref: str
+    name: str
+    definition_version: int
+    lifecycle: CampaignProgramLifecycle
+    steps: list[CampaignProgramStepSpec]
+    audience: NotRequired[CampaignProgramAudienceSpec | None]
+class CampaignProgramRecord(TypedDict):
+    program_ref: str
+    definition: CampaignProgramDefinitionView
+    automatic_intake: bool
+    created_at: int
+    updated_at: int
+class CampaignProgramReadRequest(TypedDict):
+    campaign_ref: str
+    program_ref: str
+class CampaignProgramReadResult(TypedDict):
+    found: bool
+    record: NotRequired[CampaignProgramRecord | None]
+class UpdateCampaignProgramRequest(TypedDict):
+    campaign_ref: str
+    program_ref: str
+    expected_definition_version: int
+    name: str
+    steps: list[CampaignProgramStepSpec]
+    audience: NotRequired[CampaignProgramAudienceSpec | None]
+class ArchiveCampaignProgramRequest(TypedDict):
+    campaign_ref: str
+    program_ref: str
+    expected_definition_version: int
 WeaveSectionKind = Literal["changes", "projects", "open_asks", "links", "conflicts", "exceptions", "admissions", "budgets", "sieve_score", "digest"]
 class WeaveSectionInput(TypedDict):
     kind: WeaveSectionKind
@@ -1435,6 +1488,7 @@ class WeaveReportView(TypedDict):
     narrowing: ScopedReadReceipt
 class WeaveDigestRequest(TypedDict):
     scheduled_for: NotRequired[int | None]
+GeneratedUiCatalog = Literal["lens_atom_kit"]
 LensText = str
 class LensTextSpanLiteral(TypedDict):
     type: Literal["literal"]
@@ -1714,25 +1768,6 @@ SelfUiBindableProperty = Literal["checked", "selected", "value", "text"]
 class SelfUiBinding(TypedDict):
     stateKey: str
     property: SelfUiBindableProperty
-LensNode = TypedDict("LensNode", {"id": str, "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "children": NotRequired[list[LensNode]]})
-class GeneratedLens(TypedDict):
-    kit_version: int
-    apps_contract_version: int
-    root: LensNode
-class WeaveLensRefusal(TypedDict):
-    reason: str
-    skill_ref: str
-    skill_version: str
-    model: str
-    refused_at: int
-class WeaveDigestView(TypedDict):
-    scheduled_for: int
-    rendered_at: int
-    sections: list[WeaveSectionView]
-    narrowing: ScopedReadReceipt
-    lens: NotRequired[GeneratedLens | None]
-    lens_refused: NotRequired[WeaveLensRefusal | None]
-GeneratedUiCatalog = Literal["lens_atom_kit"]
 GeneratedUiNode = TypedDict("GeneratedUiNode", {"id": str, "parent": NotRequired[str | None], "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "childRefs": NotRequired[list[str]]})
 GeneratedUiActionTier = Literal["local", "deterministic_tool", "model_round_trip"]
 class GeneratedUiActionDeclaration(TypedDict):
@@ -1748,10 +1783,28 @@ class GeneratedUiCardLifecycle(TypedDict):
     revision: int
     archiveReason: NotRequired[GeneratedUiArchiveReason | None]
 GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "root": str, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
+LensNode = TypedDict("LensNode", {"id": str, "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "children": NotRequired[list[LensNode]]})
+class GeneratedLens(TypedDict):
+    kit_version: int
+    apps_contract_version: int
+    root: LensNode
 class LensFrameCard(TypedDict):
     card_id: str
     render: GeneratedUiRender
     lens: GeneratedLens
+class WeaveLensRefusal(TypedDict):
+    reason: str
+    skill_ref: str
+    skill_version: str
+    model: str
+    refused_at: int
+class WeaveDigestView(TypedDict):
+    scheduled_for: int
+    rendered_at: int
+    sections: list[WeaveSectionView]
+    narrowing: ScopedReadReceipt
+    lens: NotRequired[LensFrameCard | None]
+    lens_refused: NotRequired[WeaveLensRefusal | None]
 class WeaveWrongLinkRequest(TypedDict):
     source_ref: str
     kind: str
@@ -3992,7 +4045,7 @@ class DecisionReceipt(TypedDict):
     images: NotRequired[list[ImagePin]]
     think_row: NotRequired[int | None]
     person_row: NotRequired[int | None]
-HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline"]
+HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
     candidate: str

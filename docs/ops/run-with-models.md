@@ -216,7 +216,9 @@ route say, holds a socket when its entry sets `responses_socket = true` (a
 
 An `anthropic-compat` provider at `https://api.anthropic.com` sends a
 `/v1/messages` request body of 16 KiB or more gzip-encoded (level 1), when that
-makes it smaller. Replies do not change. Any other provider sends plain bodies
+makes it smaller, except on a cloud node (a managed or host-readable
+deployment), where gzip costs more on the link than it saves; zstd still
+compresses there. Replies do not change. Any other provider sends plain bodies
 unless its entry names the codec its route decodes: `request_compression =
 "zstd"` (level 3) for our CPA agents route, say, or `"gzip"`. Set
 `request_compression = false` to send plain. If a compressed body is answered
@@ -549,6 +551,18 @@ only grant is the secret's binding for the operation's effector (such as
 secret the mask on write found has no binding, so `self.use` refuses it and
 names the owner door that adds one. Every use, and every refused one, leaves a
 Gate record with the handle, generation, effector, operation and send status.
+
+On a server, `self.use` also takes `connector.call`: one connector call with
+the secret as the call's credential, in place of the connector's own. Its
+`arguments` are what `connector.call` takes: `name`, `tool`, the tool's
+`arguments` and `mutation`. The secret needs a binding for
+`connector:<connector>`, the connector the name routes to, and the call itself
+still runs under the run's own standing grant and gate. The tool's reply comes
+back as `result`, marked foreign, with the value replaced. A call the gate
+holds answers with its `call_ref`, and the run does not wait on it. The
+settler sends it once the hold clears, with the same secret, and the door
+checks the binding again at that send. An embedded vault refuses
+`connector.call`.
 When the host's model ladder served the turn, each verb call the turn's
 program makes carries the provider that answered it, and a reveal's ask names
 that provider. An agent no host model drives, such as an external HTTP or MCP
@@ -562,7 +576,13 @@ no new record is minted. The match is exact and needs at least 12 bytes. It
 reads a keyed index that holds each value's length and fingerprint, never the
 value. The index's key never leaves this machine. The owner's "not a secret"
 ruling for a record wins over the match. The step's program is stored as the
-model wrote it, so a resumed step runs the same code.
+model wrote it, so a resumed step runs the same code. A run in an off-record
+session is swept the same way.
+
+A stored file keeps its bytes. A known value in a file, or in a member of a
+container file, is marked with its existing record, as a key the scan finds
+is marked. A reader without a grant then gets the file with that value
+masked, and a granted read gets the real bytes, both through the same mark.
 
 ### Reader children, summaries and fold receipts
 

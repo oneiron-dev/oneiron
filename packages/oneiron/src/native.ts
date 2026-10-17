@@ -70,10 +70,15 @@ vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
+vaultCampaignProgramCreate(input: unknown): unknown
+vaultCampaignProgramRead(input: unknown): unknown
+vaultCampaignProgramUpdate(input: unknown): unknown
+vaultCampaignProgramArchive(input: unknown): unknown
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
 vaultWeaveLens(input: unknown): unknown
 vaultWeaveLinkWrong(input: unknown): unknown
+vaultWeaveOwnerLinkWrong(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksSetupPrepare(input: unknown): unknown
 vaultPacksSetupGet(input: unknown): unknown

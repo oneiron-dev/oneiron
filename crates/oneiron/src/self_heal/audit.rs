@@ -272,6 +272,15 @@ impl Vault {
         SEALS.get(&self.store, &txn, attempt.as_bytes())
     }
 
+    /// [`Self::sealed_attempt_receipt`] in the caller's snapshot.
+    pub(crate) fn sealed_attempt_receipt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: AttemptId,
+    ) -> Result<Option<SealedAttemptReceipt>> {
+        SEALS.get(&self.store, txn, attempt.as_bytes())
+    }
+
     /// Durable work for the host's auditor. Reading a request does not lease
     /// extra budget, widen a Grant, or execute a model.
     pub fn pending_seal_checks(&self) -> Result<Vec<SealCheckRequest>> {
