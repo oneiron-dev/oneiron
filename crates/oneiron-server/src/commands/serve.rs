@@ -276,6 +276,13 @@ pub(super) async fn serve_with_config(
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
     #[cfg(unix)]
     let vault_id = super::local_servers::vault_id(sync_server.vault());
+    // The server's own voice loop (OF-410): off unless `[models.voice]`
+    // names its socket.
+    #[cfg(unix)]
+    let voice = crate::voice_host::VoiceBoot::start(
+        &sync_server,
+        config.models.as_ref().map(|models| &models.voice),
+    );
     let mesh_server = Arc::clone(&sync_server);
     let app = build_app(sync_server).layer(cors_layer);
     // The paired-machine mesh listener (OF-535): off unless the host names
@@ -330,6 +337,12 @@ pub(super) async fn serve_with_config(
     }
     if let Some(mesh) = mesh {
         mesh.stop().await;
+    }
+    // A voice call in flight ends through its own teardown before the
+    // models it speaks on stop.
+    #[cfg(unix)]
+    if let Some(voice) = voice {
+        voice.stop().await;
     }
     // A pass or step in flight reaches its own boundary before this returns.
     ai.shutdown().await;
