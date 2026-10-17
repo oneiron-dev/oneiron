@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 308 facade rows, 1186 declarations.
+Census: 308 facade rows, 1187 declarations.
 Inputs: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
@@ -2637,6 +2637,13 @@ class PriorSeed(TypedDict):
     alpha: float
     beta: float
     source_ref: str
+class ResearchExecution(TypedDict):
+    experimenter: EntityId
+    scorer: EntityId
+    referee: NotRequired[EntityId | None]
+    experiment_units: int
+    measure_units: int
+    confirm_units: int
 class ResearchBindWire(TypedDict):
     root: EntityId
     config: CampaignConfig
@@ -2646,6 +2653,7 @@ class ResearchBindWire(TypedDict):
     share: NotRequired[str | None]
     incumbent: CandidateRef
     prior_ladder: NotRequired[list[PriorSeed]]
+    execution: NotRequired[ResearchExecution | None]
 class ResearchGoalPin(TypedDict):
     goal_id: EntityId
     revision: str
@@ -2662,6 +2670,7 @@ class ResearchBinding(TypedDict):
     confirmation: NotRequired[ResearchConfirmationSeat | None]
     share: NotRequired[str | None]
     prior_ladder: list[PriorSeed]
+    execution: NotRequired[ResearchExecution | None]
     bound_at: int
 ForkKind = Literal["variation", "debug"]
 class ResearchForkWire(TypedDict):
