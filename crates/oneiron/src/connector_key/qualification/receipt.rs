@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const CONNECTOR_QUALIFICATION_SUITE: &str = "oneiron.connector.qualification.v1";
+/// A built-in connector pack's suite: the engine's own hash-verified adapter
+/// rides its Verified setup connection instead of a probe suite. Only an
+/// embedded built-in source may carry it.
+pub const SETUP_CHECK_QUALIFICATION_SUITE: &str = "oneiron.connector.setup_check.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,9 +39,36 @@ impl ConnectorQualificationReceipt {
         Ok(receipt)
     }
 
+    /// The receipt a built-in's checked setup connection earns. The
+    /// revision is the engine's, which built-in adapters version with.
+    pub(crate) fn setup_check(
+        report_hash: String,
+        engine_revision: String,
+        source_hash: [u8; 32],
+        qualified_at: u64,
+    ) -> Result<Self> {
+        let receipt = Self {
+            suite: SETUP_CHECK_QUALIFICATION_SUITE.to_owned(),
+            report_hash,
+            protocol_revision: engine_revision,
+            manifest_hash: source_hash,
+            qualified_at,
+        };
+        receipt.validate_setup_check()?;
+        Ok(receipt)
+    }
+
     pub(crate) fn validate(&self) -> Result<()> {
+        self.validate_as(CONNECTOR_QUALIFICATION_SUITE)
+    }
+
+    pub(crate) fn validate_setup_check(&self) -> Result<()> {
+        self.validate_as(SETUP_CHECK_QUALIFICATION_SUITE)
+    }
+
+    fn validate_as(&self, suite: &str) -> Result<()> {
         validate_protocol_revision(&self.protocol_revision)?;
-        if self.suite != CONNECTOR_QUALIFICATION_SUITE
+        if self.suite != suite
             || self.report_hash.len() != 64
             || !self
                 .report_hash

@@ -4,7 +4,7 @@
 use super::qualify::{validate_installed_qualification, validate_qualification};
 use super::{
     PackAdapter, PackCandidateReason, PackInstallReceipt, PackInstallStatus, PackKind,
-    PackQualifier, PackSource, admission,
+    PackQualifier, PackSource, SetupCheckQualifier, admission,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::skill_hub::{HubFile, HubPin, HubRef};
@@ -68,6 +68,15 @@ fn builtin_source(name: &str, markdown: &str) -> Result<PackSource> {
         files.push(HubFile::new(SETUP_SKILL_PATH, skill.as_bytes()));
     }
     PackSource::from_files(files)
+}
+
+/// A built-in channel's exact embedded source.
+pub(super) fn embedded_builtin_source(channel: &str) -> Result<PackSource> {
+    let (name, markdown) = PACKS
+        .iter()
+        .find(|(name, _)| *name == channel)
+        .ok_or_else(|| super::invalid("unknown built-in connector pack"))?;
+    builtin_source(name, markdown)
 }
 
 /// The engine hub ref a built-in source's bundled skills are imported under,
@@ -205,18 +214,15 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
 
 impl Vault {
     /// Bootstrap never trusts an engine-built connector merely because it is
-    /// first-party. Its real isolated adapter must clear the same probes as a
-    /// hub pack before the receipt enters the Active installation catalog.
+    /// first-party. The exact embedded source must pass a qualifier before
+    /// the receipt enters the Active installation catalog: its checked setup
+    /// connection ([`SetupCheckQualifier`]) or a probe suite.
     pub fn qualify_builtin_connector_pack(
         &self,
         channel: &str,
         qualifier: &dyn PackQualifier,
     ) -> Result<PackInstallReceipt> {
-        let (_, markdown) = PACKS
-            .iter()
-            .find(|(name, _)| *name == channel)
-            .ok_or_else(|| super::invalid("unknown built-in connector pack"))?;
-        let source = builtin_source(channel, markdown)?;
+        let source = embedded_builtin_source(channel)?;
         let hub = builtin_hub_ref(channel, &source)?;
         let hash = source.content_hash().to_hex();
         let (candidate, installed) = {
@@ -277,6 +283,62 @@ impl Vault {
             admission::PACK_CANDIDATE.delete(&self.store, txn, &hash)?;
             Ok(receipt.clone())
         })
+    }
+
+    /// A built-in whose setup check just turned Verified qualifies in the
+    /// same flow (Engine ruling 10-17). Only the engine-seeded receipt of the
+    /// exact embedded source moves, and only while the runtime gate would
+    /// refuse it: a Candidate, or a receipt an older engine qualified. A pack
+    /// with several connections waits until every one is checked. Returns
+    /// whether the pack is now Active.
+    pub(crate) fn qualify_builtin_on_checked_setup(
+        &self,
+        pack: &str,
+        content_hash: &str,
+    ) -> Result<bool> {
+        let Some(channel) = pack.strip_prefix("oneiron.") else {
+            return Ok(false);
+        };
+        if !PACKS.iter().any(|(name, _)| *name == channel) {
+            return Ok(false);
+        }
+        let source = embedded_builtin_source(channel)?;
+        let Some(setup) = source.manifest().setup.as_ref() else {
+            return Ok(false);
+        };
+        if source.content_hash().to_hex() != content_hash {
+            return Ok(false);
+        }
+        let receipt = {
+            let txn = self.store.env.read_txn()?;
+            match admission::PACK_CANDIDATE.get(&self.store, &txn, &content_hash.to_owned())? {
+                Some(candidate) => Some(candidate),
+                None => self
+                    .installed_pack_in_txn(&txn, pack)?
+                    .filter(|installed| installed.content_hash == content_hash),
+            }
+        };
+        let Some(receipt) = receipt else {
+            return Ok(false);
+        };
+        let current = receipt.status == PackInstallStatus::Active
+            && receipt.engine_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
+        if receipt.publisher != ENGINE_PUBLISHER
+            || receipt.adapter != Some(PackAdapter::Builtin(channel.to_owned()))
+            || current
+        {
+            return Ok(false);
+        }
+        for connection in &setup.connections {
+            if self
+                .require_candidate_pack_connection_verified(pack, content_hash, &connection.id)
+                .is_err()
+            {
+                return Ok(false);
+            }
+        }
+        self.qualify_builtin_connector_pack(channel, &SetupCheckQualifier { vault: self })?;
+        Ok(true)
     }
 
     /// A built-in channel runs as its engine pack (OF-519): once the vault

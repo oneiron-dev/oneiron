@@ -71,6 +71,7 @@ mod removal;
 pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
 pub use qualify::{
     ConnectorPackQualification, PackConnectorReceipt, ProbePackQualifier, QualifiedPackFitPolicy,
+    SetupCheckQualifier,
 };
 mod schema;
 mod screening;
