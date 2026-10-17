@@ -327,11 +327,15 @@ pub(crate) fn materialized_database_names(env: &Env, txn: &heed::RoTxn<'_>) -> R
     let mut names = Vec::new();
     for row in main.iter(txn)? {
         let (key, _) = row?;
-        if key.contains(&0) {
+        // mdb.master3 stores a database's name with its terminating NUL
+        // (`mdb_dbi_open` keys `strlen(name) + 1` bytes). Any other NUL marks
+        // a key that is no database name.
+        let name = key.strip_suffix(&[0]).unwrap_or(key);
+        if name.contains(&0) {
             continue;
         }
         names.push(
-            str::from_utf8(key)
+            str::from_utf8(name)
                 .map_err(|_| Error::InvalidKey)?
                 .to_owned(),
         );
