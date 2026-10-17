@@ -133,6 +133,11 @@ export_facade! {
     let output = client.vault_fanout_resume(&input)?;
     crate::codec::lift_record("vault.fanout.resume", &output)
 };
+"vault.fanout.resume_as" => fn vault_fanout_resume_as(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
+    let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume_as", input)?;
+    let output = client.vault_fanout_resume_as(&input)?;
+    crate::codec::lift_record("vault.fanout.resume_as", &output)
+};
 "vault.fanout.ack" => fn vault_fanout_ack(&self, input: FanoutAckRequest) -> FanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutAckRequest = crate::codec::lower_record("vault.fanout.ack", input)?;
     let output = client.vault_fanout_ack(&input)?;
@@ -1256,8 +1261,8 @@ export_facade! {
     let output = client.vault_artifacts_body_export(&input)?;
     crate::codec::lift_record("vault.artifacts.body.export", &output)
 };
-"vault.artifacts.body.preview" => fn vault_artifacts_body_preview(&self, input: OfficeBodyArtifactRequest) -> XlsxPreview = |client| {
-    let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.preview", input)?;
+"vault.artifacts.body.preview" => fn vault_artifacts_body_preview(&self, input: OfficeBodyPreviewRequest) -> XlsxPreview = |client| {
+    let input: oneiron::office_body::OfficeBodyPreviewRequest = crate::codec::lower_record("vault.artifacts.body.preview", input)?;
     let output = client.vault_artifacts_body_preview(&input)?;
     crate::codec::lift_record("vault.artifacts.body.preview", &output)
 };

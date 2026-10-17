@@ -10,6 +10,7 @@
 //! that carry the failure class and never vault text. It takes no proxy.
 
 use std::io::Read;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use oneiron::ModelId;
@@ -18,6 +19,7 @@ use oneiron::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder
 use serde::Deserialize;
 
 use crate::config::OneironerConfig;
+use crate::config::models::RequestCodec;
 
 /// The slot's wire contract version. A tagger must report exactly this.
 /// Version 2 carries cross-turn and speaker links, link confidences and the
@@ -97,6 +99,10 @@ pub(crate) struct HttpTagger {
     expected_stack: Option<String>,
     expected_label_count: u32,
     client: reqwest::blocking::Client,
+    /// The codec extract bodies go in, while `compress` holds.
+    compression: Option<RequestCodec>,
+    /// Off once the tagger refused a compressed body that it took plain.
+    compress: AtomicBool,
 }
 
 impl HttpTagger {
@@ -160,6 +166,8 @@ impl HttpTagger {
             expected_stack: config.stack_sha16.clone(),
             expected_label_count: config.label_count.unwrap_or_default(),
             client,
+            compression: config.request_compression,
+            compress: AtomicBool::new(true),
         })
     }
 
@@ -239,13 +247,55 @@ impl HttpTagger {
         Ok(ProbeOutcome::Ready(card))
     }
 
+    /// Posts `plain` to `url`, in the section's codec when it names one and
+    /// the body is worth it. A 400 or 415 to a compressed body is sent once
+    /// more, plain; when the plain answer differs, the tagger gets plain
+    /// bodies from then on.
+    fn send_extract(
+        &self,
+        url: &str,
+        plain: Vec<u8>,
+    ) -> reqwest::Result<reqwest::blocking::Response> {
+        let request = || {
+            self.client
+                .post(url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+        };
+        let encoded = self
+            .compression
+            .filter(|_| self.compress.load(Ordering::Relaxed))
+            .and_then(|codec| Some((codec, crate::models::encode_request_body(codec, &plain)?)));
+        let Some((codec, encoded)) = encoded else {
+            return request().body(plain).send();
+        };
+        let token = crate::models::codec_token(codec);
+        let response = request()
+            .header(reqwest::header::CONTENT_ENCODING, token)
+            .body(encoded)
+            .send()?;
+        if !matches!(response.status().as_u16(), 400 | 415) {
+            return Ok(response);
+        }
+        let refused = response.status();
+        drop(response);
+        let response = request().body(plain).send()?;
+        if response.status() != refused {
+            self.compress.store(false, Ordering::Relaxed);
+            tracing::warn!(
+                status = refused.as_u16(),
+                codec = token,
+                "the tagger refused a compressed request body; sending plain from now on"
+            );
+        }
+        Ok(response)
+    }
+
     fn post_extract(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
         let url = format!("{}/v1/extract", self.base);
+        let plain = serde_json::to_vec(input)
+            .map_err(|_| failure("tagger extract request did not encode".to_owned()))?;
         let response = self
-            .client
-            .post(&url)
-            .json(input)
-            .send()
+            .send_extract(&url, plain)
             .map_err(|error| transport_error("extract", &error))?;
         let status = response.status();
         if !status.is_success() {

@@ -2,7 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use super::compact::UPDATE_CARRIERS;
 #[cfg(all(feature = "sync", test))]
 use super::run::{INJECT_UW_ROW_BEFORE_FINALIZE, RACE_BENIGN_MARKER};
 use super::run::{RETRY_BACKOFF_BASE_SECS, RETRY_BACKOFF_CAP_SECS};
@@ -19,7 +18,7 @@ use crate::entity_id::EntityId;
 #[cfg(all(feature = "sync", test))]
 use crate::error::SyncEngineContext;
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, WindowDeletionRows};
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 #[cfg(all(feature = "sync", test))]
 use crate::sync::window_rows::WINDOW_UPDATE;
@@ -71,10 +70,10 @@ pub(super) fn finalize_job(
         // any `u:w:` row present at AllCompacted-finalize is a post-
         // compaction arrival → abort with no mutation, signalling defer.
         //
-        // Undecoded rows through the sweep's own binding (see
-        // [`UPDATE_CARRIERS`]): any row at all is an arrival.
-        if UPDATE_CARRIERS
-            .iter_raw_from(&vault.store, wtxn, &[])?
+        // Raw keys, undecoded: any row at all is an arrival.
+        if vault
+            .store
+            .port_window_update_keys(wtxn, None, |_| ())?
             .next()
             .transpose()?
             .is_some()
@@ -189,8 +188,9 @@ pub(super) fn finalize_withdrawn_job(
     job: &WithdrawnGenerationSweepJob,
 ) -> Result<bool> {
     vault.with_write_txn_grouped(|wtxn| {
-        if UPDATE_CARRIERS
-            .iter_raw_from(&vault.store, wtxn, &[])?
+        if vault
+            .store
+            .port_window_update_keys(wtxn, None, |_| ())?
             .next()
             .transpose()?
             .is_some()

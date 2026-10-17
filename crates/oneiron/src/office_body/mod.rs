@@ -53,7 +53,7 @@ pub use verbs::{
     OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest,
     OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest,
     OfficeBodyForkMergeRequest, OfficeBodyForkOpenRequest, OfficeBodyForkRequest,
-    OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyProposalRequest,
+    OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyPreviewRequest, OfficeBodyProposalRequest,
     OfficeBodyProposalSettleRequest, OfficeBodyReadRequest, OfficeBodyReviewedFork, OfficeBodyView,
     XlsxBodyView, XlsxSheetView,
 };
@@ -185,6 +185,46 @@ pub struct OfficeBodyExportRequest<'a> {
     /// The envelope the export version carries; `None` gives it the
     /// exporter's own.
     pub made_by: Option<&'a MadeBy>,
+    /// The local time a workbook recalculates at.
+    pub zone: &'a OfficeRecalcZone,
+}
+
+/// The local time a workbook export or preview recalculates TODAY() and
+/// NOW() at, as the caller's device knows it: its offset east of UTC now,
+/// and the IANA zone it read that from, kept as a label. The vault keeps no
+/// owner zone; a caller that names none gets the default, UTC (FIX 790).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OfficeRecalcZone {
+    pub utc_offset_minutes: i16,
+    pub iana_timezone: Option<String>,
+}
+
+impl OfficeRecalcZone {
+    /// The caller's zone, checked as an outbound schedule's is: a zone label
+    /// comes with its offset, and an offset is within ±14 hours.
+    pub fn from_caller(
+        utc_offset_minutes: Option<i16>,
+        iana_timezone: Option<String>,
+    ) -> Result<Self> {
+        if iana_timezone.is_some() && utc_offset_minutes.is_none() {
+            return Err(invalid("iana_timezone requires utc_offset_minutes"));
+        }
+        let utc_offset_minutes = utc_offset_minutes.unwrap_or_default();
+        if !(-840..=840).contains(&utc_offset_minutes) {
+            return Err(invalid("utc_offset_minutes must be in -840..=840"));
+        }
+        if iana_timezone.as_deref().is_some_and(|label| {
+            label.trim().is_empty() || label.chars().any(char::is_control) || label.len() > 255
+        }) {
+            return Err(invalid(
+                "iana_timezone must be non-blank and contain no controls",
+            ));
+        }
+        Ok(Self {
+            utc_offset_minutes,
+            iana_timezone,
+        })
+    }
 }
 
 /// An export version and the exact body it projects. The version keeps a
@@ -199,8 +239,8 @@ pub struct OfficeBodyExportRecord {
     pub author: String,
     pub at: u64,
     pub changes: u64,
-    /// The engine that recalculated an XLSX export; `None` when the file
-    /// recalculates on open, and for DOCX.
+    /// The engine that recalculated an XLSX export and the local time it
+    /// read; `None` when the file recalculates on open, and for DOCX.
     pub recalc: Option<String>,
 }
 
@@ -218,8 +258,9 @@ pub struct OfficeBodyExport {
 pub struct XlsxPreview {
     pub frontier: Vec<u8>,
     pub book: XlsxBook,
-    /// The engine that recalculated it; `None` when it could not, and formula
-    /// values are blank until the file is opened.
+    /// The engine that recalculated it and the local time it read; `None`
+    /// when it could not, and formula values are blank until the file is
+    /// opened.
     pub recalc: Option<String>,
 }
 
@@ -610,7 +651,7 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         let at = self.now_recorded_at();
         let Some((bytes, changes, recalc)) =
-            self.project_body(artifact, &head, request.author, at)?
+            self.project_body(artifact, &head, request.author, at, request.zone)?
         else {
             return Ok(OfficeBodyExport {
                 frontier: head.frontier,
@@ -653,7 +694,9 @@ impl Vault {
                 author: request.author.to_owned(),
                 at,
                 changes: changes as u64,
-                recalc: recalc.as_ref().map(recalc_label),
+                recalc: recalc
+                    .as_ref()
+                    .map(|stamp| recalc_label(stamp, request.zone)),
             };
             EXPORTS.put(
                 &self.store,
@@ -671,7 +714,11 @@ impl Vault {
 
     /// The workbook an export would land now: the body projected onto its
     /// imported package and recalculated, then read back. Nothing lands.
-    pub fn preview_xlsx_body(&self, artifact: &EntityId) -> Result<XlsxPreview> {
+    pub fn preview_xlsx_body(
+        &self,
+        artifact: &EntityId,
+        zone: &OfficeRecalcZone,
+    ) -> Result<XlsxPreview> {
         let head = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
@@ -680,16 +727,16 @@ impl Vault {
         }
         let at = self.now_recorded_at();
         let limits = self.docedit_package_limits()?;
-        let (bytes, recalc) = match self.project_body(artifact, &head, "preview", at)? {
+        let (bytes, recalc) = match self.project_body(artifact, &head, "preview", at, zone)? {
             Some((bytes, _, recalc)) => (bytes, recalc),
-            None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at)?,
+            None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
         };
         let book = read_xlsx_cells(&bytes, limits)
             .map_err(|_| invalid("the projected workbook could not be read"))?;
         Ok(XlsxPreview {
             frontier: head.frontier,
             book,
-            recalc: recalc.as_ref().map(recalc_label),
+            recalc: recalc.as_ref().map(|stamp| recalc_label(stamp, zone)),
         })
     }
 
@@ -712,6 +759,7 @@ impl Vault {
         head: &OfficeBodyHead,
         author: &str,
         at: u64,
+        zone: &OfficeRecalcZone,
     ) -> Result<Option<(Vec<u8>, usize, Option<CalcEngineStamp>)>> {
         if head.kind == OfficeBodyKind::Pptx {
             return Err(invalid(
@@ -763,7 +811,7 @@ impl Vault {
         let limits = self.docedit_package_limits()?;
         let projected = project_xlsx(&self.body_source(artifact, head)?, &changes, limits)
             .map_err(|_| invalid("the body could not be projected onto its package"))?;
-        let (bytes, recalc) = recalc_xlsx(&projected, limits, at)?;
+        let (bytes, recalc) = recalc_xlsx(&projected, limits, at, zone)?;
         Ok(Some((bytes, changes.len(), recalc)))
     }
 
@@ -962,19 +1010,25 @@ fn three_way(
     })
 }
 
-/// Recalculate a projected workbook in process at `at` (UTC), seeded by the
-/// projected package, so the result is deterministic in both and no vault
-/// frontier reaches the file (OF-491). A workbook the engine refuses is marked
-/// to recalculate when it is opened instead.
+/// Recalculate a projected workbook in process at `at`, read in `zone`'s
+/// local time, seeded by the projected package, so the result is
+/// deterministic in all three and no vault frontier reaches the file
+/// (OF-491). A workbook the engine refuses is marked to recalculate when it
+/// is opened instead.
 fn recalc_xlsx(
     bytes: &[u8],
     limits: Limits,
     at: u64,
+    zone: &OfficeRecalcZone,
 ) -> Result<(Vec<u8>, Option<CalcEngineStamp>)> {
     let mut seed = [0u8; 8];
     seed.copy_from_slice(&blake3::hash(bytes).as_bytes()[..8]);
-    let clock = RecalcClock::new(timestamp(at)?, 0, u64::from_le_bytes(seed))
-        .ok_or_else(|| invalid("office body recalc clock"))?;
+    let clock = RecalcClock::new(
+        timestamp(at)?,
+        zone.utc_offset_minutes,
+        u64::from_le_bytes(seed),
+    )
+    .ok_or_else(|| invalid("office body recalc clock"))?;
     match FormualizerEngine::new().recalculate_xlsx(bytes, limits, &clock, None) {
         Ok(report) => Ok((
             report.bytes,
@@ -992,9 +1046,26 @@ fn recalc_xlsx(
     }
 }
 
-/// The calculator as the export record and the preview name it.
-fn recalc_label(stamp: &CalcEngineStamp) -> String {
-    format!("{} {}", stamp.engine(), stamp.version())
+/// The calculator and the local time it read, as the export record and the
+/// preview name them: `formualizer 0.5.1 at UTC+09:00 (Asia/Tokyo)`.
+fn recalc_label(stamp: &CalcEngineStamp, zone: &OfficeRecalcZone) -> String {
+    let sign = if zone.utc_offset_minutes < 0 {
+        '-'
+    } else {
+        '+'
+    };
+    let minutes = zone.utc_offset_minutes.unsigned_abs();
+    let mut label = format!(
+        "{} {} at UTC{sign}{:02}:{:02}",
+        stamp.engine(),
+        stamp.version(),
+        minutes / 60,
+        minutes % 60
+    );
+    if let Some(name) = &zone.iana_timezone {
+        label.push_str(&format!(" ({name})"));
+    }
+    label
 }
 
 fn timestamp(at: u64) -> Result<chrono::DateTime<chrono::Utc>> {
