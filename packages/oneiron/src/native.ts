@@ -61,6 +61,7 @@ vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
+tasksAccept(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
@@ -125,6 +126,21 @@ vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
+vaultResearchBind(input: unknown): unknown
+vaultResearchFork(input: unknown): unknown
+vaultResearchWeave(input: unknown): unknown
+vaultResearchMeasureSearch(input: unknown): unknown
+vaultResearchMeasureHeldOut(input: unknown): unknown
+vaultResearchMarkInvalid(input: unknown): unknown
+vaultResearchPrune(input: unknown): unknown
+vaultResearchSelect(input: unknown): unknown
+vaultResearchPromotionBasis(input: unknown): unknown
+vaultResearchReserveConfirmation(input: unknown): unknown
+vaultResearchPromote(input: unknown): unknown
+vaultResearchReserveWork(input: unknown): unknown
+vaultResearchSettleWork(input: unknown): unknown
+vaultResearchRefundWork(input: unknown): unknown
+vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
