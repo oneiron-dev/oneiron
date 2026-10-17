@@ -606,9 +606,10 @@ impl DecisionHost {
     /// The Dreamer's consolidation questions through this ladder, in the
     /// shipped wording: the verdict role's generated read sits at the Local
     /// slot, and an answer still in the band steps up the host's stronger
-    /// rungs and then asks the role the Dreamer binds for the claims'
-    /// project, under the host's bands. The work an ask decides waits for its
-    /// answer; the rest of the pass goes on.
+    /// rungs under the host's bands. A consolidation verdict never asks a
+    /// person: the executor caps its dial at Big (`VERDICT_CEILING`, OF-023),
+    /// and a verdict still in band parks its pair as a `conflict.open` with
+    /// both claims standing.
     pub(crate) fn consolidation_decisions(&self) -> oneiron::Result<ConsolidationDecisions> {
         Ok(ConsolidationDecisions {
             ladder: self.ladder.clone(),

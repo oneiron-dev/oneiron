@@ -1,7 +1,12 @@
 //! Loopback wire to a separately deployed, always-warm CUDA worker.
 //! A bounded FIFO sender never runs HTTP inside `TtsSeamClient::submit`.
+//! Each render is one `ai.speech` call on the host's [`WireSeat`]: admitted
+//! on its own permit, started at the rung's media gate before the reference
+//! leaves for the worker, and settled on the characters it spoke.
 
 use super::*;
+use crate::llm::media::{AiOperation, MediaPart, MediaUsage, MediaVoice};
+use crate::llm::run_admission::{WireCallError, WireSeat};
 use reqwest::{Url, blocking::Client};
 use serde_json::{Value, json};
 use std::{
@@ -61,7 +66,18 @@ pub struct VoxCpm2HttpQueue {
 }
 
 impl VoxCpm2HttpQueue {
-    pub fn connect(vault: Arc<Vault>, base_url: &str, bearer: &str) -> Result<Self> {
+    /// Connects to the worker at `base_url`; each render it sends is a call
+    /// on `seat`, the host's rung for the worker. The reference clip is the
+    /// person's raw voice, so a third party's rung refuses.
+    pub fn connect(
+        vault: Arc<Vault>,
+        base_url: &str,
+        bearer: &str,
+        seat: WireSeat,
+    ) -> Result<Self> {
+        if seat.locality() == ModelLocality::ThirdParty {
+            return Err(invalid("a voice reference never goes to a third party"));
+        }
         if bearer.len() < 32
             || bearer.len() > 512
             || !bearer.is_ascii()
@@ -108,7 +124,7 @@ impl VoxCpm2HttpQueue {
         thread::Builder::new()
             .name("voxcpm2-render".into())
             .spawn(move || {
-                run_worker(vault, client, render_url, credential, work, results);
+                run_worker(vault, &seat, client, render_url, credential, work, results);
             })
             .map_err(|_| invalid("worker thread unavailable"))?;
         Ok(Self {
@@ -138,15 +154,20 @@ impl VoxCpm2Queue for VoxCpm2HttpQueue {
     }
 }
 
-fn target_json(target: &RenderTarget) -> Value {
-    let fence = &target.fence;
-    let revision: String = fence
+/// The bank's revision of the identity's refs a render is fenced at, in hex.
+fn reference_revision(fence: &VoiceRefFence) -> String {
+    fence
         .incarnation
         .iter()
         .flatten()
         .chain(&fence.ref_digest)
         .map(|byte| format!("{byte:02x}"))
-        .collect();
+        .collect()
+}
+
+fn target_json(target: &RenderTarget) -> Value {
+    let fence = &target.fence;
+    let revision = reference_revision(fence);
     json!({"voice_id": target.voice_id, "owner": fence.owner.to_hex(),
         "register": target.register, "reference_revision": revision,
         "limits": target.limits,
@@ -212,8 +233,50 @@ fn render(
     }
     Ok(received.split_off(4 + n))
 }
+
+/// One render as one call on `seat`: its permit starts before the request
+/// leaves, and an answer settles on the characters it spoke.
+fn admitted_render(
+    seat: &WireSeat,
+    client: &Client,
+    url: &Url,
+    credential: &str,
+    target: &RenderTarget,
+    reference: &VoiceRegisterClip,
+    text: &str,
+) -> Result<Vec<u8>> {
+    let request = seat.request(
+        AiOperation::Speech,
+        vec![MediaPart::Text {
+            text: text.to_owned(),
+        }],
+        Some(MediaVoice::Reference {
+            voice_id: target.voice_id.clone(),
+            owner: target.fence.owner.to_hex(),
+            register: reference.register.clone(),
+            revision: reference_revision(&target.fence),
+            media_type: reference.media_type.clone(),
+            audio: reference.audio.clone(),
+            transcript: reference.transcript.clone(),
+        }),
+    );
+    seat.call(
+        &request,
+        || render(client, url, credential, target, reference, text),
+        |_| MediaUsage {
+            characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
+            ..MediaUsage::default()
+        },
+    )
+    .map_err(|error| match error {
+        WireCallError::Refused(_) => invalid("run admission refused the render"),
+        WireCallError::Failed(error) => error,
+    })
+}
+
 fn run_worker(
     vault: Arc<Vault>,
+    seat: &WireSeat,
     client: Client,
     url: Url,
     credential: String,
@@ -235,7 +298,15 @@ fn run_worker(
                 let event = match active.as_ref() {
                     Some((epoch, target)) if *epoch == item.generation => {
                         match target.with_current(&vault, |reference| {
-                            render(&client, &url, &credential, target, reference, &text)
+                            admitted_render(
+                                seat,
+                                &client,
+                                &url,
+                                &credential,
+                                target,
+                                reference,
+                                &text,
+                            )
                         }) {
                             Ok(bytes) => {
                                 let event = VoxCpm2Event::Audio {

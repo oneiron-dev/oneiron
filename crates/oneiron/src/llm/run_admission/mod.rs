@@ -21,6 +21,7 @@ mod media;
 mod permit;
 mod receipt;
 mod settle;
+mod wire;
 
 pub use admission::{RunAdmission, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR};
 pub use declaration::{
@@ -42,6 +43,7 @@ pub use receipt::{
     RunStreamUsage, RunTokenUsage, TeacherReport,
 };
 pub use settle::CallOutcome;
+pub use wire::{WireCallError, WireSeat};
 
 #[cfg(test)]
 mod tests;

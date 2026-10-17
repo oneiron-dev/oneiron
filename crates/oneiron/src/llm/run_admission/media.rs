@@ -96,6 +96,22 @@ impl MediaGate {
         answer
     }
 
+    /// Sends one call on the host's own wire ([`WireSeat`](super::WireSeat)):
+    /// its permit is checked and started as [`Self::run`] starts one, `send`
+    /// runs only then, and the dispatch receipt is written when it ends. A
+    /// call whose permit does not start sends nothing.
+    pub(super) fn run_wire<T, E>(
+        &self,
+        request: &MediaRequest,
+        lease: &BudgetLease,
+        send: impl FnOnce() -> Result<T, E>,
+    ) -> LlmResult<Result<T, E>> {
+        let mut opened = self.open(request, lease)?;
+        let answer = send();
+        opened.finish(None, answer.is_ok());
+        Ok(answer)
+    }
+
     /// Starts one long call as a provider job; its permit stays open for
     /// the job's polls and is settled when the job ends.
     pub async fn submit(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<String> {

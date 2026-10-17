@@ -501,8 +501,10 @@ fn engine_locality(config: crate::config::EmbedderLocality) -> EmbedderLocality 
 /// `serve`: filling one vault from two embedding spaces is not recoverable, so
 /// it is refused before anything is written. An UNREACHABLE remote is logged and
 /// started anyway — the vault answers lexical and graph reads meanwhile, which
-/// is the two-tier write rule, not a degraded mode. The remote rung's probe is
-/// a paid call like its batches, its rows written to `receipts`.
+/// is the two-tier write rule, not a degraded mode. Every embedding request an
+/// endpoint sends is a paid call, its rows written to `receipts`: the primary
+/// endpoint's probe, queries and batches, and the remote rung's probe like its
+/// batches.
 pub(crate) fn build_slot(
     config: Option<&EmbedderConfig>,
     receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
@@ -517,6 +519,7 @@ pub(crate) fn build_slot(
     if let Some(ready) = slot.ready()
         && let Some(http) = ready.as_endpoint()
     {
+        admitted::pay_primary(http, config, Arc::clone(&receipts))?;
         match endpoint::probe_endpoint(http) {
             Ok(endpoint::ProbeOutcome::Ready) => {
                 tracing::info!("endpoint embedder probe succeeded");

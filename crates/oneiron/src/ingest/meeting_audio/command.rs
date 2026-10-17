@@ -3,6 +3,10 @@
 //! The executable is trusted host configuration, never recording metadata. The
 //! caller supplies an OF-133 route receipt; this adapter does not invent one.
 //! The bundled offline bridge refuses missing forced alignment/community-1.
+//! Each pack's inference is one `ai.transcribe` call on the host's
+//! [`WireSeat`]: admitted on its own permit and started at the rung's media
+//! gate before the pack goes to the native process, then settled on the
+//! seconds it heard. Its answer stays the bridge's aligned words.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
@@ -10,6 +14,10 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use serde_json::{Value, json};
+
+use crate::llm::ModelLocality;
+use crate::llm::media::{AiOperation, MediaPart, MediaUsage};
+use crate::llm::run_admission::{WireCallError, WireSeat};
 
 use super::provenance::sha256;
 use super::{
@@ -96,13 +104,18 @@ pub struct CommandMeetingAudioHost {
     config: CommandAudioConfig,
     route: AsrRoute,
     runtime_profile: Option<(PathBuf, String)>,
+    /// The host's on-device rung for the routed ASR model: every pack's
+    /// inference is a call on it.
+    seat: WireSeat,
 }
 
 impl CommandMeetingAudioHost {
     /// `route` must come from the caller's authenticated OF-133 selection.
     /// This local-only backend refuses fleet/hosted routes rather than claiming
     /// inference ran on another tier. The engine checks the batch-default pin.
-    pub fn new(config: CommandAudioConfig, route: AsrRoute) -> AudioResult<Self> {
+    /// `seat` is the host's rung for the routed model on this device, which
+    /// each pack's inference is admitted on.
+    pub fn new(config: CommandAudioConfig, route: AsrRoute, seat: WireSeat) -> AudioResult<Self> {
         let files = [&config.python, &config.bridge, &config.ffmpeg];
         let dirs = [&config.workspace, &config.model_snapshot];
         if files.iter().any(|p| !p.is_absolute() || !p.is_file())
@@ -112,6 +125,9 @@ impl CommandMeetingAudioHost {
             || route.tier != ProcessingTier::Local
             || route.model_id.trim().is_empty()
             || route.route_receipt_ref.trim().is_empty()
+            || seat.locality() != ModelLocality::OnDevice
+            || seat.model().rsplit_once('@').map(|(model, _)| model)
+                != Some(route.model_id.as_str())
         {
             return Err(AudioError::InvalidOptions);
         }
@@ -119,6 +135,7 @@ impl CommandMeetingAudioHost {
             config,
             route,
             runtime_profile: None,
+            seat,
         })
     }
 
@@ -237,6 +254,42 @@ impl CommandMeetingAudioHost {
         }
         self.call(stage, &bytes, options)
     }
+
+    /// Runs one pack's inference by `infer` as one `ai.transcribe` call on
+    /// the host's seat. The pack's audio goes to the native process, not in
+    /// the call, so the call names it by its digest and length; an answer
+    /// settles on the seconds of audio the pack carried.
+    fn admitted_pack(
+        &self,
+        request: &AsrPackRequest<'_>,
+        infer: impl FnOnce() -> AudioResult<Reply>,
+    ) -> AudioResult<Reply> {
+        let audio_ms = request.audio.duration_ms()?;
+        let mut call = self.seat.request(
+            AiOperation::Transcribe,
+            vec![MediaPart::Audio {
+                media_type: "audio/pcm".into(),
+                bytes: Vec::new(),
+            }],
+            None,
+        );
+        call.params.extend([
+            ("audio_format".to_owned(), Value::from("pcm_s16le")),
+            ("sample_rate".to_owned(), Value::from(16_000)),
+            ("num_channels".to_owned(), Value::from(1)),
+            ("audio_ms".to_owned(), Value::from(audio_ms)),
+            ("audio_sha256".to_owned(), Value::from(request.audio_sha256)),
+        ]);
+        self.seat
+            .call(&call, infer, |_| MediaUsage {
+                audio_ms,
+                ..MediaUsage::default()
+            })
+            .map_err(|error| match error {
+                WireCallError::Refused(_) => host_error("transcribe_pack", "RunAdmissionRefused"),
+                WireCallError::Failed(error) => error,
+            })
+    }
 }
 
 impl MeetingAudioHost for CommandMeetingAudioHost {
@@ -300,15 +353,17 @@ impl MeetingAudioHost for CommandMeetingAudioHost {
         }
         // Only acoustic word alignment can produce AsrWord values. An absent
         // pinned runtime or unsupported alignment language refuses the call.
-        let reply = self.pcm_call(
-            "transcribe_pack",
-            request.audio,
-            request.audio_sha256,
-            json!({
-                "model_id": request.route.model_id, "glossary": request.glossary,
-                "language_hint": request.language_hint,
-            }),
-        )?;
+        let reply = self.admitted_pack(&request, || {
+            self.pcm_call(
+                "transcribe_pack",
+                request.audio,
+                request.audio_sha256,
+                json!({
+                    "model_id": request.route.model_id, "glossary": request.glossary,
+                    "language_hint": request.language_hint,
+                }),
+            )
+        })?;
         let words = array(&reply.result, "words")?
             .iter()
             .map(|word| {
