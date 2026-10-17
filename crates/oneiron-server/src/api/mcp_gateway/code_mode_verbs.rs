@@ -57,7 +57,7 @@ use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
-use oneiron::llm::decision::{DecisionRung, RoutineOutcome};
+use oneiron::llm::decision::{AnswerContract, DecisionRung, RoutineOutcome};
 use oneiron::memory::{HostWriteOrigin, Memory};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
@@ -289,10 +289,17 @@ pub(crate) enum VerdictAsker {
 
 impl RoutineDecider for LadderDecider {
     fn decide(&mut self, ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError> {
-        let locate = ask.options.is_empty();
+        // A step with no candidates finds its target in the screenshot.
+        let contract = if ask.options.is_empty() {
+            AnswerContract::Box
+        } else {
+            AnswerContract::Choice {
+                options: ask.options,
+            }
+        };
         let request = AiVerdictRequest {
             question: ask.question.to_owned(),
-            options: ask.options,
+            contract,
             evidence: Vec::new(),
             state: Some(ask.state),
             // No model: the ladder stops at its rule rung.
@@ -302,7 +309,6 @@ impl RoutineDecider for LadderDecider {
             deadline_ms: None,
             routine: true,
             image: ask.image.map(|(image, _)| image.to_owned()),
-            locate,
             misses: ask.misses,
             until_ms: ask.until_ms,
         };

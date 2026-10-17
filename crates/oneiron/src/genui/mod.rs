@@ -31,7 +31,9 @@ pub use self::failure_card::{
     SurfacedFailureCard, SurfacedFailureCardInput, surfaced_failure_card,
 };
 pub use self::offer_card::{
-    OFFER_JOIN_ACTION_ID, OFFER_NOT_NOW_ACTION_ID, OfferAnswerIntent, OfferCardPayload,
+    OFFER_JOIN_ACTION_ID, OFFER_NOT_NOW_ACTION_ID, OFFER_REOPEN_ACTION_ID,
+    OFFER_VOTE_JOIN_ACTION_ID, OFFER_VOTE_NOT_NOW_ACTION_ID, OfferAnswerIntent, OfferCardIntent,
+    OfferCardOutcome, OfferCardPayload, OfferCardPhase, OfferReopenIntent, OfferVoteIntent,
 };
 pub use self::project_proposal::{
     PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectGoalDraft, ProjectMintIntent, ProjectProposalCard,
