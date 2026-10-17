@@ -14,6 +14,8 @@ pub enum RunVerb {
     SelfFolds,
     TasksRefuse,
     SelfSkillsCall,
+    SelfTeamStart,
+    SelfTeamRecord,
     SelfSpawn,
     TasksWait,
     Summarize,
@@ -30,6 +32,8 @@ impl RunVerb {
         Self::SelfFolds,
         Self::TasksRefuse,
         Self::SelfSkillsCall,
+        Self::SelfTeamStart,
+        Self::SelfTeamRecord,
         Self::SelfSpawn,
         Self::TasksWait,
         Self::Summarize,
@@ -49,6 +53,8 @@ impl RunVerb {
             Self::SelfFolds => "self.folds",
             Self::TasksRefuse => "tasks.refuse",
             Self::SelfSkillsCall => "self.skills.call",
+            Self::SelfTeamStart => "self.team.start",
+            Self::SelfTeamRecord => "self.team.record",
             Self::SelfSpawn => "self.spawn",
             Self::TasksWait => "tasks.wait",
             Self::Summarize => "summarize",
@@ -65,6 +71,8 @@ impl RunVerb {
                 | Self::SelfUnfold
                 | Self::TasksRefuse
                 | Self::SelfSkillsCall
+                | Self::SelfTeamStart
+                | Self::SelfTeamRecord
                 | Self::SelfSpawn
                 | Self::Summarize
         )
@@ -81,6 +89,8 @@ impl RunVerb {
             Self::SelfFolds => crate::code_run::SelfEffect::Fold,
             Self::TasksRefuse => crate::code_run::SelfEffect::TasksRefuse,
             Self::SelfSkillsCall => crate::code_run::SelfEffect::SkillsCall,
+            Self::SelfTeamStart => crate::code_run::SelfEffect::Team,
+            Self::SelfTeamRecord => crate::code_run::SelfEffect::Team,
             Self::SelfSpawn => crate::code_run::SelfEffect::ReaderSpawn,
             Self::TasksWait => crate::code_run::SelfEffect::TasksWaitSet,
             Self::Summarize => crate::code_run::SelfEffect::Summarize,

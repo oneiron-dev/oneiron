@@ -130,6 +130,14 @@ pub struct ServeArgs {
     #[arg(long = "break-glass-recipient-file")]
     pub break_glass_recipient_file: Option<PathBuf>,
 
+    /// Managed mode: the directory the vault spools its escrow capsules to,
+    /// an absolute path the supervisor chose and ships from. The node
+    /// removes each report only after the registry's durable acknowledgement
+    /// (CROSS-ARCH-0022 #ov-custody, invariant 03;
+    /// `oneiron_vault_contract::escrow`).
+    #[arg(long = "escrow-outbox-dir")]
+    pub escrow_outbox_dir: Option<PathBuf>,
+
     /// Managed mode: the unix socket the vault's artifact origin listens on,
     /// an absolute path the supervisor chose and routes `<vault>.<domain>` to
     /// (`oneiron_vault_contract::artifact_origin`). Without it a managed vault
@@ -371,6 +379,7 @@ impl fmt::Debug for ServeArgs {
                 "break_glass_recipient_file",
                 &self.break_glass_recipient_file,
             )
+            .field("escrow_outbox_dir", &self.escrow_outbox_dir)
             .field("artifact_http_socket", &self.artifact_http_socket)
             .field("host", &self.host)
             .field("port", &self.port)
