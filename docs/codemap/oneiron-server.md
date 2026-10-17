@@ -189,6 +189,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_origin.rs` | src | s | 1 crate-vis | — | `/v1/owner/origin-authority`: the owner's origin cutover (ARCH-0068 RA7) |
 | `src/api/owner_routes.rs` | src | L | 5 crate-vis | — | `/v1/owner`: the vault owner's own actions over HTTP |
 | `src/api/owner_routes/commitment_routes.rs` | src | s | 1 crate-vis | — | Owner doors for where commitment reminders go (OF-187) |
+| `src/api/owner_routes/concern_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/inbox/concern/outcome`: the owner settles one of the Coach's agent-health cards (OF-568)… |
 | `src/api/owner_routes/conflict_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023… |
 | `src/api/owner_routes/cooperative_deletion_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route |
 | `src/api/owner_routes/decision_ask_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/decisions/asks`: the typed decisions the host's ladder asked the vault owner (ARCH-0076, its last… |

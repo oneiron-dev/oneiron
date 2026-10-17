@@ -100,7 +100,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/workflow_pump.rs` | src | s | 1 fn | — | Ordered workflow host pump |
 | `src/agent_dispatch/workflow_record.rs` | src | m | 2 struct · 1 enum · 2 fn · 13 crate-vis | WorkflowDispatchStatus, WorkflowProgress, WorkflowStepResult | Durable, inert workflow admission and result provenance |
 | `src/agent_dispatch/workflow_tests.rs` | test | m | — | — | Headless saved-workflow execution and authority regressions |
-| `src/agent_inbox_lens.rs` | src | m | 4 struct · 1 enum · 4 fn · 1 const | AgentInboxItemKind, AgentInboxLensItem, AgentInboxLensQuery, AgentInboxParticipant, InboxImpact | Renderer-neutral inbox query |
+| `src/agent_inbox_lens.rs` | src | m | 5 struct · 1 enum · 4 fn · 1 const | AgentInboxConcern, AgentInboxItemKind, AgentInboxLensItem, AgentInboxLensQuery, AgentInboxParticipant, InboxImpact | Renderer-neutral inbox query |
 | `src/agent_inbox_lens/inbound.rs` | src | s | 1 crate-vis | — | Identity-stamped conversation and membership projections; no writes or index repairs |
 | `src/agent_inbox_lens/tests.rs` | test | s | — | — | — |
 | `src/agent_inbox_lens/tests/inbound.rs` | test | s | — | — | — |
@@ -1390,6 +1390,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/codec.rs` | src | m | 2 fn · 30 crate-vis | — | MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows |
 | `src/dreamer_runner/connector_event.rs` | src | s | 2 struct · 1 trait · 4 fn · 2 const · 1 crate-vis | ConnectorEventExecutor, ConnectorEventResponder, ConnectorEventWake | Connector wake delivery retains its typed event; it is not a partition job |
 | `src/dreamer_runner/constants.rs` | src | s | 24 const · 34 crate-vis | — | Pinned wire vocabulary for the private Dreamer runner rows |
+| `src/dreamer_runner/maintenance/agent_health.rs` | src | L | 1 struct · 5 enum · 7 fn · 9 const · 2 crate-vis | AgentHealthCard, AgentHealthConfidence, AgentHealthCounter, AgentHealthMove, AgentHealthOutcome, AgentHealthTone | The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance… |
 | `src/dreamer_runner/maintenance/coach.rs` | src | m | 1 trait · 7 fn · 14 const · 7 crate-vis | PersonThresholdPolicy | The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and… |
 | `src/dreamer_runner/maintenance/curator.rs` | src | m | 2 struct · 1 enum · 2 fn · 2 crate-vis | CuratorQuestions, CuratorRubric, CuratorTrigger | Curator grading data and minimum-force proposals |
 | `src/dreamer_runner/maintenance/digest.rs` | src | m | 8 struct · 13 fn · 3 const · 1 crate-vis | DigestOffer, DigestProposal, ProactivityCadence, ProactivityDigest, ProactivityPolicyProposal, ProactivityPolicyRequest, ProactivityPresentation, UrgentDigestWake | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
@@ -1397,7 +1398,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/evaluation.rs` | src | m | 4 struct · 3 fn · 1 const · 2 crate-vis | DreamerTuningConfig, HarnessEvaluation, HarnessEvaluationTarget, RetuneThresholds | Eval-schedule observations over actual immutable config artifact versions |
 | `src/dreamer_runner/maintenance/honesty.rs` | src | s | 1 const · 2 crate-vis | — | The Coach's audit-draw recipe on the shared, gated maintenance lane |
 | `src/dreamer_runner/maintenance/identity.rs` | src | L | 9 struct · 4 enum · 8 fn · 4 const · 2 crate-vis | IdentityActNow, IdentityActNowRequest, IdentityAnswerRequest, IdentityAsk, IdentityAskReason, IdentityAskView, IdentityCardCopy, IdentityDecisions +5 | Background identity checks (OF-123; owner ruling: ask rule B) |
-| `src/dreamer_runner/maintenance/mod.rs` | src | s | 1 fn · 3 const · 6 mod · 3 re-export · 7 crate-vis | — | Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly… |
+| `src/dreamer_runner/maintenance/mod.rs` | src | s | 1 fn · 3 const · 7 mod · 3 re-export · 7 crate-vis | — | Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly… |
 | `src/dreamer_runner/maintenance/optimize.rs` | src | s | 2 struct · 1 crate-vis | CoachLiveSlice, CoachSkillOptimizer | The Coach's skill-maintenance body on the shared wake runner |
 | `src/dreamer_runner/maintenance/proposals.rs` | src | s | 3 crate-vis | — | The shared Generated/Proposed writer for deterministic maintenance findings |
 | `src/dreamer_runner/maintenance/representation/approval.rs` | src | m | 2 struct · 12 fn · 2 crate-vis | ApprovedRepresentation, RepresentationReview | Content-bound owner review, live revalidation, and the existing OF-327 adapter |
@@ -2945,7 +2946,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/detector_runner.rs` | src | s | 2 fn · 2 crate-vis | — | Deterministic detector execution: working-set validation, run loop, event ids, Vault entry points |
 | `src/self_heal/diagnostic_codec.rs` | src | m | 2 fn · 5 crate-vis | — | MessagePack codec and validators for diagnostic event bodies, refs, and tokens |
 | `src/self_heal/distillation.rs` | src | m | 3 struct · 1 enum · 4 fn · 1 crate-vis | ClosedFormPredicate, GraduatedT1, MintedT2, ReviewedFinding | Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof |
-| `src/self_heal/event.rs` | src | m | 4 struct · 3 enum · 1 trait · 7 fn · 2 const · 12 crate-vis | DeterministicDetector, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticReplayCoordinate, DiagnosticSourceKind, DiagnosticWorkingSet | Closed diagnostic event vocabulary: classes, sources, criticality, event and working-set types, bounds |
+| `src/self_heal/event.rs` | src | m | 4 struct · 4 enum · 1 trait · 10 fn · 2 const · 12 crate-vis | AgentHealthSignal, DeterministicDetector, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticReplayCoordinate, DiagnosticSourceKind +1 | Closed diagnostic event vocabulary: classes, sources, criticality, event and working-set types, bounds |
 | `src/self_heal/healer_host.rs` | src | m | 5 struct · 2 enum · 10 fn · 4 crate-vis | HealerDeployment, HealerProposalRecord, HealerRegistration, HealerRunReceipt, PatchPullRequest, ProposalBurstCheck, ProposalState | External healer capability, durable propose receipts, and human-only PR release |
 | `src/self_heal/healer_host_tests.rs` | test | m | — | — | — |
 | `src/self_heal/invariant_canonical.rs` | src | s | 2 crate-vis | — | Canonicalization of invariant field values for stable comparison |
@@ -3563,7 +3564,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/verb_hook_boundary.rs` | src | s | 7 fn | — | The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1) |
 | `src/task_verb/verb_kind.rs` | src | s | 1 struct · 2 enum · 7 fn · 2 crate-vis | TaskAssignee, TaskKind, TaskTtl | — |
 | `src/task_verb/wave_port.rs` | src | m | 2 struct · 1 enum · 7 fn | VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage | Vault-backed, atomic wave plan application through the ordinary TASK doors |
-| `src/task_verb/wire_decode.rs` | src | m | 16 crate-vis | — | Read side of the hand-rolled rmpv wire format for typed TASK bodies |
+| `src/task_verb/wire_decode.rs` | src | m | 17 crate-vis | — | Read side of the hand-rolled rmpv wire format for typed TASK bodies |
 | `src/task_verb/wire_encode.rs` | src | m | 8 crate-vis | — | Write side of the hand-rolled rmpv wire format for typed TASK bodies |
 | `src/team/market.rs` | src | m | 6 struct · 3 enum · 8 fn · 1 const | LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind, SignedReferee +1 | The MARKET pattern's ledger (ARCH-0079 #market, OF-540) |
 | `src/team/mod.rs` | src | s | 5 mod · 5 re-export | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
