@@ -317,13 +317,7 @@ impl crate::Vault {
             || self
                 .shared_vault_creation_in_txn(txn)?
                 .is_none_or(|row| row.vault_id != vault_id)
-            || crate::ports::EntityStoreRead::port_entity_with_raw(
-                &self.store,
-                txn,
-                &member_ref,
-                |_| Ok(()),
-            )?
-            .is_none()
+            || !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &member_ref)?
         {
             return Err(Error::InvalidConfig(
                 "delegate parent or member is not active".into(),

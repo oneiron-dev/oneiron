@@ -122,9 +122,8 @@ pub(crate) fn preflight_canonical_recovery(
                 return Err(reserved);
             }
         }
-        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &source)?.is_none()
-            || crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &target)?
-                .is_none()
+        if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, &txn, &source)?
+            || !crate::ports::EntityStoreRead::port_entity_present(&vault.store, &txn, &target)?
         {
             return Err(ArtifactError::InvalidRecoveryArtifact(
                 "edge endpoint missing at recovery",

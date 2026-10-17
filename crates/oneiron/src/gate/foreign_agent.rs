@@ -130,14 +130,12 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             if foreign == introducer.entity_ref()
-                || crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &foreign)?
-                    .is_none()
-                || crate::ports::EntityStoreRead::port_entity_raw(
+                || !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &foreign)?
+                || !crate::ports::EntityStoreRead::port_entity_present(
                     &self.store,
                     txn,
                     &introducer.entity_ref(),
                 )?
-                .is_none()
             {
                 return Err(Error::InvalidClaimBody("foreign introduction identity"));
             }

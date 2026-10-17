@@ -151,6 +151,9 @@ impl EntityStoreRead for Memory {
             .map(|row| read(&row.encode()))
             .transpose()
     }
+    fn port_entity_present(&self, txn: &Snapshot, id: &EntityId) -> Result<bool> {
+        Ok(txn.entities.contains_key(id))
+    }
 }
 
 impl EdgeStoreRead for Memory {

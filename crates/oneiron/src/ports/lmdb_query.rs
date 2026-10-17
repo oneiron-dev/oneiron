@@ -184,6 +184,9 @@ impl<T: ManifestDbs> EntityStoreRead for T {
             .map(|raw| read(&raw))
             .transpose()
     }
+    fn port_entity_present(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        Ok(self.entities().get(txn, id.as_bytes())?.is_some())
+    }
 }
 impl EntityStoreRead for Vault {
     fn port_entity_raw(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
@@ -258,6 +261,9 @@ impl EntityStoreRead for Vault {
         F: FnOnce(&[u8]) -> Result<R>,
     {
         self.store.port_entity_with_raw(txn, id, read)
+    }
+    fn port_entity_present(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        self.store.port_entity_present(txn, id)
     }
 }
 impl super::EntityWriteSegmentRead for crate::store::SessionStoreView<'_> {

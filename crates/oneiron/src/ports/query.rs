@@ -81,6 +81,8 @@ pub trait EntityStoreRead: Transactions {
     ) -> Result<Option<R>>
     where
         F: FnOnce(&[u8]) -> Result<R>;
+    /// Key-only presence of the row [`port_entity_raw`](Self::port_entity_raw) would copy.
+    fn port_entity_present(&self, txn: &Self::Read<'_>, id: &EntityId) -> Result<bool>;
 }
 
 /// Entity rows at a session's current write-segment position, for admission

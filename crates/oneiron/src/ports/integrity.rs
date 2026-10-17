@@ -297,7 +297,7 @@ pub(super) fn carried_now(
     txn: &RoTxn<'_>,
     source: &EntityId,
 ) -> Result<CarriedWorlds> {
-    if super::EntityStoreRead::port_entity_raw(store, txn, source)?.is_none()
+    if !super::EntityStoreRead::port_entity_present(store, txn, source)?
         && crate::deletion::row_deletion_marked(store, txn, source, None)?
     {
         return Ok(CarriedWorlds::default());

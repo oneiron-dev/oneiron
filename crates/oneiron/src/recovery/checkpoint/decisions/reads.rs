@@ -730,7 +730,7 @@ pub(super) fn undeleted(
         let txn = vault.store.env.read_txn()?;
         let mut held = BTreeSet::new();
         for id in ids {
-            if EntityStoreRead::port_entity_with_raw(&vault.store, &txn, &id, |_| Ok(()))?.is_some()
+            if EntityStoreRead::port_entity_present(&vault.store, &txn, &id)?
                 && !vault.store.port_deletion_state(&txn, &id)?.deleted
             {
                 held.insert(id);

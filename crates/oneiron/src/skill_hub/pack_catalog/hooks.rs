@@ -907,7 +907,7 @@ impl Vault {
         if let HookAuthor::ForeignActor {
             actor, identity, ..
         } = &author
-            && crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, actor)?.is_none()
+            && !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, actor)?
         {
             let mut body = Vec::new();
             rmpv::encode::write_value(
@@ -948,7 +948,7 @@ impl Vault {
                 },
             };
             let code = row.code;
-            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &code)?.is_none() {
+            if !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &code)? {
                 let body = CodeArtifactBody::new(
                     hook.intent
                         .clone()

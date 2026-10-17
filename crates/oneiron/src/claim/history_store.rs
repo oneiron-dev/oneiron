@@ -393,7 +393,7 @@ pub(crate) fn reject_machine_history_delete(
             .vault_meta
             .get(txn, &super::history_projection::pin_key(target))?
             .is_some()
-            || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &target)?.is_some()
+            || crate::ports::EntityStoreRead::port_entity_present(store, txn, &target)?
         {
             return Err(invalid_history());
         }
@@ -649,7 +649,7 @@ pub(crate) fn stage_machine_birth_after_candidate(
     // a birth stamp does (batch::base_apply), create the owner first.
     let owner = crate::vault::embedded_owner_actor_id()?;
     if body.scope_facet == super::substrate_facet_id(owner)?
-        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &owner)?.is_none()
+        && !crate::ports::EntityStoreRead::port_entity_present(store, txn, &owner)?
     {
         ops.push(crate::batch::BatchOp::Put {
             id: owner,

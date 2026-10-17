@@ -270,9 +270,11 @@ impl Vault {
             )));
         }
         if fresh
-            && (crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &preferred_id)?
-                .is_some()
-                || self.local_hard_delete_marker_exists_in_txn(wtxn, &preferred_id)?)
+            && (crate::ports::EntityStoreRead::port_entity_present(
+                &self.store,
+                wtxn,
+                &preferred_id,
+            )? || self.local_hard_delete_marker_exists_in_txn(wtxn, &preferred_id)?)
         {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "restore target is not a fresh entity id",

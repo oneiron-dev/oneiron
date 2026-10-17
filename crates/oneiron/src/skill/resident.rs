@@ -149,7 +149,7 @@ pub(crate) fn validate_owner_put_in_txn(
         // state needs its owner before materialization and keeps a retry.
         if replicated
             && record.lifecycle_status != super::SkillLifecycle::Candidate
-            && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &resident)?.is_none()
+            && !crate::ports::EntityStoreRead::port_entity_present(store, txn, &resident)?
         {
             return Err(Error::Artifact(
                 ArtifactError::ResidentOwnerDependencyPending,

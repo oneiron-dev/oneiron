@@ -402,7 +402,7 @@ pub(super) fn seed_is_live_for_ppr(
     txn: &RoTxn<'_>,
     entity_id: &EntityId,
 ) -> Result<bool> {
-    if crate::ports::EntityStoreRead::port_entity_raw(store, txn, entity_id)?.is_some() {
+    if crate::ports::EntityStoreRead::port_entity_present(store, txn, entity_id)? {
         return Ok(true);
     }
 

@@ -353,7 +353,7 @@ impl FloorWrites<'_> {
                 tgt,
                 ..
             } = op
-                && crate::ports::EntityStoreRead::port_entity_raw(self.store, wtxn, tgt)?.is_none()
+                && !crate::ports::EntityStoreRead::port_entity_present(self.store, wtxn, tgt)?
             {
                 return Err(Error::OffRecord(
                     OffRecordError::OffRecordPromoteAuthorMissing {
@@ -497,9 +497,7 @@ impl FloorWrites<'_> {
                     .is_some_and(|receipt| receipt.session_ref == session_ref)
             {
                 held.insert(*id);
-            } else if crate::ports::EntityStoreRead::port_entity_raw(self.store, wtxn, id)?
-                .is_some()
-            {
+            } else if crate::ports::EntityStoreRead::port_entity_present(self.store, wtxn, id)? {
                 return Err(Error::InvariantViolation(
                     "an off-record message to copy already names a row base holds",
                 ));

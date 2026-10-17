@@ -117,7 +117,7 @@ pub(super) fn default_l2_subjects(
         None
     };
     let mut subjects = BTreeSet::new();
-    if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &owner)?.is_some() {
+    if crate::ports::EntityStoreRead::port_entity_present(&vault.store, &txn, &owner)? {
         subjects.insert(owner);
     }
     if let Some(person) = principal {

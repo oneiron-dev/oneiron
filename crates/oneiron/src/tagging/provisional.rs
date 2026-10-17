@@ -339,7 +339,7 @@ pub(crate) fn confirm_in_txn(
     if !PROVISIONAL.contains(&vault.store, txn, id)? {
         return Ok(false);
     }
-    if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?.is_some() {
+    if crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, id)? {
         return Err(Error::InvariantViolation(
             "a provisional id names an entity row",
         ));

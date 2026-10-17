@@ -150,8 +150,7 @@ pub(crate) fn guard_claim_put(
             };
             if project_bytes != *project.as_bytes()
                 || payload_hash != *blake3::hash(payload).as_bytes()
-                || crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |_| Ok(()))?
-                    .is_some()
+                || crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)?
                 || body.lifecycle != ClaimLifecycleStatus::Active
             {
                 return Err(invalid());

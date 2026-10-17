@@ -198,7 +198,7 @@ impl Vault {
     ) -> Result<WorkflowDefinition> {
         self.with_write_txn_grouped(|txn| {
             require_kind(&self.store, txn, parent, ENTITY_TYPE_WORKFLOW)?;
-            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, fork)?.is_some() {
+            if crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, fork)? {
                 return Err(invalid());
             }
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, parent)?

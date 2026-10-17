@@ -153,7 +153,7 @@ pub(crate) fn validate_put_in_txn(
             return Err(invalid("leader chat binding"));
         }
         if !replicated
-            && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_none()
+            && !crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)?
             && store
                 .vault_meta
                 .get(
@@ -212,7 +212,7 @@ pub(crate) fn fresh_id_in_txn(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<bool> {
-    if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some() {
+    if crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)? {
         return Ok(false);
     }
     let state = crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, &id)?;

@@ -249,11 +249,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
 
                 let src_exists =
-                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, &src)?
-                        .is_some();
+                    crate::ports::EntityStoreRead::port_entity_present(&vault.store, &*wtxn, &src)?;
                 let tgt_exists =
-                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, &tgt)?
-                        .is_some();
+                    crate::ports::EntityStoreRead::port_entity_present(&vault.store, &*wtxn, &tgt)?;
                 if !src_exists || !tgt_exists {
                     if kind == crate::edge::EdgeKind::SpawnedBy {
                         bridge::defer_spawned_by(

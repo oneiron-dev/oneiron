@@ -134,12 +134,11 @@ impl Memory<'_> {
                     }
                     state.base = committed_text(self.vault, txn, &state.seed)?.unwrap_or_default();
                     state.emitted_chars = state.base.chars().count();
-                    state.seed.continuation = crate::ports::EntityStoreRead::port_entity_raw(
+                    state.seed.continuation = crate::ports::EntityStoreRead::port_entity_present(
                         &self.vault.store,
                         txn,
                         &id,
-                    )?
-                    .is_some();
+                    )?;
                     if state.seed.continuation && !state.raw.is_empty() {
                         return Err(MessageStreamError::InvalidRequest(
                             "continuation starts with empty content",
@@ -171,12 +170,11 @@ impl Memory<'_> {
                         super::super::person_author_in_txn(self.vault, txn, state.seed.actor)?,
                     )?;
                     if state.seed.author == crate::memory::WitnessAuthor::System
-                        && crate::ports::EntityStoreRead::port_entity_raw(
+                        && !crate::ports::EntityStoreRead::port_entity_present(
                             &self.vault.store,
                             txn,
                             &state.seed.turn,
                         )?
-                        .is_none()
                     {
                         return Err(MessageStreamError::InvalidRequest(
                             "system stream requires an existing turn",
