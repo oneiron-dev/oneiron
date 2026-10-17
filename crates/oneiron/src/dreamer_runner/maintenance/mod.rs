@@ -25,6 +25,7 @@ pub use calibration_asks::COACH_CALIBRATION_ASKS_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 mod retrieval_policy;
+pub mod seal_checks;
 pub mod stewardship;
 #[cfg(test)]
 mod tests;
