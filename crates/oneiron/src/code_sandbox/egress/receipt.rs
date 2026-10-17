@@ -50,6 +50,20 @@ impl Vault {
             .as_bytes(),
         )
     }
+    /// A run desktop's takeover (CUA-001), returned to its agent: the
+    /// record of who held it and for how long is the takeover's receipt.
+    pub fn append_desktop_takeover_receipt(
+        &self,
+        run_id: EntityId,
+        record: &serde_json::Value,
+    ) -> Result<String> {
+        let body = serde_json::to_string(
+            &serde_json::json!({"run_id": run_id.to_hex(), "takeover": record}),
+        )
+        .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?;
+        let hash = *blake3::hash(body.as_bytes()).as_bytes();
+        self.append_sandbox_gate_receipt(run_id, "desktop_takeover", "returned", body, hash)
+    }
     pub fn append_egress_receipt(&self, receipt: &EgressReceipt) -> Result<String> {
         let body = serde_json::to_string(receipt)
             .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?;

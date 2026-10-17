@@ -104,12 +104,21 @@ struct RunBrowser {
     run_id: oneiron::EntityId,
 }
 
-/// One run's desktop guest, held as the run's browser is.
+/// One run's desktop guest, held as the run's browser is. Its seat is in
+/// the server's registry while the door is bound, so the owner can take the
+/// desktop over (CUA-001).
 struct RunDesktop {
     guest: DesktopGuest,
-    session: Mutex<Option<DesktopSession>>,
+    session: Arc<crate::server::DesktopSeat>,
+    seats: Arc<crate::server::DesktopSeats>,
     vault: Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
+}
+
+impl Drop for RunDesktop {
+    fn drop(&mut self) {
+        self.seats.release(self.run_id, &self.session);
+    }
 }
 
 /// A run's guest session as the door drives it: its verbs, whether its
@@ -503,14 +512,20 @@ impl RunDesktop {
     fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Option<Self> {
         let mut guest = server.desktop_guest()?.clone();
         guest.policy = browser_send_policy(server);
+        let session = Arc::new(Mutex::new(None));
+        server.desktop_seats.register(run_id, &session);
         Some(Self {
             guest,
-            session: Mutex::new(None),
+            session,
+            seats: Arc::clone(&server.desktop_seats),
             vault: Arc::clone(&server.vault),
             run_id,
         })
     }
 
+    /// A desktop verb. While a person is asked or holds the desktop, the
+    /// session refuses it `desktop_taken_over`; the first answer after they
+    /// hand it back carries the takeover's record as `takeover`.
     fn call(
         &self,
         verb: AgentVerb,
@@ -536,7 +551,17 @@ impl RunDesktop {
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
         driver.set_decider(Box::new(decider));
         driver.set_receipt_sink(Box::new(writer));
-        drive_run_guest(&self.vault, self.run_id, driver, verb, input)
+        let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
+        if let Some(object) = output.as_object_mut()
+            && let Some(record) = driver.take_returned()
+        {
+            object.insert(
+                "takeover".into(),
+                serde_json::to_value(record)
+                    .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+            );
+        }
+        Ok(output)
     }
 }
 

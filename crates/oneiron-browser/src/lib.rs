@@ -32,7 +32,7 @@ mod receipt_evidence;
 mod session;
 
 #[cfg(feature = "driver")]
-pub use desktop::{DesktopGuest, DesktopSession};
+pub use desktop::{DesktopGuest, DesktopSession, PersonInput, Takeover, TakeoverRecord};
 pub use library::{
     LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
     LibraryRunInput, LibraryRunOutput, ProposeInput, ProposeOutput, WORKFLOW_MAX_CHECKS,
@@ -405,6 +405,22 @@ pub struct WindowInput {
     pub window: String,
 }
 
+/// Asks a person to take the desktop over (CUA-001): `reason` says what the
+/// agent needs them to do. Until they hand it back, every desktop verb
+/// refuses `desktop_taken_over`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HandoverInput {
+    pub reason: String,
+}
+
+/// The "Needs you" ask as the run's desktop holds it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HandoverOutput {
+    pub reason: String,
+    pub asked_at_ms: u64,
+}
+
 /// The effect classes a browser control can fall in. A vault grant names one
 /// of these to set its press.
 pub const EFFECT_SEND: &str = "browser.send";
@@ -596,7 +612,8 @@ pub struct BatchInput {
 }
 
 /// How a batched subgoal program ended. The big model is the fallback only:
-/// it takes over on `NEEDS_AGENT`, and a person presses on `NEEDS_YOU`.
+/// it takes over on `NEEDS_AGENT`, and a person presses, or has the
+/// desktop, on `NEEDS_YOU`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SubgoalStatus {
     #[serde(rename = "done")]
@@ -747,6 +764,8 @@ pub enum BrowserError {
     Library(String),
     #[error("this driver does not serve {0}")]
     Unsupported(String),
+    #[error("a person has the desktop ({0}); it answers again once they hand it back")]
+    TakenOver(String),
 }
 
 /// Steps one batched subgoal program may hold.
@@ -832,6 +851,11 @@ pub trait BrowserDriver: Send {
     /// Moves a desktop session onto another window.
     fn window(&mut self, _input: WindowInput) -> Result<Observation, BrowserError> {
         Err(BrowserError::Unsupported("window".to_owned()))
+    }
+
+    /// Asks a person to take a desktop session over.
+    fn handover(&mut self, _input: HandoverInput) -> Result<HandoverOutput, BrowserError> {
+        Err(BrowserError::Unsupported("handover".to_owned()))
     }
 
     /// Runs one batched program for a subgoal; a routine step has no
@@ -969,7 +993,10 @@ pub trait BrowserDriver: Send {
                     }
                 }
                 Err(error) => {
-                    output.status = if matches!(error, BrowserError::NeedsPress(_)) {
+                    output.status = if matches!(
+                        error,
+                        BrowserError::NeedsPress(_) | BrowserError::TakenOver(_)
+                    ) {
                         SubgoalStatus::NeedsYou
                     } else {
                         SubgoalStatus::NeedsAgent
@@ -1216,6 +1243,7 @@ impl BrowserError {
             Self::NoWorkflow(_) => "browser_no_workflow",
             Self::Library(_) => "browser_library_failed",
             Self::Unsupported(_) => "browser_unsupported",
+            Self::TakenOver(_) => "desktop_taken_over",
         }
     }
 }
