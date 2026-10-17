@@ -1136,6 +1136,8 @@
      "path": "src/agent_dispatch/widen_doors.rs",
      "purpose": "The owner's doors over context-widen proposals (OF-568): list them, and approve or decline one as the board…",
      "surface": {
+      "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 4
@@ -13967,7 +13969,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChildState",

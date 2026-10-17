@@ -100,7 +100,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/tests/widen.rs` | test | m | — | — | Propose-widen is inert until an authenticated holder of the board above acts |
 | `src/agent_dispatch/types.rs` | src | m | 9 struct · 7 enum · 26 fn · 7 const · 22 crate-vis | AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext, AttenuatedDispatchTarget, CareLevel, DispatchAgent +8 | Dispatch domain types, outcome enums, and pinned key/sentinel constants |
 | `src/agent_dispatch/widen.rs` | src | m | 3 fn · 4 crate-vis | — | Fail-closed propose-widen and owner-authenticated, TASK-bound board approval or decline |
-| `src/agent_dispatch/widen_doors.rs` | src | s | 4 struct · 1 enum · 3 fn | WidenProposalAnswer, WidenProposalState, WidenProposalView, WidenProposalsRequest, WidenProposalsView | The owner's doors over context-widen proposals (OF-568): list them, and approve or decline one as the board… |
+| `src/agent_dispatch/widen_doors.rs` | src | s | 4 struct · 1 enum · 3 fn · 1 const · 1 crate-vis | WidenProposalAnswer, WidenProposalState, WidenProposalView, WidenProposalsRequest, WidenProposalsView | The owner's doors over context-widen proposals (OF-568): list them, and approve or decline one as the board… |
 | `src/agent_dispatch/widen_record.rs` | src | m | 1 struct · 21 crate-vis | ContextWidenProposal | Exact, durable widen intents |
 | `src/agent_dispatch/workflow.rs` | src | m | 4 crate-vis | — | Atomic saved-workflow admission |
 | `src/agent_dispatch/workflow_host.rs` | src | s | 2 fn | — | Typed headless host door for running the one ready workflow leaf |
@@ -1113,7 +1113,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consult_ladder/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer… |
 | `src/consult_ladder/tests.rs` | test | s | — | — | Pure ladder, novelty-guard, magistrate, and A2A-projection tests (ONE-1888) |
 | `src/context_board/capabilities.rs` | src | s | 2 struct · 3 fn | CapabilityHit, SkillsSection | Turn-local capability hits and session-long loaded skill bodies |
-| `src/context_board/children.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 crate-vis | ChildState, ForkState | The agent's own runs on the board (PEOPLE ruling, ARCH-0067): the children it spawned, whose state rides… |
+| `src/context_board/children.rs` | src | m | 1 struct · 1 enum · 4 fn · 1 crate-vis | ChildState, ForkState | The agent's own runs on the board (PEOPLE ruling, ARCH-0067): the children it spawned, whose state rides… |
 | `src/context_board/explain.rs` | src | s | 2 struct · 2 fn | GateExplanation, MemoryExplanation | Explain receipts (OF-278): why a memory appeared, and why a write needed approval |
 | `src/context_board/frame.rs` | src | m | 12 struct · 4 enum · 15 fn · 7 const · 1 crate-vis | BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame, BoardFrameError, BoardLegend, BoardRender +8 | Board frame — the canonical `<memory surface="board">` envelope over typed sections, plus the adaptive… |
 | `src/context_board/history/claims.rs` | src | s | 6 crate-vis | — | Reserved board claim shape shared by admission and history reconstruction |
