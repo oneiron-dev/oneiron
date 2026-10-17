@@ -32,6 +32,7 @@
 
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
+mod adopted_fold;
 mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
