@@ -4611,7 +4611,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 1
      }
     },
@@ -4858,6 +4858,19 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArtifactCreateRequest"
+     ],
+     "path": "src/blob_artifact/create.rs",
+     "purpose": "`vault.artifacts.create` (OF-181): one artifact with its first version, the composite `POST…",
+     "surface": {
+      "fn": 1,
       "struct": 1
      }
     },
@@ -5408,7 +5421,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -10177,7 +10190,7 @@
      "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers",
      "surface": {
       "crate-vis": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -10233,6 +10246,28 @@
       "enum": 1,
       "fn": 3,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeBlameView",
+      "CodeChangeView",
+      "CodeDiffRequest",
+      "CodeDiffView",
+      "CodeOperationView",
+      "CodeSpanView",
+      "CodeStateRequest",
+      "CodeStateView",
+      "CodeUnitBlameView",
+      "CodeUnitVersionView"
+     ],
+     "path": "src/code_document/verbs.rs",
+     "purpose": "The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff between two tested states of one…",
+     "surface": {
+      "fn": 2,
+      "struct": 10
      }
     },
     {
@@ -11218,14 +11253,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "EmbeddedMediaSeed",
       "InProcessVaultReadAdapter"
      ],
      "path": "src/code_run/vault_read/in_process.rs",
      "purpose": "The in-process adapter: scoped reads against a live vault plus retrieval-budget control",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 2,
-      "struct": 1
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -13052,7 +13089,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -14151,7 +14188,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 22
      }
     },
@@ -14458,16 +14495,18 @@
      "notable": [
       "ScratchpadAppendReceipt",
       "ScratchpadBoard",
-      "ScratchpadMark"
+      "ScratchpadMark",
+      "ScratchpadRecall",
+      "ScratchpadRecallLine"
      ],
      "path": "src/context_board/scratchpad.rs",
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
      "surface": {
-      "const": 1,
-      "crate-vis": 2,
+      "const": 2,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 4,
-      "struct": 2
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -17983,8 +18022,9 @@
      "path": "src/dreamer_runner/maintenance/code_fix.rs",
      "purpose": "The Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 7,
       "trait": 1
      }
@@ -30750,7 +30790,7 @@
      "path": "src/origin/lfs/mod.rs",
      "purpose": "Vault-scoped FastCDC/BLAKE3 object plane over ordinary ASSET storage",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 7
      }
     },
@@ -30821,7 +30861,7 @@
      "path": "src/origin/lfs/scanner.rs",
      "purpose": "Bounded credential scanning across transport and content-defined boundaries",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -31690,7 +31730,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ServedChannelSink"
@@ -31698,7 +31738,7 @@
      "path": "src/outbound/served_sink.rs",
      "purpose": "The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -34858,7 +34898,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)",
      "surface": {
       "crate-vis": 7,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -34988,6 +35028,21 @@
       "const": 2,
       "crate-vis": 10,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MessageReactionExternal",
+      "MessageReactionReceipt",
+      "MessageReactionRequest"
+     ],
+     "path": "src/reaction/verbs.rs",
+     "purpose": "`vault.messages.react` (OF-181): the one typed door that a reaction button, an agent's call and `POST…",
+     "surface": {
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -36294,7 +36349,7 @@
      "path": "src/repo_mutation/snapshot.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 13
      }
     },
     {
@@ -37726,7 +37781,7 @@
      "path": "src/secret_snapshot.rs",
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 8,
       "fn": 2,
       "struct": 3
      }
@@ -45025,7 +45080,8 @@
      "path": "src/task_verb/recall_door.rs",
      "purpose": "The recall door: when a recall's clock starts, what it answers when its door stops waiting, and how it…",
      "surface": {
-      "fn": 4,
+      "const": 1,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -45281,7 +45337,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 253
+      "fn": 257
      }
     },
     {
@@ -47089,7 +47145,7 @@
      "purpose": "Soniox streaming ASR wire client",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1,
       "trait": 1
      }
@@ -49882,7 +49938,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50015,7 +50071,7 @@
      "purpose": "—"
     },
     "code_document": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50820,7 +50876,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "reaction": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51291,7 +51347,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3100,
+   "source_files": 3103,
    "test_files": 903
   },
   "oneiron-android": {
@@ -54051,14 +54107,17 @@
      "notable": [
       "ContextPackBudgetControls",
       "ContextPackDepthControls",
+      "ContextPackMediaQuery",
       "ContextPackRetrievalBudgetControls",
-      "CoreContextPackRequest"
+      "CoreContextPackRequest",
+      "MediaQueryKind"
      ],
      "path": "src/code_run/vault_read/context_pack.rs",
      "purpose": "The vault-read context-pack request and its depth / budget controls",
      "surface": {
+      "enum": 1,
       "fn": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -54411,7 +54470,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EngineLimit",
@@ -54797,7 +54856,7 @@
     "limit_ask": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)"
     },
@@ -59159,7 +59218,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 208
+      "fn": 212
      }
     },
     {
@@ -59169,7 +59228,7 @@
      "path": "src/facade/convert.rs",
      "purpose": "DTO to/from engine converters plus the forget paging helper",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -59219,6 +59278,7 @@
       "NapiPendingWrite",
       "NapiReadReceipt",
       "NapiReadScope",
+      "NapiRecallMedia",
       "NapiRecallScope",
       "NapiRetrievalMeta",
       "NapiScopeHonesty",
@@ -59233,7 +59293,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 53
+      "struct": 54
      }
     },
     {
@@ -60173,7 +60233,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 209
+      "fn": 213
      }
     },
     {
@@ -62348,13 +62408,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_board/scratchpad.rs",
      "purpose": "POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
      }
     },
     {
@@ -62720,7 +62780,7 @@
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -62810,7 +62870,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -62831,6 +62891,16 @@
      "purpose": "The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/reaction_doors.rs",
+     "purpose": "The host door of `vault.messages.react` (OF-181)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -65428,6 +65498,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LineConfig"
+     ],
+     "path": "src/config/line.rs",
+     "purpose": "`[line]`: the plan of the LINE Official Account the built-in LINE pack serves (OF-519)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/config/lookup.rs",
      "purpose": "Leaf config helpers: env lookups, value parsing, and secret redaction",
@@ -65458,7 +65542,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 13,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -69248,7 +69332,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 275,
+     "files": 276,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69304,7 +69388,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69572,7 +69656,7 @@
    },
    "over_bar": 35,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 540,
+   "source_files": 542,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -69691,6 +69775,7 @@
       "QuoteSpan",
       "ReadReceipt",
       "ReadScope",
+      "RecallMedia",
       "RecallScope",
       "RerankReport",
       "RerankSkip",
@@ -69713,7 +69798,7 @@
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
       "enum": 7,
-      "struct": 48
+      "struct": 49
      }
     },
     {
@@ -69772,6 +69857,7 @@
       "AiVideoTicket",
       "AnswerContract",
       "AnswerRecord",
+      "ArtifactCreateRequest",
       "ArtifactExportFile",
       "ArtifactExportRequest",
       "ArtifactKind",
@@ -69807,6 +69893,16 @@
       "CallableCardView",
       "CancelRejectionPathology",
       "ClaimApprovalStatus",
+      "CodeBlameView",
+      "CodeChangeView",
+      "CodeDiffRequest",
+      "CodeDiffView",
+      "CodeOperationView",
+      "CodeSpanView",
+      "CodeStateRequest",
+      "CodeStateView",
+      "CodeUnitBlameView",
+      "CodeUnitVersionView",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
       "CompanionSharingStored",
@@ -70001,6 +70097,9 @@
       "MemoryExport",
       "MessagePersonReceipt",
       "MessagePersonRequest",
+      "MessageReactionExternal",
+      "MessageReactionReceipt",
+      "MessageReactionRequest",
       "NativeOutputRequest",
       "NotWorse",
       "NoteAnchor",
@@ -70322,7 +70421,7 @@
      "purpose": "—",
      "surface": {
       "enum": 170,
-      "struct": 407
+      "struct": 421
      }
     },
     {
