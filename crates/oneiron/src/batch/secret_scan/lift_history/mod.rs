@@ -18,6 +18,7 @@
 //! What a run cannot reach is the owner's: a checkpoint, a backup or a peer
 //! copy already sent keeps the raw value, and only a HardErase reaches it.
 
+mod authored;
 mod carriers;
 mod records;
 mod side_rows;

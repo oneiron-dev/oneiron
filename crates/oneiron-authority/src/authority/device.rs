@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use super::*;
 
 /// Folded roster entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldedDevice {
     /// Authority key.
     pub key: AuthorityKey,
