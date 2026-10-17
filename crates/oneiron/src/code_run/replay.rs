@@ -4,6 +4,7 @@ use std::cell::Cell;
 use rmpv::Value;
 
 use crate::batch::secret_scan::admitted_from;
+use crate::receipt::{ActionInputs, call_bytes_digest};
 use crate::{EntityId, Error, Result};
 
 use super::codec::{
@@ -54,6 +55,11 @@ pub struct CodeRunBridgeCall {
     pub outcome: Value,
     pub started_at_ms: u64,
     pub finished_at_ms: u64,
+    /// The call's action digest over its effect, its canonical request and
+    /// the input versions the host captured before it ran
+    /// ([`ActionInputs::action_digest`], OF-568); `None` when the host
+    /// captured none, or the call never ran.
+    pub action_digest: Option<String>,
 }
 
 impl CodeRunBridgeCall {
@@ -81,9 +87,22 @@ impl CodeRunBridgeCall {
             outcome: self_dispatch_outcome_value(outcome)?,
             started_at_ms,
             finished_at_ms,
+            action_digest: None,
         };
         row.validate_speech_coherence()?;
         Ok(row)
+    }
+
+    /// This row with its action digest over `inputs`, the versions the host
+    /// captured before the call ran (OF-568); `None` leaves it unknown.
+    #[must_use]
+    pub fn with_inputs(mut self, inputs: Option<&ActionInputs>) -> Self {
+        self.action_digest = inputs.and_then(|inputs| {
+            let mut request = Vec::new();
+            rmpv::encode::write_value(&mut request, &self.request).ok()?;
+            Some(inputs.action_digest(self.effect.as_str(), &call_bytes_digest(&request)))
+        });
+        self
     }
 
     /// Validates every host-owned and outcome-owned axis of a speech row.

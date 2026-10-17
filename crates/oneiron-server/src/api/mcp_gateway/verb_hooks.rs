@@ -41,7 +41,7 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
     let admitted = mcp_hooks_admitted(server, tool, actor, memory);
     let invocation = memory.invocation();
     let resume = RowHookResume {
-        credential: mcp_verb_ask_credential(server, tool, actor, memory),
+        credential: mcp_verb_ask_credential(actor, memory),
         drain: actor.drain.clone(),
     };
     async move {
@@ -64,17 +64,13 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
 
 /// The reference a verb hook's ask saves for a connector's call of `tool`:
 /// the registration it came in by and the ceiling it was admitted at, when
-/// a hook may run and its memory carries nothing the drain could not rebuild
-/// (ARCH-0080 §3 Ask).
+/// its memory carries nothing the drain could not rebuild (ARCH-0080 §3
+/// Ask). Bound on every call, so a retry of a call an ask parked meets its
+/// saved reference whether or not a hook takes `tool` now.
 fn mcp_verb_ask_credential(
-    server: &Arc<SyncServer>,
-    tool: &str,
     actor: &McpCallContext,
     memory: &Memory<'_>,
 ) -> Option<VerbAskCredential> {
-    if !VerbCall::may_run(&server.vault, tool) {
-        return None;
-    }
     let door = VerbAskDoor::Mcp {
         connection: actor.stream_connection.0.clone(),
         ceiling: mcp_adapter_ceiling(actor),
@@ -96,8 +92,9 @@ fn mcp_adapter_ceiling(actor: &McpResolvedActor) -> [u8; 32] {
     *blake3::hash(ceiling.as_bytes()).as_bytes()
 }
 
-/// The door's admission of `tool` for `actor`, then what only a hook reads,
-/// built only when one may run: the memory's key and the rewrite admission.
+/// The door's admission of `tool` for `actor`, then what a hook reads, built
+/// on every call so a binding installed meanwhile still finds it: the
+/// memory's key and the rewrite admission.
 fn mcp_hooks_admitted(
     server: &Arc<SyncServer>,
     tool: &str,
@@ -113,9 +110,6 @@ fn mcp_hooks_admitted(
             ));
         }
         crate::api::facade::row_door_admits(server, auth, tool).map_err(mcp_facade_error)?;
-    }
-    if !VerbCall::may_run(&server.vault, tool) {
-        return Ok((None, None));
     }
     let reader = VerbCall::reader_of(memory, tool).map_err(mcp_facade_error)?;
     Ok((reader, Some(mcp_rewrite_admit(server, tool, actor))))
