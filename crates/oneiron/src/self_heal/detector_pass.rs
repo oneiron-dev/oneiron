@@ -57,6 +57,24 @@ pub fn detector_window_key(
     *hash.finalize().as_bytes()
 }
 
+/// The key of one window under a registered T2: its seed's wording at T2b and
+/// the corpus revision it asks with, so a new revision grades it afresh.
+#[must_use]
+pub fn minted_window_key(
+    policy: &DetectorPolicy,
+    revision: &[u8; 32],
+    runs: &[&RetrievalRunRecord],
+) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(&detector_window_key(
+        policy,
+        ProposedTier::PromptClassifier,
+        runs,
+    ));
+    hash.update(revision);
+    *hash.finalize().as_bytes()
+}
+
 impl Vault {
     /// Whether a detector already graded this window.
     ///
