@@ -273,7 +273,7 @@
       "prose_links": ["/label", "/spec"],
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
-      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::msgpack_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
+      "call": "memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?",
       "scope": "Write",
       "proposes": true,
       "mcp_fields": {
@@ -2329,6 +2329,39 @@
       "input": "oneiron_browser::BatchInput",
       "output": "oneiron_browser::BatchOutput",
       "call": "driver.batch(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.find",
+      "description": "The replay library's programs for a site, or for the open page's site.",
+      "input": "oneiron_browser::LibraryFindInput",
+      "output": "oneiron_browser::LibraryFindOutput",
+      "call": "driver.library_find(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.propose",
+      "description": "Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition.",
+      "input": "oneiron_browser::ProposeInput",
+      "output": "oneiron_browser::ProposeOutput",
+      "call": "driver.library_propose(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.run",
+      "description": "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner.",
+      "input": "oneiron_browser::LibraryRunInput",
+      "output": "oneiron_browser::LibraryRunOutput",
+      "call": "driver.library_run(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",

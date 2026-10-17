@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 153 facade rows, 559 declarations.
+Census: 153 facade rows, 560 declarations.
 Inputs: 131 of 153 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 127 of 153 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
@@ -124,9 +124,15 @@ class PeoplePage(TypedDict):
     more: int
 class PersonRequest(TypedDict):
     pr: str
+class MentionProvenance(TypedDict):
+    turn: str
+    message: str
+    start: int
+    end: int
 class MessagePersonRequest(TypedDict):
     pr: str
     text: str
+    mention: NotRequired[MentionProvenance | None]
 class WitnessReceipt(TypedDict):
     turn_short_id: str
     message_short_ids: list[str]
@@ -243,9 +249,27 @@ class TaskDescriptionSelfCard(TypedDict):
     kind: Literal["self_card"]
     tail: str
 TaskDescription = TaskDescriptionSection | TaskDescriptionCard | TaskDescriptionSelfCard
+class TaskAssigneeAgentDefBody(TypedDict):
+    agent_def_ref: EntityId
+class TaskAssigneeAgentDef(TypedDict):
+    agent_def: TaskAssigneeAgentDefBody
+class TaskAssigneePeerBody(TypedDict):
+    actor_ref: EntityId
+class TaskAssigneePeer(TypedDict):
+    peer: TaskAssigneePeerBody
+class TaskAssigneeChildBody(TypedDict):
+    actor_ref: EntityId
+class TaskAssigneeChild(TypedDict):
+    child: TaskAssigneeChildBody
+class TaskAssigneeHumanBody(TypedDict):
+    actor_ref: EntityId
+class TaskAssigneeHuman(TypedDict):
+    human: TaskAssigneeHumanBody
+TaskAssignee = Literal["dreamer"] | TaskAssigneeAgentDef | TaskAssigneePeer | TaskAssigneeChild | TaskAssigneeHuman
 class TaskCreateRequest(TypedDict):
     spec: Any
     label: NotRequired[str | None]
+    assignee: NotRequired[TaskAssignee | None]
 class AttemptId(TypedDict):
     bytes: list[int]
 class TaskRouteOutcomeDreamerAttemptBody(TypedDict):
@@ -950,7 +974,7 @@ class PackSetupAccount(TypedDict):
     label: str
     sign_up: NotRequired[str | None]
     note: NotRequired[str | None]
-PackSetupAuth = Literal["oauth", "api_key", "bot_token", "app_password", "session", "webhook"]
+PackSetupAuth = Literal["oauth", "api_key", "bot_token", "app_password", "session", "webhook", "local"]
 class PackSetupSecret(TypedDict):
     name: str
     label: str
@@ -1659,23 +1683,6 @@ class TaskAskClass(TypedDict):
     remind: list[int]
 AskAuthorityScopeWire = TypedDict("AskAuthorityScopeWire", {"class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": bool})
 AskAuthorityScope = AskAuthorityScopeWire
-class TaskAssigneeAgentDefBody(TypedDict):
-    agent_def_ref: EntityId
-class TaskAssigneeAgentDef(TypedDict):
-    agent_def: TaskAssigneeAgentDefBody
-class TaskAssigneePeerBody(TypedDict):
-    actor_ref: EntityId
-class TaskAssigneePeer(TypedDict):
-    peer: TaskAssigneePeerBody
-class TaskAssigneeChildBody(TypedDict):
-    actor_ref: EntityId
-class TaskAssigneeChild(TypedDict):
-    child: TaskAssigneeChildBody
-class TaskAssigneeHumanBody(TypedDict):
-    actor_ref: EntityId
-class TaskAssigneeHuman(TypedDict):
-    human: TaskAssigneeHumanBody
-TaskAssignee = Literal["dreamer"] | TaskAssigneeAgentDef | TaskAssigneePeer | TaskAssigneeChild | TaskAssigneeHuman
 class TaskAskGuest(TypedDict):
     companion_ref: EntityId
     disclosure_grant_ref: str
@@ -2491,7 +2498,7 @@ class RetryableLlmErrorKeptOnDeviceBody(TypedDict):
 class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
 RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice
-LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill"]
+LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input"]
 ModelId = str
 class UnsupportedCapability(TypedDict):
     capability: LlmCapability
@@ -2780,6 +2787,7 @@ class OutboundScheduleRequest(TypedDict):
     trigger_ref: str
     job_ref: NotRequired[str | None]
     occurred_at: NotRequired[int | None]
+    mention: NotRequired[MentionProvenance | None]
 class OutboundIntentReceipt(TypedDict):
     intent_ref: str
     outcome: str

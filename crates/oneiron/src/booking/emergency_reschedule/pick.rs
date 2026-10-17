@@ -94,6 +94,7 @@ pub(super) fn prepare_pick(
             sequence: invite_sequence,
             ics_blob_ref: String::new(),
             recipient,
+            mention: None,
         },
         content_hash: [0; 32],
     };

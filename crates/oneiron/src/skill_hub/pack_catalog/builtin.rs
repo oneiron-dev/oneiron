@@ -41,7 +41,7 @@ const PACKS: [(&str, &str); 6] = [
 /// Each built-in pack's guided setup skill (OF-378), at the folder its
 /// PACK.md `setup` names. It ships in the same exact source, so the owner
 /// reads it while the connector is still a Candidate.
-const SETUP_SKILLS: [(&str, &str); 4] = [
+const SETUP_SKILLS: [(&str, &str); 5] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
@@ -57,6 +57,10 @@ const SETUP_SKILLS: [(&str, &str); 4] = [
     (
         "linkedin",
         include_str!("../../../../../packs/builtin/linkedin/skills/setup/SKILL.md"),
+    ),
+    (
+        "browser",
+        include_str!("../../../../../packs/builtin/browser/skills/setup/SKILL.md"),
     ),
 ];
 const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";
@@ -98,6 +102,26 @@ fn engine_hub_id() -> Result<EntityId> {
 
 /// The publisher an engine-seeded receipt names.
 const ENGINE_PUBLISHER: &str = "oneiron-engine";
+
+/// A removed engine-seeded built-in goes back to the Candidate it was seeded
+/// as, and qualifies again on its checked setup.
+pub(super) fn reseeded_candidate(removed: &PackInstallReceipt) -> Option<PackInstallReceipt> {
+    let Some(PackAdapter::Builtin(channel)) = removed.adapter.as_ref() else {
+        return None;
+    };
+    if removed.publisher != ENGINE_PUBLISHER
+        || !PACKS.iter().any(|(name, _)| *name == channel.as_str())
+    {
+        return None;
+    }
+    let mut candidate = removed.clone();
+    candidate.status = PackInstallStatus::Candidate;
+    candidate.candidate_reason = Some(PackCandidateReason::QualificationRequired);
+    candidate.qualification_report_hash = None;
+    candidate.connector_qualification = None;
+    candidate.runtime = None;
+    Some(candidate)
+}
 
 pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
     super::local::seed_local_pack(vault)?;
@@ -322,29 +346,42 @@ impl Vault {
     }
 
     /// A built-in channel runs as its engine pack (OF-519): once the vault
-    /// is seeded, a send on it needs `oneiron.<channel>` installed Active
-    /// with the built-in adapter. An owner who removed or replaced the pack
-    /// has no such channel. A channel no built-in pack names passes.
+    /// is seeded, a send or an inbound event on it needs a pack serving the
+    /// channel installed Active with the built-in adapter. An owner who
+    /// removed or replaced the pack has no such channel. A channel no
+    /// built-in pack names passes.
     pub fn require_builtin_channel_pack(&self, channel: &str) -> Result<()> {
-        let Some((name, _)) = PACKS.iter().find(|(name, _)| *name == channel) else {
-            return Ok(());
-        };
         let txn = self.store.env.read_txn()?;
-        if !SEEDED.contains(&self.store, &txn, &())? {
+        self.require_builtin_channel_pack_in_txn(&txn, channel)
+    }
+
+    /// [`Self::require_builtin_channel_pack`] in the caller's snapshot.
+    /// Email has two built-in packs: delegated Gmail (`email`) and the
+    /// native mailbox (`native_mail`); either one Active serves it.
+    pub(crate) fn require_builtin_channel_pack_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        channel: &str,
+    ) -> Result<()> {
+        let serves = |name: &str| name == channel || (channel == "email" && name == "native_mail");
+        if !PACKS.iter().any(|(name, _)| serves(name)) {
             return Ok(());
         }
-        match self.installed_pack_in_txn(&txn, &format!("oneiron.{name}"))? {
-            Some(receipt)
-                if receipt.status == PackInstallStatus::Active
-                    && receipt.adapter == Some(PackAdapter::Builtin((*name).to_owned()))
-                    && receipt.engine_version.as_deref() == Some(env!("CARGO_PKG_VERSION")) =>
-            {
-                Ok(())
-            }
-            _ => Err(super::invalid(
-                "the channel's built-in pack is not installed",
-            )),
+        if !SEEDED.contains(&self.store, txn, &())? {
+            return Ok(());
         }
+        for (name, _) in PACKS.iter().filter(|(name, _)| serves(name)) {
+            if let Some(receipt) = self.installed_pack_in_txn(txn, &format!("oneiron.{name}"))?
+                && receipt.status == PackInstallStatus::Active
+                && receipt.adapter == Some(PackAdapter::Builtin((*name).to_owned()))
+                && receipt.engine_version.as_deref() == Some(env!("CARGO_PKG_VERSION"))
+            {
+                return Ok(());
+            }
+        }
+        Err(super::invalid(
+            "the channel's built-in pack is not installed",
+        ))
     }
 }
 

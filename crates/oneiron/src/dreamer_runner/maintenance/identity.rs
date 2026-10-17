@@ -93,8 +93,7 @@ const STOP_WORDS: &[&str] = &[
 const ASKS: SideTable<[u8; 32], IdentityAsk, Named> =
     SideTable::new(&side_table::DREAMER_IDENTITY_ASK);
 /// The last turn the nightly pass read.
-const CURSOR: SideTable<(), EntityId, Named> =
-    SideTable::new(&side_table::DREAMER_IDENTITY_CURSOR);
+const CURSOR: SideTable<(), EntityId, Named> = SideTable::new(&side_table::DREAMER_IDENTITY_CURSOR);
 /// Context hints. Key: kind, the name's identity-hint digest, the entity.
 const HINTS: SideTable<([u8; 1], [u8; 32], EntityId), IdentityHint, Named> =
     SideTable::new(&side_table::DREAMER_IDENTITY_HINT);
@@ -277,6 +276,76 @@ enum Answer {
     SomeoneNew,
 }
 
+/// Where an effect's person target came from: one saved mention (OF-123
+/// act-now guard). An effect door that carries it refuses while the mention
+/// is unsettled ([`mention_unsettled_in_txn`]), and the agent settles it
+/// through `self.identity.settle` first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MentionProvenance {
+    /// The turn whose tags hold the mention, as 32 hex.
+    pub turn: String,
+    /// The message the mention is in, as 32 hex.
+    pub message: String,
+    /// The mention's byte span in the message text.
+    pub start: u64,
+    pub end: u64,
+}
+
+/// The name of a mention an effect may not act on yet: its ask is open, or
+/// it is still uncertain and no saved hint settles it. Provenance that names
+/// no saved mention is unsettled too, with an empty name. Reads only, in the
+/// caller's snapshot: no ask opens here.
+pub(crate) fn mention_unsettled_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    mention: &MentionProvenance,
+) -> Result<Option<String>> {
+    let (Ok(turn), Ok(message), Ok(start), Ok(end)) = (
+        EntityId::from_hex(&mention.turn),
+        EntityId::from_hex(&mention.message),
+        usize::try_from(mention.start),
+        usize::try_from(mention.end),
+    ) else {
+        return Ok(Some(String::new()));
+    };
+    let current = crate::tagging::tag_set_in_txn(&vault.store, txn, &turn)?.and_then(|tags| {
+        tags.mentions
+            .into_iter()
+            .find(|each| each.message == message && each.start == start && each.end == end)
+    });
+    let Some(current) = current else {
+        return Ok(Some(String::new()));
+    };
+    let Some(text) = crate::tagging::message_text_in_txn(vault, txn, &turn, &message)? else {
+        return Ok(Some(String::new()));
+    };
+    let name = text
+        .get(start..end)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned();
+    if ASKS.contains(&vault.store, txn, &ask_key(&turn, &message, start, end))? {
+        return Ok(Some(name));
+    }
+    let Some(ask) = ask_for_mention_in_txn(
+        vault,
+        txn,
+        &turn,
+        &current,
+        &text,
+        IdentityAskReason::Unsettled,
+        0,
+    )?
+    else {
+        return Ok(None);
+    };
+    if hinted_in_txn(vault, txn, &ask)?.is_some() {
+        return Ok(None);
+    }
+    Ok(Some(name))
+}
+
 /// An uncertain mention, before it is an ask.
 struct Uncertain {
     kind: u8,
@@ -373,8 +442,8 @@ fn label_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<S
     if let Some(entity) = crate::tagging::provisional_in_txn(&vault.store, txn, id)? {
         return Ok(entity.name);
     }
-    let name = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?.and_then(
-        |raw| {
+    let name =
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?.and_then(|raw| {
             if crate::batch::EntityMetadataHeader::parse(&raw).is_none()
                 || raw.len() <= crate::batch::ENTITY_METADATA_HEADER_LEN
             {
@@ -393,8 +462,7 @@ fn label_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<S
                         .map(str::to_owned)
                 })
             })
-        },
-    );
+        });
     Ok(name.unwrap_or_else(|| id.to_hex().chars().take(8).collect()))
 }
 
@@ -485,6 +553,49 @@ fn hinted_in_txn(
             .context
             .iter()
             .filter(|term| ask.context.contains(term))
+            .count();
+        if shared == 0 {
+            continue;
+        }
+        match best {
+            Some((_, top)) if shared < top => {}
+            Some((_, top)) if shared == top => tied = true,
+            _ => {
+                best = Some((entity, shared));
+                tied = false;
+            }
+        }
+    }
+    Ok(best.filter(|_| !tied).map(|(entity, _)| entity))
+}
+
+/// The one of `candidates` a saved hint picks for a mention of `name` at
+/// `start..end` of `text`, as the nightly re-check settles an ask: the
+/// candidate whose hint shares the most words with the mention's context;
+/// none on no shared word or a tie. The Linker reads it when it saves a
+/// turn, so a saved hint settles a mention live.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hinted_mention_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    kind: u8,
+    name: &str,
+    text: &str,
+    start: usize,
+    end: usize,
+    candidates: &[EntityId],
+) -> Result<Option<EntityId>> {
+    let context = context_terms(text, start, end, name);
+    let mut best: Option<(EntityId, usize)> = None;
+    let mut tied = false;
+    for (entity, hint) in hints_in_txn(vault, txn, kind, name)? {
+        if !candidates.contains(&entity) {
+            continue;
+        }
+        let shared = hint
+            .context
+            .iter()
+            .filter(|term| context.contains(term))
             .count();
         if shared == 0 {
             continue;
@@ -1114,8 +1225,8 @@ impl Vault {
             let held = ASKS
                 .get(&self.store, txn, &key)?
                 .ok_or_else(|| invalid("no such open ask"))?;
-            let answer =
-                parse_choice(&held, choice).ok_or_else(|| invalid("not one of the ask's options"))?;
+            let answer = parse_choice(&held, choice)
+                .ok_or_else(|| invalid("not one of the ask's options"))?;
             let entity = settle_ask_in_txn(self, txn, &key, &held, answer, now)?;
             Ok(IdentitySettled {
                 ask: key_hex(&key),
@@ -1216,8 +1327,8 @@ impl Memory<'_> {
                 }
                 return Ok(IdentityActNow::Deciding { ask: key_hex(&key) });
             }
-            let current = crate::tagging::tag_set_in_txn(&vault.store, txn, &hit.turn)?
-                .and_then(|tags| {
+            let current =
+                crate::tagging::tag_set_in_txn(&vault.store, txn, &hit.turn)?.and_then(|tags| {
                     tags.mentions.into_iter().find(|each| {
                         each.message == mention.message
                             && each.start == mention.start

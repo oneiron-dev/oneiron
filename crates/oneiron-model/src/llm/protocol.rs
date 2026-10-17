@@ -144,6 +144,14 @@ pub enum ContentPart {
         media_type: String,
         image: ImageContent,
     },
+    /// An input audio clip: standard padded base64 of its encoded bytes, with
+    /// no `data:` prefix. Only a row that admits
+    /// [`LlmCapability::AudioInput`](crate::llm::LlmCapability::AudioInput)
+    /// takes it; a wire with no audio encoder refuses it.
+    Audio {
+        media_type: String,
+        data: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

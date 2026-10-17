@@ -1,6 +1,7 @@
 //! The wake loop: admit, warn, dispatch under panic containment, stop conditions.
 
 mod concurrent;
+mod hooks;
 
 use std::future::poll_fn;
 use std::panic::AssertUnwindSafe;
@@ -249,14 +250,21 @@ impl<'a> DreamerWakeDriver<'a> {
         exec: &mut E,
         cancel: &WakeCancellation,
     ) -> Result<WakePassReport> {
+        let hooks = match self.pre_wake_hooks(&input)? {
+            Ok(hooks) => hooks,
+            Err(skipped) => return Ok(skipped),
+        };
         self.begin_wake(input.now)?;
         let prepared = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
             self.vault,
             input.scope,
             input.host_scope.as_ref(),
         )?;
-        self.run_prepared_wake_pass(input, exec, cancel, &prepared)
-            .await
+        let report = self
+            .run_prepared_wake_pass(input, exec, cancel, &prepared)
+            .await?;
+        self.post_wake_hooks(hooks, &report);
+        Ok(report)
     }
 
     fn begin_wake(&mut self, now: u64) -> Result<()> {
