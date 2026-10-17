@@ -270,6 +270,7 @@ fn public_http_transport_context(
         authenticated_actor_ref: None,
         credential: None,
         owner_grade: false,
+        principal: None,
         transport: BookingTransport::AnonymousHttp,
     })
 }

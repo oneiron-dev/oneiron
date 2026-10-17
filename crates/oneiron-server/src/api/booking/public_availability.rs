@@ -154,9 +154,10 @@ pub(super) fn solve(
 ///
 /// A prebuilt object bypasses parsing but still validates and canonicalizes,
 /// so two semantically identical constraints reach the oracle as the same
-/// bytes. Free text goes to ONE-1816's bounded parser and NEVER reaches the
-/// oracle: [`SolveRequest`] has no text field, and this function returns the
-/// parsed object or an error — never the sentence.
+/// bytes. Free text goes to ONE-1816's bounded parser before the solve
+/// (`free_text`) and NEVER reaches the oracle: [`SolveRequest`] has no text
+/// field, and this function returns the object or an error — never the
+/// sentence.
 fn normalize_constraint(
     input: Option<BookingConstraintInput>,
     _now: u64,
@@ -166,14 +167,9 @@ fn normalize_constraint(
         Some(BookingConstraintInput::Object(object)) => {
             Ok(Some(object.canonicalize().map_err(booking_error)?))
         }
-        // ONE-1816's parser is one bounded model call over a host-configured
-        // cheap tier. This daemon binds no LLM backend and no budget lease, so
-        // there is nothing to parse WITH — and the fail-closed answer is the
-        // only correct one: forwarding the sentence to the oracle is exactly
-        // what the seam exists to prevent, and inventing a local parser would
-        // be the second parser ONE-1816 forbids.
-        Some(BookingConstraintInput::FreeText(_)) => Err(ApiError::not_implemented(
-            "booking free-text constraint parsing requires a configured constraint parse tier",
+        // The parse ran before the solve; text here would be a bypass.
+        Some(BookingConstraintInput::FreeText(_)) => Err(ApiError::internal_server_error(
+            "booking free text reached the solve unparsed",
         )),
     }
 }

@@ -55,6 +55,7 @@ use crate::server::SyncServer;
 
 mod admission;
 mod constants;
+mod free_text;
 mod helpers;
 mod instructions;
 mod lifecycle;
@@ -133,6 +134,10 @@ pub(crate) struct BookingTransportContext {
     /// owner and is not held to the per-email cap on active bookings, which
     /// sheds anonymous visitors.
     pub(crate) owner_grade: bool,
+    /// Who a model call this request makes is paid by: the credential's
+    /// principal, or the owner for an owner-grade credential naming none.
+    /// `None` (an anonymous visitor) is sponsored by the vault owner.
+    pub(crate) principal: Option<oneiron::WriteActor>,
     pub(crate) transport: BookingTransport,
 }
 
@@ -490,7 +495,22 @@ pub(crate) async fn execute_booking_operation(
 
     // ── 3, 4, 5. parse, dispatch, project ───────────────────────────────
     match request {
-        BookingOperationRequest::Availability(input) => {
+        BookingOperationRequest::Availability(mut input) => {
+            // Free text is parsed first; only its object reaches the oracle.
+            if let Some(BookingConstraintInput::FreeText(text)) = &input.constraint {
+                let (object, visitor_tz) = free_text::parse_free_text(
+                    server,
+                    transport,
+                    text.clone(),
+                    input.visitor_tz.clone(),
+                    now,
+                )
+                .await?;
+                input.constraint = Some(BookingConstraintInput::Object(object));
+                if let Some(visitor_tz) = visitor_tz {
+                    input.visitor_tz = visitor_tz;
+                }
+            }
             public_availability::solve(server, page_ref, input, now, public_authority.as_ref())
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {

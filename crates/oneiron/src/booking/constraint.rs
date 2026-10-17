@@ -68,11 +68,6 @@ const OFF_TOPIC_QUESTION: &str = "Is the text something other than a scheduling 
 /// The time one shipped off-topic read may take.
 const OFF_TOPIC_BUDGET: Duration = Duration::from_secs(30);
 
-/// Routing namespace for the model id derived from the resolved tier. The
-/// concrete provider/model is chosen by host policy behind the tier ref, so
-/// only this namespace is constant.
-const CONSTRAINT_TIER_PROVIDER: &str = "tier";
-
 /// Host-configured event type. Configuration for the type (duration, pool,
 /// flex policy) is ONE-1823's `EventTypeConfig`; the key alone lives here.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -420,9 +415,12 @@ pub trait SlotOracle: Send + Sync {
 // Bounded parse pass
 // -------------------------------------------------------------------------
 
-/// The parse dial. `tier` is resolved by the existing model-policy precedence
-/// and must point at the host's cheap tier.
+/// The parse dial. `model` and `locality` are the host's cheap seat as the
+/// vault's live model policy admitted it; `tier` is that admission's tier
+/// precedence, carried on each call's envelope.
 pub struct ConstraintParseConfig {
+    pub model: ModelId,
+    pub locality: ModelLocality,
     pub tier: TierPrecedence,
     pub max_input_bytes: usize,
     pub decisions: BookingDecisions,
@@ -473,37 +471,6 @@ impl ConstraintParseConfig {
             ));
         }
         Ok(())
-    }
-
-    /// The model id is derived from the RESOLVED tier ref, never hard-coded:
-    /// host policy owns which concrete model sits behind the tier.
-    fn model_id(&self) -> Result<ModelId, BookingError> {
-        let tier = sanitize_model_id_segment(self.tier.resolved().as_str());
-        ModelId::new(format!("{CONSTRAINT_TIER_PROVIDER}/{tier}@configured")).map_err(|error| {
-            BookingError::InvalidConfig(format!(
-                "constraint parse tier does not resolve to a usable model id: {error}"
-            ))
-        })
-    }
-}
-
-fn sanitize_model_id_segment(value: &str) -> String {
-    let sanitized = value
-        .bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_') {
-                byte as char
-            } else {
-                '.'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('.')
-        .to_owned();
-    if sanitized.is_empty() {
-        "configured".to_owned()
-    } else {
-        sanitized
     }
 }
 
@@ -723,7 +690,7 @@ fn constraint_parse_llm_request(
     params.insert("max_output_tokens".to_owned(), json!(MAX_OUTPUT_TOKENS));
 
     Ok(LlmRequest {
-        model: config.model_id()?,
+        model: config.model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
             scope: crate::llm::Scope::default(),
@@ -740,7 +707,7 @@ fn constraint_parse_llm_request(
             response_format: ResponseFormat::Json {
                 schema: constraint_response_schema(),
             },
-            locality: ModelLocality::ThirdParty,
+            locality: config.locality,
         },
         messages: vec![
             system_message(format!(

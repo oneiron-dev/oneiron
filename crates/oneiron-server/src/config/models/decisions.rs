@@ -16,6 +16,9 @@ use serde::Deserialize;
 const DEFAULT_SEAT_BUDGET_MS: u64 = 2_000;
 /// One image pick's anytime budget when the file names none.
 const DEFAULT_IMAGE_PICK_BUDGET_MS: u64 = 1_000;
+/// The longest booking free text the parse reads when the file names none:
+/// the engine's own ceiling.
+const DEFAULT_BOOKING_PARSE_INPUT_BYTES: usize = 4096;
 
 /// `[models.decisions]` as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -27,6 +30,18 @@ pub(super) struct DecisionsFile {
     system_one: Option<SystemOneFile>,
     big: Option<BigFile>,
     image_pick: Option<ImagePickFile>,
+    booking_parse: Option<BookingParseFile>,
+}
+
+/// `[models.decisions.booking_parse]`: the cheap seat a booking page's free
+/// text is parsed on (ONE-1816), through a seat `[models]` already fills.
+/// Without it, free text is refused.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BookingParseFile {
+    /// The seat whose model parses.
+    role: ModelRole,
+    max_input_bytes: Option<usize>,
 }
 
 /// `[models.decisions.seat]`: the code-mode seat pick.
@@ -102,6 +117,14 @@ pub struct DecisionsSettings {
     pub system_one: Option<SystemOneSettings>,
     pub big: Option<BigSettings>,
     pub image_pick: Option<ImagePickSettings>,
+    pub booking_parse: Option<BookingParseSettings>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BookingParseSettings {
+    pub role: ModelRole,
+    /// The longest free text one parse reads, at most 4096 bytes.
+    pub max_input_bytes: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -215,12 +238,30 @@ impl DecisionsFile {
                 })
             })
             .transpose()?;
+        let booking_parse = self
+            .booking_parse
+            .map(|parse| -> anyhow::Result<_> {
+                Ok(BookingParseSettings {
+                    role: parse.role,
+                    max_input_bytes: match parse
+                        .max_input_bytes
+                        .unwrap_or(DEFAULT_BOOKING_PARSE_INPUT_BYTES)
+                    {
+                        bytes @ 1..=DEFAULT_BOOKING_PARSE_INPUT_BYTES => bytes,
+                        _ => anyhow::bail!(
+                            "models.decisions.booking_parse.max_input_bytes must be within 1..=4096"
+                        ),
+                    },
+                })
+            })
+            .transpose()?;
         Ok(DecisionsSettings {
             auto_check,
             seat,
             system_one,
             big,
             image_pick,
+            booking_parse,
         })
     }
 }
