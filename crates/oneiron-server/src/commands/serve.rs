@@ -364,7 +364,7 @@ pub(super) async fn serve_with_config(
         mesh_server,
         &crate::handler::mesh::MeshConfig::from_env()?,
         &app,
-        config.limits.connections().header_read_timeout,
+        config.limits.connections(),
     )
     .await?;
     host.ready()?;
