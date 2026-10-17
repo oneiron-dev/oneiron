@@ -168,13 +168,14 @@ pub enum SendOverrideMatch {
     OneShot,
 }
 
-/// One row of the ARCH-0057 §4 claim-class table for the `comm.*` family.
+/// One row of the ARCH-0057 §4 claim-class table for the `comm.*` family, as
+/// this build compiles it.
 ///
-/// PURE DATA. There is no descriptor runtime in the engine and this ticket
-/// mints none: the rows DESCRIBE the write classes the family's own verbs
-/// enforce, so a future descriptor registry has something exact to register and
-/// a reader has something exact to check the verbs against. Nothing here is
-/// persisted, and nothing here gates a write.
+/// The rows DESCRIBE the write classes the family's own verbs enforce. They
+/// are the seed and the fallback of the synced descriptor entities
+/// (`comm::descriptor`): the open-time seed writes each row as a
+/// CLAIM_CLASS_DESCRIPTOR, and a reader with no readable synced row gets the
+/// row here. Nothing here gates a write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClaimClassDescriptorRow {
     /// The predicate this row describes.
@@ -239,14 +240,6 @@ pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
             projector_only: false,
         },
     ]
-}
-
-/// Whether `predicate` is a restrictive row of [`claim_class_descriptors`]:
-/// its heads only add suppression.
-pub(crate) fn is_restrictive_comm_predicate(predicate: &str) -> bool {
-    claim_class_descriptors()
-        .iter()
-        .any(|row| row.restrictive && row.predicate == predicate)
 }
 
 /// Typed value carried by one claim in the `comm.*` family.
