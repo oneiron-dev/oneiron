@@ -56370,7 +56370,7 @@
      "path": "src/edit/media.rs",
      "purpose": "`set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -56409,6 +56409,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/structure/born.rs",
+     "purpose": "The live-deck projector's creation verbs for what a preset shape cannot carry: a picture over a new media…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -56422,7 +56432,10 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConnectorPreset",
+      "NewConnector",
       "NewGroup",
+      "NewPicture",
       "NewShape",
       "Preset",
       "StructureEdit",
@@ -56432,9 +56445,9 @@
      "purpose": "Structural edits (ONE-2529; ARCH-0077, \"Edit in place with passthrough\"): `add_shape` from a preset…",
      "surface": {
       "crate-vis": 2,
-      "enum": 2,
-      "fn": 2,
-      "struct": 3
+      "enum": 3,
+      "fn": 3,
+      "struct": 5
      }
     },
     {
@@ -56764,6 +56777,7 @@
       "ExportOutcome",
       "ExportProfile",
       "Gate",
+      "HeldAssets",
       "OracleReceipt",
       "RoundtripReport",
       "StepOutcome"
@@ -56773,8 +56787,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 8,
-      "struct": 6
+      "fn": 9,
+      "struct": 7
      }
     },
     {
@@ -56798,7 +56812,10 @@
       "ApproveScope",
       "AttributionIndex",
       "ChangeKind",
+      "ChartKind",
+      "ChartSeries",
       "Conflict",
+      "ConnectorEnd",
       "DeckDiff",
       "DeckFork",
       "DeckNode",
@@ -56811,6 +56828,7 @@
       "NodeId",
       "NodeKind",
       "NodeMove",
+      "NodePayload",
       "OpaqueChange",
       "Paragraph",
       "PreflightReport",
@@ -56826,9 +56844,9 @@
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
       "crate-vis": 3,
-      "enum": 6,
-      "fn": 24,
-      "struct": 20
+      "enum": 8,
+      "fn": 25,
+      "struct": 22
      }
     },
     {
@@ -57117,7 +57135,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57189,7 +57207,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 61,
+   "source_files": 62,
    "test_files": 14
   },
   "oneiron-driver": {
