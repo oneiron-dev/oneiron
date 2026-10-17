@@ -82,6 +82,7 @@ pub(super) fn assemble_extracted(
                         kept.provenance_chain.push(hop);
                     }
                 }
+                super::provenance::join_decisions(&mut kept.decisions, &incoming.decisions);
                 kept.evidence_meet =
                     super::provenance::source_meet(kept.evidence_meet, incoming.evidence_meet);
                 kept.learned_at = kept.learned_at.min(incoming.learned_at);
