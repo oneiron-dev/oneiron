@@ -10018,7 +10018,7 @@
      "purpose": "Per-reader report schedules (OF-499)",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 10,
       "struct": 2
@@ -10046,7 +10046,7 @@
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
       "const": 3,
-      "crate-vis": 7,
+      "crate-vis": 11,
       "fn": 2,
       "struct": 5
      }
@@ -62824,7 +62824,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
