@@ -202,9 +202,19 @@ impl<'a> HostSelfDispatcher<'a> {
         if call.intent_key.trim().is_empty() || call.intent_key.len() > 256 {
             return Err(invalid());
         }
+        let now = crate::unix_seconds_now();
+        // OF-541: an ask is placed and planned on the host's planner over
+        // the agent's lease; without one, the target dispatches directly.
+        let (target, context) = match call.ask {
+            None => (call.target, call.context),
+            Some(_) if !self.planner_bound() => {
+                return Ok(Self::planner_unbound(SelfEffect::AgentsSpawn));
+            }
+            Some(ask) => self.planned_spawn(call.context, ask, now)?,
+        };
         let result = AgentDispatcher::new(vault).dispatch_with_context(
             DispatchAgent {
-                target: call.target,
+                target,
                 parent_attempt: Some(parent),
                 dedupe_key: Some(format!(
                     "code:{}:{}",
@@ -212,9 +222,9 @@ impl<'a> HostSelfDispatcher<'a> {
                     call.intent_key
                 )),
                 run_id: live.attempt.run_id,
-                now: crate::unix_seconds_now(),
+                now,
             },
-            call.context,
+            context,
         )?;
         Ok(SelfDispatchOutcome::AgentSpawn(match result {
             AgentDispatchOutcome::Dispatched(status) | AgentDispatchOutcome::Existing(status) => {

@@ -1025,6 +1025,17 @@
       "section": false
     },
     {
+      "name": "vault.guests.mint_slip",
+      "description": "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device.",
+      "input": "crate::task_verb::sdk::GuestSlipMintRequest",
+      "output": "crate::task_verb::sdk::GuestSlipMinted",
+      "call": "crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.authority.handoff_alarms",
       "description": "Every saved authority handoff fork alarm, for the owner.",
       "input": "EmptyRequest",
@@ -1099,6 +1110,39 @@
       "input": "crate::task_verb::sdk::LegalHoldLiftAndEraseRequest",
       "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
       "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.settings.learning",
+      "description": "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type.",
+      "input": "crate::learning_setting_doors::LearningSettingsRequest",
+      "output": "crate::learning_setting_doors::LearningSettingsView",
+      "call": "crate::learning_setting_doors::learning_settings_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.settings.learning.put",
+      "description": "The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope.",
+      "input": "crate::learning_setting_doors::LearningSettingPut",
+      "output": "crate::learning_setting_doors::LearningSettingsView",
+      "call": "crate::learning_setting_doors::put_learning_setting_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning.put\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.settings.learning.clear",
+      "description": "The owner clears one learned-setting row of a key, mode and scope.",
+      "input": "crate::learning_setting_doors::LearningSettingClear",
+      "output": "crate::learning_setting_doors::LearningSettingsView",
+      "call": "crate::learning_setting_doors::clear_learning_setting_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning.clear\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -3381,6 +3425,20 @@
       "scope": "Write",
       "context": "run",
       "effect": "TasksRefuse"
+    },
+    {
+      "name": "self.leader.advice",
+      "input": "crate::code_run::LeaderAdviceInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "Leader"
+    },
+    {
+      "name": "self.leader.pattern",
+      "input": "crate::code_run::LeaderPatternInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "Leader"
     },
     {
       "name": "self.skills.call",
