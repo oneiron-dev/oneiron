@@ -35,6 +35,8 @@ use crate::error::{bad_request, forbidden, transport_error};
 mod checkpoint;
 mod origin;
 mod pairing;
+// FIX 3377: a paired owner device renews its own credential.
+mod renewal;
 mod response;
 // OF-237: the network or an in-process server under one signing path.
 mod wire;
