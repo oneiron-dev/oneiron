@@ -241,6 +241,13 @@ fn rule_on_proposal(
     // A project goal's measured axes come from its bound live report, read
     // before any judgment so a missing one retries without spending them.
     let measured = live::live_axes(vault, proposal, &inputs.basis, &inputs.goal_definition)?;
+    // The human picks in the skill's anchor, scored against the judge that
+    // answers now, read before any judgment like the outcomes they sit beside.
+    let incumbent = crate::skill_optimize::judge_incumbent(vault)?;
+    let anchor = anchor_score(
+        &crate::skill_optimize::labels::skill_label_anchor(vault, inputs.target)?,
+        incumbent.as_ref().map(|incumbent| incumbent.judge.as_str()),
+    );
     // Freeze the response-only preference before ANY rubric-aware callback.
     // The same frozen sample is used to measure both instruction versions.
     let blind = scorer.blind_preference(current_case.skill_id, &inputs.held_out)?;
@@ -250,6 +257,7 @@ fn rule_on_proposal(
         &proposed_case,
         &inputs.outcomes,
         &blind,
+        anchor,
     )?;
     let goal_axes = score_goal_axes(
         scorer,
@@ -597,6 +605,21 @@ fn decide_in_txn(
     if !bound {
         return Ok(SkillEditDisposition::RefusedProtectedTier);
     }
+    // The judge's rubric revises at most once per campaign, and only on k
+    // fresh anchored labels since its last revision (ARCH-0042 judge re-pin
+    // cadence). A tradeoff on it is not put to anyone before then either.
+    if current.skill_id == JUDGE_SKILL_ID
+        && !judge_revision_due_in_txn(
+            vault,
+            wtxn,
+            cycle,
+            proposal,
+            &target_of(staged)?,
+            world_now.len(),
+        )?
+    {
+        return Ok(SkillEditDisposition::DeferredJudgeCadence);
+    }
     // A mixed vector may reach the preference ladder only after both tier
     // checks. Otherwise a protected candidate could remain open indefinitely.
     if is_tradeoff(goal_axes) {
@@ -640,6 +663,54 @@ pub(super) fn accepted_in_cycle_in_txn(
     Ok(u32::try_from(accepted.len()).unwrap_or(u32::MAX))
 }
 
+/// The bootstrap judge skill: its instructions are the rubric every skill edit
+/// is judged by (ARCH-0053: "The judge (the rubric) ... A skill").
+const JUDGE_SKILL_ID: &str = "judge";
+
+/// k: the fresh anchored labels a judge rubric revision needs since the last
+/// one (ARCH-0042 "Each rubric revision needs k fresh labels since the last
+/// revision"). Canon names no number; five is N, the evidence any skill needs
+/// before the loop may edit it at all.
+const JUDGE_REVISION_FRESH_LABELS: u64 = 5;
+
+/// Whether the judge's rubric, `target`, may revise in `cycle`, the campaign.
+///
+/// No other edit of this judge may stand accepted in the same cycle, and its
+/// anchor must hold k labels fresher than its last revision: the human picks
+/// made after the ruling that admitted `target`, and the settled world
+/// outcomes on `target`'s held-out receipts, every one of which landed after
+/// it began judging. Derived from the verdict ledger like the cycle cap.
+fn judge_revision_due_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    cycle: &SkillEditCycle,
+    spending: &EntityId,
+    target: &EntityId,
+    world_outcomes: usize,
+) -> Result<bool> {
+    let mut since = 0_u64;
+    for verdict in verdict_rows_in_txn(vault, rtxn)? {
+        if !verdict.disposition.admits()
+            || verdict.displaced_by_revision.is_some()
+            || verdict.proposal == *spending
+        {
+            continue;
+        }
+        // The ruling that made `target` the judge, or another edit of it.
+        if verdict.proposal == *target || verdict.skill == *target {
+            if verdict.cycle == cycle.as_str() {
+                return Ok(false);
+            }
+            if verdict.proposal == *target {
+                since = since.max(verdict.at);
+            }
+        }
+    }
+    let picks = crate::skill_optimize::labels::anchor_labels_since_in_txn(vault, rtxn, since)?;
+    let outcomes = u64::try_from(world_outcomes).unwrap_or(u64::MAX);
+    Ok(picks.saturating_add(outcomes) >= JUDGE_REVISION_FRESH_LABELS)
+}
+
 /// The standing ruling this delivery would only be repeating, if there is one.
 ///
 /// "Standing" is the LATEST ruling, not any ruling: a proposal accepted and
@@ -677,8 +748,11 @@ fn standing_ruling_in_txn(
             && verdict.judge_revision.as_deref() == Some(judge_revision)
             && (verdict.disposition.admits()
                 || verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision
-                || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
-                    && verdict.cycle == cycle.as_str()))
+                || (matches!(
+                    verdict.disposition,
+                    SkillEditDisposition::DeferredCycleCap
+                        | SkillEditDisposition::DeferredJudgeCadence
+                ) && verdict.cycle == cycle.as_str()))
     });
     match standing {
         Some(pending)

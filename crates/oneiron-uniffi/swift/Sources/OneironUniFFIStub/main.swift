@@ -5,8 +5,8 @@
 // so `swift build` type-checks the entire generated surface — both
 // constructors, actor rebinding, all 27 pinned verbs, every DTO's full
 // memberwise initializer, and the three-field error shape — without
-// executing the definition-only entrypoints. The top-level body stays
-// empty on purpose: it prints no success marker and opens no vault.
+// executing any of them. The top-level body stays empty on purpose: it
+// prints no success marker and opens no vault.
 //
 // Any export rename, DTO field drift, optionality change, or width change
 // breaks this build by construction. That, plus the Rust contract tests, is
