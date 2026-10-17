@@ -19,6 +19,7 @@ import type {
   CommitReceipt,
   FacadeReceipt,
   MemoryPack,
+  QueryAffect,
   RecallMedia,
   RecallScope,
   WitnessReceipt,
@@ -59,7 +60,7 @@ vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
-vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined): MemoryPack
+vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
 vaultExport(input: unknown): unknown
 vaultReceipts(limit: number | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
@@ -130,6 +131,7 @@ vaultEmbeddingSpacesProbesDelete(input: unknown): unknown
 vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
+vaultSecretsLiftHistory(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
 vaultWidenProposalsApprove(input: unknown): unknown
 vaultWidenProposalsDecline(input: unknown): unknown

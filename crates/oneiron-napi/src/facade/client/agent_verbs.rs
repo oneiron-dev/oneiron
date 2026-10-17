@@ -224,6 +224,7 @@ impl NativeClient {
         as_of: Option<f64>,
         deadline_ms: Option<f64>,
         media: Option<NapiRecallMedia>,
+        query_affect: Option<NapiQueryAffect>,
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
@@ -246,6 +247,7 @@ impl NativeClient {
             .map(recall_media_to_engine)
             .transpose()
             .map_err(facade_error)?;
+        let query_affect = query_affect.map(query_affect_to_engine);
         let output = self
             .inner
             .vault_recall(
@@ -257,6 +259,7 @@ impl NativeClient {
                 as_of,
                 deadline_ms,
                 media,
+                query_affect,
             )
             .map_err(facade_error)?;
         memory_pack_from_engine(output).map_err(boundary_error)
@@ -935,6 +938,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.settings.learning.clear", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_lift_history(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.lift_history", input)
             .map_err(facade_error)
     }
     #[napi]

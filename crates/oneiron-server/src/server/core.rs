@@ -103,6 +103,8 @@ pub struct SyncServer {
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// The lens frames held for the cards this server rendered (OF-181), charged to `retained`.
+    pub(crate) lens_frames: crate::lens_frames::LensFrameStore,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -368,6 +370,7 @@ impl SyncServer {
             std::time::Instant::now(),
         );
         Ok(Self {
+            lens_frames: crate::lens_frames::LensFrameStore::new(&retained, &wire_telemetry),
             retained,
             presence,
             usage_ledger: UsageLedger::new(vault.clone()),
