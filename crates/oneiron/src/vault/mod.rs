@@ -161,6 +161,9 @@ pub struct Vault {
     /// Verb hooks' in-memory state: the process switch, the cached binding
     /// list, the sandbox and the invocations in flight (ARCH-0080 §3).
     pub(crate) verb_hook_state: crate::runtime_hooks::verb::VerbHookState,
+    /// The callable skill invocations running on this handle, each with the
+    /// token an owner's suspension cancels it by (FIX 600). In memory only.
+    pub(crate) skill_invocations: crate::skill::SkillInvocations,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

@@ -1,5 +1,6 @@
 //! Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types.
 
+use super::cancel::StepCancellation;
 use crate::code_run::{
     CodeRunDeterminism, CodeRunReplayRecord, ResultFacet, SelfCall, SelfDispatchOutcome,
     SelfDurableWait, WaitKey,
@@ -380,6 +381,23 @@ pub trait JsCodeModeHost {
     ) -> Result<SelfDispatchResponse> {
         self.dispatch_self(call)
     }
+
+    /// [`Self::dispatch_self_nested`] for a caller whose step `cancel` may
+    /// stop (FIX 600). A host that runs the nested step overrides it and
+    /// runs that step under a child of `cancel`, so a stop of the caller
+    /// reaches it. This default refuses the call once the caller is
+    /// cancelled, and fails it when the cancel lands while it runs.
+    fn dispatch_self_nested_cancellable(
+        &mut self,
+        call: SelfCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+        cancel: &StepCancellation,
+    ) -> Result<SelfDispatchResponse> {
+        cancel.check()?;
+        let answered = self.dispatch_self_nested(call, runtime);
+        cancel.check()?;
+        answered
+    }
 }
 
 /// Runtime seam for the CODE-1 plain-JS guest component.
@@ -399,6 +417,23 @@ pub trait JsCodeModeRuntime {
         step: JsCodeModeStep<'_>,
         host: &mut dyn JsCodeModeHost,
     ) -> Result<JsCodeModeStepOutcome>;
+
+    /// [`Self::run_step`] for a step `cancel` may stop (FIX 600). A runtime
+    /// that can end its guest mid-step overrides it. This default checks
+    /// the token before the step and after it, so a step cancelled while it
+    /// ran fails with [`crate::error::CodeError::CodeStepCancelled`] and
+    /// never counts as run; it does not stop the step early.
+    fn run_step_cancellable(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+        cancel: &StepCancellation,
+    ) -> Result<JsCodeModeStepOutcome> {
+        cancel.check()?;
+        let outcome = self.run_step(step, host);
+        cancel.check()?;
+        outcome
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

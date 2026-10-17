@@ -12,6 +12,7 @@ use crate::{
             MicroVmHandle,
         },
     },
+    engine_executor::StepCancellation,
 };
 use oneiron_sandbox_contract::{MAX_COMPONENT_BYTES, MAX_PROGRAM_BYTES, WorkspacePath};
 use serde::{Deserialize, Serialize};
@@ -86,8 +87,14 @@ pub(in crate::code_sandbox) struct GuestProgram<'a> {
     pub source: &'a str,
 }
 
+/// [`exchange_cancellable`] for a step nothing cancels.
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "this file is compiled under two modules, and the tests of only one call it"
+)]
 pub(in crate::code_sandbox) fn exchange(
-    mut stream: UnixStream,
+    stream: UnixStream,
     vm: &MicroVmHandle,
     program: GuestProgram<'_>,
     budget: ExecutionBudget,
@@ -95,86 +102,154 @@ pub(in crate::code_sandbox) fn exchange(
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
-    let GuestProgram { component, source } = program;
-    if source.len() > MAX_PROGRAM_BYTES {
-        return Err(refused("guest source exceeds message budget"));
-    }
-    if component.is_empty() || component.len() > MAX_COMPONENT_BYTES {
-        return Err(refused("guest component size refused"));
-    }
-    if !matches!(
-        read_frame(&mut stream, deadline)?,
-        GuestFrame::Hello { version: 1 }
-    ) {
-        return Err(refused("guest protocol version mismatch"));
-    }
-    write_frame(
-        &mut stream,
-        &HostFrame::Start {
-            version: 1,
-            vm_id: vm.id(),
-            tier: vm.tier().as_str(),
-            pids: budget.pids,
-            component_bytes: component.len(),
-            source,
-        },
+    exchange_cancellable(
+        stream,
+        vm,
+        program,
+        budget,
         deadline,
-    )?;
-    for (index, bytes) in component.chunks(256 * 1024).enumerate() {
-        write_frame(
-            &mut stream,
-            &HostFrame::Component {
-                offset: index * 256 * 1024,
-                bytes,
-            },
-            deadline,
-        )?;
-    }
-    // Snapshot bytes only. There is no host mount device inside the VM and
-    // no path from a guest overlay file to the original source directory.
-    let base = super::snapshot::files(vm.base_root())?;
-    for file in &base.files {
-        write_frame(
-            &mut stream,
-            &HostFrame::File {
-                path: file.path.as_str(),
-                bytes: &file.bytes,
-            },
-            deadline,
-        )?;
-    }
-    write_frame(&mut stream, &HostFrame::Ready, deadline)?;
-    let (mut exit, writes) = receive_proposals(stream, vm, &base, deadline, proxy, transport)?;
-    let mut edits = Vec::new();
-    for write in writes {
-        match write {
-            SandboxProposalWrite::FileWrite(file) => {
-                let old = base
-                    .files
-                    .iter()
-                    .find(|entry| entry.path == file.path)
-                    .map_or(b"".as_slice(), |entry| entry.bytes.as_slice());
-                if let Some(edit) = file.lower_to_edit(old)? {
-                    edits.push(SandboxProposalWrite::FileEdit(edit));
-                }
-            }
-            SandboxProposalWrite::FileDelete(_) | SandboxProposalWrite::FileRename(_) => {
-                edits.push(write);
-            }
-            _ => return Err(refused("unexpected guest proposal kind")),
-        }
-    }
-    exit.overlay_dirty = !edits.is_empty();
-    Ok((exit, edits))
+        proxy,
+        transport,
+        &StepCancellation::never(),
+    )
 }
 
+/// One guest's exchange under its step's token (FIX 600). The token is read
+/// before the exchange starts, at each frame boundary and around the host
+/// call a credential frame makes. The backend cuts the stream once the token
+/// fires; the cut stream's error, and any result that raced the cancel, give
+/// way to [`crate::error::CodeError::CodeStepCancelled`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the exchange takes the guest's stream, program, budget, credential policy and step token"
+)]
+pub(in crate::code_sandbox) fn exchange_cancellable(
+    mut stream: UnixStream,
+    vm: &MicroVmHandle,
+    program: GuestProgram<'_>,
+    budget: ExecutionBudget,
+    deadline: Instant,
+    proxy: &CredentialEgressProxy,
+    transport: Option<&dyn CredentialReadTransport>,
+    cancel: &StepCancellation,
+) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
+    let exchanged = (|| {
+        cancel.check()?;
+        let GuestProgram { component, source } = program;
+        if source.len() > MAX_PROGRAM_BYTES {
+            return Err(refused("guest source exceeds message budget"));
+        }
+        if component.is_empty() || component.len() > MAX_COMPONENT_BYTES {
+            return Err(refused("guest component size refused"));
+        }
+        if !matches!(
+            read_frame(&mut stream, deadline)?,
+            GuestFrame::Hello { version: 1 }
+        ) {
+            return Err(refused("guest protocol version mismatch"));
+        }
+        cancel.check()?;
+        write_frame(
+            &mut stream,
+            &HostFrame::Start {
+                version: 1,
+                vm_id: vm.id(),
+                tier: vm.tier().as_str(),
+                pids: budget.pids,
+                component_bytes: component.len(),
+                source,
+            },
+            deadline,
+        )?;
+        for (index, bytes) in component.chunks(256 * 1024).enumerate() {
+            write_frame(
+                &mut stream,
+                &HostFrame::Component {
+                    offset: index * 256 * 1024,
+                    bytes,
+                },
+                deadline,
+            )?;
+        }
+        // Snapshot bytes only. There is no host mount device inside the VM
+        // and no path from a guest overlay file to the original source
+        // directory.
+        let base = super::snapshot::files(vm.base_root())?;
+        for file in &base.files {
+            write_frame(
+                &mut stream,
+                &HostFrame::File {
+                    path: file.path.as_str(),
+                    bytes: &file.bytes,
+                },
+                deadline,
+            )?;
+        }
+        cancel.check()?;
+        write_frame(&mut stream, &HostFrame::Ready, deadline)?;
+        let (mut exit, writes) =
+            receive_proposals_cancellable(stream, vm, &base, deadline, proxy, transport, cancel)?;
+        let mut edits = Vec::new();
+        for write in writes {
+            match write {
+                SandboxProposalWrite::FileWrite(file) => {
+                    let old = base
+                        .files
+                        .iter()
+                        .find(|entry| entry.path == file.path)
+                        .map_or(b"".as_slice(), |entry| entry.bytes.as_slice());
+                    if let Some(edit) = file.lower_to_edit(old)? {
+                        edits.push(SandboxProposalWrite::FileEdit(edit));
+                    }
+                }
+                SandboxProposalWrite::FileDelete(_) | SandboxProposalWrite::FileRename(_) => {
+                    edits.push(write);
+                }
+                _ => return Err(refused("unexpected guest proposal kind")),
+            }
+        }
+        exit.overlay_dirty = !edits.is_empty();
+        Ok((exit, edits))
+    })();
+    // A cancel seen by the end wins over the error its cut stream raised, and
+    // drops a result and proposals that raced it.
+    cancel.check()?;
+    exchanged
+}
+
+/// [`receive_proposals_cancellable`] for a step nothing cancels.
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "this file is compiled under two modules, and the tests of only one call it"
+)]
 fn receive_proposals(
+    stream: UnixStream,
+    vm: &MicroVmHandle,
+    base: &super::snapshot::Snapshot,
+    deadline: Instant,
+    proxy: &CredentialEgressProxy,
+    transport: Option<&dyn CredentialReadTransport>,
+) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
+    receive_proposals_cancellable(
+        stream,
+        vm,
+        base,
+        deadline,
+        proxy,
+        transport,
+        &StepCancellation::never(),
+    )
+}
+
+fn receive_proposals_cancellable(
     mut stream: UnixStream,
     vm: &MicroVmHandle,
     base: &super::snapshot::Snapshot,
     deadline: Instant,
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
+    cancel: &StepCancellation,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let mut writes = BTreeMap::new();
     let mut result_json = None;
@@ -185,6 +260,7 @@ fn receive_proposals(
     // proposal applied, under the same rules as the guest and the walker.
     let mut shape = base.shape.clone();
     for _ in 0..MAX_REQUESTS {
+        cancel.check()?;
         match read_frame(&mut stream, deadline)? {
             GuestFrame::Hello { .. } => return Err(refused("duplicate guest hello")),
             GuestFrame::CredentialRead {
@@ -203,8 +279,12 @@ fn receive_proposals(
                         ("host".into(), host.into()),
                     ]),
                 )?;
+                // The host call is admitted only while the step runs, and a
+                // cancel that lands while it runs drops its answer.
+                cancel.check()?;
                 let accepted = transport
                     .is_some_and(|transport| proxy.forward_read(vm, &call, transport).is_ok());
+                cancel.check()?;
                 write_frame(&mut stream, &HostFrame::Receipt { accepted }, deadline)?;
             }
             GuestFrame::Write { path, bytes } => {
