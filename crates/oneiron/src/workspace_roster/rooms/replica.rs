@@ -27,9 +27,9 @@ pub(crate) enum TurnMerge {
 
 /// Merges a turn row another machine of this vault carried. A row this vault
 /// lacks is written as carried. One it holds keeps its room, actor,
-/// addressing, links, time and conversion, and takes the carried messages and
-/// bound tasks it lacks; a carried row that names other fixed fields is
-/// refused.
+/// addressing, links, quote, time and conversion, and takes the carried
+/// messages and bound tasks it lacks; a carried row that names other fixed
+/// fields is refused.
 pub(crate) fn merge_replicated_turn_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -53,6 +53,7 @@ pub(crate) fn merge_replicated_turn_in_txn(
                 || held.addressed_agents != carried.addressed_agents
                 || held.reply_to != carried.reply_to
                 || held.thread_of != carried.thread_of
+                || held.quote != carried.quote
             {
                 return Ok(TurnMerge::Refused);
             }
