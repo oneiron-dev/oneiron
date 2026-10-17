@@ -686,6 +686,14 @@ The session lives in the server process: a restart ends it, and only saved turns
 routes keep no wire receipt (the per-route and per-caller call counts other routes keep), so
 nothing records that a session ran.
 
+A call on any other door that names an anonymous session in its `x-oneiron-session` header keeps
+no call or refusal receipt only when its caller is in that session: the person who entered it,
+or a member of its room. Every door acts inside the session its request names (facade rows, host
+doors, the context board, MCP), and the SDK handles do too (`inOffRecordSession` /
+`in_off_record_session`; embedded, the app host's actor is the caller). A credential that names
+no person (the host root, the shared secret) binds no session, and a stretch entered without a
+person binds no caller, so those calls are receipted as usual.
+
 ### Everyone in a room (ARCH-0052 D5, the notice model)
 
 A stretch can also run in a room, a conversation whose members are everyone in it. Each person
