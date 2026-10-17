@@ -1140,8 +1140,9 @@ path.
 ## Live agent runs
 
 The actions that act for one running agent need a live-run handle: `tasks.refuse`,
-`self.agents.spawn`, `self.team.start`, `self.team.record`, and the leader's
-`self.leader.advice` and `self.leader.pattern`. An outside harness gets and uses one like this:
+`self.agents.spawn`, `self.team.start`, `self.team.record`, `self.team.submit`, and the
+leader's `self.leader.advice` and `self.leader.pattern`. An outside harness gets and uses one
+like this:
 1. Pair a credential with write scope to that agent's AGENT_DEF: `POST /v1/core/pairing/links`
    with `principal.holder_ref` set to the AGENT_DEF id and `principal.actor_class` set to
    `agent`. The harness redeems the link at `POST /v1/core/pairing/redeem`.

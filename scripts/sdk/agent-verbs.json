@@ -5096,6 +5096,14 @@
       "effect": "Team"
     },
     {
+      "name": "self.team.submit",
+      "input": "crate::code_run::TeamSubmitInput",
+      "output": "crate::code_run::TeamSubmitAnswer",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
       "name": "self.spawn",
       "input": "crate::code_run::ReaderSpawnInput",
       "output": "crate::code_run::ReaderSpawnReceipt",

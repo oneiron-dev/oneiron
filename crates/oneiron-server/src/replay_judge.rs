@@ -7,6 +7,11 @@
 //! live arm attribution for one open proposal, judged per axis by this judge
 //! or by one a caller lends it (the Coach's, on its wake pass's clock).
 //!
+//! While the judge-swap incumbent is a judge none of the ladder's rungs
+//! answers as (a new judge shadows it and has not taken over), every
+//! judgment is asked of the model the incumbent names, alone on the Big
+//! rung; the swap's shadow still asks the configured ladder.
+//!
 //! A plain inner scorer: a decorator (the archive coverage floor) wraps it
 //! before registration when one is built.
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,7 +25,8 @@ use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::dreamer_runner::maintenance::CoachLiveSlice;
 use oneiron::learning::honesty::HONESTY_AXIS;
 use oneiron::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, TypedDecision,
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, ProviderPin,
+    TypedDecision,
 };
 use oneiron::posterior::Posterior;
 use oneiron::receipt::{ReceiptKind, ReceiptQuery};
@@ -30,13 +36,15 @@ use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
     AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
-    SkillOptimizeDecisions, SkillReplayPair, register_held_out_replay_scorer, skill_edit_goal,
+    SkillOptimizeDecisions, SkillReplayPair, judge_incumbent, register_held_out_replay_scorer,
+    skill_edit_goal,
 };
 use oneiron::skill_reliability::{SkillReliabilityPosterior, effective_skill_outcome};
-use oneiron::{EntityId, Error, Result, Vault};
+use oneiron::{EntityId, Error, ModelId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::decision_host::{DecisionHost, MODEL_DIAL};
 use crate::server::SyncServer;
 
 /// The judge's revision: every verdict it rules names it.
@@ -68,6 +76,10 @@ const MAX_ACT_MINUTES: f64 = 24.0 * 60.0;
 const ATTEMPT_RECEIPT: &str = "attempt:";
 /// The attempt state of a run that finished.
 const COMPLETED: &str = "completed";
+/// Whether the configured ladder judges while the held incumbent is a judge
+/// this server cannot ask (its seat's rungs were changed, or its model is no
+/// longer served alone); otherwise every judgment fails until the swap rules.
+const CONFIGURED_JUDGES_UNASKED_INCUMBENT: bool = true;
 
 /// The host's wording of each judgment (`SkillOptimizeDecisions` keys); an
 /// axis question is worded per axis name.
@@ -117,6 +129,11 @@ fn cut(text: &str, bytes: usize) -> &str {
 
 fn now() -> u64 {
     oneiron_vault_contract::now_ts()
+}
+
+/// A rung as the judge-swap journal names its judge, `model@version`.
+fn judge_name(pin: &ProviderPin) -> String {
+    format!("{}@{}", pin.model, pin.version)
 }
 
 /// The attempt behind a terminal pack receipt (`attempt:<32 hex>`), when its
@@ -254,7 +271,12 @@ pub fn person_minutes(vault: &Vault, receipt: &str) -> Result<Option<f64>> {
 /// The serve host's held-out replay judge.
 pub struct ServeReplayJudge {
     vault: Arc<Vault>,
-    ladder: HeldLadder,
+    /// The host whose configured ladder judges, and which asks one named
+    /// model alone.
+    host: DecisionHost,
+    /// The incumbent judge last resolved, with the ladder it is asked on
+    /// alone; `None` beside it while the configured ladder judges for it.
+    incumbent: Mutex<Option<(String, Option<&'static HeldLadder>)>>,
     principal: EntityId,
     dial: DecisionDial,
     bands: DecisionBandPolicy,
@@ -282,7 +304,8 @@ impl ServeReplayJudge {
             .collect();
         Ok(Self {
             vault: Arc::clone(server.vault()),
-            ladder: host.ladder().clone(),
+            host: host.clone(),
+            incumbent: Mutex::new(None),
             principal,
             dial: host.dial(DecisionRung::Big),
             bands: host.bands(),
@@ -307,6 +330,75 @@ impl ServeReplayJudge {
 
     fn wording(&self) -> &'static BTreeMap<String, String> {
         *self.wording.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The ladder the judge-swap incumbent is asked on alone, while it is a
+    /// judge none of the configured ladder's rungs answers as. `None` while
+    /// no incumbent is named, the configured ladder answers as it, or this
+    /// server cannot ask it and [`CONFIGURED_JUDGES_UNASKED_INCUMBENT`]
+    /// holds. Resolved once per incumbent.
+    fn incumbent_ladder(&self) -> Option<&'static HeldLadder> {
+        let incumbent = match judge_incumbent(&self.vault) {
+            Ok(incumbent) => incumbent?.judge,
+            Err(error) => {
+                tracing::warn!(%error, "the judge incumbent is unreadable; the configured ladder judges");
+                return None;
+            }
+        };
+        let mut resolved = self
+            .incumbent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some((judge, ladder)) = resolved.as_ref()
+            && *judge == incumbent
+        {
+            return *ladder;
+        }
+        let ladder = self.ask_incumbent(&incumbent);
+        *resolved = Some((incumbent, ladder));
+        ladder
+    }
+
+    /// [`Self::incumbent_ladder`] for `incumbent`: the model it names before
+    /// its last `@`, asked alone, when that ladder answers by its name.
+    fn ask_incumbent(&self, incumbent: &str) -> Option<&'static HeldLadder> {
+        let configured = self.host.ladder();
+        if [
+            &configured.rule,
+            &configured.local,
+            &configured.system_one,
+            &configured.escalation,
+            &configured.big,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|rung| judge_name(&rung.pin()) == incumbent)
+        {
+            return None;
+        }
+        let alone = incumbent
+            .rsplit_once('@')
+            .and_then(|(model, _)| ModelId::new(model).ok())
+            .ok_or_else(|| anyhow::anyhow!("it names no model"))
+            .and_then(|model| self.host.ladder_for_model(&model))
+            .and_then(|held| {
+                let answers_as = held.big.as_ref().map(|big| judge_name(&big.pin()));
+                if answers_as.as_deref() == Some(incumbent) {
+                    Ok(held)
+                } else {
+                    Err(anyhow::anyhow!(
+                        "asked alone, its model answers as another judge"
+                    ))
+                }
+            });
+        match alone {
+            Ok(held) => Some(&*Box::leak(Box::new(held))),
+            Err(error) => {
+                tracing::warn!(%error, judge = incumbent, "the incumbent judge cannot be asked here");
+                (!CONFIGURED_JUDGES_UNASKED_INCUMBENT)
+                    .then(|| &*Box::leak(Box::new(HeldLadder::unstaffed())))
+            }
+        }
     }
 
     /// Adds an axis question's wording for each axis not worded yet. A new
@@ -376,14 +468,17 @@ impl HeldOutReplayNotes for ServeReplayJudge {
         JUDGE_REVISION
     }
 
+    /// The configured ladder's judgments while it answers as the judge-swap
+    /// incumbent; a held incumbent it does not answer as is asked alone, on
+    /// the Big rung, of the model it names.
     fn decisions(&self) -> SkillOptimizeDecisions<'_> {
-        SkillOptimizeDecisions {
-            ladder: self.ladder.ladder(),
-            principal: self.principal,
-            dial: self.dial,
-            bands: self.bands.clone(),
-            deadline: self.clock(),
-            wording: self.wording(),
+        match self.incumbent_ladder() {
+            Some(incumbent) => SkillOptimizeDecisions {
+                ladder: incumbent.ladder(),
+                dial: MODEL_DIAL,
+                ..self.configured_decisions()
+            },
+            None => self.configured_decisions(),
         }
     }
 
@@ -532,6 +627,21 @@ pub fn register(server: &SyncServer, live_pulls_per_axis: Option<u32>) {
 }
 
 impl ServeReplayJudge {
+    /// The judgments as the configured ladder answers them, whoever the
+    /// judge-swap incumbent is: the swap's shadow asks the new judge here
+    /// while a held incumbent goes on judging.
+    #[must_use]
+    pub fn configured_decisions(&self) -> SkillOptimizeDecisions<'_> {
+        SkillOptimizeDecisions {
+            ladder: self.host.ladder().ladder(),
+            principal: self.principal,
+            dial: self.dial,
+            bands: self.bands.clone(),
+            deadline: self.clock(),
+            wording: self.wording(),
+        }
+    }
+
     /// The configured live pulls per online axis, across both arms; `None`
     /// when `[skills] live_pulls_per_axis` is unset.
     #[must_use]
