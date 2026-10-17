@@ -10907,7 +10907,7 @@
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
       "crate-vis": 9,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -11046,12 +11046,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CodeRunLiveRunBinding",
+      "LiveRunCredential"
+     ],
+     "path": "src/code_run/live_run.rs",
+     "purpose": "A live agent run's attachment to the one credential that may act for it (OF-181)",
+     "surface": {
+      "const": 1,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
       "crate-vis": 14,
-      "mod": 4,
+      "mod": 5,
       "re-export": 13
      }
     },
@@ -51570,7 +51585,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52839,7 +52854,7 @@
    },
    "over_bar": 160,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3198,
+   "source_files": 3199,
    "test_files": 903
   },
   "oneiron-android": {
@@ -70414,6 +70429,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/server/live_runs.rs",
+     "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
+     "surface": {
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/media_embedding.rs",
      "purpose": "The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same…",
      "surface": {
@@ -70437,7 +70462,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 3
      }
     },
@@ -71621,7 +71646,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71693,7 +71718,7 @@
    },
    "over_bar": 43,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 580,
+   "source_files": 581,
    "test_files": 182
   },
   "oneiron-spawn": {
