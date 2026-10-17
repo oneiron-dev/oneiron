@@ -303,6 +303,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     if let Some(gpu) = &config.gpu {
         gpu.validate()?;
     }
+    config.line.validate()?;
     if let Some(embedding) = &config.embedding {
         embedding.validate()?;
     }
@@ -518,6 +519,7 @@ struct FileServeConfig {
     desktop: Option<super::DesktopConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
     embedding: Option<super::EmbeddingConfig>,
+    line: Option<super::LineConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -576,6 +578,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             desktop: value.desktop,
             gpu: value.gpu,
             embedding: value.embedding,
+            line: value.line,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -640,6 +643,8 @@ struct PartialServeConfig {
     gpu: Option<crate::runtime::GpuPoolConfig>,
     /// `[embedding]` is file-only, as `[models]` is.
     embedding: Option<super::EmbeddingConfig>,
+    /// `[line]` is file-only, as `[browser]` is.
+    line: Option<super::LineConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -710,6 +715,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
             .field("embedding", &self.embedding)
+            .field("line", &self.line)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -878,6 +884,9 @@ impl PartialServeConfig {
         if let Some(value) = self.desktop {
             resolved.desktop = Some(value);
         }
+        if let Some(value) = self.line {
+            resolved.line = value;
+        }
         if let Some(value) = self.gpu {
             resolved.gpu = Some(value);
         }
@@ -961,6 +970,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             desktop: None,
             gpu: None,
             embedding: None,
+            line: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

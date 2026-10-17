@@ -54,11 +54,17 @@ pub enum EngineLimit {
     /// everything is okay and keeps queueing; it never refuses and never
     /// bounds the active window.
     CodeReaderBacklog,
+    /// Messages a LINE Official Account has sent this month, as LINE counts
+    /// them (`totalUsage`), read before each push. The bound is the account
+    /// plan's monthly push allowance (`[line]`), told at the send itself.
+    /// Past it the push still goes: a paid plan bills the overage, and LINE
+    /// itself refuses a free plan's.
+    LinePushMonthly,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -67,6 +73,7 @@ impl EngineLimit {
         Self::CodeResultSessionMemoryBytes,
         Self::ImageRoomBytes,
         Self::CodeReaderBacklog,
+        Self::LinePushMonthly,
     ];
 
     /// The config key that sets the row.
@@ -80,6 +87,7 @@ impl EngineLimit {
             Self::CodeResultSessionMemoryBytes => "limits.code_result_session_memory_bytes",
             Self::ImageRoomBytes => "limits.image_room_bytes",
             Self::CodeReaderBacklog => "limits.code_reader_backlog",
+            Self::LinePushMonthly => "line.monthly_push_allowance",
         }
     }
 
@@ -94,6 +102,8 @@ impl EngineLimit {
             Self::CodeResultSessionMemoryBytes => memory_share(64),
             Self::ImageRoomBytes => 32 << 20,
             Self::CodeReaderBacklog => 256,
+            // LINE's free plan allowance, as the plan row defaults.
+            Self::LinePushMonthly => 200,
         }
     }
 }

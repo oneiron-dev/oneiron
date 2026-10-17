@@ -7,12 +7,12 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use oneiron::Vault;
 use oneiron::channel_identity_provider::{
-    LINE_CHANNEL, LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig,
-    LineOfficialAccountPlanTier, SLACK_CHANNEL, SlackSharedPresenceAdapter,
+    LINE_CHANNEL, LineOfficialAccountAdapter, SLACK_CHANNEL, SlackSharedPresenceAdapter,
 };
 use oneiron::skill_hub::pack_catalog::{CheckedBuiltinConnection, PackSetupSecret};
 
 use super::slack_app::{SlackInstalls, public_origin, slack_app_config};
+use crate::config::LineConfig;
 
 /// The built-in Slack pack's connection and its request-signing secret.
 pub(crate) const SLACK_CONNECTION: &str = "slack-app";
@@ -62,8 +62,9 @@ impl BuiltinHandles {
     }
 
     /// One pass: every built-in channel's handle follows its pack and check.
-    /// `base` is the host's public origin, the Slack app's URLs hang off it.
-    pub(crate) fn reconcile(&self, vault: &Vault, base: Option<&str>) {
+    /// `base` is the host's public origin, the Slack app's URLs hang off it;
+    /// `plan` is the LINE account's plan, as the host config names it.
+    pub(crate) fn reconcile(&self, vault: &Vault, base: Option<&str>, plan: &LineConfig) {
         let slack = checked(vault, SLACK_CHANNEL, SLACK_CONNECTION).and_then(|checked| {
             let basis = basis(&checked);
             if self.slack().is_some_and(|handle| handle.basis == basis) {
@@ -73,11 +74,17 @@ impl BuiltinHandles {
         });
         replace(&self.slack, slack, SLACK_CHANNEL);
         let line = checked(vault, LINE_CHANNEL, LINE_CONNECTION).and_then(|checked| {
-            let basis = basis(&checked);
+            // A plan change rebuilds the handle, as a new check does.
+            let basis = format!(
+                "{}:{}:{}",
+                basis(&checked),
+                plan.plan.as_str(),
+                plan.monthly_push_allowance()
+            );
             if self.line().is_some_and(|handle| handle.basis == basis) {
                 return self.line();
             }
-            line_handle(checked, basis).map(Arc::new)
+            line_handle(checked, basis, plan).map(Arc::new)
         });
         replace(&self.line, line, LINE_CHANNEL);
     }
@@ -145,19 +152,23 @@ fn slack_handle(
     })
 }
 
-fn line_handle(checked: CheckedBuiltinConnection, basis: String) -> Option<LineHandle> {
+fn line_handle(
+    checked: CheckedBuiltinConnection,
+    basis: String,
+    plan: &LineConfig,
+) -> Option<LineHandle> {
     let Some(destination) = checked.check.provider_account.clone() else {
         tracing::info!("the LINE check named no bot user id; check the connection again");
         return None;
     };
     let channel_secret = secret(&checked, LINE_CHANNEL_SECRET)?;
-    // Free until a host config row names the account's plan (Engine 10-17).
-    let config = LineOfficialAccountAdapterConfig::new(
-        destination.clone(),
-        LineOfficialAccountPlanTier::Free,
-    )
-    .map_err(|error| tracing::info!(%error, "the LINE bot id is invalid; LINE is not served"))
-    .ok()?;
+    // The plan the host's `[line]` row names; a free account when it names none.
+    let config = plan
+        .adapter_config(destination.clone())
+        .map_err(|error| {
+            tracing::info!(%error, "the LINE bot id or plan is invalid; LINE is not served")
+        })
+        .ok()?;
     Some(LineHandle {
         adapter: LineOfficialAccountAdapter::new(config),
         destination,

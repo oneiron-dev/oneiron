@@ -145,6 +145,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::CodeResultSessionMemoryBytes),
         Self::Engine(EngineLimit::ImageRoomBytes),
         Self::Engine(EngineLimit::CodeReaderBacklog),
+        Self::Engine(EngineLimit::LinePushMonthly),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
