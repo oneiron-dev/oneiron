@@ -308,6 +308,7 @@ pub(crate) fn witness_turn(
         conversation_ref: conversation_ref.to_owned(),
         turn_ref: turn.map(|turn| turn.to_hex()),
         quote: None,
+        thread_audience: None,
         messages: vec![WitnessMessage {
             id: None,
             author,

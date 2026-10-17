@@ -3,7 +3,9 @@
 //! review claim, the Gate parks it for the owner, and the review binds to the
 //! team in the same writer, so the owner's answer settles the team on the
 //! inbox's existing path. Only an explicit submit writes a review; nothing is
-//! inferred from a run's end or a task's completion.
+//! inferred from a run's end or a task's completion. The review stands in the
+//! scope the output was recorded under ([`super::team_submit_output`]), never
+//! the vault's default.
 
 use std::cell::Cell;
 
@@ -11,10 +13,11 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 
 use super::HostSelfDispatcher;
+use super::team_submit_output::output_descriptor_in_txn;
 use crate::attempt_queue::AttemptId;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::team_submit::{
-    BlobOutputRevision, TEAM_DELIVERABLE_REVIEW_PREDICATE, TeamSubmitAnswer, TeamSubmitInput,
+    OutputRevision, TEAM_DELIVERABLE_REVIEW_PREDICATE, TeamSubmitAnswer, TeamSubmitInput,
 };
 use crate::code_run::{SelfDispatchOutcome, SelfEffect, SelfFailedResult};
 use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
@@ -25,7 +28,7 @@ use crate::team::{
 };
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
-    ClaimSubject, EntityId, TimeRange, Vault,
+    ClaimSubject, EntityId, TimeRange,
 };
 
 /// Domain of a review claim's id: one id per (leader, team, output), so a
@@ -59,7 +62,7 @@ impl HostSelfDispatcher<'_> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return Ok(Err("team_off_record"));
         };
-        let Some(output) = BlobOutputRevision::parse(&input.output_revision) else {
+        let Some(output) = OutputRevision::parse(&input.output_revision) else {
             return Ok(Err("team_submit_invalid_output"));
         };
         let team = input.team;
@@ -75,29 +78,44 @@ impl HostSelfDispatcher<'_> {
         if !team.starts_with(&led_prefix) && team_run_binding(vault, leader, &team)?.is_none() {
             return Ok(Err("team_submit_not_led"));
         }
+        // The output as one snapshot reads it: proven, with the scope its own
+        // recorded claim carries. The writer reads it again before it writes.
+        let descriptor = {
+            let rtxn = vault.store.env.read_txn()?;
+            match output_descriptor_in_txn(vault, &rtxn, output)? {
+                Ok(descriptor) => descriptor,
+                Err(code) => return Ok(Err(code)),
+            }
+        };
+        let subject = descriptor.subject();
         let output_revision = output.canonical();
         let review = review_claim_id(leader, &team, &output_revision)?;
         let value = review_value(&team, &output_revision, leader);
         let (envelope, run_group) = self.team_submit_envelope(vault, leader)?;
-        let candidate = ClaimCandidate::new(
-            TEAM_DELIVERABLE_REVIEW_PREDICATE,
-            ClaimSubject::Entity(output.artifact),
-            value.clone(),
-            1.0,
-        )
-        // The review cites the output it asks about, which the landing
-        // proves exists in this writer.
-        .with_evidence(encode_consolidation_evidence(
-            &ConsolidationEvidenceEnvelope {
-                refs: vec![output.artifact],
-                chain: Vec::new(),
-                source_meet: ClaimSource::Generated,
-            },
-        ));
+        // The review takes the output's scope, so it is never wider than
+        // what it asks about.
+        let candidate = descriptor.scoped(
+            ClaimCandidate::new(
+                TEAM_DELIVERABLE_REVIEW_PREDICATE,
+                ClaimSubject::Entity(subject),
+                value.clone(),
+                1.0,
+            )
+            // The review cites the output it asks about, which the landing
+            // proves exists in this writer.
+            .with_evidence(encode_consolidation_evidence(
+                &ConsolidationEvidenceEnvelope {
+                    refs: vec![subject],
+                    chain: Vec::new(),
+                    source_meet: ClaimSource::Generated,
+                },
+            )),
+        );
         let is_review = |body: &ClaimBody| {
             body.predicate == TEAM_DELIVERABLE_REVIEW_PREDICATE
-                && body.subject == ClaimSubject::Entity(output.artifact)
+                && body.subject == ClaimSubject::Entity(subject)
                 && body.value == value
+                && descriptor.scopes(body)
         };
         let now = crate::unix_seconds_now();
         let refusal = Cell::new(None);
@@ -112,8 +130,19 @@ impl HostSelfDispatcher<'_> {
             },
             now,
             |txn| {
+                // The output still stands as it was read, in the same scope.
+                // One that changed under the submit is answered as missing.
+                let unproven = match output_descriptor_in_txn(vault, txn, output)? {
+                    Ok(current) => (current != descriptor).then_some("team_submit_output_missing"),
+                    Err(code) => Some(code),
+                };
+                if unproven.is_some() {
+                    refusal.set(unproven);
+                    return Err(stopped());
+                }
                 // A repeat submit of this output finds its first review and
-                // never rewrites it.
+                // never rewrites it. Only a review of this output in its
+                // scope replays.
                 if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &review)?
                     .is_some()
                 {
@@ -129,13 +158,10 @@ impl HostSelfDispatcher<'_> {
                     }
                     return Err(stopped());
                 }
-                if !output_exists_in_txn(vault, txn, output)? {
-                    refusal.set(Some("team_submit_output_missing"));
-                    return Err(stopped());
-                }
                 Ok(())
             },
             |vault, txn, id| {
+                // The review binds only as written, in the output's scope.
                 let stored = vault
                     .get_claim_in_txn(txn, id)?
                     .ok_or(Error::EntityNotFound)?;
@@ -197,32 +223,6 @@ impl HostSelfDispatcher<'_> {
 /// caller answers the refusal it recorded instead.
 fn stopped() -> Error {
     Error::InvalidClaimBody("team submit refused in its writer")
-}
-
-/// Whether `output` exists as that exact version: the artifact, the version's
-/// record bound to its `blob.version` claim, and the stored bytes its content
-/// hash names. A head is never read in its place.
-fn output_exists_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    output: BlobOutputRevision,
-) -> Result<bool> {
-    match vault.get_blob_artifact_in_txn(txn, &output.artifact) {
-        Ok(Some(_)) => {}
-        Ok(None) | Err(Error::Artifact(_)) => return Ok(false),
-        Err(error) => return Err(error),
-    }
-    if vault
-        .blob_artifact_version_metadata_in_txn(txn, &output.artifact, output.version)?
-        .is_none()
-    {
-        return Ok(false);
-    }
-    match vault.read_blob_artifact_version_in_txn(txn, &output.artifact, output.version) {
-        Ok(bytes) => Ok(bytes.is_some()),
-        Err(Error::EntityNotFound) => Ok(false),
-        Err(error) => Err(error),
-    }
 }
 
 /// The review's value: what the owner is asked to accept, and whose work it

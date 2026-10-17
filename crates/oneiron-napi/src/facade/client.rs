@@ -45,6 +45,9 @@ pub struct NapiWitnessTurnInput {
     pub messages: Vec<NapiWitnessMessage>,
     /// Unix seconds; omitted ⇒ stamped at the call boundary.
     pub occurred_at: Option<f64>,
+    /// A new project room thread root's audience (32-hex PERSON and
+    /// AGENT_DEF ids), fixed once set; omitted ⇒ it reads as its room does.
+    pub thread_audience: Option<Vec<String>>,
 }
 
 impl NapiWitnessTurnInput {
@@ -59,6 +62,7 @@ impl NapiWitnessTurnInput {
             turn_ref: self.turn_ref,
             messages: self.messages,
             occurred_at,
+            thread_audience: self.thread_audience,
         })
         .map_err(witness_input_error)
     }
