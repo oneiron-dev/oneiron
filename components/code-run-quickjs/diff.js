@@ -19,6 +19,8 @@ const DIFF_WINDOW_BYTES = 65536;
 const DIFF_STORE_PAST_BYTES = 1 << 20;
 // Edits one window pair may take before it is one coarse hunk.
 const DIFF_MAX_EDITS = 512;
+// The mode a diff takes when the caller names none.
+const DIFF_DEFAULT_BY = "lines";
 // The algorithm each mode states in its reply.
 const DIFF_ALGORITHM_LINES = "myers-windowed/v1";
 const DIFF_ALGORITHM_BYTES = "blocks/v1";
@@ -133,7 +135,7 @@ function makeDiff(api) {
   };
 
   return async function diff(a, b, options = {}) {
-    const by = options.by ?? "lines";
+    const by = options.by ?? DIFF_DEFAULT_BY;
     if (by !== "lines" && by !== "bytes") throw new TypeError('diff takes {by: "lines" | "bytes"}');
     const left = refOf(a), right = refOf(b);
     let calls = 0;

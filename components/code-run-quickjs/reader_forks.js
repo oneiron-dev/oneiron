@@ -33,6 +33,28 @@ const READ_ALL_FOLD_RECIPE = "dedupe-cites/v1";
 const READ_ALL_DEFAULT_EFFORT = "medium";
 // What `readAll` stores when no finding was made.
 const READ_ALL_EMPTY_RESULT = '{"answer":null,"findings":0,"note":"no finding was made"}';
+// The fold ends once a stage leaves this many summaries.
+const READ_ALL_FOLD_TO = 1;
+// Why a read ends refused when a chunk page is withheld.
+const READ_ALL_WITHHELD_REASON = "tainted";
+
+// What `readAll` chunks by when the caller names no `by`: `tokens` a chunk,
+// at most the memory one child may hold.
+function readAllChunkBy(tokens, child) {
+  return {tokens, ...(child.memory_bytes ? {max_bytes: child.memory_bytes} : {})};
+}
+
+// When the wait on the children ends when the caller names no `until`: the
+// children's cutoff.
+function readAllWaitUntil(child) {
+  return child.cutoff_unix_ms;
+}
+
+// How many children the wait ends on: the caller's `n_of`, at most the
+// children; none (all of them) without one.
+function readAllWaitCount(nOf, children) {
+  return Number.isInteger(nOf) ? Math.min(nOf, children) : undefined;
+}
 
 // The chunk size, in tokens: half the child window, which `window` may only
 // lower.
@@ -212,8 +234,8 @@ function makeReaderForks(api) {
       const window = child.window_tokens || READ_ALL_FALLBACK_WINDOW_TOKENS;
       const tokens = readAllChunkTokens(window, options.window);
       state.window_tokens = window;
-      state.by = options.by ?? {tokens, ...(child.memory_bytes ? {max_bytes: child.memory_bytes} : {})};
-      state.until = options.until ?? child.cutoff_unix_ms;
+      state.by = options.by ?? readAllChunkBy(tokens, child);
+      state.until = options.until ?? readAllWaitUntil(child);
       state.chunks = [];
       state.cursor = null;
       state.phase = "chunk";
@@ -224,7 +246,7 @@ function makeReaderForks(api) {
       while (state.phase === "chunk") {
         if (spent()) return await pause();
         const page = await host(pages.page, state.cursor ?? undefined);
-        if (page.withheld) return freeze({done: true, refused: "tainted", detail: page});
+        if (page.withheld) return freeze({done: true, refused: READ_ALL_WITHHELD_REASON, detail: page});
         for (const c of page.chunks) push(state.chunks, {ref: c.ref, start: c.start, end: c.end});
         if (page.done || !page.next) { state.phase = "spawn"; state.tasks = []; }
         else state.cursor = page.next;
@@ -251,7 +273,8 @@ function makeReaderForks(api) {
     if (state.phase === "wait") {
       if (spent()) return await pause();
       const request = {tasks: state.tasks, step_key: readAllStepKey(key, "wait")};
-      if (isInteger(options.n_of)) request.n_of = min(options.n_of, state.tasks.length);
+      const count = readAllWaitCount(options.n_of, state.tasks.length);
+      if (count !== undefined) request.n_of = count;
       if (isInteger(state.until)) request.until = state.until;
       let settled;
       try {
@@ -339,7 +362,7 @@ function makeReaderForks(api) {
       }
       const made = state.groups.filter(g => g.result);
       for (const g of made) push(state.tree, {summary: g.result.ref, inputs: g.refs});
-      if (made.length <= 1) {
+      if (made.length <= READ_ALL_FOLD_TO) {
         state.final = made.length ? made[0].result.ref : null;
         state.phase = "store";
         break;
