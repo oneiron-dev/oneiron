@@ -291,15 +291,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
 /// or its credentials are wrong: a server error, a timeout, a cut stream or
 /// an empty answer. Its offer rests for its health (OF-305).
 pub(super) fn provider_down(error: &LlmError) -> bool {
-    use oneiron::RetryableLlmError;
-    matches!(
-        error,
-        LlmError::Retryable(
-            RetryableLlmError::ServerError
-                | RetryableLlmError::Timeout
-                | RetryableLlmError::StreamCut
-        ) | LlmError::Fatal(FatalLlmError::EmptyResponse)
-    )
+    error.is_provider_unavailable()
 }
 
 /// A failure that ends the call as it came: the request itself failed (a
