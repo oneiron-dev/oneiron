@@ -156,6 +156,34 @@ fn hub_vouches_for_content(
     Ok(false)
 }
 
+/// The rows a skill's reliability, as a reader is shown it, may stand on
+/// (DEC-0005): every CLAIM about the skill, its reliability heads and its
+/// hub aliases among them, and every scan verdict on its stored bytes. A
+/// host lists them beside an answer that shows the skill's reliability.
+///
+/// # Errors
+///
+/// A read failure, or a skill record that does not decode.
+pub(crate) fn skill_reliability_sources(vault: &Vault, skill: &EntityId) -> Result<Vec<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut rows = vault.claims_for_subject_in_txn(&rtxn, skill)?;
+    if let Some(raw) = vault.store.port_entity_record(&rtxn, skill)?
+        && raw.entity_type == ENTITY_TYPE_SKILL
+        && let Some(content_hash) = decode_skill_record(&raw.body)?.content_hash
+    {
+        rows.extend(
+            crate::skill_hub::skill_scan_verdict_heads_for_content_hash_in_store(
+                &vault.store,
+                &rtxn,
+                content_hash,
+            )?
+            .into_iter()
+            .map(|(id, _)| id),
+        );
+    }
+    Ok(rows)
+}
+
 /// The prior a skill's posterior starts from, before any attributed outcome.
 pub fn skill_reliability_prior(
     vault: &Vault,

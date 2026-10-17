@@ -365,10 +365,34 @@ pub(crate) async fn vault_mesh_path_receipts(
 /// `ai.options`: the rows the credential could call now, where each runs,
 /// what it takes, its price, the rates its native counts settle at, and
 /// what its meter has left (FIX 2942).
+///
+/// Its answer is the host runtime's seats, rates and meters, each row
+/// filtered by the vault's inference-policy admission and priced from the
+/// model registry, none of which is a record, or from the installed model
+/// catalog pack when the registry holds no row for the model: that pack's
+/// source is the one row it lists. A caller shown no option lists none; a
+/// catalog that cannot be read leaves the answer unlisted.
 pub(crate) async fn ai_options(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiOptionsRequest,
+) -> (MemoryResult<AiOptions>, Option<Vec<EntityId>>) {
+    let answer = ai_options_answer(server, auth, &input);
+    let listed = match &answer {
+        Ok(options) if !options.options.is_empty() => server
+            .vault
+            .model_catalog_source()
+            .ok()
+            .map(|source| source.into_iter().collect()),
+        _ => Some(Vec::new()),
+    };
+    (answer, listed)
+}
+
+fn ai_options_answer(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    input: &AiOptionsRequest,
 ) -> MemoryResult<AiOptions> {
     let operation = input
         .operation
