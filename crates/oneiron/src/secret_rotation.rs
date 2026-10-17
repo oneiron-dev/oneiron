@@ -3,7 +3,7 @@
 //!
 //! Two halves of ARCH-0069, kept deliberately apart:
 //!
-//! **S6 — rotation is a vault update.** [`Vault::rotate_secret`] bumps the
+//! **S6 — rotation is a vault update.** [`Vault::rotate_secret_as_owner`] bumps the
 //! record's `rotation_generation`, stamps `rotated_at`, and replaces the
 //! value bytes inside ONE write transaction. The next lease materializes the
 //! new value and doored uses rotate invisibly, because the value never lived
@@ -678,7 +678,14 @@ impl Vault {
     ///   check purely because this generation moved.
     ///
     /// `at` is the caller's clock (ARCH-0026: the engine owns no timers).
-    pub fn rotate_secret(
+    ///
+    /// Test-only: it writes no signed transition, so a portable record's
+    /// rotation would never reach the owner's other machines. Every served
+    /// rotation goes through [`Vault::rotate_secret_as_owner`], which runs
+    /// the same body and writes the transition in the same transaction
+    /// (OF-422).
+    #[cfg(test)]
+    pub(crate) fn rotate_secret(
         &self,
         secret_ref: &str,
         new_value: &[u8],
