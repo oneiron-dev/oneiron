@@ -69,10 +69,21 @@ impl RawValue for BandState {
             .map_err(|_| CodecError::Value(crate::Error::CorruptedIndex("ask band state")))
     }
 }
-fn key(owner: EntityId, class: &str) -> MemoryResult<BandKey> {
-    if class.is_empty() || class.len() > 256 {
+/// Refuses a question class no band key can hold: an empty one, or one whose
+/// longest key (a consumed-word marker: the table prefix, the 16-byte owner,
+/// the 2-byte length, the class, `:` and the 16-byte word) passes the
+/// `max_key_bytes` this vault's LMDB environment reads keys up to.
+pub(super) fn check_class_key(max_key_bytes: usize, class: &str) -> MemoryResult<()> {
+    let room = max_key_bytes
+        .saturating_sub(BAND_MARKER.decl().prefix.len() + 16 + 2 + 1 + 16)
+        .min(usize::from(u16::MAX));
+    if class.is_empty() || class.len() > room {
         return Err(MemoryError::bad_request("invalid ask question class"));
     }
+    Ok(())
+}
+fn key(vault: &Vault, owner: EntityId, class: &str) -> MemoryResult<BandKey> {
+    check_class_key(vault.store.env.max_key_size(), class)?;
     Ok(BandKey {
         owner,
         class: class.to_owned(),
@@ -114,7 +125,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        Ok(read(self.vault(), &txn, &key(self.actor(), class)?)?.band)
+        Ok(read(self.vault(), &txn, &key(self.vault(), self.actor(), class)?)?.band)
     }
 
     /// Settle and consume only this owner's labels for this class. The
@@ -128,7 +139,7 @@ impl Memory<'_> {
         if handles.len() > 4096 {
             return Err(MemoryError::bad_request("too many ask receipts"));
         }
-        let key = key(self.actor(), class)?;
+        let key = key(self.vault(), self.actor(), class)?;
         self.with_verified_actor_write_txn(|txn| {
             let mut state = read(self.vault(), txn, &key)?;
             let mut labels = Vec::new();

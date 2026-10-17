@@ -9,7 +9,7 @@
 //! `ONEIRON_SEAL_TRUST` names the trust anchors (PEM; the chain's last
 //! certificate when unset), `ONEIRON_SEAL_TSA` a timestamp authority (a
 //! B-T seal; B-B without one), and `ONEIRON_SEAL_URL` the signing page the
-//! evidence names. The seal organ is the build an installed pack carries
+//! evidence names (the sign page at the host's public origin when unset). The seal organ is the build an installed pack carries
 //! for this platform, written under `ONEIRON_ORGAN_DIR`, or the program
 //! `ONEIRON_SEAL_ORGAN` names.
 
@@ -25,6 +25,7 @@ use oneiron_organ_host::seal::{
 };
 use oneiron_organ_host::{FetchGrant, FetchOrigin, HostConfig, OrganHost, OrganSpec};
 
+use crate::builtin_host::public_origin;
 use crate::server::SyncServer;
 
 const KEY_ENV: &str = "ONEIRON_SEAL_KEY";
@@ -34,6 +35,9 @@ const TSA_ENV: &str = "ONEIRON_SEAL_TSA";
 const URL_ENV: &str = "ONEIRON_SEAL_URL";
 const ORGAN_ENV: &str = "ONEIRON_SEAL_ORGAN";
 const ORGAN_DIR_ENV: &str = "ONEIRON_ORGAN_DIR";
+
+/// The public sign page under the host's origin (the `/sign` route).
+const SIGN_PAGE_PATH: &str = "/sign";
 
 const TICK: Duration = Duration::from_secs(30);
 const LEASE_OWNER: &str = "esign-seal-worker";
@@ -125,12 +129,26 @@ fn tick(server: &SyncServer, host: &OrganHost) -> Result<Vec<EsignSealRun>, Stri
         }
         None => SealProfile::BaselineB,
     };
+    let url = signing_url(server)?;
     let sealer = HostedSealer::new(host, &server.vault, &keys, settings);
-    let url = std::env::var(URL_ENV).unwrap_or_else(|_| "/sign".to_owned());
     server
         .vault
         .run_esign_seals(&sealer, profile, &url, LEASE_OWNER, PER_TICK)
         .map_err(|err| format!("the seal queue: {err}"))
+}
+
+/// The signing page the evidence names: `ONEIRON_SEAL_URL`, else the sign
+/// page at the host's public origin. With neither, seals wait: the
+/// certificate names only an https URL.
+fn signing_url(server: &SyncServer) -> Result<String, String> {
+    if let Some(url) = std::env::var(URL_ENV).ok().filter(|url| !url.is_empty()) {
+        return Ok(url);
+    }
+    public_origin(server.config.oauth_resource_indicator.as_deref())
+        .map(|origin| format!("{origin}{SIGN_PAGE_PATH}"))
+        .ok_or_else(|| {
+            format!("no public signing page: set {URL_ENV}, or oauth_resource_indicator to the host's https origin")
+        })
 }
 
 /// The seal organ to install: the program the host names, else the build
