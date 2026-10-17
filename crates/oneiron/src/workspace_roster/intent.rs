@@ -7,8 +7,9 @@ use super::*;
 /// This is the caller's statement of "which workplace, whose org, which seeded
 /// row wears the house pen, and what the venture is called". It is stored
 /// verbatim under `PRESET` the first time a
-/// member is onboarded into `workspace_ref`, and every later onboarding into
-/// the same `workspace_ref` must agree with it.
+/// member is onboarded into `workspace_ref`, or earlier when an owner
+/// establishes the workspace, and every later onboarding into the same
+/// `workspace_ref` must agree with it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceRosterPreset {
     /// Host-side workspace handle (e.g. a Slack workspace key). Opaque here.
@@ -33,7 +34,7 @@ pub struct WorkspaceRosterPreset {
 }
 
 impl WorkspaceRosterPreset {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         validate_name(
             &self.workspace_ref,
             "workspace_ref must be 1..=256 bytes and contain no NUL",

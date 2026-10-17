@@ -64,24 +64,11 @@ pub(super) fn run(
         bands: host.bands(),
         budget: DECIDE_BUDGET,
     };
-    let runtime = server.ai.model_runtime();
     let run_id = format!(
         "coach-code-fix:{}",
         EntityId::from_bytes(*admitted.status.attempt.id.as_bytes())?.to_hex()
     );
-    let guard = vault.policy_budget_guard(
-        run_id.clone(),
-        BUDGET_UNITS,
-        oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
-        BudgetExhaustionPolicy::Suspend,
-        vault.coach_authority()?,
-    )?;
-    let models = HostModels {
-        vault,
-        runtime,
-        run: runtime.undeclared_run(run_id, guard),
-        handle: tokio::runtime::Handle::current(),
-    };
+    let models = HostModels::open(server, run_id, PURPOSE, BUDGET_UNITS)?;
     let settled = vault.run_coach_code_fix(admitted, &decisions, &models, now)?;
     tracing::debug!(
         example = ?settled.example,
@@ -91,31 +78,58 @@ pub(super) fn run(
     Ok(())
 }
 
-/// The generative seat, for the Coach's draft and the failing agent's
+/// The generative seat, for the Coach's drafts and the failing agent's
 /// replay. Each call blocks this worker's thread on the server's runtime.
-struct HostModels<'a> {
+pub(super) struct HostModels<'a> {
     vault: &'a Vault,
     runtime: &'a ModelRuntime,
     run: RunAdmission,
     handle: tokio::runtime::Handle,
+    purpose: &'static str,
 }
 
-impl HostModels<'_> {
+impl<'a> HostModels<'a> {
+    /// The seat for one Coach run, metered under `purpose`, which the Coach
+    /// pays for up to `budget_units`.
+    pub(super) fn open(
+        server: &'a SyncServer,
+        run_id: String,
+        purpose: &'static str,
+        budget_units: u64,
+    ) -> oneiron::Result<Self> {
+        let vault = server.vault();
+        let runtime = server.ai.model_runtime();
+        let guard = vault.policy_budget_guard(
+            run_id.clone(),
+            budget_units,
+            oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
+            BudgetExhaustionPolicy::Suspend,
+            vault.coach_authority()?,
+        )?;
+        Ok(Self {
+            vault,
+            runtime,
+            run: runtime.undeclared_run(run_id, guard),
+            handle: tokio::runtime::Handle::current(),
+            purpose,
+        })
+    }
+
     /// One tool-less call's text; `Ok(None)` when no seat serves it or the
     /// seat refused it.
-    fn generate(&self, messages: Vec<LlmMessage>) -> oneiron::Result<Option<String>> {
+    pub(super) fn generate(&self, messages: Vec<LlmMessage>) -> oneiron::Result<Option<String>> {
         let Some(seat) = self.runtime.seat(CHAT_ROLE) else {
             return Ok(None);
         };
         let purpose = CallPurpose::Other {
-            name: PURPOSE.to_owned(),
+            name: self.purpose.to_owned(),
         };
         let request = LlmRequest {
             model: seat.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
                 scope: Default::default(),
-                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef(PURPOSE.to_owned())),
+                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef(self.purpose.to_owned())),
                 purpose,
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
@@ -132,9 +146,7 @@ impl HostModels<'_> {
         let response = self
             .handle
             .block_on(call.ladder.generate(&self.run, call.request, None))
-            .map_err(|error| {
-                Error::InvalidConfig(format!("a Coach code-fix call failed: {error}"))
-            })?;
+            .map_err(|error| Error::InvalidConfig(format!("a Coach call failed: {error}")))?;
         Ok(Some(
             response
                 .message
@@ -157,9 +169,9 @@ impl CodeFixHost for HostModels<'_> {
             "heal_route": job.route.as_str(),
             "wants_fix": matches!(job.route, HealRoute::SkillEdit | HealRoute::PromptInject),
             "reports": job.reports,
-            "agent_instructions": clip(&source.instructions),
-            "briefing": source.briefing.as_deref().map(clip),
-            "task": source.task.as_deref().map(clip),
+            "agent_instructions": clip(&source.instructions, SOURCE_BYTES),
+            "briefing": source.briefing.as_deref().map(|text| clip(text, SOURCE_BYTES)),
+            "task": source.task.as_deref().map(|text| clip(text, SOURCE_BYTES)),
         });
         let Some(text) = self.generate(vec![
             message(LlmMessageRole::System, DRAFT_SYSTEM.to_owned()),
@@ -216,16 +228,16 @@ fn parse_draft(text: &str) -> Option<CodeFixDraft> {
     })
 }
 
-fn message(role: LlmMessageRole, text: String) -> LlmMessage {
+pub(super) fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
         content: vec![ContentPart::Text { text }],
     }
 }
 
-/// At most [`SOURCE_BYTES`] of `text`, cut on a character boundary.
-fn clip(text: &str) -> &str {
-    let mut end = text.len().min(SOURCE_BYTES);
+/// At most `max` bytes of `text`, cut on a character boundary.
+pub(super) fn clip(text: &str, max: usize) -> &str {
+    let mut end = text.len().min(max);
     while !text.is_char_boundary(end) {
         end -= 1;
     }
