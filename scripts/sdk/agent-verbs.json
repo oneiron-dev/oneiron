@@ -878,8 +878,9 @@
     },
     {
       "name": "vault.weave.lens",
+      "description": "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events.",
       "input": "crate::claim::WeaveReportRequest",
-      "output": "crate::lens::GeneratedLens",
+      "output": "crate::lens::LensFrameCard",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.lens\", &input)?",
       "host_door": true,
       "scope": "Read",
@@ -4639,6 +4640,33 @@
           "remote": "    /// Records the deck oracle's receipt for its export profile.\n",
           "ts": "/** Records the deck oracle's receipt for its export profile. */",
           "py": "Records the deck oracle's receipt for its export profile."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.deck.preview",
+      "description": "The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed.",
+      "input": "crate::office_body::DeckPreviewRequest",
+      "output": "crate::office_body::DeckPreview",
+      "call": "memory.artifacts_body_deck_preview(&input, None)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The asked slides of a deck's head, drawn by the host's review renderer (provisional).\n",
+          "ts": "/** The asked slides of a deck's head, drawn by the host's review renderer (provisional). */",
+          "py": "The asked slides of a deck's head, drawn by the host's review renderer (provisional)."
         }
       }
     },

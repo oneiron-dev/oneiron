@@ -10,7 +10,8 @@
 //! the host serves from its own seats are served as the host serves them for
 //! an agent's credential: `ai.verdict`, `vault.graph.ask` and the standing
 //! questions on the host's ladder, `vault.recall` and `report` with the
-//! host's embedder, a slide review through the host's decider, and
+//! host's embedder, a slide review through the host's decider, a deck
+//! preview through its review renderer, and
 //! `ai.options` from its model runtime. Its `tasks.wave` is its own wave,
 //! queued under its lease, where a credential's is the owner's root one. Its
 //! `connector.call` goes through the host's connector transports under the
@@ -303,6 +304,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::VaultRecall
             | AgentVerb::VaultHooksReplay
             | AgentVerb::VaultArtifactsReviewSlides
+            | AgentVerb::VaultArtifactsBodyDeckPreview
             | AgentVerb::AiOptions
             | AgentVerb::AiImage
             | AgentVerb::AiSpeech
@@ -462,6 +464,12 @@ fn host_row(
                 &host.bands(),
             )?)
         }
+        AgentVerb::VaultArtifactsBodyDeckPreview => encode(memory.artifacts_body_deck_preview(
+            &decode(input)?,
+            crate::slide_render::host_renderer().map(|renderer| {
+                renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
+            }),
+        )?),
         AgentVerb::AiOptions => encode(ai_options(server, decode(input)?)?),
         // The run's own wave: planned for its agent and queued on its own
         // surface, whose bound lease is the wave's creator (OF-532).

@@ -139,6 +139,42 @@ fn slide_reviewer(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
     })
 }
 
+/// `vault.artifacts.body.deck.preview`: the asked slides of a deck's head,
+/// drawn by this host's review renderer on a blocking thread, for a
+/// credential that reads the artifact.
+pub(crate) async fn vault_artifacts_body_deck_preview(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::office_body::DeckPreviewRequest,
+) -> MemoryResult<oneiron::office_body::DeckPreview> {
+    let (actor, class) = super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "a deck preview reads as the credential's own principal",
+            &["Present a slip paired with a principal ref and an actor class."],
+        )
+    })?;
+    if let Ok(artifact) = EntityId::from_hex(&input.artifact_ref)
+        && !auth.can_read_entity(&server.vault, &artifact)?
+    {
+        return Err(oneiron::Error::EntityNotFound.into());
+    }
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
+            .at(auth.locality())
+            .artifacts_body_deck_preview(
+                &input,
+                crate::slide_render::host_renderer().map(|renderer| {
+                    renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
+                }),
+            )
+    })
+    .await
+    .map_err(|_| internal("vault.artifacts.body.deck.preview"))?
+}
+
 /// `vault.authority.audit`: one page of the dated AUTHORITY_LOG audit, the
 /// owner's view under the proof `/v1/owner` takes from the request.
 pub(crate) async fn vault_authority_audit(

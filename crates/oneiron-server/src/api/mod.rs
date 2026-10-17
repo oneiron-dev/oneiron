@@ -64,6 +64,8 @@ mod artifacts;
 // OF-511: the artifact family's contract routes (versions, made_by, born-from,
 // export, proposals, Keep/Discard/Undo).
 mod blob_artifacts;
+// OF-604: zstd and gzip request bodies, and compressed JSON replies.
+mod body_codec;
 // ONE-1819 [BK-08]: the agent-readable booking surface. Its shared executor is
 // the sole consumer of the ONE-1817 guards below and the sole door into the
 // merged booking solver and lifecycle.
@@ -506,6 +508,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
                 .layer(middleware::map_response(call_receipt::no_record_reply)),
         )
         .with_state(server.clone())
+        // OF-604: inside admission, outside every route and pre-reader, so
+        // digests and body limits see the decoded bytes.
+        .layer(middleware::from_fn(self::body_codec::body_codec))
         .layer(middleware::from_fn_with_state(
             server,
             crate::auth::admit_http_binding,
