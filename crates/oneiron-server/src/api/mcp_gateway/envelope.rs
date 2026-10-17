@@ -417,9 +417,14 @@ fn mcp_call_receipt(
     called: Result<Value, McpGatewayError>,
 ) -> Result<Value, McpGatewayError> {
     let (outcome, result_digest) = match &called {
+        // A `reveal.wait` reply is digested with its value masked (OF-560).
         Ok(result) => (
             oneiron::receipt::CallOutcome::Ok,
-            Some(oneiron::receipt::call_json_digest(result)),
+            Some(oneiron::receipt::call_json_digest(
+                oneiron::task_verb::sdk::masked_reveal_reply(&tool, result)
+                    .as_ref()
+                    .unwrap_or(result),
+            )),
         ),
         Err(error) => (
             oneiron::receipt::CallOutcome::Refused {

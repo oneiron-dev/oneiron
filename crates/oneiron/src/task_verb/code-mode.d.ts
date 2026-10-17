@@ -138,7 +138,7 @@ declare const tasks: {
   create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;
   outcomes(input: { group_ref: string }): Promise<unknown>;
   refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
-  update(input: { resultRef?: string | null; task_ref: string }): Promise<unknown>;
+  update(input: { attempt?: object | null; report?: "ack" | object | object | object | object | object | object | null; report_key?: string | null; resultRef?: string | null; task_ref: string }): Promise<unknown>;
   wait(input: { all?: boolean | null; n_of?: number | null; step_key: string; tasks: string[]; until?: number | null }): Promise<unknown>;
   wave(input: { constraints?: unknown; epic_task_ref: string; objective: string; planner_ref: string }): Promise<unknown>;
 };
@@ -171,7 +171,7 @@ declare const vault: {
     born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;
     create(input: { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null }): Promise<unknown>;
     discard(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
-    export(input: { artifact_ref: string; version?: number | null }): Promise<unknown>;
+    export(input: { artifact_ref: string; version?: number | null; why?: string | null }): Promise<unknown>;
     keep(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     proposals(input: { artifact_ref: string }): Promise<unknown>;
     propose_deck(input: { artifact_ref: string; context?: unknown; made_by?: unknown; run_ref: string; transaction: unknown }): Promise<unknown>;
@@ -262,6 +262,11 @@ declare const vault: {
     retire(input: { space: string }): Promise<unknown>;
   };
   export(input: { format?: string | null }): Promise<unknown>;
+  fanout: {
+    ack(input: { answer: "ack" | "ack_and_remember"; launch_ref: string; plan_digest: string; remembered_cap?: number | null }): Promise<unknown>;
+    launch(input: { launch_ref: string }): Promise<unknown>;
+    resume(input: { launch_ref: string; plan_digest: string; remembered_cap?: number | null; ruling: "approve_once" | "approve_and_remember" | "deny" }): Promise<unknown>;
+  };
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
   graph: {

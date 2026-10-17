@@ -202,15 +202,25 @@ pub struct WorkCompanionSetRequest {
 pub struct TaskRequest {
     pub task_ref: String,
 }
-/// `tasks.update`: the owner's acknowledgement of a TASK, or, from a code
-/// run's reader child, the finding its result name `resultRef` holds. Only a
-/// run resolves its result names, so a host door refuses `resultRef`.
+/// `tasks.update`: a typed report on a TASK (progress, blocked work, a
+/// durable result, a failure, a release or a brief revision) through the
+/// task highway under the caller's `report_key`, fenced by the `attempt` an
+/// accept returned when the caller holds one; without a report, the owner's
+/// acknowledgement of a failed TASK. `resultRef` is reserved for a code
+/// run's reader child: it names the finding one of that run's results
+/// holds, which only the run resolves, so a host door refuses it.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskUpdateRequest {
     pub task_ref: String,
     #[serde(default, rename = "resultRef", skip_serializing_if = "Option::is_none")]
     pub result_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<super::TaskReportBody>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<super::AttemptHandle>,
 }
 /// `vault.projects.proposals`: the conversation whose project cards to read.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -411,6 +421,7 @@ pub use super::sdk_connector_call::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
 pub use super::sdk_embedding_space::*;
+pub use super::sdk_fanout_launch::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
 pub use super::sdk_legal_hold::*;
