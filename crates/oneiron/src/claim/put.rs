@@ -30,8 +30,10 @@ impl Vault {
     /// `claim_of` edge (u8 = 5, structural 12 B) Claim → subject in the SAME
     /// write transaction, and rejects with [`Error::EntityNotFound`] if the
     /// subject entity does not exist — nothing is written on rejection. An
-    /// EdgeRef subject ([`ClaimSubject::Edge`]) is shape-validated only; its
-    /// `claim_of` wiring belongs to the provenance path. Reserved namespaces
+    /// EdgeRef subject ([`ClaimSubject::Edge`]) lands only while the vault
+    /// owner may read its exact live edge and both endpoints, and is refused
+    /// with the same [`Error::EntityNotFound`] otherwise; its `claim_of`
+    /// wiring belongs to the provenance path. Reserved namespaces
     /// are writable only through crate-private owner doors, and
     /// `companion.expression.*` is refused here for the same reason
     /// [`Vault::retract_claim`] refuses it: a typed door owns that family's
@@ -89,7 +91,31 @@ impl Vault {
                 "expression preference lifecycle is owned by set_expression_preference",
             ));
         }
+        // An EdgeRef subject is read in this txn as the entity subject is
+        // below: holding the `Vault` is owner authority, so the raw door reads
+        // through the owner's key. The reserved door keeps its own allowance:
+        // provenance lands an edge and its claim in one txn.
+        if let ClaimSubject::Edge { .. } = body.subject
+            && !self.owner_reads_edge_subject_in(wtxn, &body.subject)?
+        {
+            return Err(Error::EntityNotFound);
+        }
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
+    }
+
+    /// Whether the vault owner may read `subject`'s exact live edge and both
+    /// its endpoints in `txn`. A vault with no live owner admits none.
+    fn owner_reads_edge_subject_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &ClaimSubject,
+    ) -> Result<bool> {
+        let owners = crate::policy_model::owners_in_txn(self, txn)?;
+        let Some(owner) = owners.first() else {
+            return Ok(false);
+        };
+        self.scoped_read(ScopedReadActorKey::vault_owner(*owner))
+            .claim_edge_subject_admitted_in_txn(txn, subject)
     }
 
     /// Crate-private transaction-composable door for ENGINE-OWNED Claims:
