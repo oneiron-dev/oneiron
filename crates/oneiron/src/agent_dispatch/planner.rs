@@ -1,34 +1,31 @@
 //! The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`]
-//! into a-launch-ready plan — which pattern, how wide, which model, what
+//! into a launch-ready plan — which pattern, how wide, which seat, what
 //! budget — under a model ladder so cheap calls handle the easy cases.
 //!
-//! The planner reads the active model set and each model's description,
-//! the budget, the spawn's need, care and notes, the planner card (payoff
-//! rows for the task type, with seeds and pins in force) and the
-//! team-shape skill, whose first lesson is *solo first*. A field the
-//! spawn pinned is never overridden. The budget is an input to the plan,
-//! never a refusal: the best shape that fits is fitted, with one line on
-//! what more would buy.
+//! The planner reads what the vault measured ([`PlannerEvidence`]): the
+//! active seats with each model's description and its AGENT_DEF's
+//! calibrated spend, the budget the launch runs under, solo's rate (the seat
+//! AGENT_DEF's own reliability on the task type) and the planner card's read
+//! of every bound pattern skill, with the payoff rows' anchored outcomes per
+//! measured width. The live service ([`AgentDispatcher::plan_spawn_for_attempt`])
+//! gathers it; this module is the algorithm. A field the spawn pinned is
+//! never overridden, and pins that contradict each other are invalid input.
+//! The budget is an input to the plan, never a refusal: the best shape that
+//! fits is fitted, with one line on what more would buy, and a plan whose
+//! pins leave nothing to fit keeps its pins and states the shortfall.
 //!
 //! The deterministic selection here is the ladder's floor: it must always
 //! be able to answer. When the host installs a [`crate::llm::decision::DecisionLadder`],
-//! the rung the ladder selects may re-rank the top shapes through one
+//! the rung the care selects may re-rank the top candidates through one
 //! typed question ([`plan_spawn_routed`]); an abstention keeps the
-//! deterministic pick. Each rung's executor is routed and scored like any
-//! skill, so the ladder improves from receipts.
-//!
-//! When a run nears the end of its lease, [`AgentDispatcher::graceful_stop`]
-//! asks every attempt to land (the queue's two-rung graceful cancel under
-//! a budget warning), saves the partial results in a resumable
-//! [`PartialResultHold`], and names the notice the owner gets. A
-//! suspension is a hold, not a kill.
+//! deterministic pick. The rung's workflow skill is loaded and its executor
+//! recorded on the receipt, so the ladder is scored from receipts like any
+//! skill.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::attempt_queue::{
-    AttemptId, AttemptQueue, CancelRequestOutcome, CancelStanding, LandingTrigger,
-    RequestAttemptCancel,
-};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning_setting::{
@@ -36,17 +33,15 @@ use crate::learning_setting::{
 };
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionRung,
-    Reversibility,
+    ProviderPin, Reversibility,
 };
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::retrieval_depth::RetrievalDeadline;
-use crate::side_table::{self, LegacyJson, SideTable};
+use crate::team::PatternSkillRef;
 use crate::vault::Vault;
 
-use super::AgentDispatcher;
-use super::team_shape::{
-    CoordinationPattern, PlannerCard, TEAM_SHAPE_LESSONS, TeamShape, seeded_shape,
-};
+use super::spend_calibration::ExpectedSpend;
+use super::team_shape::{CoordinationPattern, TEAM_SHAPE_LESSONS, TeamShape};
 use super::types::{CareLevel, SpawnNeed, SpawnOverride};
 use super::widen_record::invalid;
 
@@ -85,17 +80,71 @@ impl PlannerRung {
     }
 }
 
-/// One model the planner may seat agents on: its id, the description the
-/// router shows for it, and the measured per-agent expected spend (the
-/// engine learns per-agent calibration from receipts; until a model has
-/// runs, the host seeds this figure).
+/// One seat the planner may run agents on: a model, the description the
+/// vault holds for it, and the AGENT_DEF that runs on it with that
+/// AGENT_DEF's expected spend. Calibration is per AGENT_DEF and unit, learned
+/// from settled launches; it is never a per-model figure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AvailableModel {
     pub model: ModelId,
-    #[serde(default)]
-    pub description: String,
-    /// Expected whole-agent spend in lease units, at the plan's effort.
-    pub expected_units_per_agent: u64,
+    /// The vault's description lines for the model, strongest source first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub description: Vec<String>,
+    /// The AGENT_DEF the seat runs: the calibration key.
+    pub agent_def: EntityId,
+    /// Expected whole-agent spend in the launch's unit, calibrated or the
+    /// labelled prior.
+    pub expected: ExpectedSpend,
+}
+
+/// The budget a plan is fitted to: the launch's binding hard cap and what
+/// may be spent under it now, as the launch statement reads them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanBudget {
+    /// `None`: the launch is unmetered by any lease tree.
+    pub cap_units: Option<u64>,
+    pub available_units: Option<u64>,
+}
+
+impl PlanBudget {
+    /// No lease tree: nothing to fit to.
+    pub const UNMETERED: Self = Self {
+        cap_units: None,
+        available_units: None,
+    };
+
+    /// The budget a stated launch runs under.
+    #[must_use]
+    pub fn from_launch(plan: &super::LaunchPlan) -> Self {
+        plan.cap.as_ref().map_or(Self::UNMETERED, |cap| Self {
+            cap_units: Some(cap.cap_units),
+            available_units: Some(cap.available_units),
+        })
+    }
+
+    /// The most the plan may spend now; `None` when unmetered.
+    #[must_use]
+    pub fn spendable(self) -> Option<u64> {
+        match (self.cap_units, self.available_units) {
+            (Some(cap), Some(available)) => Some(cap.min(available)),
+            (cap, None) => cap,
+            (None, available) => available,
+        }
+    }
+
+    /// A budget seed or pin on the spawn only ever narrows the cap.
+    fn narrowed(self, need: &SpawnNeed) -> Self {
+        match &need.budget_cap_units {
+            Some(over) => {
+                let asked = *over.value();
+                Self {
+                    cap_units: Some(self.cap_units.map_or(asked, |cap| cap.min(asked))),
+                    available_units: self.available_units,
+                }
+            }
+            None => self,
+        }
+    }
 }
 
 /// The cost envelope every plan states before launch (OF-393, OF-532):
@@ -105,30 +154,111 @@ pub struct AvailableModel {
 pub struct CostEnvelope {
     pub agent_count: u32,
     pub expected_spend_units: u64,
-    pub hard_cap_units: u64,
-    pub per_agent_expected_units: u64,
+    /// `None`: unmetered by any lease tree.
+    pub hard_cap_units: Option<u64>,
+    pub available_units: Option<u64>,
+    /// One agent's expected spend and the evidence behind it.
+    pub per_agent: ExpectedSpend,
 }
 
 impl CostEnvelope {
-    fn for_shape(width: u32, per_agent: u64, hard_cap: u64) -> Self {
+    fn for_shape(width: u32, per_agent: ExpectedSpend, budget: PlanBudget) -> Self {
         Self {
             agent_count: width,
-            expected_spend_units: per_agent.saturating_mul(u64::from(width)),
-            hard_cap_units: hard_cap,
-            per_agent_expected_units: per_agent,
+            expected_spend_units: per_agent.units.saturating_mul(u64::from(width)),
+            hard_cap_units: budget.cap_units,
+            available_units: budget.available_units,
+            per_agent,
+        }
+    }
+
+    fn fits(&self, budget: PlanBudget) -> bool {
+        budget
+            .spendable()
+            .is_none_or(|most| self.expected_spend_units <= most)
+    }
+}
+
+/// One skill revision a plan read or ran.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillRevisionRef {
+    pub skill: EntityId,
+    pub version: String,
+}
+
+/// What the vault measured for one candidate on one seat: the posterior
+/// mean in force, the candidate's own anchored runs (0 = prior only), and
+/// the weight in runs the whole estimate carries (own runs plus its prior).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MeasuredRate {
+    pub mean: f64,
+    pub own_runs: f64,
+    pub weight_runs: f64,
+}
+
+impl MeasuredRate {
+    /// One width's anchored record, shrunk toward this estimate. Only
+    /// anchored wins and losses count: an open team is neither.
+    #[allow(clippy::cast_precision_loss)]
+    fn pooled(self, wins: u64, losses: u64) -> Self {
+        let (wins, losses) = (wins as f64, losses as f64);
+        let weight = self.weight_runs.max(0.0);
+        let total = wins + losses + weight;
+        if total <= 0.0 {
+            return self;
+        }
+        Self {
+            mean: (wins + self.mean * weight) / total,
+            own_runs: wins + losses,
+            weight_runs: total,
         }
     }
 }
 
-/// One candidate shape quoted to the CEO before commit: expected payoff
-/// and cost (ARCH-0079 #planner).
+/// One bound pattern skill the planner may run, as the planner card reads
+/// it: the skill revision, the shape it teaches, its `works well for` line,
+/// its estimate per seat model, and the anchored team outcomes per measured
+/// width and seat model, `(wins, losses)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PatternCandidate {
+    pub skill: PatternSkillRef,
+    pub pattern: CoordinationPattern,
+    pub works_well_for: String,
+    pub rates: BTreeMap<ModelId, MeasuredRate>,
+    pub widths: BTreeMap<u32, BTreeMap<ModelId, (u64, u64)>>,
+}
+
+/// Everything one plan reads, gathered from the vault by the live service.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlannerEvidence {
+    /// One seat per model.
+    pub models: Vec<AvailableModel>,
+    /// Solo's rate per seat model: the seat AGENT_DEF's own reliability on
+    /// the task type. Solo is a shape, never a pattern skill.
+    pub solo: BTreeMap<ModelId, MeasuredRate>,
+    pub patterns: Vec<PatternCandidate>,
+    pub budget: PlanBudget,
+}
+
+/// One candidate quoted to the CEO before commit: expected payoff and cost
+/// (ARCH-0079 #planner).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ShapeQuote {
+    /// The ladder's option id: shape, width, model and pattern skill, so no
+    /// two candidates share one.
+    pub candidate: String,
     pub shape: TeamShape,
     pub model: ModelId,
+    pub agent_def: EntityId,
+    /// The pattern skill revision a team runs; `None` for solo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern_skill: Option<PatternSkillRef>,
     pub expected_success_rate: f64,
+    /// Own anchored runs behind the estimate; 0 is prior only.
+    pub own_runs: f64,
     pub envelope: CostEnvelope,
-    pub works_well_for: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub works_well_for: Option<String>,
 }
 
 /// The resolved plan: what will actually launch.
@@ -136,13 +266,22 @@ pub struct ShapeQuote {
 pub struct TeamPlan {
     pub shape: TeamShape,
     pub model: ModelId,
+    /// The AGENT_DEF the launch seats.
+    pub agent_def: EntityId,
+    /// The pattern workflow skill a team runs; `None` for solo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern_skill: Option<PatternSkillRef>,
     pub care: CareLevel,
     pub effort: ReasoningEffort,
     pub envelope: CostEnvelope,
     pub rung: PlannerRung,
-    /// True when the plan is the best shape found; false when the budget
-    /// fitted it down (see `what_more_would_buy`).
+    /// True when the budget fitted the best shape down.
     pub fitted_to_budget: bool,
+    /// The expected spend exceeds what may be spent now and the pins left
+    /// nothing to fit. Stated, never refused: the lease refuses only spend
+    /// beyond the cap.
+    #[serde(default)]
+    pub over_budget: bool,
     /// One line on what a bigger budget buys, when the best shape did not
     /// fit. The budget never refuses; it reports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -154,10 +293,69 @@ pub struct TeamPlan {
 pub struct SpawnPlanReceipt {
     pub asked: SpawnNeed,
     pub plan: TeamPlan,
-    /// The runner-up shapes with payoff and cost, best first — the CEO's
-    /// top-shapes view rides the same rows.
+    /// The runner-up candidates with payoff and cost, best first — the
+    /// CEO's top-shapes view rides the same rows.
     pub alternatives: Vec<ShapeQuote>,
     pub why: Vec<String>,
+    /// The team-shape skill revision the plan read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_shape: Option<SkillRevisionRef>,
+    /// The workflow skill the answering ladder rung ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rung_skill: Option<SkillRevisionRef>,
+    /// The executors that read the rung's question, at revision.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rung_providers: Vec<ProviderPin>,
+}
+
+impl SpawnPlanReceipt {
+    /// A receipt is whole and honest: its need validates, its shape is one
+    /// the pattern can run, a team names its pattern skill, its envelope
+    /// counts its agents, and no pinned field was overridden.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::error::ArtifactError::InvalidAgentDispatchInput`] naming the
+    /// broken rule.
+    pub fn validate(&self) -> Result<()> {
+        self.asked.validate()?;
+        let plan = &self.plan;
+        if !plan.shape.pattern.admits_width(plan.shape.width) {
+            return Err(invalid("plan width does not fit its pattern"));
+        }
+        if plan.shape.pattern.is_team() != plan.pattern_skill.is_some() {
+            return Err(invalid("a team plan runs a pattern skill; solo runs none"));
+        }
+        if plan.envelope.agent_count != plan.shape.width {
+            return Err(invalid("plan envelope must count its agents"));
+        }
+        if self
+            .asked
+            .pinned_pattern()
+            .is_some_and(|pattern| pattern != plan.shape.pattern)
+            || self
+                .asked
+                .pinned_width()
+                .is_some_and(|width| width != plan.shape.width)
+            || self
+                .asked
+                .pinned_model()
+                .is_some_and(|model| *model != plan.model)
+        {
+            return Err(invalid("a plan never overrides a pinned spawn field"));
+        }
+        Ok(())
+    }
+
+    /// The candidate id the resolved plan runs.
+    #[must_use]
+    pub fn candidate(&self) -> String {
+        candidate_token(
+            &self.plan.shape,
+            &self.plan.model,
+            self.plan.pattern_skill.as_ref(),
+        )
+    }
 }
 
 /// The planner thresholds in force: catalog seeds unless the owner seeded
@@ -240,17 +438,17 @@ pub fn planner_rung_for(
     }
 }
 
-/// The hard cap in force: the caller's budget, narrowed by a budget seed
-/// or pin on the spawn — seeds and pins never widen a budget.
-fn hard_cap(need: &SpawnNeed, budget_units: u64) -> u64 {
-    match &need.budget_cap_units {
-        Some(over) => budget_units.min(*over.value()),
-        None => budget_units,
-    }
+/// The rung one set of ranked quotes plans at.
+pub(super) fn planned_rung(
+    need: &SpawnNeed,
+    quotes: &[ShapeQuote],
+    thresholds: PlannerThresholds,
+) -> PlannerRung {
+    planner_rung_for(resolve_care(need), quotes.len(), widest(quotes), thresholds)
 }
 
-/// The models a plan may seat: all available, or only the pinned one. A
-/// pinned model the vault does not carry is refused, never substituted.
+/// The seats a plan may use: all, or only the pinned model's. A pinned
+/// model no seat carries is refused, never substituted.
 fn seatable_models<'a>(
     need: &SpawnNeed,
     models: &'a [AvailableModel],
@@ -266,73 +464,166 @@ fn seatable_models<'a>(
 }
 
 /// Seed pull: a seeded (not pinned) value starts with a prior bonus worth
-/// `weight_runs` against the card's own runs, so light seeds move fast and
-/// heavy ones barely move.
-fn seed_bonus<T: PartialEq>(over: &Option<SpawnOverride<T>>, candidate: &T, card_runs: u32) -> f64 {
+/// `weight_runs` against the candidate's own runs, so light seeds move fast
+/// and heavy ones barely move.
+fn seed_bonus<T: PartialEq>(over: &Option<SpawnOverride<T>>, candidate: &T, own_runs: f64) -> f64 {
     match over {
         Some(SpawnOverride::Seed { value, weight_runs }) if value == candidate => {
-            weight_runs / (weight_runs + f64::from(card_runs) + 1.0)
+            weight_runs / (weight_runs + own_runs + 1.0)
         }
         _ => 0.0,
     }
 }
 
-/// Every candidate shape for this need, quoted and ranked. Ranking is
-/// solo-first: candidates sort by expected success per unit spend, then
-/// the solo-first gate holds solo unless a team clears it.
-fn ranked_quotes(
+/// A candidate's option id: `shape@model`, plus `#skill` for a team. Long
+/// ids fall back to a digest, so every id fits a typed-choice option.
+fn candidate_token(shape: &TeamShape, model: &ModelId, skill: Option<&PatternSkillRef>) -> String {
+    let mut token = format!("{}@{}", shape.token(), model.as_str());
+    if let Some(skill) = skill {
+        token.push('#');
+        token.push_str(&skill.skill.to_hex());
+    }
+    if token.len() > 256 {
+        return format!(
+            "candidate:{}",
+            &blake3::hash(token.as_bytes()).to_hex().as_str()[..32]
+        );
+    }
+    token
+}
+
+/// The widths a pattern candidate is quoted at: the pinned width alone, or
+/// the pattern's floor, every width its payoff rows measured, and a seeded
+/// width the pattern can run. No width is capped.
+fn candidate_widths(need: &SpawnNeed, candidate: &PatternCandidate) -> BTreeSet<u32> {
+    if let Some(width) = need.pinned_width() {
+        return if candidate.pattern.admits_width(width) {
+            BTreeSet::from([width])
+        } else {
+            BTreeSet::new()
+        };
+    }
+    let mut widths: BTreeSet<u32> = candidate
+        .widths
+        .keys()
+        .copied()
+        .filter(|width| candidate.pattern.admits_width(*width))
+        .collect();
+    widths.insert(candidate.pattern.min_width());
+    if let Some(SpawnOverride::Seed { value, .. }) = &need.width
+        && candidate.pattern.admits_width(*value)
+    {
+        widths.insert(*value);
+    }
+    widths
+}
+
+fn quote(
     need: &SpawnNeed,
-    card: &PlannerCard,
-    models: &[AvailableModel],
-    budget_units: u64,
+    shape: TeamShape,
+    seat: &AvailableModel,
+    skill: Option<&PatternSkillRef>,
+    works_well_for: Option<&String>,
+    rate: MeasuredRate,
+    budget: PlanBudget,
+) -> ShapeQuote {
+    let runs = rate.own_runs;
+    let bonus = seed_bonus(&need.pattern, &shape.pattern, runs)
+        + seed_bonus(&need.model, &seat.model, runs)
+        + seed_bonus(&need.width, &shape.width, runs);
+    ShapeQuote {
+        candidate: candidate_token(&shape, &seat.model, skill),
+        shape,
+        model: seat.model.clone(),
+        agent_def: seat.agent_def,
+        pattern_skill: skill.cloned(),
+        expected_success_rate: (rate.mean + bonus * 0.1).clamp(0.0, 1.0),
+        own_runs: runs,
+        envelope: CostEnvelope::for_shape(shape.width, seat.expected, budget),
+        works_well_for: works_well_for.cloned(),
+    }
+}
+
+/// Every candidate for this need, quoted and ranked: solo on each seat, and
+/// each bound pattern skill on each seat at each width it can run, filtered
+/// by the pins. Ranking is by expected success per unit spend; the
+/// solo-first gate applies when the plan is assembled.
+pub(super) fn ranked_quotes(
+    need: &SpawnNeed,
+    evidence: &PlannerEvidence,
 ) -> Result<Vec<ShapeQuote>> {
-    if models.is_empty() {
+    if evidence.models.is_empty() {
         return Err(invalid("planner has no available models"));
     }
-    let cap = hard_cap(need, budget_units);
-    let seatable = seatable_models(need, models)?;
-    let patterns: Vec<CoordinationPattern> = match need.pinned_pattern() {
-        Some(pattern) => vec![pattern],
-        None => CoordinationPattern::ALL.to_vec(),
-    };
+    let budget = evidence.budget.narrowed(need);
+    let seatable = seatable_models(need, &evidence.models)?;
+    let pinned_pattern = need.pinned_pattern();
     let mut quotes = Vec::new();
-    for pattern in patterns {
-        for model in &seatable {
-            let width = need
-                .pinned_width()
-                .unwrap_or_else(|| seeded_shape(pattern).width)
-                .max(pattern.min_width());
-            let shape = TeamShape { pattern, width };
-            let card_rate = card.success_rate(pattern, Some(&model.model));
-            let runs = card.runs_for(pattern);
-            let bonus = seed_bonus(&need.pattern, &pattern, runs)
-                + seed_bonus(&need.model, &model.model, runs)
-                + seed_bonus(&need.width, &width, runs);
-            quotes.push(ShapeQuote {
-                shape,
-                model: model.model.clone(),
-                expected_success_rate: (card_rate + bonus * 0.1).clamp(0.0, 1.0),
-                envelope: CostEnvelope::for_shape(width, model.expected_units_per_agent, cap),
-                works_well_for: seeded_shape(pattern).works_well_for.to_owned(),
-            });
+    if pinned_pattern.is_none_or(|pattern| pattern == CoordinationPattern::Solo)
+        && need.pinned_width().is_none_or(|width| width == 1)
+    {
+        for seat in &seatable {
+            let rate = evidence
+                .solo
+                .get(&seat.model)
+                .copied()
+                .ok_or_else(|| invalid("planner evidence has no solo rate for a seat"))?;
+            quotes.push(quote(need, TeamShape::SOLO, seat, None, None, rate, budget));
         }
+    }
+    for candidate in &evidence.patterns {
+        if pinned_pattern.is_some_and(|pattern| pattern != candidate.pattern) {
+            continue;
+        }
+        for seat in &seatable {
+            let rate = candidate
+                .rates
+                .get(&seat.model)
+                .copied()
+                .ok_or_else(|| invalid("planner card has no read for a seat"))?;
+            for width in candidate_widths(need, candidate) {
+                let measured = candidate
+                    .widths
+                    .get(&width)
+                    .and_then(|by_model| by_model.get(&seat.model))
+                    .map_or(rate, |(wins, losses)| rate.pooled(*wins, *losses));
+                quotes.push(quote(
+                    need,
+                    TeamShape {
+                        pattern: candidate.pattern,
+                        width,
+                    },
+                    seat,
+                    Some(&candidate.skill),
+                    Some(&candidate.works_well_for),
+                    measured,
+                    budget,
+                ));
+            }
+        }
+    }
+    if quotes.is_empty() {
+        return Err(invalid(
+            "no bound pattern skill can run the pinned spawn shape",
+        ));
     }
     quotes.sort_by(|a, b| {
         payoff_density(b)
-            .partial_cmp(&payoff_density(a))
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&payoff_density(a))
             .then_with(|| a.shape.width.cmp(&b.shape.width))
+            .then_with(|| a.candidate.cmp(&b.candidate))
     });
     Ok(quotes)
 }
 
 /// Expected success per 1k lease units: how shapes compare at equal budget.
+#[allow(clippy::cast_precision_loss)]
 fn payoff_density(quote: &ShapeQuote) -> f64 {
     let spend = quote.envelope.expected_spend_units.max(1) as f64;
     quote.expected_success_rate * 1000.0 / spend
 }
 
-/// Quotes for the widest candidate a rung decision needs.
+/// The widest candidate a rung decision needs.
 fn widest(quotes: &[ShapeQuote]) -> u32 {
     quotes
         .iter()
@@ -343,55 +634,61 @@ fn widest(quotes: &[ShapeQuote]) -> u32 {
 
 /// The CEO's top shapes: the best `n` candidate plans with expected payoff
 /// and cost, before anything commits.
+///
+/// # Errors
+///
+/// As [`plan_spawn`].
 pub fn top_shapes(
     need: &SpawnNeed,
-    card: &PlannerCard,
-    models: &[AvailableModel],
-    budget_units: u64,
+    evidence: &PlannerEvidence,
     n: usize,
 ) -> Result<Vec<ShapeQuote>> {
     need.validate()?;
-    let mut quotes = ranked_quotes(need, card, models, budget_units)?;
+    let mut quotes = ranked_quotes(need, evidence)?;
     quotes.truncate(n.max(1));
     Ok(quotes)
 }
 
-/// Plan one spawn deterministically: solo-first selection over the
-/// planner card, pins honoured exactly, then fitted to the budget.
+/// Plan one spawn deterministically: solo-first selection over what the
+/// vault measured, pins honoured exactly, then fitted to the budget.
 ///
 /// # Errors
 ///
-/// A blank need, an invalid override, no available models, or a pinned
-/// model the vault does not carry.
+/// A blank need, an invalid or inconsistent override, no seats, a pinned
+/// model no seat carries, or pins no bound pattern skill can run.
 pub fn plan_spawn(
     need: &SpawnNeed,
-    card: &PlannerCard,
-    models: &[AvailableModel],
-    budget_units: u64,
+    evidence: &PlannerEvidence,
     thresholds: PlannerThresholds,
 ) -> Result<SpawnPlanReceipt> {
     need.validate()?;
     plan_from_quotes(
         need,
-        ranked_quotes(need, card, models, budget_units)?,
-        models,
+        ranked_quotes(need, evidence)?,
+        evidence,
         thresholds,
         None,
     )
 }
 
-/// Assemble the receipt from ranked quotes. `routed_pick` is the shape
-/// token a ladder rung chose, when one ran; it may only pick among the
-/// quotes, never invent a shape, and the solo-first gate still applies.
+/// A ladder rung's pick: the candidate id it chose and who read the question.
+pub(super) struct RoutedPick {
+    pub candidate: String,
+    pub providers: Vec<ProviderPin>,
+}
+
+/// Assemble the receipt from ranked quotes. `routed` is the candidate a
+/// ladder rung chose, when one ran; it may only pick among the quotes,
+/// never invent a shape, and the solo-first gate still applies.
 fn plan_from_quotes(
     need: &SpawnNeed,
     quotes: Vec<ShapeQuote>,
-    models: &[AvailableModel],
+    evidence: &PlannerEvidence,
     thresholds: PlannerThresholds,
-    routed_pick: Option<&str>,
+    routed: Option<&RoutedPick>,
 ) -> Result<SpawnPlanReceipt> {
     let care = resolve_care(need);
-    let rung = planner_rung_for(care, quotes.len(), widest(&quotes), thresholds);
+    let rung = planned_rung(need, &quotes, thresholds);
     let mut why = vec![format!(
         "planner rung {} for care {}",
         rung.as_str(),
@@ -405,11 +702,13 @@ fn plan_from_quotes(
         .first()
         .ok_or_else(|| invalid("planner produced no candidate shapes"))?
         .clone();
-    if let Some(token) = routed_pick
-        && let Some(routed) = quotes.iter().find(|quote| quote.shape.token() == token)
+    if let Some(pick) = routed
+        && let Some(picked) = quotes
+            .iter()
+            .find(|quote| quote.candidate == pick.candidate)
     {
-        chosen = routed.clone();
-        why.push(format!("ladder rung picked {token}"));
+        chosen = picked.clone();
+        why.push(format!("ladder rung picked {}", pick.candidate));
     }
 
     // Solo first: when solo already succeeds often, a team must project
@@ -433,114 +732,182 @@ fn plan_from_quotes(
         why.push("pinned spawn fields honoured exactly".to_owned());
     }
 
-    let (plan, fit_why) = fit_to_budget(chosen, models, care, rung);
+    let (plan, fit_why) = fit_to_budget(&chosen, need, evidence, care, rung);
     why.extend(fit_why);
+    let resolved = candidate_token(&plan.shape, &plan.model, plan.pattern_skill.as_ref());
     let alternatives = quotes
         .into_iter()
-        .filter(|quote| quote.shape != plan.shape || quote.model != plan.model)
+        .filter(|quote| quote.candidate != resolved)
         .take(3)
         .collect();
-    Ok(SpawnPlanReceipt {
+    let receipt = SpawnPlanReceipt {
         asked: need.clone(),
         plan,
         alternatives,
         why,
-    })
+        team_shape: None,
+        rung_skill: None,
+        rung_providers: Vec::new(),
+    };
+    receipt.validate()?;
+    Ok(receipt)
 }
 
-/// Fit the best shape to the cap (ARCH-0079 #budget): shrink width one
-/// agent at a time to the pattern's floor, then fall back to the cheapest
-/// seatable model, then solo at width 1. Never a refusal — the narrowest
-/// honest plan over a zero budget is solo with a zero cap, and the
-/// receipt says what more would buy.
+/// Fit the chosen shape to the budget (ARCH-0079 #budget), changing only
+/// what the spawn left unpinned: narrow an unpinned width toward the
+/// pattern's floor, then move an unpinned model to the cheapest seat, then
+/// fall back to solo when neither pattern nor width is pinned. Never a
+/// refusal: when the pins leave nothing that fits, the narrowest plan the
+/// pins allow is kept and stated over budget, with what more would buy.
 fn fit_to_budget(
-    chosen: ShapeQuote,
-    models: &[AvailableModel],
+    chosen: &ShapeQuote,
+    need: &SpawnNeed,
+    evidence: &PlannerEvidence,
     care: CareLevel,
     rung: PlannerRung,
 ) -> (TeamPlan, Vec<String>) {
-    let cap = chosen.envelope.hard_cap_units;
-    let per_agent = chosen.envelope.per_agent_expected_units;
+    let budget = evidence.budget.narrowed(need);
     let mut why = Vec::new();
-    let base = |shape: TeamShape,
-                model: ModelId,
-                envelope: CostEnvelope,
+    let plan = |shape: TeamShape,
+                seat: (&ModelId, EntityId, ExpectedSpend),
+                skill: Option<PatternSkillRef>,
                 fitted: bool,
+                over: bool,
                 more: Option<String>| TeamPlan {
         shape,
-        model,
+        model: seat.0.clone(),
+        agent_def: seat.1,
+        pattern_skill: skill,
         care,
         effort: care.reasoning_effort(),
-        envelope,
+        envelope: CostEnvelope::for_shape(shape.width, seat.2, budget),
         rung,
         fitted_to_budget: fitted,
+        over_budget: over,
         what_more_would_buy: more,
     };
-    if chosen.envelope.expected_spend_units <= cap {
+    let chosen_seat = (&chosen.model, chosen.agent_def, chosen.envelope.per_agent);
+    if chosen.envelope.fits(budget) {
         return (
-            base(chosen.shape, chosen.model, chosen.envelope, false, None),
+            plan(
+                chosen.shape,
+                chosen_seat,
+                chosen.pattern_skill.clone(),
+                false,
+                false,
+                None,
+            ),
             why,
         );
     }
-    let missing = chosen.envelope.expected_spend_units - cap;
+    let most = budget.spendable().unwrap_or(0);
+    let fits = |width: u32, per_agent: ExpectedSpend| {
+        CostEnvelope::for_shape(width, per_agent, budget).fits(budget)
+    };
     let more = Some(format!(
-        "{} more lease units would buy {} on {} (expected success {:.2})",
-        missing,
-        chosen.shape.token(),
-        chosen.model.as_str(),
+        "{} more lease units would buy {} (expected success {:.2})",
+        chosen.envelope.expected_spend_units.saturating_sub(most),
+        chosen.candidate,
         chosen.expected_success_rate
     ));
-    // Shrink width toward the pattern floor.
-    let floor = chosen.shape.pattern.min_width();
+    let width_free = need.pinned_width().is_none();
+    let model_free = need.pinned_model().is_none();
+    let pattern_free = need.pinned_pattern().is_none();
+    let pattern = chosen.shape.pattern;
+
+    // Narrow an unpinned width toward the pattern floor.
+    let floor = pattern.min_width();
     let mut width = chosen.shape.width;
-    while width > floor && per_agent.saturating_mul(u64::from(width)) > cap {
-        width -= 1;
+    if width_free {
+        while width > floor && !fits(width, chosen.envelope.per_agent) {
+            width -= 1;
+        }
+        if fits(width, chosen.envelope.per_agent) {
+            why.push(format!(
+                "fitted {} to width {width} under the {most}-unit budget",
+                pattern.as_str()
+            ));
+            return (
+                plan(
+                    TeamShape { pattern, width },
+                    chosen_seat,
+                    chosen.pattern_skill.clone(),
+                    true,
+                    false,
+                    more,
+                ),
+                why,
+            );
+        }
     }
-    if per_agent.saturating_mul(u64::from(width)) <= cap {
-        why.push(format!(
-            "fitted {} to width {width} under the {cap}-unit cap",
-            chosen.shape.pattern.as_str()
-        ));
-        let shape = TeamShape {
-            pattern: chosen.shape.pattern,
-            width,
-        };
-        let envelope = CostEnvelope::for_shape(width, per_agent, cap);
-        return (base(shape, chosen.model, envelope, true, more), why);
-    }
-    // Cheapest seatable model at the pattern floor.
-    if let Some(cheap) = models
+    let cheapest = evidence
+        .models
         .iter()
-        .min_by_key(|model| model.expected_units_per_agent)
-        && cheap
-            .expected_units_per_agent
-            .saturating_mul(u64::from(floor))
-            <= cap
-    {
+        .min_by(|a, b| {
+            a.expected
+                .units
+                .cmp(&b.expected.units)
+                .then_with(|| a.model.cmp(&b.model))
+        })
+        .map(|seat| (&seat.model, seat.agent_def, seat.expected));
+    let seat = match cheapest {
+        Some(cheap) if model_free => cheap,
+        _ => chosen_seat,
+    };
+    // Move an unpinned model to the cheapest seat at that width.
+    if model_free && seat.0 != chosen_seat.0 && fits(width, seat.2) {
         why.push(format!(
-            "fitted {} to {} at width {floor} under the {cap}-unit cap",
-            chosen.shape.pattern.as_str(),
-            cheap.model.as_str()
+            "fitted {} to {} at width {width} under the {most}-unit budget",
+            pattern.as_str(),
+            seat.0.as_str()
         ));
-        let shape = TeamShape {
-            pattern: chosen.shape.pattern,
-            width: floor,
-        };
-        let envelope = CostEnvelope::for_shape(floor, cheap.expected_units_per_agent, cap);
-        return (base(shape, cheap.model.clone(), envelope, true, more), why);
+        return (
+            plan(
+                TeamShape { pattern, width },
+                seat,
+                chosen.pattern_skill.clone(),
+                true,
+                false,
+                more,
+            ),
+            why,
+        );
     }
-    // Solo, width 1, cheapest model: the narrowest honest plan.
-    let cheap = models
-        .iter()
-        .min_by_key(|model| model.expected_units_per_agent)
-        .map(|model| (model.model.clone(), model.expected_units_per_agent))
-        .unwrap_or((chosen.model.clone(), per_agent));
+    // Solo, when neither the pattern nor the width is pinned.
+    if pattern_free && width_free {
+        let fits_solo = fits(1, seat.2);
+        why.push(if fits_solo {
+            format!(
+                "budget fits only solo on {} under the {most}-unit budget",
+                seat.0.as_str()
+            )
+        } else {
+            format!(
+                "solo on {} is the narrowest plan and still exceeds the {most}-unit budget",
+                seat.0.as_str()
+            )
+        });
+        return (
+            plan(TeamShape::SOLO, seat, None, true, !fits_solo, more),
+            why,
+        );
+    }
+    // The pins leave nothing that fits: keep them and state the shortfall.
     why.push(format!(
-        "budget fits only solo on {} under the {cap}-unit cap",
-        cheap.0.as_str()
+        "pinned spawn fields keep the plan over the {most}-unit budget"
     ));
-    let envelope = CostEnvelope::for_shape(1, cheap.1, cap);
-    (base(TeamShape::SOLO, cheap.0, envelope, true, more), why)
+    let fitted = width != chosen.shape.width || seat.0 != chosen_seat.0;
+    (
+        plan(
+            TeamShape { pattern, width },
+            seat,
+            chosen.pattern_skill.clone(),
+            fitted,
+            true,
+            more,
+        ),
+        why,
+    )
 }
 
 /// The host's planner-ladder decisions: its typed-decision ladder, the
@@ -553,6 +920,15 @@ pub struct PlannerDecisions<'a> {
     pub bands: DecisionBandPolicy,
     pub wording: String,
     pub deadline: &'a RetrievalDeadline,
+}
+
+/// What the answering rung reads beside the quotes: the team-shape skill's
+/// loaded content and the rung's own workflow skill, as their packs carry
+/// them. Wording lives in the skills, not here.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlannerQuestionContext<'a> {
+    pub team_shape: Option<&'a str>,
+    pub rung_skill: Option<&'a str>,
 }
 
 /// The dial a planner ask runs under: start at the rung the care selected,
@@ -570,9 +946,9 @@ fn planner_dial(rung: PlannerRung) -> DecisionDial {
 }
 
 /// Plan one spawn with the model ladder engaged: the deterministic floor
-/// quotes and ranks the shapes, then — when the care climbs past the
+/// quotes and ranks the candidates, then — when the care climbs past the
 /// cheap classifier — the selected rung picks among the top quotes
-/// through one typed question. Only the quoted shape tokens are options,
+/// through one typed question. Only the quoted candidate ids are options,
 /// so an answer outside them, an abstention, or a failed run keeps the
 /// deterministic pick.
 ///
@@ -581,46 +957,64 @@ fn planner_dial(rung: PlannerRung) -> DecisionDial {
 /// As [`plan_spawn`].
 pub fn plan_spawn_routed(
     need: &SpawnNeed,
-    card: &PlannerCard,
-    models: &[AvailableModel],
-    budget_units: u64,
+    evidence: &PlannerEvidence,
     thresholds: PlannerThresholds,
     decisions: Option<&PlannerDecisions<'_>>,
+    context: PlannerQuestionContext<'_>,
 ) -> Result<SpawnPlanReceipt> {
     need.validate()?;
-    let quotes = ranked_quotes(need, card, models, budget_units)?;
-    let care = resolve_care(need);
-    let rung = planner_rung_for(care, quotes.len(), widest(&quotes), thresholds);
+    let quotes = ranked_quotes(need, evidence)?;
+    plan_ranked(need, quotes, evidence, thresholds, decisions, context)
+}
+
+/// [`plan_spawn_routed`] over quotes already ranked, so the live service
+/// can load the rung's skill once it knows the rung.
+pub(super) fn plan_ranked(
+    need: &SpawnNeed,
+    quotes: Vec<ShapeQuote>,
+    evidence: &PlannerEvidence,
+    thresholds: PlannerThresholds,
+    decisions: Option<&PlannerDecisions<'_>>,
+    context: PlannerQuestionContext<'_>,
+) -> Result<SpawnPlanReceipt> {
+    let rung = planned_rung(need, &quotes, thresholds);
     let routed = match (decisions, rung) {
         (Some(decisions), PlannerRung::SmallThinking | PlannerRung::Strong) => {
-            routed_shape_pick(need, &quotes, decisions, rung)
+            routed_shape_pick(need, &quotes, evidence, decisions, rung, context)
         }
         _ => None,
     };
-    plan_from_quotes(need, quotes, models, thresholds, routed.as_deref())
+    let mut receipt = plan_from_quotes(need, quotes, evidence, thresholds, routed.as_ref())?;
+    if let Some(pick) = routed {
+        receipt.rung_providers = pick.providers;
+    }
+    Ok(receipt)
 }
 
-/// Ask the ladder to pick one quoted shape. `None` on abstention, an
+/// Ask the ladder to pick one quoted candidate. `None` on abstention, an
 /// out-of-vocabulary answer, or any ladder error: the floor's pick holds.
 fn routed_shape_pick(
     need: &SpawnNeed,
     quotes: &[ShapeQuote],
+    evidence: &PlannerEvidence,
     decisions: &PlannerDecisions<'_>,
     rung: PlannerRung,
-) -> Option<String> {
-    let options: Vec<String> = quotes
+    context: PlannerQuestionContext<'_>,
+) -> Option<RoutedPick> {
+    let shown: Vec<&ShapeQuote> = quotes.iter().take(6).collect();
+    let options: Vec<String> = shown
         .iter()
-        .take(6)
-        .map(|quote| quote.shape.token())
-        .collect::<std::collections::BTreeSet<_>>()
+        .map(|quote| quote.candidate.clone())
+        .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
     if options.len() < 2 {
         return None;
     }
+    let type_wire = need.type_ref.wire_form();
     let question = crate::llm::decision::catalogue::PLANNER_SHAPE
         .question(
-            &[need.task_type.as_deref().unwrap_or("root").as_bytes()],
+            &[type_wire.as_bytes()],
             decisions.wording.clone(),
             AnswerContract::Choice { options },
         )
@@ -629,11 +1023,24 @@ fn routed_shape_pick(
         "need": need.need,
         "care": resolve_care(need).as_str(),
         "notes": need.notes,
+        "type_ref": type_wire,
         "lessons": TEAM_SHAPE_LESSONS,
-        "shapes": quotes.iter().take(6).map(|quote| serde_json::json!({
+        "team_shape": context.team_shape,
+        "rung_skill": context.rung_skill,
+        "models": evidence.models.iter().map(|seat| serde_json::json!({
+            "model": seat.model.as_str(),
+            "description": seat.description,
+            "expected_units_per_agent": seat.expected.units,
+            "spend_basis": seat.expected.basis,
+        })).collect::<Vec<_>>(),
+        "shapes": shown.iter().map(|quote| serde_json::json!({
+            "candidate": quote.candidate,
             "shape": quote.shape.token(),
+            "width": quote.shape.width,
             "model": quote.model.as_str(),
+            "pattern_skill": quote.pattern_skill.as_ref().map(|skill| skill.skill.to_hex()),
             "expected_success_rate": quote.expected_success_rate,
+            "own_runs": quote.own_runs,
             "expected_spend_units": quote.envelope.expected_spend_units,
             "works_well_for": quote.works_well_for,
         })).collect::<Vec<_>>(),
@@ -653,136 +1060,10 @@ fn routed_shape_pick(
         )
         .ok()?;
     match decision.answer {
-        DecisionAnswer::Choice(token) => Some(token),
+        DecisionAnswer::Choice(candidate) => Some(RoutedPick {
+            candidate,
+            providers: decision.receipt.providers,
+        }),
         _ => None,
-    }
-}
-
-/// A run's saved partial state (ARCH-0079 #budget): the attempts that were
-/// asked to wrap up, the partial results they handed over, and the plan
-/// they were running. The hold is what a resume reads; the attempts
-/// themselves sit in the queue's landing/paused states, never killed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PartialResultHold {
-    /// The spawn (root) attempt this hold belongs to.
-    pub root_attempt: AttemptId,
-    pub attempts: Vec<AttemptId>,
-    /// Partial result entity refs, lower-hex (the engine's wire spelling).
-    #[serde(default)]
-    pub partial_result_refs: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plan: Option<TeamPlan>,
-    pub reason: String,
-    pub held_at: u64,
-}
-
-/// What a graceful stop produced: per-attempt landing outcomes, the
-/// durable hold, and the one-line notice for the owner.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GracefulStop {
-    pub hold: PartialResultHold,
-    pub outcomes: Vec<(AttemptId, CancelRequestOutcome)>,
-    pub notice: String,
-}
-
-/// Holds keyed by root attempt id.
-const PLAN_HOLD: SideTable<AttemptId, PartialResultHold, LegacyJson> =
-    SideTable::new(&side_table::AGENT_DISPATCH_PLAN_HOLD);
-
-impl AgentDispatcher<'_> {
-    /// Plan a spawn from this vault's learned settings, without a model
-    /// ladder: the deterministic floor over the card the caller supplies.
-    ///
-    /// # Errors
-    ///
-    /// As [`plan_spawn`], plus a settings read failure.
-    pub fn plan_spawn(
-        &self,
-        need: &SpawnNeed,
-        card: &PlannerCard,
-        models: &[AvailableModel],
-        budget_units: u64,
-    ) -> Result<SpawnPlanReceipt> {
-        plan_spawn(
-            need,
-            card,
-            models,
-            budget_units,
-            PlannerThresholds::from_vault(self.vault)?,
-        )
-    }
-
-    /// Stop a run gracefully at the end of its lease: every attempt gets
-    /// the wrap-up warning (a budget-warning landing request — finish the
-    /// step, hand over what exists), the partial results are saved in a
-    /// durable resumable hold, and the returned notice is the owner's.
-    ///
-    /// # Errors
-    ///
-    /// A queue or storage failure. An attempt with no standing reports its
-    /// typed outcome in `outcomes` rather than failing the stop.
-    pub fn graceful_stop(
-        &self,
-        root_attempt: AttemptId,
-        attempts: &[AttemptId],
-        plan: Option<TeamPlan>,
-        partial_result_refs: Vec<EntityId>,
-        actor: &str,
-        standing: CancelStanding,
-        reason: &str,
-        now: u64,
-    ) -> Result<GracefulStop> {
-        if actor.trim().is_empty() {
-            return Err(invalid("graceful stop actor is required"));
-        }
-        let queue = AttemptQueue::new(self.vault);
-        let mut outcomes = Vec::with_capacity(attempts.len());
-        for attempt in attempts {
-            let outcome = queue.request_cancel(RequestAttemptCancel {
-                id: *attempt,
-                actor: actor.to_owned(),
-                standing,
-                trigger: LandingTrigger::BudgetWarning,
-                reason: Some("wrap up: finish the step and hand over what exists".to_owned()),
-                now,
-            })?;
-            outcomes.push((*attempt, outcome));
-        }
-        let hold = PartialResultHold {
-            root_attempt,
-            attempts: attempts.to_vec(),
-            partial_result_refs: partial_result_refs.iter().map(|id| id.to_hex()).collect(),
-            plan,
-            reason: reason.to_owned(),
-            held_at: now,
-        };
-        let mut wtxn = self.vault.store.env.write_txn()?;
-        PLAN_HOLD.put(&self.vault.store, &mut wtxn, &root_attempt, &hold)?;
-        wtxn.commit()?;
-        let notice = format!(
-            "run held with {} partial result(s) from {} agent(s); resume from the hold when ready",
-            hold.partial_result_refs.len(),
-            hold.attempts.len()
-        );
-        Ok(GracefulStop {
-            hold,
-            outcomes,
-            notice,
-        })
-    }
-
-    /// The saved hold for a spawn, if one was stopped gracefully.
-    pub fn plan_hold(&self, root_attempt: AttemptId) -> Result<Option<PartialResultHold>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        PLAN_HOLD.get(&self.vault.store, &rtxn, &root_attempt)
-    }
-
-    /// Clear a hold once its run has resumed (or its owner gave it up).
-    /// Clearing is bookkeeping only: it touches no attempt.
-    pub fn clear_plan_hold(&self, root_attempt: AttemptId) -> Result<()> {
-        let mut wtxn = self.vault.store.env.write_txn()?;
-        PLAN_HOLD.delete(&self.vault.store, &mut wtxn, &root_attempt)?;
-        wtxn.commit()?;
-        Ok(())
     }
 }
