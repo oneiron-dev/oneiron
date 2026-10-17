@@ -16,7 +16,7 @@ use axum::{
 };
 use oneiron::{
     EdgeActorClass, EntityId, WriteActor,
-    conversation::{HistoryChoice, MembershipAction},
+    conversation::{ContainerAttendee, ContainerAttendeeEvent, HistoryChoice, MembershipAction},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -83,6 +83,7 @@ pub(super) async fn write_member(
     let actor = actor(&auth, req.actor)?;
     let at = req.at.unwrap_or_else(unix_seconds_now);
     let result = match req.action {
+        MembershipAction::Join if first_entry(&server, room, &req, actor, at)? => Ok(()),
         // A person takes a room seat only through the room's join door, which
         // proves the caller stands for that person and seats it only once the
         // join is Ready (#2008); a Hold or a refusal is returned as decided.
@@ -151,6 +152,45 @@ fn join_error(error: oneiron::memory::MemoryError) -> ApiError {
             ApiError::internal_server_error("room join failed")
         }
     }
+}
+
+/// A person's first entry into an ordinary room (ILDF2 P5, OF-365): the
+/// engine records the entry fact the owner's clearance answer names
+/// (`/v1/owner/disclosure/entry/*`) and joins them with the requested
+/// history. True when it did; a member, a rejoin or a project room keeps the
+/// ledger's own join. The entry's roster revision is the join time.
+fn first_entry(
+    server: &SyncServer,
+    room: EntityId,
+    req: &MemberWrite,
+    actor: WriteActor,
+    at: u64,
+) -> Result<bool, ApiError> {
+    let member = || {
+        server
+            .vault
+            .members(room)
+            .map(|members| members.contains(&req.person_id))
+            .map_err(|e| core_engine_error("members read failed", e))
+    };
+    if member()? {
+        return Ok(false);
+    }
+    let event = ContainerAttendeeEvent {
+        container: room,
+        attendee: ContainerAttendee::Person(req.person_id),
+        roster_revision: at.max(1),
+        trigger_turn: None,
+        candidates: Vec::new(),
+        until: at,
+        history: req.history,
+    };
+    server
+        .vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .container_attendee_entered(&event)
+        .map_err(|_| ApiError::invalid_state(Some("attendee_entry")))?;
+    member()
 }
 pub(super) async fn read_members(
     auth: CoreAuth,

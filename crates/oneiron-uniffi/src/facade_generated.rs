@@ -555,6 +555,16 @@ export_facade! {
     let output = client.vault_code_blame(&input)?;
     crate::codec::lift_record("vault.code.blame", &output)
 };
+"vault.code.proposal_view" => fn vault_code_proposal_view(&self, input: CodeProposalViewRequest) -> Option<CodeProposalView> = |client| {
+    let input: oneiron::code_document::CodeProposalViewRequest = crate::codec::lower_record("vault.code.proposal_view", input)?;
+    let output = client.vault_code_proposal_view(&input)?;
+    crate::codec::lift_record("vault.code.proposal_view", &output)
+};
+"vault.code.repo_diff" => fn vault_code_repo_diff(&self, input: CodeRepoDiffRequest) -> Option<CodeRepoDiffView> = |client| {
+    let input: oneiron::code_document::CodeRepoDiffRequest = crate::codec::lower_record("vault.code.repo_diff", input)?;
+    let output = client.vault_code_repo_diff(&input)?;
+    crate::codec::lift_record("vault.code.repo_diff", &output)
+};
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;
     let output = client.vault_artifacts_export(&input)?;

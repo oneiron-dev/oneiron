@@ -18,11 +18,12 @@ if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): ra
 # A `context: "run"` row is answered by the code run itself, over its own
 # dispatcher and storage route, as the typed `self.*` call its `effect` names.
 # Code mode serves it beside the host's rows; no host door, tool, route or
-# binding can carry a run, so it projects nowhere else.
+# binding can carry a run, so it projects nowhere else. Its optional `output`
+# is the type its reply carries, which only the catalog fragment reads.
 RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
 for row in RUN_ROWS:
-    if set(row) != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
-        raise ValueError(f'{row["name"]}: a run row names its input, scope and effect, and nothing else')
+    if set(row) - {'output'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
+        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect and output, and nothing else')
 # ARCH-0028: the MCP tool list and the code-mode method table ARE the verb table,
 # so a row carries no opt-out. A row's tool takes its whole typed input as `spec`
 # unless it names a projection, and refuses a world/facet-narrowed connector

@@ -389,6 +389,8 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
         "self.inference_defaults.read" => Ok(SelfEffect::InferenceDefaultsRead),
         "self.inference_defaults.replace" => Ok(SelfEffect::InferenceDefaultsReplace),
+        // A summary not yet made parks its call on its job's task.
+        "summarize" => Ok(SelfEffect::Summarize),
         _ => Err(Error::CorruptedIndex("executor replay durable wait effect").into()),
     }
 }
