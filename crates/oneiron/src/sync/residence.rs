@@ -6,6 +6,7 @@ mod tests;
 
 mod admission;
 mod authority_tail;
+mod bundle_payload;
 mod discover;
 mod policy;
 mod prune;
@@ -15,6 +16,7 @@ pub use authority_tail::{
     AUTHORITY_TAIL_PAGE_MAX, AuthorityPageImport, authority_append_for, authority_range_for,
     authority_tail_for, authority_wanted, held_authority_entries, import_authority_page,
 };
+pub use bundle_payload::SealedBundleTake;
 pub use discover::discover_local_window_keys;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
