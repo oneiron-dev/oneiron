@@ -23,14 +23,34 @@ pub(super) fn history_in_txn(
 }
 
 /// Refuses the import when an arriving row stands on a key a handoff retired
-/// in `fold`: such a key signs nothing new into this history, and nothing new
-/// stands on a row one signed. `merged` holds the resident and arriving rows.
+/// in `fold` ([`retired_standing`]).
 fn refuse_retired_standing(
     store: &crate::store::Store,
     fold: &AuthorityFold,
     merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
     arriving: &[AuthorityEntryHash],
 ) -> Result<()> {
+    match retired_standing(store, fold, merged, arriving)? {
+        Some(_) => Err(retired_standing_refusal()),
+        None => Ok(()),
+    }
+}
+
+fn retired_standing_refusal() -> Error {
+    Error::Record(RecordError::InvalidAuthorityLogBody(
+        "authority history standing on a key a handoff retired",
+    ))
+}
+
+/// The first arriving row that stands on a key a handoff retired in `fold`:
+/// such a key signs nothing new into this history, and nothing new stands on
+/// a row one signed. `merged` holds the resident and arriving rows.
+fn retired_standing(
+    store: &crate::store::Store,
+    fold: &AuthorityFold,
+    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    arriving: &[AuthorityEntryHash],
+) -> Result<Option<AuthorityEntryHash>> {
     for hash in arriving {
         let Some((_, entry)) = merged.get(hash) else {
             continue;
@@ -38,12 +58,10 @@ fn refuse_retired_standing(
         if super::door_refuses_retired_standing(store, fold, hash, entry, &mut |parent| {
             Ok(merged.get(parent).map(|(_, row)| row.clone()))
         })? {
-            return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
-                "authority history standing on a key a handoff retired",
-            )));
+            return Ok(Some(*hash));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn history_root(
@@ -395,17 +413,21 @@ impl Vault {
     /// order and judgement, and the refold before commit. One refused entry
     /// writes nothing.
     pub fn import_signed_authority_page(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
-        self.import_page_in(decode_page(blobs)?, false)
+        match self.import_page_in(decode_page(blobs)?, false)? {
+            PageVerdict::Landed(ids) => Ok(ids),
+            PageVerdict::Retired(_) => Err(retired_standing_refusal()),
+        }
     }
 
     /// [`Self::import_signed_authority_page`] for `decoded`. With `staged`,
     /// the rows a repair staged earlier arrive beside the page
     /// ([`super::history_repair`]), and the stage empties as they land.
+    /// A row refused for retired standing writes nothing and is named.
     pub(super) fn import_page_in(
         &self,
         mut decoded: Vec<DecodedRow>,
         staged: bool,
-    ) -> Result<Vec<EntityId>> {
+    ) -> Result<PageVerdict> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
@@ -438,8 +460,10 @@ impl Vault {
             Err(error) if super::readonly_fold::is_history_incomplete(&error) => None,
             Err(error) => return Err(error),
         };
-        if let Some(local) = &local {
-            refuse_retired_standing(&self.store, local, &merged, &arriving)?;
+        if let Some(local) = &local
+            && let Some(refused) = retired_standing(&self.store, local, &merged, &arriving)?
+        {
+            return Ok(PageVerdict::Retired(refused));
         }
         page_root(&merged, &resident)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
@@ -485,8 +509,10 @@ impl Vault {
         )?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
-        if local.is_none() {
-            refuse_retired_standing(&self.store, &fold, &merged, &arriving)?;
+        if local.is_none()
+            && let Some(refused) = retired_standing(&self.store, &fold, &merged, &arriving)?
+        {
+            return Ok(PageVerdict::Retired(refused));
         }
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
@@ -496,8 +522,16 @@ impl Vault {
         }
         txn.commit()?;
         watch.finish()?;
-        Ok(ids)
+        Ok(PageVerdict::Landed(ids))
     }
+}
+
+/// What a page import found, short of an error.
+pub(super) enum PageVerdict {
+    /// The page landed: the rows written.
+    Landed(Vec<EntityId>),
+    /// This arriving row stands on a key a handoff retired; nothing landed.
+    Retired(AuthorityEntryHash),
 }
 
 /// One signed authority row as a page carries it: its hash, its original

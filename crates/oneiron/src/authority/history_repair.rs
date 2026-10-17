@@ -16,7 +16,7 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault, error::Result};
 
-use super::history_transfer::{DecodedRow, decode_page, history_in_txn, page_root};
+use super::history_transfer::{DecodedRow, PageVerdict, decode_page, history_in_txn, page_root};
 
 /// Key: the row's entry hash. Value: its original signed bytes. Device-local
 /// repair progress: no image carries it.
@@ -27,12 +27,19 @@ const AUTHORITY_HISTORY_STAGE: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityRepairOutcome {
     /// The page, with every row staged before it, closed the missing history
-    /// and landed: the rows written.
-    Applied(Vec<EntityId>),
+    /// and landed: the rows written, and the rows refused for standing on a
+    /// key a handoff retired, which left the page and the stage.
+    Applied {
+        written: Vec<EntityId>,
+        refused: BTreeSet<AuthorityEntryHash>,
+    },
     /// The history is still incomplete: the page's rows wait in the stage,
     /// not in the log, and the request names what is still missing, staged
-    /// rows counted as fetched.
-    Staged(AuthorityHistoryRequest),
+    /// rows counted as fetched. `refused` as for `Applied`.
+    Staged {
+        request: AuthorityHistoryRequest,
+        refused: BTreeSet<AuthorityEntryHash>,
+    },
 }
 
 /// The staged rows, decoded, in hash order.
@@ -68,20 +75,67 @@ impl Vault {
     /// empties. When the history is still incomplete, the page's new rows
     /// are staged instead, checked as bytes only, and the request names what
     /// is still missing; delivery fetches that next, naming the staged rows
-    /// ([`Self::authority_staged_history`]) as fetched. Any other refusal
-    /// stages nothing.
+    /// ([`Self::authority_staged_history`]) as fetched. A row that stands on
+    /// a key a handoff retired leaves the page and the stage with every row
+    /// standing on it, and the rest is tried again. Any other refusal stages
+    /// nothing.
     pub fn import_signed_authority_repair_page(
         &self,
         blobs: &[Vec<u8>],
     ) -> Result<AuthorityRepairOutcome> {
-        let decoded = decode_page(blobs)?;
-        match self.import_page_in(decoded.clone(), true) {
-            Ok(ids) => Ok(AuthorityRepairOutcome::Applied(ids)),
-            Err(error) if super::readonly_fold::is_history_incomplete(&error) => self
-                .stage_repair_rows(&decoded)
-                .map(AuthorityRepairOutcome::Staged),
-            Err(error) => Err(error),
+        let mut decoded = decode_page(blobs)?;
+        let mut refused = BTreeSet::new();
+        loop {
+            match self.import_page_in(decoded.clone(), true) {
+                Ok(PageVerdict::Landed(written)) => {
+                    return Ok(AuthorityRepairOutcome::Applied { written, refused });
+                }
+                Ok(PageVerdict::Retired(hash)) => {
+                    let dropped = self.drop_from_stage(hash, &decoded)?;
+                    decoded.retain(|(hash, _, _)| !dropped.contains(hash));
+                    refused.extend(dropped);
+                }
+                Err(error) if super::readonly_fold::is_history_incomplete(&error) => {
+                    let request = self.stage_repair_rows(&decoded)?;
+                    return Ok(AuthorityRepairOutcome::Staged { request, refused });
+                }
+                Err(error) => return Err(error),
+            }
         }
+    }
+
+    /// Drops `refused` and every page or staged row standing on it from the
+    /// stage, and answers them all.
+    fn drop_from_stage(
+        &self,
+        refused: AuthorityEntryHash,
+        decoded: &[DecodedRow],
+    ) -> Result<BTreeSet<AuthorityEntryHash>> {
+        let mut txn = self.store.env.write_txn()?;
+        let staged = staged_rows_in_txn(&self.store, &txn)?;
+        let mut dropped = BTreeSet::from([refused]);
+        loop {
+            let before = dropped.len();
+            for (hash, _, entry) in staged.iter().chain(decoded) {
+                if entry
+                    .parent_hashes
+                    .iter()
+                    .any(|parent| dropped.contains(parent))
+                {
+                    dropped.insert(*hash);
+                }
+            }
+            if dropped.len() == before {
+                break;
+            }
+        }
+        for (hash, _, _) in &staged {
+            if dropped.contains(hash) {
+                AUTHORITY_HISTORY_STAGE.delete(&self.store, &mut txn, hash)?;
+            }
+        }
+        txn.commit()?;
+        Ok(dropped)
     }
 
     /// The rows a repair staged and the log does not hold yet. They are no
