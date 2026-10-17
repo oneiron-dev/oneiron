@@ -19,6 +19,7 @@ use super::context_pack::{
 use super::contract::{VaultReadMethod, VaultReadRequest, VaultReadResponse};
 use super::error::{
     VaultReadError, VaultReadErrorExt, VaultReadResult, engine_absent, engine_failure,
+    invalid_request,
 };
 use super::projection::{
     batch_item_from_result, entity_record_from_parts, project_context_pack,
@@ -90,6 +91,38 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     /// costs no embedding.
     pub fn check_context_pack(request: &CoreContextPackRequest) -> VaultReadResult<()> {
         super::validate::validate_request(VaultReadRequest::ContextPack(request.clone())).map(drop)
+    }
+
+    /// The typed skill-reliability query a pack's `type_ref` and `axis` name,
+    /// on the vault's type tree (OF-184). A placement that tree does not hold
+    /// at that version is refused. Free: a host runs it before a paid embed.
+    pub fn context_pack_skill_query(
+        vault: &Vault,
+        request: &CoreContextPackRequest,
+    ) -> VaultReadResult<Option<crate::skill_reliability::SkillReliabilityQuery>> {
+        const METHOD: VaultReadMethod = VaultReadMethod::ContextPack;
+        let Some(placed) = &request.type_ref else {
+            return Ok(None);
+        };
+        let tree = crate::task_type::type_tree(vault, None)
+            .map_err(|error| engine_failure(METHOD, &error))?;
+        let type_ref = crate::learning::TypeRef {
+            node_id: placed.node_id.clone(),
+            tree_version: placed.tree_version,
+        };
+        match crate::skill_reliability::SkillReliabilityQuery::on_tree(
+            &tree,
+            type_ref,
+            request.axis.clone(),
+        ) {
+            Ok(Some(query)) => Ok(Some(query)),
+            Ok(None) => Err(invalid_request(
+                METHOD,
+                "type_ref",
+                "type_ref is not a node of the vault's type tree at that version",
+            )),
+            Err(error) => Err(invalid_request(METHOD, "axis", &error.to_string())),
+        }
     }
 
     /// Lists in `producers` every row a query reads, the ones its count
@@ -220,6 +253,11 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         if let Some(model) = request.executor_model.as_deref() {
             builder = builder
                 .skill_executor(model)
+                .map_err(|error| engine_failure(METHOD, &error))?;
+        }
+        if let Some(query) = Self::context_pack_skill_query(self.scoped_read.vault(), request)? {
+            builder = builder
+                .skill_reliability_context(query)
                 .map_err(|error| engine_failure(METHOD, &error))?;
         }
         if let Some(query) = query {

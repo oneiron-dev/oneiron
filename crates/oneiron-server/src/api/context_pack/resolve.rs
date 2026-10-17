@@ -124,6 +124,7 @@ pub(crate) async fn run_context_pack(
         .as_ref()
         .map(|media| media.decode(server.config.limits.retrieval_query_bytes))
         .transpose()?;
+    let skill_reliability = req.skill_reliability_query(&server.vault)?;
     let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
         resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
     validate_context_pack_depth(edge_hop, edge_hop_field, max_neighbors, max_neighbors_field)?;
@@ -226,6 +227,11 @@ pub(crate) async fn run_context_pack(
         builder = builder
             .skill_executor(model)
             .map_err(|error| core_engine_error("invalid context-pack executor model", error))?;
+    }
+    if let Some(query) = skill_reliability {
+        builder = builder
+            .skill_reliability_context(query)
+            .map_err(|error| core_engine_error("invalid context-pack skill type", error))?;
     }
     if let Some(query) = query {
         builder = builder.search_text(query, candidate_limit);

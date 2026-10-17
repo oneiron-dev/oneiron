@@ -231,6 +231,8 @@ async fn context_pack_media(
     }
     let pack: CoreContextPackRequest = request(body.clone())?;
     InProcessVaultReadAdapter::check_context_pack(&pack).map_err(native_error)?;
+    InProcessVaultReadAdapter::context_pack_skill_query(&server.vault, &pack)
+        .map_err(native_error)?;
     let Some(media) = pack.media else {
         return Ok(None);
     };
