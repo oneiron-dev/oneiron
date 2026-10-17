@@ -7,8 +7,10 @@
 //! then a typed decision bound to the exact question at or above the goal's high
 //! band, then a durable A/B ask to the responsible person, whose pick becomes a
 //! learned preference. Every settlement is a resolution row that answers the
-//! pending row, written by the decision door. A goal without preferences waits
-//! for the owner door ([`super::resolve_skill_edit_tradeoff`]).
+//! pending row, written by the decision door. A goal with neither preferences
+//! nor a project climbs the same ladder with no rule and no band: its A/B ask
+//! goes to the vault's owners, and the first pick starts the goal's
+//! preferences, whose author later asks reach first.
 //!
 //! Preferences are part of the goal record. They are keyed by the portable goal
 //! identity and hashed into the goal revision, so a successor revision on any
@@ -378,7 +380,7 @@ pub fn skill_tradeoff_preferences(
 
 /// The ask bound to this pending verdict, while the proposal is open and the
 /// goal, preferences included, is the one the question was put under. The
-/// preferences are absent only for a project-bound goal with no picks yet.
+/// preferences are absent until the goal's first pick.
 fn bound_ask_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -402,9 +404,6 @@ fn bound_ask_in_txn(
         return Ok(None);
     }
     let preferences = preferences_in_txn(vault, txn, &ask.question.goal_id)?;
-    if preferences.is_none() && ask.question.project.is_none() {
-        return Ok(None);
-    }
     Ok(Some((ask, preferences)))
 }
 
@@ -504,23 +503,17 @@ pub fn escalate_skill_tradeoff_ask(
 }
 
 /// Whether a standing pending verdict may be returned to a redelivery as it
-/// is. A goal without preferences waits for the owner door. A goal with them
-/// waits on its bound A/B ask; a pending verdict with no bound ask is ruled
-/// again. While policy leaves no capacity to learn the pick, the delivery is
+/// is. It waits on its bound A/B ask; a pending verdict with no bound ask is
+/// ruled again. While policy leaves no capacity to learn the pick, the delivery is
 /// refused before any judge is paid, and a policy revision recovers it.
 pub(super) fn pending_waits_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     pending: &HeldOutVerdict,
 ) -> Result<bool> {
-    let goal_id = pending.goal_id.ok_or(Error::CorruptedIndex(
+    pending.goal_id.ok_or(Error::CorruptedIndex(
         "pending skill tradeoff without a goal",
     ))?;
-    if preferences_in_txn(vault, txn, &goal_id)?.is_none()
-        && project_goal_in_txn(vault, txn, &goal_id)?.is_none()
-    {
-        return Ok(true);
-    }
     let Some((ask, preferences)) = bound_ask_in_txn(vault, txn, pending)? else {
         return Ok(false);
     };
@@ -536,7 +529,7 @@ pub(super) fn pending_waits_in_txn(
 
 /// What the ladder decided outside the write transaction.
 pub(super) enum TradeoffPlan {
-    /// Not a pending tradeoff, or its goal holds no preferences.
+    /// Not a pending tradeoff.
     None,
     /// A preference rule, or a confident bound Jev verdict, answered.
     Decided {
@@ -573,9 +566,6 @@ pub(super) fn plan(
     let txn = vault.store.env.read_txn()?;
     let preferences = preferences_in_txn(vault, &txn, &basis.goal_id)?;
     let prior: Option<SkillTradeoffAsk> = load(vault, &txn, &key(ASK_PREFIX, proposal))?;
-    if preferences.is_none() && definition.project.is_none() {
-        return Ok(TradeoffPlan::None);
-    }
     let roles = responsible_roles_in_txn(
         vault,
         &txn,
@@ -733,9 +723,6 @@ pub(super) fn apply_in_txn(
         }
         TradeoffPlan::Ask { question, jev } => {
             let preferences = preferences_in_txn(vault, txn, &question.goal_id)?;
-            if preferences.is_none() && question.project.is_none() {
-                return Err(retry("tradeoff preferences moved while scoring"));
-            }
             // A policy contraction while Jev was thinking cannot commit an
             // ask the person is no longer permitted to settle.
             let holder = limits_holder(preferences.as_ref(), question)?;
@@ -876,9 +863,7 @@ fn settle_ask_in_txn(
         }
         let previous = preferences_in_txn(vault, txn, &question.goal_id)?;
         let project = project_goal_in_txn(vault, txn, &question.goal_id)?;
-        if project.as_ref().map(|join| join.project) != question.project
-            || (previous.is_none() && project.is_none())
-        {
+        if project.as_ref().map(|join| join.project) != question.project {
             return Err(invalid("tradeoff goal changed before the pick"));
         }
         let holder = previous
