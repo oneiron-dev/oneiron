@@ -169,6 +169,15 @@ A `key_secret` provider answers whole chat replies only for now: a streamed chat
 call to it is refused before it starts. Its media calls go through the same
 broker (§10).
 
+A managed vault (`serve --managed-by-hypnos`) reads no config file and no
+environment. Its supervisor passes the models table as `--models-file <path>`.
+The path is absolute and names a TOML file that holds only the `[models]`
+table, written as above. Relative `prompt_file` paths resolve beside it. Every
+provider there names its key with `key_secret`; a `key_env` provider or a
+`[models.decisions.system_one]` seat (whose bearer is an environment variable)
+stops the vault at start. Without the flag a managed vault runs with no model
+seats: its ladder is the rule table and the owner's asks.
+
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
@@ -484,6 +493,16 @@ summary. A mark that fails its pass keeps why and waits for the next
 `self.compact`. A run whose compaction is off answers its marks with
 `compaction is off for this run`. The ledger is node-local and follows the
 run's route, so an off-record room's folds stay in its overlay.
+
+A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
+field's value, never as its value. `describe("sc12")` says what it names,
+where it was found and whether a reveal would deliver at once, ask the owner
+or be refused. `reveal({handle, why})` returns a pending reveal every time,
+and `wait(pending)` answers `pending`, `denied`, `expired` or `granted`. The
+first `granted` answer carries the value as `value` (or `value_base64`), and
+later ones carry only the receipt. The run's record keeps that answer without
+the value, so a resumed step must reveal again. The rows are `reveal`,
+`reveal.wait` and `reveal.describe` on every other door too.
 
 ### Reader children, summaries and fold receipts
 

@@ -131,13 +131,7 @@ pub fn normalize_platform_announcement_body(body: &Value) -> Cow<'_, Value> {
         "message_type".to_owned(),
         Value::String(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE.to_owned()),
     );
-    for key in [
-        "spkr",
-        "speaker",
-        "voice",
-        "attribution",
-        "render_voice",
-    ] {
+    for key in ["spkr", "speaker", "voice", "attribution", "render_voice"] {
         normalized.insert(
             key.to_owned(),
             Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
@@ -263,9 +257,7 @@ pub fn core_text_pairs<'t>(
 }
 
 /// A row's text fields as the pairs [`core_text_pairs`] reads.
-pub(crate) fn text_pairs(
-    text: &[CoreWriteTextField],
-) -> impl Iterator<Item = (&str, &str)> {
+pub(crate) fn text_pairs(text: &[CoreWriteTextField]) -> impl Iterator<Item = (&str, &str)> {
     text.iter()
         .map(|entry| (entry.field.as_str(), entry.value.as_str()))
 }
@@ -309,7 +301,10 @@ pub(crate) fn entity_id(value: &str, field: &str) -> MemoryResult<EntityId> {
 }
 
 /// The entity `field` names, if any.
-pub(crate) fn optional_entity_id(value: Option<&str>, field: &str) -> MemoryResult<Option<EntityId>> {
+pub(crate) fn optional_entity_id(
+    value: Option<&str>,
+    field: &str,
+) -> MemoryResult<Option<EntityId>> {
     value.map(|value| entity_id(value, field)).transpose()
 }
 
