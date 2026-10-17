@@ -702,6 +702,22 @@ it from the cases where a person changed the answer. A host passes it to
 `DecisionBandPolicy::set_person_threshold`. Without the row, the person
 reading is recorded on every receipt and routes nothing.
 
+"Ask a person?" asks for escalation, not for an actor. Who the ask goes to is
+the caller's: it sets `DecisionLadder.ask_to` to an `AskTo` (the role asked,
+`Responsible { actor, project }`, `Board { project }` or `Owner`; the highest
+`RoleRank` it may climb to; and the act an answer authorises). With none set,
+the ask goes to the vault's owners, as before. When `DecisionAsks` queues the
+ask, the vault resolves the first role on the chain that has a live holder:
+the responsible actor, then the boards of its project and that project's
+parents, then the owners, cut at the ceiling. A live person or a live bound
+agent can hold a role. An `ESignature` or `Payment` act resolves only to a
+person. When no role up to the ceiling has a holder, the ask stays unresolved;
+it never goes wider. A holder answers through `DecisionAsks::answer_as` with
+its verified `WriteActor`, and the door reads the role's holders again before
+it takes the answer. The owner door answers any ask whose ceiling is `Owner`.
+`DecisionAsks::climb` moves an open ask to the next role. The answer keeps the
+role and the kind of actor that gave it.
+
 To tune it, the host keeps each changed answer
 (`HumanDecisionRequest::changed_by`) with `Vault::record_person_changed_answer`,
 bound to its ask. The Coach's nightly `coach.person_threshold` job (a host job:

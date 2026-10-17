@@ -14,7 +14,7 @@ mod task_ask;
 #[cfg(test)]
 mod standing_tests;
 
-pub(crate) use arrival::project_arrivals_in_txn;
+pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
 pub(crate) use graph_ask::validate_decision as validate_unit_decision;
 pub use graph_ask::{
     GraphAnswerer, GraphAskFailure, GraphAskReceipts, GraphAskResult, GraphContextSource,
