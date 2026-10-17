@@ -403,6 +403,7 @@ impl ModelRuntime {
                 }
                 None
             });
+        router.name_aliases(&config.aliases);
         Self {
             seats,
             router: (!router.is_empty()).then(|| Arc::new(router)),

@@ -25,7 +25,8 @@ use crate::sync::window_rows::{
 enum CompactOutcome {
     /// Persisted state existed and was rebuilt through a shallow snapshot.
     Compacted,
-    /// No persisted state for this window — nothing to do.
+    /// No persisted state for this window — nothing to compact. While a
+    /// withdrawn generation is due, its queued sends went (OF-013).
     Empty,
     /// The window changed between the read phase and the compaction write
     /// txn (a `u:w:` row was added/removed, or the `d:w:` snapshot was
@@ -131,7 +132,16 @@ pub(super) fn compact_all_windows(
     if let Err(err) = crate::note::scrub_pending_citations(vault) {
         return Ok(WindowSweepState::Failed(format!("{:?}", err.kind())));
     }
-    let (labels, malformed) = persisted_window_labels(vault)?;
+    let (mut labels, malformed) = persisted_window_labels(vault)?;
+    // OF-013: a window that holds queued sends and no persisted state has
+    // nothing to compact, but while a withdrawn generation is due its sends
+    // go as a compacted window's do.
+    if !withdrawn.due.is_empty() {
+        let rtxn = vault.store.env.read_txn()?;
+        labels.extend(crate::sync::queue::queued_window_labels_in_txn(
+            vault, &rtxn,
+        )?);
+    }
     let mut state = if malformed {
         WindowSweepState::Failed(format!("{:?}", crate::error::ErrorKind::InvalidKey))
     } else {
@@ -308,6 +318,9 @@ fn compact_window_with(
         (snapshot, rows)
     };
     if snapshot_bytes.is_none() && update_rows.is_empty() {
+        if !withdrawn.due.is_empty() {
+            return scrub_stateless_window_sends(vault, &window);
+        }
         return Ok(CompactOutcome::Empty);
     }
 
@@ -333,6 +346,10 @@ fn compact_window_with(
     // across hex-casing aliases (fail closed). Tombstones map untouched
     // (permanent); receipt entities are receipt-ids, never erased ids.
     scrub_erased_ids_from_doc(vault, &doc, erased)?;
+
+    // OF-522: a turn row of a room this vault deleted leaves the window; the
+    // shallow export below drops its history, so nothing is pinned.
+    crate::sync::room_turns::scrub_deleted_room_turns(vault, &doc, None)?;
 
     // OF-013: a withdrawn generation's live carrier becomes its keyframe
     // envelope before the shallow export drops the history that held its
@@ -469,6 +486,49 @@ fn compact_window_with(
     }
 }
 
+/// Drops the queued sends of window `window`, which holds no persisted state
+/// (OF-013), once the write txn finds none there still; state that landed
+/// since the read defers the window. Delete-bearing sends stay. No state is
+/// left to re-send what this drops, so the drop is logged.
+#[cfg(feature = "sync")]
+fn scrub_stateless_window_sends(vault: &Vault, window: &str) -> Result<CompactOutcome> {
+    let label = window.to_owned();
+    let update_prefix = format!("{window}:");
+    let raced = std::cell::Cell::new(false);
+    let result = vault.with_write_txn_grouped(|wtxn| {
+        if WINDOW_SNAPSHOT.get(&vault.store, wtxn, &label)?.is_some() {
+            raced.set(true);
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::SweepSnapshotRace,
+            ));
+        }
+        if !WINDOW_UPDATE
+            .scan_keys(&vault.store, wtxn, update_prefix.as_bytes())?
+            .is_empty()
+        {
+            raced.set(true);
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::SweepUpdateRowsRace,
+            ));
+        }
+        crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window)
+    });
+    match result {
+        Ok(dropped) => {
+            if dropped > 0 {
+                tracing::warn!(
+                    dropped,
+                    "sweep: queued sends of a window with no persisted state dropped — \
+                     no state is left to re-send them"
+                );
+            }
+            Ok(CompactOutcome::Empty)
+        }
+        Err(_) if raced.get() => Ok(CompactOutcome::RacedDefer),
+        Err(err) => Err(err),
+    }
+}
+
 /// Every row id window `doc` carries, live or tombstoned.
 #[cfg(feature = "sync")]
 fn carried_ids(doc: &loro::LoroDoc) -> Vec<EntityId> {
@@ -591,18 +651,38 @@ fn inject_race_before_compact_write(
 }
 
 /// Removes every entities/edges map key referencing an erased id (any
-/// hex-casing alias), committing once if anything changed. The tombstones
-/// map is PERMANENT and untouched.
+/// hex-casing alias), and every late pad of a destroyed world whatever its
+/// key, committing once if anything changed. The tombstones map is PERMANENT
+/// and untouched.
 #[cfg(feature = "sync")]
 fn scrub_erased_ids_from_doc(
     vault: &Vault,
     doc: &loro::LoroDoc,
     erased: &BTreeSet<EntityId>,
 ) -> Result<()> {
-    use crate::sync::loro_support::{map_delete, map_get_bytes};
+    use crate::sync::loro_support::{map_delete, map_for_each_bytes, map_get_bytes};
     use crate::sync::window::{CarrierRemoval, mark_removed_carriers_first};
 
-    if erased.is_empty() {
+    // A destroyed world's late pad goes with the cut, so a pad the old
+    // shallow root alone held does not outlive its world (Docs Q27). The
+    // pass runs with no erased id too.
+    let entities = doc.get_map("entities");
+    let mut doomed_entities = BTreeSet::new();
+    let mut pads = Vec::new();
+    map_for_each_bytes(&entities, |key, bytes| {
+        if crate::world_keys::pad_body_world(bytes).is_some() {
+            pads.push((key.to_owned(), bytes.to_vec()));
+        }
+    });
+    if !pads.is_empty() {
+        let rtxn = vault.store.env.read_txn()?;
+        for (key, blob) in pads {
+            if crate::world_keys::late_pad_in_txn(&vault.store, &rtxn, &blob)? {
+                doomed_entities.insert(key);
+            }
+        }
+    }
+    if erased.is_empty() && doomed_entities.is_empty() {
         return Ok(());
     }
 
@@ -614,10 +694,8 @@ fn scrub_erased_ids_from_doc(
             hex
         })
         .collect();
-    let entities = doc.get_map("entities");
     let mut source_ids = BTreeSet::new();
-    let mut doomed_entities = BTreeSet::new();
-    crate::sync::loro_support::map_for_each_bytes(&entities, |key, bytes| {
+    map_for_each_bytes(&entities, |key, bytes| {
         let Some(header) = crate::batch::EntityMetadataHeader::parse(bytes) else {
             return;
         };
