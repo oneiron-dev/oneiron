@@ -729,8 +729,16 @@ run), the child's birth fails. It is never moved to another model. The pick
 and the placement go through the host's decision ladder (section 13), each on
 its own 10-second clock. A seat whose definition this vault does not hold is
 skipped, with a log line. With no seat, the server lends no planner: a spawn
-that names an `agent` runs it directly, and a planned spawn or a leader call
-answers `planner_unbound`.
+that names an `agent` runs it directly, and a planned spawn or a leader's
+advice or pattern call answers `planner_unbound`.
+
+A leader's `self.leader.split({leader?, slice?})` reads no planner. It splits
+the TASK her run realizes into a subproject under that TASK's project (her
+lease names both), led by `leader` (herself when unset) over `slice` (the
+parent's when unset). The parent still sees one checkbox. The server signs the
+spawn with its host key: the managed issuer, or the one `auth_secret` derives;
+a host with neither answers `slip_issuer_unbound`. A TASK wraps one child, so a
+retry answers the same child.
 
 ## 7. Raw calls
 
@@ -1084,9 +1092,17 @@ width is not its space's declared width.
 
 The verbs, each the owner's and checked against the vault's inference policy:
 
-- `GET /v1/ai/options?operation=image&inputs=text,image`: every row that
-  serves the call (text seats' rungs too), where it runs, what it takes, its
-  rates, and `media_units_left`.
+- `GET /v1/ai/options?operation=image&inputs=text,image`: every row the
+  caller could call now (text seats' rungs too), where it runs, what it
+  takes, its rates, `cost` (its price per million tokens as the vault's model
+  registry holds it; `null` when no registered row prices it), `units_left`
+  (what the meter its call spends has left: the raw routes' for a text row,
+  the media meter for the rest), and `media_units_left`. A caller the `ai.*`
+  doors refuse (anyone not owner-grade, a run's agent too) gets no rows. A row
+  the vault's inference policy refuses is left out, as is a rung whose
+  provider is down, whose one probation request is out, or that a limit
+  holds, until it is back. The facade's and MCP's `ai.options` list the same
+  rows.
 - `POST /v1/ai/image`, `/speech`, `/transcribe`, `/embed`:
   `{"prompt": "...", "input": [parts], "references": [parts], "params": {...},
   "model": "<row or seat id>"}`. A part is `{"kind": "text", "text": ...}` or
@@ -1391,6 +1407,20 @@ locates its target in a `no_accessibility_tree` screenshot. A Return, or
 typed text with a line break, takes the press of a send, and every effect's
 receipt screenshot has its password fields blacked out before it is held.
 The desktop rides the `oneiron.browser` pack and its grants.
+
+The owner can take a run's desktop over and hand it back. A program asks
+with `self.desktop.handover({reason})`, or the owner takes it unasked, at
+`/v1/owner/desktops`: `GET` lists the bound run desktops with who has each
+and the agent's ask; `POST take`, `screen` (the whole display as a PNG,
+unmasked, never kept), `input` (`{"run", "action": {"kind": "click" |
+"type" | "key" | "hotkey" | "scroll", ...}}` at that PNG's pixels) and
+`return` each take `{"run"}`. While the agent waits on its ask and while the
+owner holds the desktop, every desktop verb refuses `desktop_taken_over` (a
+batch stops `NEEDS_YOU`) and no receipt screenshot is taken. Handing it back
+writes the takeover's record (who, the ask, when it was taken and returned,
+how many inputs) as the run's `desktop_takeover` sandbox receipt, and the
+agent's next desktop answer carries it as `takeover`. The desktop lives as
+long as the run's door: one `execute_code` entry, or a resident run.
 
 ## 11. When a provider refuses for a limit
 
@@ -1766,6 +1796,13 @@ Answers never go to the owner's queue: the slide door holds its ceiling at
 Big. On a server the engine's
 `Memory::artifacts_ask_through` answers these asks. Until its door is in the
 SDK table, `vault.artifacts.review_slides` is the only door that serves one.
+
+A `vault.artifacts.review_slides` unit may name no image (neither
+`review_image` nor `review_image_ref`). On a host with the LibreOffice slide
+renderer, the door then renders that slide from the head itself, on local CPU
+and unmetered, and saves the host renderer's name on the judgment. Without the
+renderer, or when the render fails, the unit is read for its structure only
+and abstains. It is never refused. A unit that names both images is refused.
 
 ## 14. Tagger tiers and the teacher's handoff
 
