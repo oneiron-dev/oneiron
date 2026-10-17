@@ -204,11 +204,13 @@ pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{ConnectOffer, HostSlipIssuer};
 pub use task_actor::AdmittedTaskGrant;
 pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub use vault_api::AuthorityEntryStatus;
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
 pub(crate) use adopted_evidence::adopted_evidence_in_txn;
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
+pub(crate) use checkpoint_adopt::adopted_authority_checkpoint_in_txn;
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };

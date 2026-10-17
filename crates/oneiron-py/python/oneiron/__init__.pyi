@@ -491,8 +491,8 @@ class Oneiron:
         def questions(self) -> "Oneiron._VaultQuestionsVerbs": ...
         @property
         def decisions(self) -> "Oneiron._VaultDecisionsVerbs": ...
-        def commit(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
-            """Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."""
+        def commit(self, input: Facade.CommitRequest) -> list[Facade.CommitOutcome]:
+            """Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."""
         def remember(self, input: Facade.ClaimInput) -> Facade.CommitReceipt:
             """Commits one claim through the gate, the same as vault.claims.upsert."""
         def forget(self, input: Facade.ForgetRequest) -> list[Facade.CommitReceipt]:
@@ -552,8 +552,8 @@ class Oneiron:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
-        def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
-            """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
+        def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitOutcome]:
+            """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
     class _VaultReceiptsVerbs:
         def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
@@ -641,7 +641,7 @@ class Oneiron:
             """The owner stops one connector event subscription; the agent's key for the channel stays."""
     class _VaultAuthorityVerbs:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
-            """One page of the dated authority log audit: grants, revokes and confirms, for the owner."""
+            """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
         @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs": ...
     class _VaultAuthorityHandoffAlarmsVerbs:
