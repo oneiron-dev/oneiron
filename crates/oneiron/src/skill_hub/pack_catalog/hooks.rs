@@ -660,6 +660,14 @@ impl Vault {
                 enabled,
             };
             batch = batch.claim_candidate(&id, binding_candidate(&row)?, &envelope, occurred, at);
+            // The body passed under this engine's contract (ARCH-0080 §8 regen).
+            crate::runtime_hooks::note_bound_hook_in_txn(
+                self,
+                txn,
+                id,
+                &row.body_hash,
+                hook.intent.as_deref(),
+            )?;
             bound.push(id);
         }
         for (id, mut row) in prior {
