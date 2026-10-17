@@ -190,7 +190,16 @@ impl SessionBinding<'_> {
 
     /// A writer for one result body: into the session's own body directory
     /// while the room is off record, the vault's `bodies/` once on record.
+    /// Each value custody knows is replaced by its handle as it streams
+    /// (OF-560 C), as on the canonical vault.
     fn output_sink(&self) -> Result<BodySink> {
+        let known = self.answered(|| self.session.known_values())?;
+        Ok(self.script_sink()?.sweeping(known))
+    }
+
+    /// [`Self::output_sink`] with no sweep, for a step's program, which a
+    /// resumed step runs again as stored.
+    fn script_sink(&self) -> Result<BodySink> {
         let dir = self.answered(|| self.session.body_dir(self.route.target()))?;
         Ok(BodySink::new(
             dir,
@@ -738,7 +747,7 @@ impl<'a> ExecutorStorage<'a> {
     pub(crate) fn code_run_script_sink(&self) -> Result<BodySink> {
         match self {
             Self::Canonical(vault) => vault.code_run_script_sink(),
-            Self::Session(binding) => binding.output_sink(),
+            Self::Session(binding) => binding.script_sink(),
         }
     }
 
