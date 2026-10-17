@@ -83,6 +83,38 @@ pub fn refresh_question(
     )
 }
 
+/// [`refresh_question`] by hand through a graph answerer, as the standing
+/// pump answers a due question (OF-506): every unit the question's current
+/// version covers, each shown with its eligible neighbours and the media
+/// its record takes, a full decision keeping its own receipt.
+/// `answerer_for` makes the answerer from the question's record once, when
+/// the first unit is read. A paused question answers nothing.
+pub fn refresh_question_with<A: GraphAnswerer>(
+    vault: &Vault,
+    actor: WriteActor,
+    principal: EntityId,
+    question: EntityId,
+    now: u64,
+    mut answerer_for: impl FnMut(&QuestionRecord) -> Result<A>,
+) -> Result<Vec<AnswerRecord>> {
+    let mut answerer: Option<A> = None;
+    refresh_with(
+        vault,
+        actor,
+        principal,
+        question,
+        RefreshTrigger::Manual,
+        now,
+        &mut |record, unit, kind, body| {
+            if answerer.is_none() {
+                answerer = Some(answerer_for(record)?);
+            }
+            let answerer = answerer.as_mut().expect("made above");
+            graph_proposal(vault, record, answerer, unit, kind, body)
+        },
+    )
+}
+
 fn refresh_with(
     vault: &Vault,
     actor: WriteActor,
