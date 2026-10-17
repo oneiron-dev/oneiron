@@ -75,7 +75,7 @@ fn propose_in_txn(
     if holders.is_empty() {
         return Err(denied());
     }
-    let proposal = PolicyRowProposal {
+    let mut proposal = PolicyRowProposal {
         proposal_id: vault.store.clock.entity_id()?.to_hex(),
         author: author.to_hex(),
         change,
@@ -83,7 +83,7 @@ fn propose_in_txn(
         status: PolicyProposalStatus::Pending,
         at: now,
     };
-    ledger::put_proposal_in(vault, txn, &proposal)?;
+    ledger::put_proposal_in(vault, txn, &mut proposal)?;
     Ok(proposal)
 }
 
@@ -185,7 +185,7 @@ impl Vault {
                 holder: holder_actor.to_hex(),
             },
         };
-        ledger::put_proposal_in(self, &mut txn, &proposal)?;
+        ledger::put_proposal_in(self, &mut txn, &mut proposal)?;
         txn.commit()?;
         Ok(receipt)
     }

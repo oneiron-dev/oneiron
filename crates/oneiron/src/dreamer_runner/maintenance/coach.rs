@@ -75,16 +75,26 @@ pub const COACH_ISSUES_FACET: &str = "coach.issues";
 /// heal for, an invented example of the failure and the shadow result of its
 /// own candidate fix, each verified in the vault before either may leave.
 pub const COACH_CODE_FIX_FACET: &str = "coach.code_fix";
+/// Judge-swap upkeep (ARCH-0053, OF-184): the incumbent judge's retests on
+/// its own kept judgments, or another judge's shadow pass over them, which
+/// rules whether that judge takes over.
+pub const COACH_JUDGE_SWAP_FACET: &str = "coach.judge_swap";
+/// Tradeoff routing (FIX-LIST 817): each pending project-bound skill tradeoff
+/// ask is handed to the leader of every project board it reached, to ask on
+/// one of that project's TASKs.
+pub const COACH_TRADEOFF_ROUTE_FACET: &str = "coach.tradeoff_route";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 4] = [
+const HOST_FACETS: [&str; 6] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
     COACH_TRAINING_OFFER_FACET,
+    COACH_JUDGE_SWAP_FACET,
+    COACH_TRADEOFF_ROUTE_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 7] = [
@@ -217,6 +227,31 @@ impl Vault {
     ) -> Result<AttributionSweepReport> {
         self.require_coach_attempt(attempt, COACH_SKILL_DISCOVERY_FACET)?;
         run_task_attribution_sweep_with_decisions(self, limit, source, decisions)
+    }
+
+    /// Judge-swap upkeep as the Coach under a leased `coach.judge_swap`
+    /// attempt: the incumbent's retests, or another judge's shadow pass, over
+    /// the judgments `host` kept.
+    pub fn run_coach_judge_swap(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        host: &dyn crate::skill_optimize::JudgeShadowHost,
+        now: u64,
+    ) -> Result<crate::skill_optimize::JudgeSwapReport> {
+        self.require_coach_attempt(attempt, COACH_JUDGE_SWAP_FACET)?;
+        crate::skill_optimize::run_judge_swap(self, host, now)
+    }
+
+    /// Tradeoff routing as the Coach under a leased `coach.tradeoff_route`
+    /// attempt: each pending project-bound tradeoff ask's route call, handed
+    /// to the leader of each project it reached. The Coach itself never speaks.
+    pub fn run_coach_tradeoff_route(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        now: u64,
+    ) -> Result<crate::skill_optimize::TradeoffRouteReport> {
+        self.require_coach_attempt(attempt, COACH_TRADEOFF_ROUTE_FACET)?;
+        crate::skill_optimize::run_tradeoff_route(self, now)
     }
 
     /// Keeps one case where a person changed the ladder's answer (from

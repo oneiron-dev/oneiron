@@ -9,12 +9,17 @@ use crate::{
 };
 use rmpv::Value;
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the conflict, its members and decisions join the writer's fence and clock"
+)]
 pub(super) fn park_open_conflict(
     vault: &Vault,
     actor: WriteActor,
     attempt: crate::attempt_queue::AttemptId,
     conflict: &ConflictSet,
     members: &[&VerifiedCandidate],
+    decisions: &[super::KeptDecision],
     fence: &super::resources::ConsolidationFence,
     now: u64,
 ) -> Result<EntityId> {
@@ -30,13 +35,20 @@ pub(super) fn park_open_conflict(
         .ok_or_else(|| super::support::invalid_consolidation("open conflict has no evidence"))?;
     let meet = verified.meet();
     let evidence = verified.envelope(Vec::new());
-    let provenance = vec![
+    let mut provenance = vec![
         (Value::from("surface"), Value::from("dreamer")),
         (
             Value::from("run"),
             Value::from(crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())),
         ),
     ];
+    // The decisions that left it open ride beside it (ARCH-0076).
+    if !decisions.is_empty() {
+        provenance.push((
+            Value::from(crate::dreamer_promotion::PROMOTION_PROVENANCE_DECISIONS_KEY),
+            super::provenance::kept_decisions_value(decisions)?,
+        ));
+    }
     let mut candidate = ClaimCandidate::new(
         crate::claim::PREDICATE_CONFLICT_OPEN,
         ClaimSubject::Entity(conflict.identity.subject),

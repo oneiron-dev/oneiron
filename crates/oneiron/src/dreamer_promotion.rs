@@ -293,11 +293,15 @@ fn promote_one(
     let mut envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
-        WriteProvenance::new(promotion_provenance(
-            run,
-            &candidate.provenance_chain,
-            import_review.as_deref(),
-        ))
+        WriteProvenance::new(
+            promotion_provenance(
+                run,
+                &candidate.provenance_chain,
+                import_review.as_deref(),
+                &candidate.decisions,
+            )
+            .map_err(|error| error.to_string())?,
+        )
         .map_err(|error| error.to_string())?,
         // Auto for every native candidate (ARCH-0067 §7). The gate may still
         // refuse; it may never turn this into an owner-review row.
@@ -584,7 +588,8 @@ fn promotion_provenance(
     run: &DreamerRunContext,
     chain: &[ConsolidationProvenanceHop],
     import_review: Option<&str>,
-) -> Value {
+    decisions: &[crate::dreamer_consolidation::KeptDecision],
+) -> Result<Value> {
     let mut entries = vec![
         (
             Value::from("surface"),
@@ -628,11 +633,21 @@ fn promotion_provenance(
             Value::from(review),
         ));
     }
-    Value::Map(entries)
+    if !decisions.is_empty() {
+        entries.push((
+            Value::from(PROMOTION_PROVENANCE_DECISIONS_KEY),
+            crate::dreamer_consolidation::kept_decisions_value(decisions)?,
+        ));
+    }
+    Ok(Value::Map(entries))
 }
 
 /// Envelope-provenance key carrying the typed consolidation lineage.
 pub const PROMOTION_PROVENANCE_CHAIN_KEY: &str = "peer_answer_chain";
+
+/// Envelope-provenance key carrying the typed decisions behind a Dreamer
+/// write (ARCH-0076): each whole decision, and the ask it went up as.
+pub const PROMOTION_PROVENANCE_DECISIONS_KEY: &str = "decisions";
 
 /// Re-reads a landed claim and checks it is the claim we wrote. A missing
 /// or mismatched read moves the candidate to `rejected`. The source is

@@ -29,6 +29,7 @@ import type {
 export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
+selfFocusScratchpadRecall(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
@@ -138,6 +139,9 @@ vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
 vaultLensesDefault(input: unknown): unknown
 vaultDisclosureOffer(input: unknown): unknown
+reveal(input: unknown): unknown
+revealWait(input: unknown): unknown
+revealDescribe(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
@@ -178,6 +182,7 @@ vaultProjectsPropose(input: unknown): unknown
 vaultProjectsProposals(input: unknown): unknown
 vaultProjectsDismissCard(input: unknown): unknown
 vaultProjectsConfirm(input: unknown): unknown
+vaultProjectsRosterWrite(input: unknown): unknown
 vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
@@ -223,6 +228,8 @@ vaultDecisionsAsksClimb(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
+connectorCall(input: unknown): unknown
+connectorSchema(input: unknown): unknown
 vaultCommit(input: unknown): unknown
 vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown
@@ -241,7 +248,23 @@ vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
+vaultConversationsCreate(input: unknown): unknown
+vaultConversationsTurnsCreate(input: unknown): unknown
+vaultConversationsRecordsAppend(input: unknown): unknown
+vaultBatch(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
+vaultArtifactsBodyImport(requestJson: string): string
+vaultArtifactsBodyHead(requestJson: string): string
+vaultArtifactsBodyRead(requestJson: string): string
+vaultArtifactsBodyCommits(requestJson: string): string
+vaultArtifactsBodyEdit(requestJson: string): string
+vaultArtifactsBodyForkOpen(requestJson: string): string
+vaultArtifactsBodyForkEdit(requestJson: string): string
+vaultArtifactsBodyForkDiff(requestJson: string): string
+vaultArtifactsBodyForkMerge(requestJson: string): string
+vaultArtifactsBodyForkDiscard(requestJson: string): string
+vaultArtifactsBodyExport(requestJson: string): string
+vaultArtifactsBodyPreview(requestJson: string): string
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
@@ -251,6 +274,8 @@ connectorOutboundSchedule(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown
+vaultNotesSeal(requestJson: string): string
+vaultNotesLifecycle(requestJson: string): string
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

@@ -96,6 +96,11 @@ impl BoardTargets {
     pub(super) fn actor(&self) -> Option<EntityId> {
         self.actor.map(|(actor, _)| actor)
     }
+
+    /// The room the board renders, wherever it was named.
+    pub(super) fn room_id(&self) -> Option<EntityId> {
+        self.room.as_ref().map(|room| room.id)
+    }
 }
 
 /// The caller's entity principal and declared class, when it has both.
@@ -250,7 +255,9 @@ pub(super) fn board_parts(
             };
             rows.attach_people(people, &children);
             let you = oneiron::context_board::render_you_line(&forks, &rows.intents);
-            (rows.render(), you)
+            let mut tasks = rows.render();
+            tasks.pin_hook_tasks(&rows.intents, hook_pins);
+            (tasks, you)
         }
         None => (
             oneiron::context_board::TasksSection {

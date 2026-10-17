@@ -81,6 +81,7 @@ pub(crate) use revision::{
     PROJECT_REVISION_SHORT_ID_PREFIX, is_project_revision_type, project_revision_type,
 };
 pub use revision::{ProjectRevision, ProjectRevisionHash, ProjectRevisionProof};
+pub use roster::{ProjectRosterWriteOutcome, ProjectRosterWriteRequest};
 #[cfg(test)]
 mod review_tests;
 pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
@@ -608,7 +609,7 @@ impl Vault {
             });
         // A leader's signed spawn needs no owner birth; the shared door
         // verifies its proof.
-        if EntityStoreRead::port_entity_with_raw(&self.store, txn, &id, |_| Ok(()))?.is_none()
+        if !EntityStoreRead::port_entity_present(&self.store, txn, &id)?
             && body.write_proof.is_none()
         {
             let posture = self.privacy_posture();
@@ -754,8 +755,7 @@ impl Vault {
         if parent.leader != actor.to_hex() {
             return Err(RecordError::InvalidProjectBody("only the leader may spawn").into());
         }
-        if EntityStoreRead::port_entity_with_raw(&self.store, txn, &child_id, |_| Ok(()))?.is_some()
-        {
+        if EntityStoreRead::port_entity_present(&self.store, txn, &child_id)? {
             return Err(RecordError::InvalidProjectBody("subproject id already exists").into());
         }
         let remaining = parent
@@ -829,7 +829,7 @@ impl Vault {
                 )
                 .into());
             }
-            if EntityStoreRead::port_entity_with_raw(&self.store, txn, &id, |_| Ok(()))?.is_some()
+            if EntityStoreRead::port_entity_present(&self.store, txn, &id)?
                 || crate::gate::project_depth::birth_for_project(&self.store, txn, id)?.is_some()
             {
                 return Err(crate::error::RecordError::InvalidProjectBody(

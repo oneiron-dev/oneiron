@@ -349,7 +349,7 @@ impl Vault {
             .ok_or(Error::CorruptedIndex("legacy manifest header"))?;
         if crate::registry::zone_of(header.entity_type)
             != crate::registry::TypeByteZone::CompiledProduct
-            || crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &target)?.is_some()
+            || crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &target)?
         {
             return Err(Error::InvalidConfig(
                 "manifest re-key requires legacy source and fresh target".into(),
