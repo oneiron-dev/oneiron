@@ -486,7 +486,9 @@ pub(crate) fn is_hook_binding(body: &crate::ClaimBody) -> bool {
         .is_some_and(|row| row.version == HOOK_BINDING_VERSION)
 }
 
-/// Every live, approved hook binding, enabled or not.
+/// Every live, approved hook binding, enabled or not. A claim whose payload
+/// is no binding of its CODE entity is skipped with a warning, so one bad row
+/// fails no call; a storage error still fails.
 fn bindings_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -504,21 +506,27 @@ fn bindings_in_txn(
             continue;
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        if body.predicate != PREDICATE || !is_hook_binding(&body) {
-            continue;
-        }
-        let row: PackHookBinding = serde_json::from_str(body.value.as_str().unwrap_or_default())
-            .map_err(|_| invalid("hook binding is malformed"))?;
-        if body.subject != ClaimSubject::Entity(row.code) {
-            return Err(invalid("hook binding subject is not its CODE entity"));
-        }
-        if body.lifecycle == ClaimLifecycleStatus::Active
-            && matches!(
+        if body.predicate != PREDICATE
+            || !is_hook_binding(&body)
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || !matches!(
                 body.approval,
                 ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
             )
         {
-            result.push((id, row));
+            continue;
+        }
+        match serde_json::from_str::<PackHookBinding>(body.value.as_str().unwrap_or_default()) {
+            Ok(row) if body.subject == ClaimSubject::Entity(row.code) => result.push((id, row)),
+            Ok(_) => tracing::warn!(
+                claim = %id.to_hex(),
+                "hook binding subject is not its CODE entity; skipped"
+            ),
+            Err(error) => tracing::warn!(
+                claim = %id.to_hex(),
+                %error,
+                "hook binding is malformed; skipped"
+            ),
         }
     }
     Ok(result)
@@ -587,7 +595,7 @@ impl Vault {
     /// Owner consent binds an installed pack's hooks. A hub install lands
     /// the bytes; content never installs a hook by itself (ARCH-0080 §8).
     pub fn bind_pack_hooks(&self, owner: &AuthenticatedOwner, pack: &str) -> Result<Vec<EntityId>> {
-        self.with_write_txn_grouped(|txn| {
+        let bound = self.with_write_txn_grouped(|txn| {
             let receipt = self
                 .installed_pack_in_txn(txn, pack)?
                 .ok_or_else(|| invalid("pack is not installed"))?;
@@ -596,7 +604,9 @@ impl Vault {
                 .pack_source_in_txn(txn, &source_id)?
                 .ok_or_else(|| invalid("pack source missing"))?;
             self.bind_pack_hooks_in_txn(txn, owner, source_id, &source)
-        })
+        })?;
+        self.verb_hook_bindings_changed();
+        Ok(bound)
     }
 
     /// The owner's dial on one binding. The CODE entity stays.
@@ -659,7 +669,8 @@ impl Vault {
 
     /// Each hook of `source` becomes a CODE entity, derived from the pack
     /// source, plus its owner-approved binding. A binding the source no
-    /// longer carries, or whose body moved, stops.
+    /// longer carries, or whose body moved, stops. The caller tells the verb
+    /// hooks once its write commits, so no reader caches the list before it.
     pub(super) fn bind_pack_hooks_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -740,7 +751,6 @@ impl Vault {
             }
         }
         batch.apply(txn)?;
-        self.verb_hook_bindings_changed();
         Ok(bound)
     }
 }

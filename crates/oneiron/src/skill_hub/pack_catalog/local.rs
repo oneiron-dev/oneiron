@@ -69,7 +69,7 @@ impl Vault {
         // The put is the owner's consent, advisories included: the tree's OSV
         // row is evidence on its hash, and holds nothing here.
         let advisories = self.pack_advisories(source, false, crate::unix_seconds_now())?;
-        self.with_write_txn_grouped(|txn| {
+        let disposition = self.with_write_txn_grouped(|txn| {
             let holder = owner.revalidate_in_txn(self, txn)?.to_hex();
             let at = crate::unix_seconds_now();
             let occurred = TimeRange { start: at, end: at };
@@ -105,7 +105,12 @@ impl Vault {
                 self.bind_pack_hooks_in_txn(txn, owner, source_id, source)?;
             }
             Ok(disposition)
-        })
+        })?;
+        // The bindings changed once the put committed.
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.verb_hook_bindings_changed();
+        }
+        Ok(disposition)
     }
 }
 

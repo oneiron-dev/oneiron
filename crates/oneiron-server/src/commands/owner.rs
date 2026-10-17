@@ -453,8 +453,12 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         .ensure_embedded_owner_actor()
         .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))?;
     // The owner's own `vault.export`, so its verb hooks run around it
-    // (ARCH-0080 §3).
+    // (ARCH-0080 §3). The export's own owner check comes first, so a hook
+    // never fires on an export it refuses.
     let memory = vault.memory(owner, oneiron::edge::EdgeActorClass::Human);
+    memory
+        .admit_export(None)
+        .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
     let export = oneiron::task_verb::verb_hook_boundary::typed_row(
         &memory,
         "vault.export",

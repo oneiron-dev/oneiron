@@ -14,7 +14,7 @@
 //! the NDJSON lines as they come when it sets `stream`. Both run the same
 //! producer and checkpoints; a client that goes away never stops it. The
 //! turn-action worker's Continue and Retry generate through the same
-//! [`begin_answer`].
+//! [`begin_answer`], under the same `host.turn.generate` hooks.
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -388,25 +388,6 @@ fn start_turn(
     let engine = |error: &dyn std::fmt::Display| {
         refused(StatusCode::CONFLICT, "turn_refused", error.to_string())
     };
-    // `host.turn.generate` (ARCH-0080 §5): its pre chain runs before the
-    // turn's request freezes at admission, so a block a hook adds lands this
-    // turn, and a skip ends the turn before anything is written. Hooks write
-    // and run their sandbox, so they run off the runtime's workers.
-    let generate_args = json!({
-        "room": request.conversation_ref,
-        "scope": Value::Null,
-        "board_epoch": Value::Null,
-    });
-    let generating = crate::server::blocking(|| {
-        vault.pre_verb_hooks(
-            turn_generate_call(actor, invocation),
-            generate_args.clone(),
-            &|rewritten: &Value| host_args_kept(&generate_args, rewritten),
-        )
-    })
-    .map_err(|error| engine(&error))?
-    .map_err(|stop| hook_stopped(&stop))?;
-
     let mut messages: Vec<LlmMessage> = instructions
         .into_iter()
         .map(|text| text_message(LlmMessageRole::System, text))
@@ -442,6 +423,13 @@ fn start_turn(
                 refusal.to_string(),
             ),
         })?;
+    // `host.turn.generate` (ARCH-0080 §5): its pre chain runs once the turn
+    // is admitted, so a refused admission leaves no hook's blocks or notes,
+    // and before the user's turn is witnessed, so a skip or an ask ends the
+    // turn before anything lands and a retry of it witnesses once.
+    let generating = turn_generate_pre(&vault, actor, invocation, &request.conversation_ref)
+        .map_err(|error| engine(&error))?
+        .map_err(|stop| hook_stopped(&stop))?;
 
     // The assistant message closes after the vault's idle timeout without
     // an append; read before anything is written.
@@ -574,6 +562,30 @@ fn turn_generate_call(actor: EntityId, invocation: Option<InvocationId>) -> Verb
     }
 }
 
+/// Runs `host.turn.generate`'s pre chain for `actor`'s reply in `room`.
+/// `Err(stop)` when a hook skipped the turn or asked first: the turn ends
+/// there, with the stop's reason. Hooks write and run their sandbox, so they
+/// run off the runtime's workers.
+pub(crate) fn turn_generate_pre(
+    vault: &Vault,
+    actor: EntityId,
+    invocation: Option<InvocationId>,
+    room: &str,
+) -> oneiron::Result<Result<VerbHookPre, VerbHookStop>> {
+    let args = json!({
+        "room": room,
+        "scope": Value::Null,
+        "board_epoch": Value::Null,
+    });
+    crate::server::blocking(|| {
+        vault.pre_verb_hooks(
+            turn_generate_call(actor, invocation),
+            args.clone(),
+            &|rewritten: &Value| host_args_kept(&args, rewritten),
+        )
+    })
+}
+
 /// A host verb's args are the host's: a hook's rewrite of them is refused.
 fn host_args_kept(args: &Value, rewritten: &Value) -> Result<(), String> {
     if rewritten == args {
@@ -631,7 +643,11 @@ fn hook_stopped(stop: &VerbHookStop) -> Refused {
 /// Runs `host.turn.generate`'s post chain once the reply's producer ends,
 /// whether or not a caller still listens. A block a post-hook adds lands the
 /// next turn; the reply stands whatever a post-hook says.
-fn after_turn(vault: Arc<Vault>, generating: VerbHookPre, answering: Answering) -> Answering {
+pub(crate) fn after_turn(
+    vault: Arc<Vault>,
+    generating: VerbHookPre,
+    answering: Answering,
+) -> Answering {
     let Answering {
         handle,
         subscription,

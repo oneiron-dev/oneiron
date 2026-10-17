@@ -81,6 +81,7 @@ impl HostSelfDispatcher<'_> {
     /// rewritten when a hook rewrote it, and what its post chain picks up;
     /// `Err` the answer a stop gives in its place. A run bound to an
     /// off-record session runs no hook: its receipts would land on record.
+    /// A call no binding can take passes before its args are built.
     pub(crate) fn enter_verb_hooks(
         &self,
         call: SelfCall,
@@ -93,6 +94,9 @@ impl HostSelfDispatcher<'_> {
             return Ok(Ok((call, HookedCall(None))));
         }
         let effect = call.effect();
+        if !vault.verb_hooks_may_run(effect.as_str()) {
+            return Ok(Ok((call, HookedCall(None))));
+        }
         let args = hook_args(&call)?;
         let hook_call = VerbCall {
             verb: effect.as_str().to_owned(),

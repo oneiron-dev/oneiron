@@ -37,6 +37,27 @@ type Hook<'b> = (EntityId, &'b PackHookBinding);
 
 type Stopped<T> = std::result::Result<T, VerbHookStop>;
 
+/// Whether a verb hook may run on `verb`: no when hooks are off or
+/// suppressed, at hook depth 1, or when no binding's verb glob takes it. The
+/// cached binding list answers; one that does not read answers yes, so the
+/// chain reports the error.
+pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
+    let state = &vault.verb_hook_state;
+    if state.suppressed() || depth() > 0 {
+        return false;
+    }
+    match state.bindings(vault) {
+        Ok(bindings) => bindings.verb.iter().any(|(_, binding)| {
+            binding
+                .selector
+                .verbs
+                .iter()
+                .any(|glob| filter::glob_match(glob, verb))
+        }),
+        Err(_) => true,
+    }
+}
+
 /// The pre chain of `call`. It passes through with hooks off or suppressed,
 /// at hook depth 1, inside the same actor's call of this invocation, without
 /// the sandbox, and when no binding matches; the cached binding list keeps

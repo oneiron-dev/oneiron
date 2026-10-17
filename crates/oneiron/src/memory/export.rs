@@ -115,59 +115,70 @@ impl Memory<'_> {
             &self.actor.to_hex(),
             self.locality,
             WriteActor::new(self.actor, EdgeActorClass::Human),
-            |txn| {
-                verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
-                if self.actor_class != EdgeActorClass::Human {
-                    return Err(export_forbidden());
-                }
-                if let Some(proof) = proof {
-                    validate_verified_owner(self.vault, txn, proof)?;
-                    // A holder proof authorizes its own bound actor, not another
-                    // PERSON selected through `Vault::memory` or an HTTP field.
-                    if proof.claims().actor_class.as_deref() != Some("human")
-                        || proof.claims().holder_ref != self.actor.to_hex()
-                    {
-                        return Err(export_forbidden());
-                    }
-                    // A live slip outlives its holder's Owner role: whole-vault
-                    // export asks for the role now, in the export's snapshot.
-                    if !crate::policy_model::is_live_vault_owner_in_txn(
-                        self.vault,
-                        txn,
-                        &self.actor,
-                    )? {
-                        return Err(export_forbidden());
-                    }
-                } else {
-                    // `memory(actor)` is public. Only a process holding the vault
-                    // writer lease and bound to its constructor's seeded owner
-                    // can use the local door; an arbitrary PERSON cannot.
-                    let owner = crate::vault::embedded_owner_actor_id()?;
-                    if self.actor != owner
-                        || !self
-                            .vault
-                            .writer_lease()
-                            .is_some_and(crate::store::VaultWriterLease::held_by_current_process)
-                        || !crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &owner)?
-                            .is_live()
-                    {
-                        return Err(export_forbidden());
-                    }
-                    if self
-                        .vault
-                        .authority_fold_readonly_in_txn(txn)?
-                        .vault_root_is_conflicted()
-                    {
-                        return Err(MemoryError::new(
-                            MEMORY_CODE_INVALID_STATE,
-                            "conflicting vault roots suspend full-vault export",
-                            &["Resolve the authority fork before exporting."],
-                        ));
-                    }
-                }
-                Ok(())
-            },
+            |txn| self.export_admitted_in_txn(txn, proof),
         )
+    }
+
+    /// Whether [`Self::export`], or [`Self::export_with_verified_owner`]
+    /// with `proof`, admits this caller now, in a read snapshot of its own.
+    /// A door asks first, so the verb's hooks never run on an export it
+    /// refuses; the export asks again in its own snapshot.
+    pub fn admit_export(&self, proof: Option<&VerifiedSlip>) -> MemoryResult<()> {
+        let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        self.export_admitted_in_txn(&txn, proof)
+    }
+
+    fn export_admitted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        proof: Option<&VerifiedSlip>,
+    ) -> MemoryResult<()> {
+        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        if self.actor_class != EdgeActorClass::Human {
+            return Err(export_forbidden());
+        }
+        if let Some(proof) = proof {
+            validate_verified_owner(self.vault, txn, proof)?;
+            // A holder proof authorizes its own bound actor, not another
+            // PERSON selected through `Vault::memory` or an HTTP field.
+            if proof.claims().actor_class.as_deref() != Some("human")
+                || proof.claims().holder_ref != self.actor.to_hex()
+            {
+                return Err(export_forbidden());
+            }
+            // A live slip outlives its holder's Owner role: whole-vault
+            // export asks for the role now, in the export's snapshot.
+            if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, txn, &self.actor)? {
+                return Err(export_forbidden());
+            }
+        } else {
+            // `memory(actor)` is public. Only a process holding the vault
+            // writer lease and bound to its constructor's seeded owner
+            // can use the local door; an arbitrary PERSON cannot.
+            let owner = crate::vault::embedded_owner_actor_id()?;
+            if self.actor != owner
+                || !self
+                    .vault
+                    .writer_lease()
+                    .is_some_and(crate::store::VaultWriterLease::held_by_current_process)
+                || !crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &owner)?
+                    .is_live()
+            {
+                return Err(export_forbidden());
+            }
+            if self
+                .vault
+                .authority_fold_readonly_in_txn(txn)?
+                .vault_root_is_conflicted()
+            {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    "conflicting vault roots suspend full-vault export",
+                    &["Resolve the authority fork before exporting."],
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -188,12 +199,15 @@ impl Vault {
             EdgeActorClass::Human,
         );
         render_export(self, opts, "host", locality, reader, |txn| {
-            validate_verified_owner(self, txn, proof)?;
-            if proof.claims().holder_ref != "host" {
-                return Err(export_forbidden());
-            }
-            Ok(())
+            host_owner_export_admitted(self, txn, proof)
         })
+    }
+
+    /// Whether [`Self::export_with_verified_host_owner`] admits `proof` now,
+    /// in a read snapshot of its own; the export asks again in its own.
+    pub fn admit_host_owner_export(&self, proof: &VerifiedSlip) -> MemoryResult<()> {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        host_owner_export_admitted(self, &txn, proof)
     }
 
     /// Every whole-vault export receipt, oldest first.
@@ -205,6 +219,18 @@ impl Vault {
             .map(|(_, receipt)| receipt)
             .collect())
     }
+}
+
+fn host_owner_export_admitted(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proof: &VerifiedSlip,
+) -> MemoryResult<()> {
+    validate_verified_owner(vault, txn, proof)?;
+    if proof.claims().holder_ref != "host" {
+        return Err(export_forbidden());
+    }
+    Ok(())
 }
 
 fn validate_verified_owner(

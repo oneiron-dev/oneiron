@@ -141,6 +141,13 @@ impl VerbHookPre {
 pub type VerbArgsCheck<'a> = &'a dyn Fn(&Value) -> std::result::Result<(), String>;
 
 impl Vault {
+    /// A cheap check before a host builds a call's hook args: false when no
+    /// verb hook can run on `verb` (hooks off or suppressed, hook depth 1,
+    /// no binding's verb glob takes it). True when the bindings do not read.
+    pub(crate) fn verb_hooks_may_run(&self, verb: &str) -> bool {
+        chain::may_run(self, verb)
+    }
+
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in
     /// priority order, each outcome validated. `Err(stop)` when a hook
     /// skipped or asked, or a blocking one failed safe. At hook depth 1 or
