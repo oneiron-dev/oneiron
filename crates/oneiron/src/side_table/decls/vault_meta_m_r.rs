@@ -11,7 +11,7 @@ side_tables! {
     ENTITY_TEXT_INDEXED_IDLE_DELAY_MS: VaultMeta b"manifest:entity_text:indexed_idle_delay_ms" Raw;
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
-    MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named;
+    MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored;
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
@@ -193,13 +193,13 @@ side_tables! {
     OUTBOUND_INTENT_ATTEMPT_FORMAT: VaultMeta b"outbound:intent_attempt_format" Raw;
     /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting. Key:
     /// hash32.
-    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw;
+    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored;
     /// Deterministic receipt id -> intent id. Key: id16.
     OUTBOUND_SUPPRESSION_INDEX: VaultMeta b"outbound:suppression_index:v1:" Raw;
     /// Device-local receipt body, `rmp_serde::to_vec_named`. Key: hash32 (intent id).
     OUTBOUND_SUPPRESSION_RECEIPT: VaultMeta b"outbound:suppression_receipt:v1:" Named;
     /// Direct host dispatch receipt by content-derived hash32.
-    OUTBOUND_DIRECT_RECEIPT: VaultMeta b"outbound_direct_receipt:v2:" Named;
+    OUTBOUND_DIRECT_RECEIPT: VaultMeta b"outbound_direct_receipt:v2:" Named Authored;
     /// Gate outcome of a scheduled outbound attempt's first dispatch. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice): `store::outbound_send_receipt`
@@ -221,9 +221,9 @@ side_tables! {
     /// Owner policy-row change event. Key: event id.
     OWNER_POLICY_CHANGE_EVENT: VaultMeta b"owner_policy:change:event:v1:" Raw;
     /// Pending owner policy-row change proposal. Key: proposal id.
-    OWNER_POLICY_CHANGE_PROPOSAL: VaultMeta b"owner_policy:change:proposal:v1:" Raw;
+    OWNER_POLICY_CHANGE_PROPOSAL: VaultMeta b"owner_policy:change:proposal:v1:" Raw Admitted;
     /// Owner policy-row change receipt, in sequence order. Key: u64be sequence.
-    OWNER_POLICY_CHANGE_RECEIPT: VaultMeta b"owner_policy:change:receipt:v1:" Raw;
+    OWNER_POLICY_CHANGE_RECEIPT: VaultMeta b"owner_policy:change:receipt:v1:" Raw Admitted;
     /// Last owner policy-row change sequence (u64be). Key: ().
     OWNER_POLICY_CHANGE_SEQUENCE: VaultMeta b"owner_policy:change:seq:v1" Raw;
     /// Delivery cursor over the queued owner policy notifications. Key: ().
@@ -512,7 +512,7 @@ side_tables! {
     CRITIC_REVIEW_CLAIM_TRUST: VaultMeta b"review:claim:v1:" Raw;
     /// Cached review verdict/triage/artifacts for a review request, keyed by a hash of the request's
     /// identity tuple. Key: hash32.
-    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named;
+    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named Authored;
     /// Index from a review verdict claim id back to its CRITIC_REVIEW_RESULT row key. Key: id16.
     CRITIC_REVIEW_RESULT_ID: VaultMeta b"review:result_id:v1:" Raw;
     /// Claim-before-speaking receipt naming which actor may respond to one addressed turn. Key: id16

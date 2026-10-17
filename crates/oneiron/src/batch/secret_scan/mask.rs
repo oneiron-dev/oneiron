@@ -7,7 +7,10 @@
 //! A file (an ASSET, named by its bytes) keeps its bytes as they are (owner
 //! ruling G04 binary = C2): each key in it goes to custody, and the file is
 //! marked with each key's span and the Restricted band; serving doors read
-//! that mark (`secret_custody::masked_files`).
+//! that mark (`secret_custody::masked_files`). A key in a container's member
+//! (a ZIP entry, a gzip payload, a PDF stream) is marked at its span in the
+//! decoded member, and the plan's copy is rebuilt around it as a serving
+//! door's is (OF-067 C, `container`).
 //!
 //! What the door finds but cannot place still refuses the whole write: a
 //! recovery phrase, a key split over members, an entity the engine itself
@@ -25,17 +28,20 @@ use std::ops::Range;
 use heed::RwTxn;
 use rmpv::Value;
 
+use super::container::{
+    self, MAX_FILE_KEYS, REASON_OVER_BUDGET, Stop, holds_spans, masked_copy, walk_members,
+};
 use super::shapes::{self, Door, HANDLE_OPEN};
-use super::{REASON_PRIVATE_KEY, provider_token_spans, scan_batch_ops};
+use super::{REASON_PRIVATE_KEY, provider_token_spans, scan_batch_ops, secret_scan_error};
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::secret_custody::{
-    CustodyClass, CustodyWrite, KeySpan, MASKED_FILE_BAND, MaskedFile,
-    SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
-    filled, masked_file_in_txn, put_masked_file_in_txn, register_custody_in_txn,
+    CustodyClass, CustodyWrite, KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberKeys,
+    MemberStep, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
+    SecretCustodyStatus, masked_file_in_txn, put_masked_file_in_txn, register_custody_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -62,6 +68,17 @@ pub(crate) struct MaskOrigin {
     /// row outside the entity tables, `side:<table>`, `attempt` or `intake`.
     pub(crate) place: String,
     pub(crate) masked_at: u64,
+}
+
+/// Where a mask on write lifted the secret custody record `id` holds, read
+/// in `txn`; `None` for a record an owner registered. A handle's `describe`
+/// names it (OF-560).
+pub(crate) fn mask_origin_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<MaskOrigin>> {
+    MASK_ORIGIN.get(store, txn, id)
 }
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,
@@ -111,31 +128,38 @@ pub(in crate::batch) fn mask_batch_ops(
     };
     let minted = plan.mint(&write, wtxn, at)?;
     for file in files {
-        let keys = file
-            .keys
-            .into_iter()
-            .map(|(span, reason, value)| {
-                let (_, custody) = minted.get(&value).ok_or(Error::InvariantViolation(
-                    "a file's key has no custody record",
-                ))?;
-                Ok(KeySpan {
-                    start: offset(span.start)?,
-                    end: offset(span.end)?,
-                    custody: *custody,
-                    reason: reason.to_owned(),
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        put_masked_file_in_txn(
-            store,
-            wtxn,
-            &file.hash,
-            &MaskedFile {
-                band: MASKED_FILE_BAND,
-                keys,
-                masked_at: at,
-            },
-        )?;
+        let mut mark = MaskedFile {
+            band: MASKED_FILE_BAND,
+            keys: Vec::new(),
+            masked_at: at,
+            members: Vec::new(),
+        };
+        for key in file.keys {
+            let (_, custody) = minted.get(&key.value).ok_or(Error::InvariantViolation(
+                "a file's key has no custody record",
+            ))?;
+            let span = KeySpan {
+                start: offset(key.span.start)?,
+                end: offset(key.span.end)?,
+                custody: *custody,
+                reason: key.reason.to_owned(),
+            };
+            if key.path.is_empty() {
+                mark.keys.push(span);
+            } else if let Some(member) = mark
+                .members
+                .iter_mut()
+                .find(|member| member.path == key.path)
+            {
+                member.keys.push(span);
+            } else {
+                mark.members.push(MemberKeys {
+                    path: key.path,
+                    keys: vec![span],
+                });
+            }
+        }
+        put_masked_file_in_txn(store, wtxn, &file.hash, &mark)?;
     }
     Masker {
         handles: minted
@@ -169,13 +193,13 @@ impl MaskedFiles {
     }
 }
 
-/// The key spans already recorded for each file a batch puts, by its bytes'
-/// hash: a file put again keeps its mark and mints nothing.
+/// The key places already recorded for each file a batch puts, by its
+/// bytes' hash: a file put again keeps its mark and mints nothing.
 fn marked_files(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     ops: &[BatchOp],
-) -> Result<HashMap<[u8; 32], Vec<(u64, u64)>>> {
+) -> Result<HashMap<[u8; 32], KeyPlaces>> {
     let mut marked = HashMap::new();
     for op in ops {
         if let BatchOp::Put {
@@ -185,10 +209,7 @@ fn marked_files(
         {
             let hash = *blake3::hash(data).as_bytes();
             if let Some(file) = masked_file_in_txn(store, txn, &hash)? {
-                marked.insert(
-                    hash,
-                    file.keys.iter().map(|key| (key.start, key.end)).collect(),
-                );
+                marked.insert(hash, file.places());
             }
         }
     }
@@ -199,11 +220,32 @@ fn offset(at: usize) -> Result<u64> {
     u64::try_from(at).map_err(|_| Error::ArithmeticOverflow("masked file key span"))
 }
 
-/// One file a plan marks, before custody holds its keys: each key's span in
-/// its bytes, with the key's kind and value.
+/// One file a plan marks, before custody holds its keys.
 struct FoundFile {
     hash: [u8; 32],
-    keys: Vec<(Range<usize>, &'static str, Vec<u8>)>,
+    keys: Vec<FileKey>,
+}
+
+/// One key a plan found in a file: the member that holds it (none for the
+/// file's own bytes), its span there, and the key's kind and value.
+struct FileKey {
+    path: Vec<MemberStep>,
+    span: Range<usize>,
+    reason: &'static str,
+    value: Vec<u8>,
+}
+
+/// Each place `keys` sit at, with its spans, in the order they were found.
+fn places_of(keys: &[FileKey]) -> Result<KeyPlaces> {
+    let mut places: KeyPlaces = Vec::new();
+    for key in keys {
+        let span = (offset(key.span.start)?, offset(key.span.end)?);
+        match places.iter_mut().find(|(path, _)| *path == key.path) {
+            Some((_, spans)) => spans.push(span),
+            None => places.push((key.path.clone(), vec![span])),
+        }
+    }
+    Ok(places)
 }
 
 /// One secret a plan found, before custody holds it.
@@ -223,9 +265,9 @@ struct Masker {
     found: Vec<Found>,
     minted: bool,
     mints: bool,
-    /// Each file's key spans by its bytes' hash: marked before, or by this
+    /// Each file's key places by its bytes' hash: marked before, or by this
     /// plan.
-    marked: HashMap<[u8; 32], Vec<(u64, u64)>>,
+    marked: HashMap<[u8; 32], KeyPlaces>,
     /// The files this plan marks.
     files: Vec<FoundFile>,
     /// Every file put that carries a mark.
@@ -291,52 +333,76 @@ impl Masker {
         Ok(())
     }
 
-    /// A file's keys, found in its bytes: the copy the door reads again, with
-    /// each key's span overwritten. `None` when it holds none.
+    /// A file's keys, found in its bytes and in each member of a container
+    /// in it: the copy the door reads again, rebuilt with each key
+    /// overwritten where it sits. `None` when it holds none.
     fn mark_file(&mut self, id: EntityId, data: &[u8]) -> Result<Option<Vec<u8>>> {
         let hash = *blake3::hash(data).as_bytes();
-        if let Some(spans) = self.marked.get(&hash) {
+        if let Some(places) = self.marked.get(&hash) {
             self.file_ids.push(id);
-            return filled(data, spans.iter().copied()).map(Some);
+            return masked_copy(data, places).map(Some);
         }
         if !self.mints {
             return Ok(None);
         }
-        let mut spans = file_spans(data);
+        let mut keys = Vec::new();
+        if holds_spans(data) {
+            self.place(&[], data, &mut keys)?;
+        }
+        let mut visit = |path: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
+            if holds_spans(member) {
+                self.place(path, member, &mut keys)?;
+            }
+            Ok(())
+        };
+        walk_members(data, &mut visit).map_err(container::refusal)?;
+        if keys.is_empty() {
+            return Ok(None);
+        }
+        let places = places_of(&keys)?;
+        // The copy a serving door would rebuild; the door reads it again
+        // before custody is minted.
+        let copy = masked_copy(data, &places)?;
+        self.marked.insert(hash, places);
+        self.file_ids.push(id);
+        self.files.push(FoundFile { hash, keys });
+        Ok(Some(copy))
+    }
+
+    /// The keys the door's text and field rules place in `leaf` (a file's
+    /// own bytes, or one member's), each at `path`.
+    fn place(&mut self, path: &[MemberStep], leaf: &[u8], keys: &mut Vec<FileKey>) -> Result<()> {
+        let mut spans = file_spans(leaf);
         // A value a structured reading places (a credential field), wherever
-        // its bytes sit in the file.
+        // its bytes sit in the leaf.
         let mut fields = Masker {
             mints: true,
             at: self.at.clone(),
             ..Masker::default()
         };
-        fields.mask_body(data)?;
+        fields.mask_body(leaf)?;
         for found in fields.found {
-            spans.extend(occurrences(data, &found.value).map(|span| (span, found.reason)));
+            spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
         }
-        let mut keys = Vec::new();
         for (span, reason) in merged(spans) {
-            let value = data
+            let value = leaf
                 .get(span.clone())
                 .ok_or(Error::InvariantViolation(
                     "a file's key span left its bytes",
                 ))?
                 .to_vec();
             self.handle(&value, reason)?;
-            keys.push((span, reason, value));
+            keys.push(FileKey {
+                path: path.to_vec(),
+                span,
+                reason,
+                value,
+            });
         }
-        if keys.is_empty() {
-            return Ok(None);
+        if keys.len() > MAX_FILE_KEYS {
+            return Err(secret_scan_error(REASON_OVER_BUDGET));
         }
-        let spans = keys
-            .iter()
-            .map(|(span, _, _)| Ok((offset(span.start)?, offset(span.end)?)))
-            .collect::<Result<Vec<_>>>()?;
-        let copy = filled(data, spans.iter().copied())?;
-        self.marked.insert(hash, spans);
-        self.file_ids.push(id);
-        self.files.push(FoundFile { hash, keys });
-        Ok(Some(copy))
+        Ok(())
     }
 
     /// A body read as the door reads it: JSON, a whole MessagePack value, or

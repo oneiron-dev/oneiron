@@ -401,7 +401,7 @@ pub(crate) fn seed_claim_class_descriptors(vault: &Vault) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
         for row in claim_class_descriptors() {
             let id = claim_class_descriptor_id(row.predicate)?;
-            if vault.store.port_entity_raw(&*wtxn, &id)?.is_some()
+            if vault.store.port_entity_present(&*wtxn, &id)?
                 || vault.local_hard_delete_marker_exists_in_txn(&*wtxn, &id)?
             {
                 continue;

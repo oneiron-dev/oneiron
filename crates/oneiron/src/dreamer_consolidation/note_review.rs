@@ -494,5 +494,6 @@ fn note_candidate(
             end: run.now_ms,
         },
         learned_at: run.now_ms,
+        decisions: Vec::new(),
     })
 }
