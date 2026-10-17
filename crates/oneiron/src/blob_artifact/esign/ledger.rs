@@ -246,9 +246,16 @@ pub(super) fn append(
     Ok(state)
 }
 
+/// Whether only a member of a project (a seat in its home room, its leader or
+/// a board holder) may create a document for it, and so put its board on a
+/// held sign act's chain.
+pub const PROJECT_MEMBERS_ONLY: bool = true;
+
 impl Vault {
     /// Creates the signing overlay on an existing artifact. Original item
     /// versions are pinned before the first event; later send rechecks them.
+    /// A document for a project needs the project live and, under
+    /// [`PROJECT_MEMBERS_ONLY`], `actor` among its members.
     pub fn create_esign_document(
         &self,
         document: EntityId,
@@ -260,6 +267,21 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             if !events_in(self, txn, document)?.is_empty() {
                 return Err(invalid("document already exists"));
+            }
+            if let Some(project) = body.project {
+                let (_, effective) = self
+                    .effective_project_in_txn(txn, project)?
+                    .ok_or_else(|| invalid("the document's project is not a live project"))?;
+                let by = actor.actor.as_str();
+                if PROJECT_MEMBERS_ONLY
+                    && !effective.seats(by)
+                    && effective.leader != by
+                    && !effective.board.iter().any(|holder| holder == by)
+                {
+                    return Err(invalid(
+                        "only a member of a project sends a document for it",
+                    ));
+                }
             }
             for item in &body.items {
                 let id = EntityId::from_hex(&item.artifact_ref)?;

@@ -106,22 +106,26 @@ impl HeldSigning {
     }
 
     /// The role this hold's ask starts at: the principal the agent signs
-    /// for, or with none named, the document's sender; with neither, the
-    /// vault owners. Signing documents carry no project, so no board rung
-    /// sits between. A principal that is no live natural person (an
-    /// organisation, an agent) is passed over for the next rung.
+    /// for, or with none named, the document's sender, then the boards of
+    /// the project the document was sent for; with no such actor, that
+    /// project's board; with neither, the vault owners. A principal that is
+    /// no live natural person (an organisation, an agent) is passed over for
+    /// the next rung.
     ///
     /// # Errors
-    /// The document's trail could not be read.
+    /// The document's trail or draft could not be read.
     pub fn first_role(&self, vault: &Vault) -> Result<AskRole> {
+        let document = EntityId::from_hex(&self.document)?;
         let actor = match self.principal_ref.as_deref() {
             Some(principal) => EntityId::from_hex(principal).ok(),
-            None => vault.esign_sender(EntityId::from_hex(&self.document)?)?,
+            None => vault.esign_sender(document)?,
         };
-        Ok(actor.map_or(AskRole::Owner, |actor| AskRole::Responsible {
-            actor,
-            project: None,
-        }))
+        let project = vault.esign_document(document)?.document.project;
+        Ok(match (actor, project) {
+            (Some(actor), project) => AskRole::Responsible { actor, project },
+            (None, Some(project)) => AskRole::Board { project },
+            (None, None) => AskRole::Owner,
+        })
     }
 
     /// The question asked about this hold, one per hold.
