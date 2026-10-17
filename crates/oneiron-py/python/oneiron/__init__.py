@@ -518,6 +518,9 @@ class Oneiron:
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
+        def courtesy_delete(self) -> "Oneiron._VaultCourtesyDeleteVerbs":
+            return Oneiron._VaultCourtesyDeleteVerbs(self._client)
+        @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs":
             return Oneiron._VaultEmbeddingSpacesVerbs(self._client)
         @property
@@ -960,6 +963,21 @@ class Oneiron:
         def lift_and_erase(self, spec):
             """The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
+    class _VaultCourtesyDeleteVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def send(self, spec):
+            """The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."""
+            return json.loads(_translate(lambda: self._client.vault_courtesy_delete_send(json.dumps(spec))))
+        def sent(self, spec=None):
+            """Every courtesy delete ask this vault sent, with its delivery status, for the owner."""
+            return json.loads(_translate(lambda: self._client.vault_courtesy_delete_sent(json.dumps({} if spec is None else spec))))
+        def incoming(self, spec=None):
+            """Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer."""
+            return json.loads(_translate(lambda: self._client.vault_courtesy_delete_incoming(json.dumps({} if spec is None else spec))))
+        def answer(self, spec):
+            """The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where."""
+            return json.loads(_translate(lambda: self._client.vault_courtesy_delete_answer(json.dumps(spec))))
     class _VaultEmbeddingSpacesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

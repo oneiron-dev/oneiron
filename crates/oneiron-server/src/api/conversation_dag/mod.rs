@@ -553,7 +553,9 @@ pub(crate) async fn reply_in_thread(
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let record = parse_entity_id_param(&record, "record")?;
     let req = json_payload(payload)?;
-    if req.advance || req.parent.is_some() || req.reply_to.is_some() {
+    // The engine picks the thread parent and keeps HEAD; an explicit
+    // `reply_to` is the reply target, which may be a trunk message (OF-460).
+    if req.advance || req.parent.is_some() {
         return Err(ApiError::bad_request(
             "thread replies select their own parent and do not advance HEAD",
             None,

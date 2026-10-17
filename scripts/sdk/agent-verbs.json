@@ -1509,6 +1509,52 @@
       "section": false
     },
     {
+      "name": "vault.courtesy_delete.send",
+      "description": "The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery.",
+      "input": "crate::task_verb::sdk::CourtesyDeleteSendRequest",
+      "output": "crate::task_verb::sdk::CourtesyDeleteSent",
+      "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.send\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.courtesy_delete.sent",
+      "description": "Every courtesy delete ask this vault sent, with its delivery status, for the owner.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::CourtesyDeleteSent>",
+      "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.sent\", &EmptyRequest {})?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.courtesy_delete.incoming",
+      "description": "Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::CourtesyDeleteIncoming>",
+      "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.incoming\", &EmptyRequest {})?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.courtesy_delete.answer",
+      "description": "The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where.",
+      "input": "crate::task_verb::sdk::CourtesyDeleteAnswerRequest",
+      "output": "crate::task_verb::sdk::CourtesyDeleteIncoming",
+      "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.answer\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.embedding_spaces.list",
       "description": "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind.",
       "input": "EmptyRequest",

@@ -229,5 +229,7 @@ and every five minutes (a local vault only). Each rescan:
   is erased, and a note you deleted or archived yourself is left alone.
 
 Nothing is ever written to the folder: it feeds the vault, it is not the vault.
-A folder that is missing or reads empty retracts nothing. The CLI opens the
+A folder that is missing retracts nothing. A folder whose last file you
+deleted retracts that file's note too; if a mount point reads empty, the notes
+come back at the rescan after it is mounted again. The CLI opens the
 vault itself, so run `attach`, `rescan` and `detach` with `serve` stopped.

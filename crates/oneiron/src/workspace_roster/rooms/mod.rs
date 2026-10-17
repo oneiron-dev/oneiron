@@ -32,6 +32,7 @@ pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
 pub(crate) use history::erase_room_side_rows;
 pub(in crate::workspace_roster) use history::thread_turns_in;
+pub(in crate::workspace_roster) use hosting::room_host_in;
 pub(crate) use hosting::room_project_in;
 pub use hosting::{
     HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding,
