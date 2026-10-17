@@ -183,7 +183,10 @@ impl VerbHookState {
 
     /// Marks `invocation` in flight for `actor`.
     pub(super) fn enter(&self, invocation: InvocationId, actor: EntityId) -> Entered {
-        let mut set = self.in_flight.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut set = self
+            .in_flight
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         match set.get(&invocation) {
             Some(holder) if *holder == actor => Entered::Nested,
             Some(_) => Entered::Fresh(None),
@@ -237,7 +240,9 @@ impl Vault {
     /// Turns verb hooks off for this process: every boundary passes through.
     /// Serve calls it for `--no-hooks`; fact hooks keep their own switch.
     pub fn suppress_verb_hooks(&self) {
-        self.verb_hook_state.suppressed.store(true, Ordering::Release);
+        self.verb_hook_state
+            .suppressed
+            .store(true, Ordering::Release);
     }
 
     /// Tells the verb hooks a binding or the switch changed, so the next

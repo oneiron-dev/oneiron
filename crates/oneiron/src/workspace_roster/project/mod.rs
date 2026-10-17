@@ -205,6 +205,11 @@ pub struct ProjectRecord {
     pub origin_thread: Option<String>,
     #[serde(default)]
     pub origin_at: Option<u64>,
+    /// OF-389: the TASK this subproject was spawned inside, fixed at the
+    /// spawn. The TASK names this project back as its subproject; a link
+    /// either side alone does not stand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrapper_task: Option<String>,
 }
 const fn default_depth_limit() -> u8 {
     10
@@ -442,6 +447,7 @@ impl ProjectRecord {
             origin_room: None,
             origin_thread: None,
             origin_at: None,
+            wrapper_task: None,
         })
     }
 
@@ -700,6 +706,29 @@ impl Vault {
         proof: ProjectWriteProof,
         now: u64,
     ) -> Result<ProjectRecord> {
+        self.with_write_txn_grouped(|txn| {
+            self.spawn_subproject_in_txn(txn, parent_id, child_id, leader, slice, proof, None, now)
+        })
+    }
+
+    /// [`Self::spawn_subproject`] inside the caller's transaction, so a TASK
+    /// wrapper and its child commit in one write (OF-389). `wrapper_task`
+    /// names the TASK the child is spawned inside.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the spawn's parent, child, leader, slice and proof, plus its wrapper"
+    )]
+    pub(crate) fn spawn_subproject_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        parent_id: EntityId,
+        child_id: EntityId,
+        leader: EntityId,
+        slice: Scope,
+        proof: ProjectWriteProof,
+        wrapper_task: Option<EntityId>,
+        now: u64,
+    ) -> Result<ProjectRecord> {
         let kind = self.project_type_byte()?;
         // Reading the claimed holder here only selects the board seat and
         // refuses early; the door still verifies the whole proof.
@@ -707,56 +736,55 @@ impl Vault {
             .claims
             .holder_ref;
         let actor = EntityId::from_hex(&holder)?;
-        self.with_write_txn_grouped(|txn| {
-            // The parent's effective leader, slice and depth: a rolled-back
-            // stored row grants nothing its signed history does not.
-            let parent = ProjectReader::new(&self.store, txn, self.privacy_posture())?
-                .ok_or_else(invalid)?
-                .effective(parent_id)?
-                .ok_or(RecordError::InvalidProjectBody("missing parent project"))?;
-            if parent.leader != actor.to_hex() {
-                return Err(RecordError::InvalidProjectBody("only the leader may spawn").into());
-            }
-            if self.store.entities.get(txn, child_id.as_bytes())?.is_some() {
-                return Err(RecordError::InvalidProjectBody("subproject id already exists").into());
-            }
-            let remaining = parent
-                .depth_remaining
-                .min(parent.depth_limit)
-                .checked_sub(1)
-                .ok_or(RecordError::InvalidProjectBody("project depth exhausted"))?;
-            parent
-                .slice
-                .as_ref()
-                .and_then(|parent_slice| parent_slice.attenuate(slice.clone()).ok())
-                .ok_or(RecordError::InvalidProjectBody(
-                    "subproject slice widens its parent",
-                ))?;
-            let mut child = ProjectRecord::new(
-                child_id,
-                Some(parent_id),
-                EntityId::from_hex(&parent.claims_scope_ref)?,
-                leader,
-            )?;
-            child.slice = slice;
-            child.depth_limit = parent.depth_limit;
-            child.depth_remaining = remaining;
-            child.board.push(actor.to_hex());
-            child.write_proof = Some(proof);
-            self.batch_in()
-                .put(
-                    &child_id,
-                    kind,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode(&child)?,
-                )
-                .apply(txn)?;
-            Ok(child)
-        })
+        // The parent's effective leader, slice and depth: a rolled-back
+        // stored row grants nothing its signed history does not.
+        let parent = ProjectReader::new(&self.store, txn, self.privacy_posture())?
+            .ok_or_else(invalid)?
+            .effective(parent_id)?
+            .ok_or(RecordError::InvalidProjectBody("missing parent project"))?;
+        if parent.leader != actor.to_hex() {
+            return Err(RecordError::InvalidProjectBody("only the leader may spawn").into());
+        }
+        if self.store.entities.get(txn, child_id.as_bytes())?.is_some() {
+            return Err(RecordError::InvalidProjectBody("subproject id already exists").into());
+        }
+        let remaining = parent
+            .depth_remaining
+            .min(parent.depth_limit)
+            .checked_sub(1)
+            .ok_or(RecordError::InvalidProjectBody("project depth exhausted"))?;
+        parent
+            .slice
+            .as_ref()
+            .and_then(|parent_slice| parent_slice.attenuate(slice.clone()).ok())
+            .ok_or(RecordError::InvalidProjectBody(
+                "subproject slice widens its parent",
+            ))?;
+        let mut child = ProjectRecord::new(
+            child_id,
+            Some(parent_id),
+            EntityId::from_hex(&parent.claims_scope_ref)?,
+            leader,
+        )?;
+        child.slice = slice;
+        child.depth_limit = parent.depth_limit;
+        child.depth_remaining = remaining;
+        child.board.push(actor.to_hex());
+        child.write_proof = Some(proof);
+        child.wrapper_task = wrapper_task.map(|task| task.to_hex());
+        self.batch_in()
+            .put(
+                &child_id,
+                kind,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &encode(&child)?,
+            )
+            .apply(txn)?;
+        Ok(child)
     }
 
     /// Person-authorized project creation. The signed birth fact commits with

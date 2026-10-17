@@ -14,9 +14,11 @@ mod body;
 mod dial;
 mod filter;
 mod grant;
+mod host;
 mod lineage;
 mod outcome;
 mod read;
+mod regen;
 mod replay;
 mod runner;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -26,12 +28,18 @@ mod store;
 pub mod verb;
 
 pub use block::{HookBlock, HookBlockLifetime};
-pub use body::{HookBodyRun, HookBodyRuntime};
+pub use body::{HookBodyRun, HookBodyRuntime, HookVerdict, HookVerdictCall};
 pub use grant::HookGrant;
+pub use host::{BudgetHit, HOST_BUDGET_HIT};
 pub use lineage::{HookCheck, HookCheckReason, LineageLink};
 pub use outcome::{
     BlockRequest, EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim, ProposedEdge,
     ProposedNote,
+};
+pub(crate) use regen::note_bound_hook_in_txn;
+pub use regen::{
+    HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure,
+    HookRegenFailurePhase, HookRegenOutcome, HookRegenRecord, HookRegenRequest, HookRegenerator,
 };
 pub use replay::{HookReplayEntry, HookReplayResult};
 pub use runner::{FactHookRunner, HOOK_PASS_ENTRIES, HOOK_RUNNER_TICK, HookPassReport};
@@ -45,6 +53,4 @@ pub use source::{
     SettledOutcome, SettlementKind, SettlementPosition,
 };
 pub(crate) use store::hook_receipts;
-pub use verb::{
-    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class,
-};
+pub use verb::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class};
