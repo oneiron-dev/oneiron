@@ -1,13 +1,16 @@
 use super::decode_channel_identity_body;
+use super::facts::ChannelIdentityFacts;
 use super::keys::ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND;
+use super::lifecycle::ChannelIdentityState;
 use super::record::ChannelIdentity;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::channel_identity_selection::{ChannelIdentityCandidate, ChannelIdentityFace};
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::class_policy::ActPosture;
 
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::store::Store;
 
@@ -53,16 +56,7 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
         {
             continue;
         }
-        let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
-            return Err(Error::CorruptedIndex("channel identity entity row"));
-        };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
-            return Err(Error::CorruptedIndex("channel identity entity header"));
-        };
-        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-            return Err(Error::CorruptedIndex("channel identity entity type"));
-        }
-        let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let identity = read_identity_row(store, txn, &id)?;
         // The posture comes from the vault's `act_policy` row for this
         // identity's subject class, resolved in THIS transaction — not from the
         // identity's class. A delegated row is denied by the row the default
@@ -81,6 +75,96 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
         resolved = Some(id);
     }
     Ok(resolved)
+}
+
+/// The custody row of an indexed identity, refusing a dangling index.
+fn read_identity_row(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> crate::Result<ChannelIdentity> {
+    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
+        return Err(Error::CorruptedIndex("channel identity entity row"));
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Err(Error::CorruptedIndex("channel identity entity header"));
+    };
+    if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+        return Err(Error::CorruptedIndex("channel identity entity type"));
+    }
+    decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+}
+
+/// The host's face for one identity, from its facts; `None` leaves the
+/// identity out of the selection.
+pub type ChannelIdentityFaceClassifier<'a> =
+    dyn FnMut(&EntityId, &ChannelIdentityFacts) -> crate::Result<Option<ChannelIdentityFace>> + 'a;
+
+/// The selection candidates of one actor on one channel class, hydrated
+/// from the identities' claim heads (OF-272): the id, the shape head, and
+/// `active` when the state head is Active and custody may carry a send now.
+/// The face is the host's (`classify_face`): a face is a role, not a shape,
+/// and no fact states it. A deleted identity, or one with no heads, is no
+/// candidate; an inactive one stays, so a pin on it is refused, not replaced.
+pub(crate) fn channel_identity_selection_candidates_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    channel: &str,
+    actor_ref: &EntityId,
+    classify_face: &mut ChannelIdentityFaceClassifier<'_>,
+) -> crate::Result<Vec<ChannelIdentityCandidate>> {
+    let channel_class = normalize_channel_class(channel);
+    let mut candidates = Vec::new();
+    for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
+        let id = entry?;
+        if store.port_deletion_state(txn, &id)?.deleted {
+            continue;
+        }
+        let Some(facts) = super::channel_identity_facts_in_txn(store, txn, &id)? else {
+            continue;
+        };
+        if normalize_channel_class(&facts.channel) != channel_class
+            || facts.binding.actor_ref() != Some(*actor_ref)
+        {
+            continue;
+        }
+        let Some(face) = classify_face(&id, &facts)? else {
+            continue;
+        };
+        let identity = read_identity_row(store, txn, &id)?;
+        let active = facts.state == ChannelIdentityState::Active
+            && outbound_send_permitted(store, txn, &identity, Some(*actor_ref))?;
+        candidates.push(ChannelIdentityCandidate {
+            identity_ref: id,
+            shape: facts.shape,
+            face,
+            active,
+        });
+    }
+    Ok(candidates)
+}
+
+impl crate::Vault {
+    /// The candidates [`resolve_channel_identity_selection`] chooses among
+    /// for `actor_ref` on `channel`, read from claim heads on one snapshot.
+    /// The host supplies the faces and, in its query, the relationship.
+    ///
+    /// [`resolve_channel_identity_selection`]: crate::channel_identity_selection::resolve_channel_identity_selection
+    pub fn channel_identity_selection_candidates(
+        &self,
+        channel: &str,
+        actor_ref: &EntityId,
+        classify_face: &mut ChannelIdentityFaceClassifier<'_>,
+    ) -> crate::Result<Vec<ChannelIdentityCandidate>> {
+        let txn = self.store.env.read_txn()?;
+        channel_identity_selection_candidates_in_txn(
+            &self.store,
+            &txn,
+            channel,
+            actor_ref,
+            classify_face,
+        )
+    }
 }
 
 /// An explicit channel identity always wins; otherwise resolve it cheaply.

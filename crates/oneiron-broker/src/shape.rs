@@ -64,8 +64,9 @@ pub enum Shape {
     /// A file a Gemini job made:
     /// `GET …/v1beta/files/{id}:download?alt=media`, no body,
     /// `x-goog-api-key`. The provider answers with one redirect to its
-    /// download path under the same origin, which is followed once, without
-    /// the key. The reply is streamed.
+    /// download path under the same origin, which is followed once, with the
+    /// key (the same scheme, host and port it was sent to). The reply is
+    /// streamed.
     GeminiFile,
 }
 
@@ -85,7 +86,7 @@ struct Row {
     /// never changed, instead of being buffered and stripped.
     streams: bool,
     /// The one redirect the shape follows: to this prefix before the call's
-    /// own path and query, under the same origin, without the key.
+    /// own path and query, under the same origin, with the key.
     redirect: Option<&'static str>,
 }
 
@@ -338,7 +339,7 @@ impl Shape {
     }
 
     /// The path prefix of the one redirect this shape follows, under the same
-    /// origin and without the key.
+    /// origin and with the key.
     pub(crate) const fn redirect(self) -> Option<&'static str> {
         self.row().redirect
     }
