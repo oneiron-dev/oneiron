@@ -16,18 +16,21 @@
 //! own; it says what should be true, never a new way of making it true.
 
 mod apply;
+mod card;
 mod channel;
 mod grant;
 mod live;
 mod manifest;
 mod member;
 mod plan;
+mod reach;
 mod seed;
 mod skill;
 
 pub use apply::{
     ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState,
 };
+pub use card::ShapeCard;
 pub use channel::{
     ShapeChannelBinding, ShapeChannelCustody, ShapeChannelFulfillment, ShapeChannelProvision,
     ShapeMailScope, ShapeSelfHeld,
@@ -35,6 +38,10 @@ pub use channel::{
 pub use grant::ShapeGrantBound;
 pub use member::{ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick};
 pub use plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary};
+pub use reach::{
+    REACH_LINE_MAX_CHANGES, REACH_LINE_NO_CHANGE, REACH_LINE_NONE, ShapePlanReach, ShapeReach,
+    ShapeReachFact, ShapeReachVerdict,
+};
 pub use seed::StoredShapeSeed;
 pub use skill::ShapeSkillSource;
 
@@ -193,6 +200,24 @@ impl ShapeTarget {
             Self::Grant { .. } => 8,
             Self::Manifest { .. } => 9,
             Self::Sync { .. } => 10,
+        }
+    }
+
+    /// The kind a row of this target is tagged with on the wire.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Shared => "shared",
+            Self::Member { .. } => "member",
+            Self::World { .. } => "world",
+            Self::Facet { .. } => "facet",
+            Self::Pack { .. } => "pack",
+            Self::Actor { .. } => "actor",
+            Self::Skill { .. } => "skill",
+            Self::Channel { .. } => "channel",
+            Self::Grant { .. } => "grant",
+            Self::Manifest { .. } => "manifest",
+            Self::Sync { .. } => "sync",
         }
     }
 

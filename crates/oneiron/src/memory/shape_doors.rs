@@ -1,5 +1,5 @@
 //! The vault shape on code mode and MCP (ARCH-0070): the free reads
-//! `vault.shape.read` and `vault.shape.plan`, over the setup rows the
+//! `describe(vault)`, `vault.shape.read` and `vault.shape.plan`, over the setup rows the
 //! caller's read admits, and the gated effect `vault.shape.apply`. A caller
 //! who cannot read a world plans as though it were not there.
 use super::{Memory, MemoryResult};
@@ -15,6 +15,28 @@ impl Memory<'_> {
         Ok(self
             .vault
             .shape_read_visible(&mut |id| read.is_entity_readable(id))?)
+    }
+
+    /// `describe(vault)`: the vault's shape card, over the rows the caller
+    /// reads. It names nothing else.
+    pub fn describe_vault(
+        &self,
+        input: &crate::task_verb::sdk::DescribeRequest,
+    ) -> MemoryResult<crate::task_verb::TaskDescription> {
+        if input.self_target
+            || input.task_ref.is_some()
+            || input.key.is_some()
+            || input.fold.is_some()
+        {
+            return Err(super::MemoryError::bad_request(
+                "describe(vault) names the vault alone",
+            ));
+        }
+        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let card = self
+            .vault
+            .shape_card_visible(&mut |id| read.is_entity_readable(id))?;
+        Ok(crate::task_verb::TaskDescription::VaultCard { card })
     }
 
     /// `vault.shape.plan`: the difference between a seed, a preset pick's

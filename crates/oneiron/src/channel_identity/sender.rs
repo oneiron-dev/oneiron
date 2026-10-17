@@ -144,6 +144,29 @@ pub(crate) fn channel_identity_selection_candidates_in_txn(
     Ok(candidates)
 }
 
+/// The actor the identity `id`'s binding head names, and whether the
+/// identity may carry that actor's outbound send now: its state head Active
+/// and the send permitted by the manifest's act policy, as a selection
+/// candidate reads it. None for an identity with no heads or one the vault
+/// holds for no actor. A read for projections (ARCH-0070 reach); the send
+/// door asks again.
+pub(crate) fn channel_identity_send_holder_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> crate::Result<Option<(EntityId, bool)>> {
+    let Some(facts) = super::channel_identity_facts_in_txn(store, txn, id)? else {
+        return Ok(None);
+    };
+    let Some(actor) = facts.binding.actor_ref() else {
+        return Ok(None);
+    };
+    let identity = read_identity_row(store, txn, id)?;
+    let may_send = facts.state == ChannelIdentityState::Active
+        && outbound_send_permitted(store, txn, &identity, Some(actor))?;
+    Ok(Some((actor, may_send)))
+}
+
 impl crate::Vault {
     /// The candidates [`resolve_channel_identity_selection`] chooses among
     /// for `actor_ref` on `channel`, read from claim heads on one snapshot.

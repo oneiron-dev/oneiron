@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 329 code-mode rows (310 host rows, 19 run rows), 1118 declarations.
+// Census: 329 code-mode rows (310 host rows, 19 run rows), 1123 declarations.
 // Replies: 268 fully typed, 46 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
@@ -115,7 +115,11 @@ declare namespace Sdk {
   type ShapePresetPick = { preset: ShapePreset; vault_id: number; members?: ShapePresetMember[] };
   type ShapePlanRequest = { seed?: ShapeSeed | null; preset?: ShapePresetPick | null };
   type ShapePlanSummary = { changes: number; needs_word: number; ceremonies: number; no_door: number };
-  type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary };
+  type ShapeReachVerdict = "can" | "asks";
+  type ShapeReachFact = { actor: string; actor_name?: string | null; verb: string; channel: string; sender: string; identity: string; class?: string | null; audience?: string[]; verdict: ShapeReachVerdict };
+  type ShapeReach = { facts: ShapeReachFact[] };
+  type ShapePlanReach = { before: ShapeReach; after: ShapeReach; unresolved: string[]; line: string };
+  type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary; reach?: ShapePlanReach };
   type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] };
   type MentionProvenance = { turn: string; message: string; start: number; end: number };
   type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null };
@@ -133,7 +137,7 @@ declare namespace Sdk {
   type SteerRequest = { task_ref: string; instruction: string; key: string };
   type RunSignalState = "Pending" | "Settled" | "RefusedCancelCapacity" | "RefusedCancelUnavailable";
   type SteerReceipt = { task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState };
-  type DescribeRequest = { task_ref?: string | null; self?: boolean; session_id?: string | null; key?: string | null; frame_epoch?: number | null; fold?: string | null };
+  type DescribeRequest = { task_ref?: string | null; self?: boolean; vault?: boolean; session_id?: string | null; key?: string | null; frame_epoch?: number | null; fold?: string | null };
   type TaskBoardStatus = "running" | "scheduled" | "queued" | "done" | "failed";
   type TaskKind = "standard" | "consult" | "reconciliation";
   type TaskTerminalDisposition = "completed" | "rejected" | "failed" | "expired" | "abandoned" | "cancelled";
@@ -143,7 +147,8 @@ declare namespace Sdk {
   type TaskRow = { id: string; line: string; status: TaskBoardStatus; is_intent: boolean; folded_job_count: number; kind?: TaskKind | null; assignee?: string | null; terminal_disposition?: TaskTerminalDisposition | null; connector_outcome?: ConnectorSendTaskOutcome | null; result_ref?: string | null; ladder_disposition?: LadderTerminalDisposition | null; counter_task_ref?: string | null; cancel_pathology?: CancelRejectionPathology | null };
   type TasksOverflow = { known_omitted_rows: number; source_exhausted: boolean };
   type TasksSection = { rows: TaskRow[]; overflow?: TasksOverflow | null };
-  type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string };
+  type ShapeCard = { seed_id?: string | null; counts: Record<string, number>; open_applies: number; reach: ShapeReach; line: string };
+  type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string } | { kind: "vault_card"; card: ShapeCard };
   type FoldReply<T> = T | { error: string };
   type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null };
   type TaskAssignee = "dreamer" | { agent_def: { agent_def_ref: EntityId } } | { peer: { actor_ref: EntityId } } | { child: { actor_ref: EntityId } } | { human: { actor_ref: EntityId } };
@@ -1176,7 +1181,7 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
   /** One catalogued connector by name, removed ones included. */
   status(input: Sdk.ConnectorNameRequest): Promise<Sdk.ConnectorView | null | StoredResult>;
 };
-/** Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named. */
+/** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */

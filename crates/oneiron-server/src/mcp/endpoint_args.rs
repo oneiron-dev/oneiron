@@ -238,6 +238,9 @@ pub struct McpVerbArguments {
     pub task_ref: Option<String>,
     #[serde(default, rename = "self")]
     pub self_target: Option<bool>,
+    /// `describe(vault)`: the vault's shape card.
+    #[serde(default)]
+    pub vault: Option<bool>,
     #[serde(default)]
     pub session_id: Option<String>,
     #[serde(default)]
@@ -258,13 +261,14 @@ pub struct McpVerbArguments {
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 12] {
+    fn present_fields(&self) -> [(&'static str, bool); 13] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
             ("scopes", self.scopes.is_some()),
             ("task_ref", self.task_ref.is_some()),
             ("self", self.self_target.is_some()),
+            ("vault", self.vault.is_some()),
             ("session_id", self.session_id.is_some()),
             ("room_ref", self.room_ref.is_some()),
             ("turn_ref", self.turn_ref.is_some()),

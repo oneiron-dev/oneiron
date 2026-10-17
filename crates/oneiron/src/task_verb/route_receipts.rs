@@ -193,8 +193,8 @@ pub struct TaskUpdateReceipt {
     pub report: Option<super::TaskCallReceipt>,
 }
 
-/// What `describe` returns: the TASKS section when no task is named, or the
-/// named task's card.
+/// What `describe` returns: the TASKS section when no task is named, the
+/// named task's card, or the vault's shape card.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind")]
 pub enum TaskDescription {
@@ -206,4 +206,7 @@ pub enum TaskDescription {
     /// context assembly path. No prefix replacement occurs mid-run.
     #[serde(rename = "self_card")]
     SelfCard { tail: String },
+    /// `describe(vault)`: the vault's shape card.
+    #[serde(rename = "vault_card")]
+    VaultCard { card: crate::vault_shape::ShapeCard },
 }
