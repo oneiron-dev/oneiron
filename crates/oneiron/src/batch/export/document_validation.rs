@@ -38,6 +38,13 @@ impl WholeVaultDocument {
             }
             row.body.validate_in(row.entity_type, files)?;
         }
+        // FIX 2768: each side row reads back through its own table and names
+        // only records and carriers this document holds.
+        super::archive_side_tables::validate_side_rows(
+            &self.side_tables,
+            &ids,
+            &mut |file: &crate::serialize::ExportBodyFile| file.resolve(files).map(<[u8]>::to_vec),
+        )?;
         if self
             .claims
             .iter()

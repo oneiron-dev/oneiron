@@ -1,12 +1,12 @@
 //! Whole-vault export: the snapshot becomes the typed document, the document
 //! passes the credential-nulling transform, and the nulled value is cut into
 //! the archive (OF-222). No retrieval projection, truncation or token budget.
-use super::credential_nulling::null_document_credentials;
+use super::credential_nulling::{null_document_credentials, null_document_member};
 use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_file};
 use crate::batch::export::{
-    EmbeddingSetupWithheld, ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportReaderFold,
-    ExportResultBody, ExportRun, ExportRunOutput, ExportRunResults, ExportSourceVault,
-    VAULT_ARCHIVE_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument,
+    ArchiveSideWithheldReason, EmbeddingSetupWithheld, ExportDerivationEnvelope, ExportEntity,
+    ExportLedger, ExportReaderFold, ExportResultBody, ExportRun, ExportRunOutput, ExportRunResults,
+    ExportSourceVault, VAULT_ARCHIVE_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument,
     WholeVaultDocumentManifest, WholeVaultExport,
 };
 use crate::batch::export::{ExportCut, ExportSnapshot, VAULT_OKF_FORMAT};
@@ -54,6 +54,7 @@ pub(crate) fn serialize_vault_snapshot(
         diary_holds: snapshot.diary_holds,
         secrets_included: snapshot.secrets_included,
         embedding_setup_withheld,
+        side_rows_withheld: Vec::new(),
     };
     let (run_results, binary_bodies) =
         export_run_results(snapshot.run_results, snapshot.result_bodies);
@@ -76,7 +77,37 @@ pub(crate) fn serialize_vault_snapshot(
         embedding_spaces,
         slot_bindings,
         epoch_floors: snapshot.epoch_floors,
+        side_tables: Vec::new(),
     };
+    // FIX 2768: each side row goes in its table's codec, read alone by this
+    // document's nulling pass at its depth; one the pass would change, or one
+    // that does not read back through its table, is held out and named in the
+    // manifest. A long binary value goes beside the document as a file.
+    let mut side_files = std::collections::BTreeMap::new();
+    for raw in snapshot.side_rows {
+        let Some((row, files)) = raw.portable()? else {
+            document
+                .manifest
+                .side_rows_withheld
+                .push(raw.withheld(ArchiveSideWithheldReason::NotPortable));
+            continue;
+        };
+        let value = serde_json::to_value(&row)
+            .map_err(|_| Error::InvariantViolation("whole-vault side row serialization failed"))?;
+        if null_document_member("", &value, 2) != value {
+            document
+                .manifest
+                .side_rows_withheld
+                .push(raw.withheld(ArchiveSideWithheldReason::Credential));
+            continue;
+        }
+        for bytes in files {
+            side_files
+                .entry(crate::batch::export::blake3_hex(&bytes))
+                .or_insert(bytes);
+        }
+        document.side_tables.push(row);
+    }
     // OF-222: a stored file an ASSET body is goes beside the document once, by
     // digest, as it is stored; its row carries the descriptor naming it.
     let mut entity_files = std::collections::BTreeMap::new();
@@ -187,6 +218,7 @@ pub(crate) fn serialize_vault_snapshot(
             binary_bodies,
             &entity_files,
             file_bodies,
+            side_files,
         )?,
         ExportCut::Okf => (
             super::okf_bundle::write_okf_bundle(&value, snapshot.exported_at)?,

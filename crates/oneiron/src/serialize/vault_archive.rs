@@ -18,17 +18,22 @@ use crate::error::{Error, Result};
 /// The archive bytes and the manifest they carry. `secrets` are the owner's
 /// custody records; they are written as they are, never through nulling.
 /// `entity_files` are the ASSET file bodies by entity id, and `file_bodies`
-/// their stored bytes by digest (OF-222).
+/// their stored bytes by digest (OF-222). `side_files` are the long binary
+/// values the side rows name, by digest (FIX 2768).
 pub(super) fn write_vault_archive(
     mut document: Value,
     secrets: &[ArchiveSecretCustody],
     mut binary_bodies: BTreeMap<String, Vec<u8>>,
     entity_files: &BTreeMap<String, ExportBodyFile>,
     file_bodies: BTreeMap<String, Vec<u8>>,
+    side_files: BTreeMap<String, Vec<u8>>,
 ) -> Result<(Vec<u8>, WholeVaultDocumentManifest)> {
     let mut files = BTreeMap::new();
     detach_result_bodies(&mut document, &mut files, &mut binary_bodies);
     detach_entity_bodies(&document, entity_files, file_bodies, &mut files)?;
+    for (blake3, bytes) in side_files {
+        files.entry(blake3).or_insert(bytes);
+    }
     for tree in source_trees(&mut document) {
         detach_tree(tree, &mut files);
     }
@@ -71,6 +76,7 @@ pub(super) fn write_vault_archive(
         ),
         (ArchiveRecordKind::EmbeddingSpace, &["embedding_spaces"][..]),
         (ArchiveRecordKind::EpochFloor, &["epoch_floors"][..]),
+        (ArchiveRecordKind::SideTable, &["side_tables"][..]),
     ] {
         let fixed = kind
             .fixed_path()

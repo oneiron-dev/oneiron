@@ -344,6 +344,17 @@ impl Vault {
                 )?;
             }
         }
+        // FIX 2768: the side tables come back once the records and carriers
+        // they index are in: each family's records, then indexes, then heads.
+        let (restored_side_rows, unchanged_side_rows) =
+            super::archive_side_tables::restore_side_rows_in_txn(
+                &self.store,
+                &mut wtxn,
+                &document.side_tables,
+                &mut |file: &crate::serialize::ExportBodyFile| {
+                    file.resolve(&files).map(<[u8]>::to_vec)
+                },
+            )?;
         let (imported_results, withheld_results) =
             put_run_results_in_txn(self, &mut wtxn, &document.run_results, &staged_results)?;
         let (restored_secrets, unchanged_secrets, missing_secrets) =
@@ -383,6 +394,8 @@ impl Vault {
             unchanged_secrets,
             missing_secrets,
             embedding_setup,
+            restored_side_rows,
+            unchanged_side_rows,
         })
     }
 }

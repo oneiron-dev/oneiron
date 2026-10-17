@@ -44,6 +44,10 @@ pub(crate) struct ExportSnapshot {
     /// OF-013: a whole-vault archive carries every session's epoch floor; a
     /// records archive and OKF carry none.
     pub(crate) epoch_floors: Vec<super::ExportEpochFloor>,
+    /// FIX 2768: the side-table rows that index the carried records, read in
+    /// this snapshot; only a whole-vault archive carries them, as only it
+    /// carries the files they resolve.
+    pub(crate) side_rows: Vec<super::SideRowBytes>,
 }
 
 /// One run's result manifests, as its replay record names them, each with
@@ -423,6 +427,18 @@ impl Vault {
                 });
             }
         }
+        // FIX 2768: each carried record's side rows go with it, read in this
+        // snapshot; a vault-wide row only to a caller on this device.
+        let side_rows = if scope == ExportScope::WholeVault {
+            super::archive_side_rows_in_txn(
+                &self.store,
+                &rtxn,
+                &included,
+                locality == CallerLocality::OnDevice,
+            )?
+        } else {
+            Vec::new()
+        };
         drop(rtxn);
         // The gate logs the reads after the snapshot. An entry whose read
         // could not be logged leaves the archive, with its edges.
@@ -453,6 +469,7 @@ impl Vault {
                 embedding_setup,
                 attaches_files: scope == ExportScope::WholeVault,
                 epoch_floors,
+                side_rows,
             },
             cut,
         )

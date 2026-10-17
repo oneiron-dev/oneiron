@@ -143,6 +143,7 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
         "embedding_spaces": take(ArchiveRecordKind::EmbeddingSpace),
         "slot_bindings": slot_bindings,
         "epoch_floors": take(ArchiveRecordKind::EpochFloor),
+        "side_tables": take(ArchiveRecordKind::SideTable),
     });
     let mut cited = BTreeSet::new();
     cite_result_bodies(&document, &files, &mut cited)?;
@@ -154,6 +155,14 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
         if let ExportBody::File(file) = &row.body {
             file.resolve(&files)
                 .map_err(|_| invalid("archive entity file is absent or another length"))?;
+            cited.insert(file.blake3().to_owned());
+        }
+    }
+    // FIX 2768: a side row's long binary value names one attached file too.
+    for row in &document.side_tables {
+        for file in row.files() {
+            file.resolve(&files)
+                .map_err(|_| invalid("archive side row file is absent or another length"))?;
             cited.insert(file.blake3().to_owned());
         }
     }

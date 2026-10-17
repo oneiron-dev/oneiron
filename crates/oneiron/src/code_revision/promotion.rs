@@ -307,3 +307,9 @@ fn file_mode(revision: &super::CodeRevision, document: &[u8; 32]) -> u32 {
         .copied()
         .unwrap_or(0o100644)
 }
+
+/// OF-222 (FIX 2768) archive seam: the promotion receipts a whole-vault archive carries beside
+/// each revision, lent with their own key type and codec.
+pub(crate) fn archive_promotion_table() -> crate::batch::export::LentSideTable {
+    &PROMOTIONS
+}

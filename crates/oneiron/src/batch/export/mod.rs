@@ -6,8 +6,14 @@ pub use credential_filter::{
 };
 pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
 mod archive_read;
+mod archive_side_tables;
 mod archive_types;
 pub(crate) use archive_read::{VaultArchive, read_vault_archive};
+pub use archive_side_tables::{
+    ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree,
+    ArchiveSideValue, ArchiveSideWithheld, ArchiveSideWithheldReason,
+};
+pub(crate) use archive_side_tables::{LentSideTable, SideRowBytes, archive_side_rows_in_txn};
 pub use archive_types::*;
 mod export_authority;
 mod export_diary;

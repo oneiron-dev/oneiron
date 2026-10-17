@@ -12,7 +12,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
 
-pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 3;
+pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +43,8 @@ pub struct WholeVaultDocumentManifest {
     pub secrets_included: bool,
     /// OF-370: embedding setup the nulling pass withheld from this archive.
     pub embedding_setup_withheld: EmbeddingSetupWithheld,
+    /// FIX 2768: side rows this archive holds out, and why.
+    pub side_rows_withheld: Vec<super::ArchiveSideWithheld>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,7 +105,7 @@ impl WholeVaultExport {
     }
 }
 
-/// Ten sections. Entities occur once. Derived evidence is an index into
+/// Eleven sections. Entities occur once. Derived evidence is an index into
 /// claim evidence, not a second authoritative body. Structural graph edges live
 /// beside the evidence ledger and carry full value metadata. The embedding
 /// setup is descriptors only (OF-370): no vector travels. Epoch floors carry a
@@ -127,6 +129,10 @@ pub struct WholeVaultDocument {
     /// Every session's epoch floor, in session order; empty outside a
     /// whole-vault export.
     pub epoch_floors: Vec<ExportEpochFloor>,
+    /// FIX 2768: the allowlisted side-table rows that index the records here
+    /// (blob versions, LFS objects, codebase snapshots, code revisions and
+    /// code-document history); empty outside a whole-vault export.
+    pub side_tables: Vec<super::ArchiveSideRow>,
 }
 
 /// Where one session's highest removed epoch summary left the count (OF-013):
@@ -306,6 +312,9 @@ pub struct WholeVaultImportReceipt {
     pub missing_secrets: Vec<crate::secret_custody::SecretCustodyMetadata>,
     /// What the archive's embedding setup did here (OF-370).
     pub embedding_setup: EmbeddingSetupImport,
+    /// FIX 2768: side rows written, and those already here unchanged.
+    pub restored_side_rows: usize,
+    pub unchanged_side_rows: usize,
 }
 
 impl WholeVaultDocument {

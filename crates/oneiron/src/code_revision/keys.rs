@@ -36,3 +36,18 @@ pub(super) const PARENT_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
 /// Index of forks by parent session, empty marker value. Key: parent session id + fork session id.
 pub(super) const FORK_PARENT_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::CODE_REVISION_FORK_PARENT_INDEX);
+
+/// OF-222 (FIX 2768) archive seam: the code-revision tables a whole-vault archive carries
+/// beside each revision and session (records, integrity folds, the session, parent and fork
+/// indexes, forks and frontiers), lent with their own key types and codec.
+pub(crate) fn archive_revision_tables() -> [crate::batch::export::LentSideTable; 7] {
+    [
+        &RECORDS,
+        &INTEGRITY,
+        &SESSION_INDEX,
+        &PARENT_INDEX,
+        &FORKS,
+        &FORK_PARENT_INDEX,
+        &FRONTIER,
+    ]
+}

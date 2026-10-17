@@ -43,6 +43,7 @@ pub use self::body::{
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
+pub(crate) use self::born_from::archive_born_from_table;
 pub use self::born_from::{BornFromArtifact, BornFromSource};
 pub use self::create::ArtifactCreateRequest;
 pub(crate) use self::family::hash_hex;
@@ -68,6 +69,7 @@ pub use self::verbs::{
     ProposalSettleRequest, ReleasedWait, SlideReviewOutcome, SlideReviewSubmit,
     SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
+pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 pub use self::versions::{
     BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, BlobBytes, CalcEngineStamp,
