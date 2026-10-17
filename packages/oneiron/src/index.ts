@@ -488,6 +488,16 @@ export class Oneiron {
       /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
     },
+    courtesy_delete: {
+      /** The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery. */
+      send: (input: Facade.CourtesyDeleteSendRequest): Facade.CourtesyDeleteSent => this.#call(() => this.#client.vaultCourtesyDeleteSend(input) as Facade.CourtesyDeleteSent),
+      /** Every courtesy delete ask this vault sent, with its delivery status, for the owner. */
+      sent: (input: Facade.EmptyRequest = {}): Facade.CourtesyDeleteSent[] => this.#call(() => this.#client.vaultCourtesyDeleteSent(input) as Facade.CourtesyDeleteSent[]),
+      /** Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer. */
+      incoming: (input: Facade.EmptyRequest = {}): Facade.CourtesyDeleteIncoming[] => this.#call(() => this.#client.vaultCourtesyDeleteIncoming(input) as Facade.CourtesyDeleteIncoming[]),
+      /** The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where. */
+      answer: (input: Facade.CourtesyDeleteAnswerRequest): Facade.CourtesyDeleteIncoming => this.#call(() => this.#client.vaultCourtesyDeleteAnswer(input) as Facade.CourtesyDeleteIncoming),
+    },
     embedding_spaces: {
       /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
       list: (input: Facade.EmptyRequest = {}): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesList(input) as Facade.EmbeddingSpacesView),

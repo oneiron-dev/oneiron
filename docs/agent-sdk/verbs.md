@@ -100,6 +100,10 @@ both bindings and their export-census tests in one change.
 - `vault.legal_holds.list`
 - `vault.legal_holds.log`
 - `vault.legal_holds.lift_and_erase`
+- `vault.courtesy_delete.send`
+- `vault.courtesy_delete.sent`
+- `vault.courtesy_delete.incoming`
+- `vault.courtesy_delete.answer`
 - `vault.embedding_spaces.list`
 - `vault.embedding_spaces.declare`
 - `vault.embedding_spaces.bind`

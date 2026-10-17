@@ -9,121 +9,29 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{
     COOP_DELETION_PEER_PATH, COOP_DELETION_REPLY_PEER_PATH, CooperativeDeletionAnswer,
-    CooperativeDeletionDispositionKind, CooperativeDeletionNotice, IncomingCooperativeDeletion,
+    CooperativeDeletionNotice, IncomingCooperativeDeletion,
     decode_self_signed_cooperative_deletion_request, parse_hex,
 };
+use oneiron::task_verb::sdk::{
+    CourtesyDeleteAnswerRequest, CourtesyDeleteAskedWorld, CourtesyDeleteChoice,
+    CourtesyDeleteIncoming, CourtesyDeleteSendRequest, CourtesyDeleteSent,
+};
 use rand_core::RngCore;
-use serde::{Deserialize, Serialize};
 
 use super::stamp::rfc3339_secs;
 use super::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-/// `POST /v1/owner/courtesy-delete/send`.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SendAsk {
-    /// The ended pact, as 64 hex.
-    pub(crate) pact: String,
-    /// The worlds to ask about, as 32 hex; none asks about all the pact delivered.
-    #[serde(default)]
-    pub(crate) worlds: Vec<String>,
-    /// Content up to this pact epoch; by default, the epoch the pact ended at.
-    #[serde(default)]
-    pub(crate) epoch_cutoff: Option<u64>,
-    /// The former peer's host origin, `https://host[:port]`.
-    pub(crate) peer: String,
-    /// The ask already signed by the key the peer pinned, base64, when that
-    /// key is not this host's. `worlds` and `epoch_cutoff` are then the ask's.
-    #[serde(default)]
-    pub(crate) signed: Option<String>,
-}
-
 /// One sent ask, as the ledger holds it.
-#[derive(Debug, Serialize)]
-pub(crate) struct SentAsk {
-    pub(crate) request: String,
-    pub(crate) pact: String,
-    pub(crate) recipient: String,
-    pub(crate) status: &'static str,
-    pub(crate) created: String,
-    pub(crate) updated: String,
-}
-
-impl From<CooperativeDeletionNotice> for SentAsk {
-    fn from(notice: CooperativeDeletionNotice) -> Self {
-        Self {
-            request: notice.request_id,
-            pact: notice.connection_id,
-            recipient: notice.recipient_id,
-            status: notice.status.as_str(),
-            created: rfc3339_secs(notice.created_at),
-            updated: rfc3339_secs(notice.updated_at),
-        }
+fn sent_ask(notice: CooperativeDeletionNotice) -> CourtesyDeleteSent {
+    CourtesyDeleteSent {
+        request: notice.request_id,
+        pact: notice.connection_id,
+        recipient: notice.recipient_id,
+        status: notice.status.as_str().to_owned(),
+        created: rfc3339_secs(notice.created_at),
+        updated: rfc3339_secs(notice.updated_at),
     }
-}
-
-/// `POST /v1/owner/courtesy-delete/answer`.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AnswerAsk {
-    /// The pact the ask came under, as 64 hex.
-    pub(crate) pact: String,
-    /// The ask's request id, as 32 hex.
-    pub(crate) request: String,
-    pub(crate) choice: CooperativeDeletionDispositionKind,
-    /// A short snake_case reason code, for any choice but delete.
-    #[serde(default)]
-    pub(crate) reason_code: Option<String>,
-    /// When a choice other than delete comes up for review, unix seconds.
-    #[serde(default)]
-    pub(crate) review_at: Option<u64>,
-    /// Under a delete choice, the records to hard-delete, as 32 hex.
-    #[serde(default)]
-    pub(crate) delete: Vec<String>,
-    /// Under a legal hold choice, the records to hold, as 32 hex.
-    #[serde(default)]
-    pub(crate) hold: Vec<String>,
-    /// The requester's host origin, to send the answer back; without it the
-    /// answer stays on this side.
-    #[serde(default)]
-    pub(crate) reply_to: Option<String>,
-}
-
-/// One world an incoming ask names, with its stale stamp when the pact's
-/// end already stopped its refresh.
-#[derive(Debug, Serialize)]
-pub(crate) struct AskedWorld {
-    pub(crate) world: String,
-    pub(crate) stale: Option<String>,
-    pub(crate) stale_epoch: Option<u64>,
-}
-
-/// The owner's recorded choice.
-#[derive(Debug, Serialize)]
-pub(crate) struct Choice {
-    pub(crate) choice: CooperativeDeletionDispositionKind,
-    pub(crate) reason_code: Option<String>,
-    pub(crate) review: Option<String>,
-    pub(crate) deleted: Vec<String>,
-    pub(crate) recorded: String,
-}
-
-/// One ask a former peer sent.
-#[derive(Debug, Serialize)]
-pub(crate) struct IncomingAsk {
-    pub(crate) request: String,
-    pub(crate) pact: String,
-    /// The pact's state in this vault's log, when it still has one.
-    pub(crate) pact_status: Option<String>,
-    pub(crate) requester: String,
-    /// The worlds named; empty asks about everything the pact delivered.
-    pub(crate) worlds: Vec<AskedWorld>,
-    pub(crate) epoch_cutoff: u64,
-    pub(crate) requested: String,
-    pub(crate) received: String,
-    pub(crate) answer: Option<Choice>,
-    pub(crate) reply_status: Option<&'static str>,
 }
 
 fn now() -> u64 {
@@ -170,8 +78,8 @@ fn with_issuer<T>(
 pub(crate) fn send(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
-    request: &SendAsk,
-) -> OwnerResult<SentAsk> {
+    request: &CourtesyDeleteSendRequest,
+) -> OwnerResult<CourtesyDeleteSent> {
     let vault = server.vault();
     let pact = hex_field::<32>("pact", &request.pact)?;
     let destination = peer_url("peer", &request.peer, COOP_DELETION_PEER_PATH)?;
@@ -210,21 +118,21 @@ pub(crate) fn send(
     };
     let notice =
         vault.queue_cooperative_deletion_request_as(owner, &signed, &destination, now())?;
-    Ok(notice.into())
+    Ok(sent_ask(notice))
 }
 
 /// Every ask this vault sent.
-pub(crate) fn sent(server: &SyncServer) -> OwnerResult<Vec<SentAsk>> {
+pub(crate) fn sent(server: &SyncServer) -> OwnerResult<Vec<CourtesyDeleteSent>> {
     Ok(server
         .vault()
         .cooperative_deletion_notices()?
         .into_iter()
-        .map(SentAsk::from)
+        .map(sent_ask)
         .collect())
 }
 
 /// Every ask filed here, with each named world's stale stamp.
-pub(crate) fn incoming(server: &SyncServer) -> OwnerResult<Vec<IncomingAsk>> {
+pub(crate) fn incoming(server: &SyncServer) -> OwnerResult<Vec<CourtesyDeleteIncoming>> {
     let vault = server.vault();
     let fold = vault.authority_fold()?;
     vault
@@ -238,7 +146,7 @@ fn incoming_ask(
     vault: &oneiron::Vault,
     fold: &oneiron::authority::AuthorityFold,
     filed: IncomingCooperativeDeletion,
-) -> OwnerResult<IncomingAsk> {
+) -> OwnerResult<CourtesyDeleteIncoming> {
     let pact_status = parse_hex::<32>(&filed.connection_id)
         .and_then(|pact| fold.federation_pacts.get(&pact))
         .map(|state| format!("{:?}", state.status));
@@ -251,14 +159,14 @@ fn incoming_ask(
                 .map(|id| oneiron::federation::foreign_world_stale_stamp(vault, id))
                 .transpose()?
                 .flatten();
-            Ok(AskedWorld {
+            Ok(CourtesyDeleteAskedWorld {
                 world: world.clone(),
                 stale: stamp.map(|stamp| format!("{:?}", stamp.reason)),
                 stale_epoch: stamp.map(|stamp| stamp.disconnect_epoch),
             })
         })
         .collect::<OwnerResult<Vec<_>>>()?;
-    Ok(IncomingAsk {
+    Ok(CourtesyDeleteIncoming {
         request: filed.request_id,
         pact: filed.connection_id,
         pact_status,
@@ -267,14 +175,14 @@ fn incoming_ask(
         epoch_cutoff: filed.epoch_cutoff,
         requested: rfc3339_secs(filed.requested_at),
         received: rfc3339_secs(filed.received_at),
-        answer: filed.disposition.map(|choice| Choice {
+        answer: filed.disposition.map(|choice| CourtesyDeleteChoice {
             choice: choice.kind,
             reason_code: choice.reason_code,
             review: choice.review_at.map(rfc3339_secs),
             deleted: choice.deleted,
             recorded: rfc3339_secs(choice.recorded_at),
         }),
-        reply_status: filed.reply_status.map(|status| status.as_str()),
+        reply_status: filed.reply_status.map(|status| status.as_str().to_owned()),
     })
 }
 
@@ -283,8 +191,8 @@ fn incoming_ask(
 pub(crate) fn answer(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
-    request: &AnswerAsk,
-) -> OwnerResult<IncomingAsk> {
+    request: &CourtesyDeleteAnswerRequest,
+) -> OwnerResult<CourtesyDeleteIncoming> {
     let vault = server.vault();
     let pact = hex_field::<32>("pact", &request.pact)?;
     let nonce = hex_field::<16>("request", &request.request)?;

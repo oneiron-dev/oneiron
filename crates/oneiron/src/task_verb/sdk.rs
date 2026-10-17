@@ -423,6 +423,7 @@ pub use super::sdk_catalog_fragment::{
 };
 pub use super::sdk_connector::*;
 pub use super::sdk_connector_call::*;
+pub use super::sdk_courtesy_delete::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
 pub use super::sdk_embedding_space::*;

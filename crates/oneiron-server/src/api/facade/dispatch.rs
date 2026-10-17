@@ -2129,6 +2129,102 @@ async fn vault_legal_holds_lift_and_erase(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_courtesy_delete_send(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.courtesy_delete.send")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.courtesy_delete.send", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.courtesy_delete.send", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_courtesy_delete_send(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_courtesy_delete_sent(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.courtesy_delete.sent")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.courtesy_delete.sent", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.courtesy_delete.sent", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_courtesy_delete_sent(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_courtesy_delete_incoming(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.courtesy_delete.incoming")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.courtesy_delete.incoming", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.courtesy_delete.incoming", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_courtesy_delete_incoming(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_courtesy_delete_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.courtesy_delete.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.courtesy_delete.answer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.courtesy_delete.answer", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_courtesy_delete_answer(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_embedding_spaces_list(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -6241,6 +6337,12 @@ pub(crate) async fn call_verb(
         "vault.legal_holds.lift_and_erase" => {
             vault_legal_holds_lift_and_erase(server, call, input).await
         }
+        "vault.courtesy_delete.send" => vault_courtesy_delete_send(server, call, input).await,
+        "vault.courtesy_delete.sent" => vault_courtesy_delete_sent(server, call, input).await,
+        "vault.courtesy_delete.incoming" => {
+            vault_courtesy_delete_incoming(server, call, input).await
+        }
+        "vault.courtesy_delete.answer" => vault_courtesy_delete_answer(server, call, input).await,
         "vault.embedding_spaces.list" => vault_embedding_spaces_list(server, call, input).await,
         "vault.embedding_spaces.declare" => {
             vault_embedding_spaces_declare(server, call, input).await

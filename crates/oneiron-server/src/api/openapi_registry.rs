@@ -194,6 +194,12 @@ use utoipa::OpenApi;
         companion_memory_reason,
         record_usage_event,
         get_usage_rollup,
+        super::owner_routes::cooperative_deletion_routes::send,
+        super::owner_routes::cooperative_deletion_routes::sent,
+        super::owner_routes::cooperative_deletion_routes::incoming,
+        super::owner_routes::cooperative_deletion_routes::answer,
+        super::cooperative_deletion::take_request,
+        super::cooperative_deletion::take_reply,
 
         lease_revoke
     ),

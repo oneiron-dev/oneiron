@@ -337,6 +337,18 @@ impl OneironClient {
                 "vault.legal_holds.lift_and_erase" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::LegalHoldLiftAndErased,
                 >(client, verb, &input),
+                "vault.courtesy_delete.send" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CourtesyDeleteSent,
+                >(client, verb, &input),
+                "vault.courtesy_delete.sent" => remote_agent_verb_output::<
+                    Vec<oneiron::task_verb::sdk::CourtesyDeleteSent>,
+                >(client, verb, &input),
+                "vault.courtesy_delete.incoming" => remote_agent_verb_output::<
+                    Vec<oneiron::task_verb::sdk::CourtesyDeleteIncoming>,
+                >(client, verb, &input),
+                "vault.courtesy_delete.answer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CourtesyDeleteIncoming,
+                >(client, verb, &input),
                 "vault.embedding_spaces.list" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::EmbeddingSpacesView,
                 >(client, verb, &input),
@@ -2114,6 +2126,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.legal_holds.lift_and_erase", value)
+    }
+    pub fn vault_courtesy_delete_send(
+        &self,
+        input: &oneiron::task_verb::sdk::CourtesyDeleteSendRequest,
+    ) -> Result<oneiron::task_verb::sdk::CourtesyDeleteSent, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.courtesy_delete.send", value)
+    }
+    pub fn vault_courtesy_delete_sent(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::task_verb::sdk::CourtesyDeleteSent>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.courtesy_delete.sent", value)
+    }
+    pub fn vault_courtesy_delete_incoming(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::task_verb::sdk::CourtesyDeleteIncoming>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.courtesy_delete.incoming", value)
+    }
+    pub fn vault_courtesy_delete_answer(
+        &self,
+        input: &oneiron::task_verb::sdk::CourtesyDeleteAnswerRequest,
+    ) -> Result<oneiron::task_verb::sdk::CourtesyDeleteIncoming, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.courtesy_delete.answer", value)
     }
     pub fn vault_embedding_spaces_list(
         &self,

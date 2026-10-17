@@ -471,6 +471,26 @@ export_facade! {
     let output = client.vault_legal_holds_lift_and_erase(&input)?;
     crate::codec::lift_record("vault.legal_holds.lift_and_erase", &output)
 };
+"vault.courtesy_delete.send" => fn vault_courtesy_delete_send(&self, input: CourtesyDeleteSendRequest) -> CourtesyDeleteSent = |client| {
+    let input: oneiron::task_verb::sdk::CourtesyDeleteSendRequest = crate::codec::lower_record("vault.courtesy_delete.send", input)?;
+    let output = client.vault_courtesy_delete_send(&input)?;
+    crate::codec::lift_record("vault.courtesy_delete.send", &output)
+};
+"vault.courtesy_delete.sent" => fn vault_courtesy_delete_sent(&self) -> Vec<CourtesyDeleteSent> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.courtesy_delete.sent")?;
+    let output = client.vault_courtesy_delete_sent(&input)?;
+    crate::codec::lift_record("vault.courtesy_delete.sent", &output)
+};
+"vault.courtesy_delete.incoming" => fn vault_courtesy_delete_incoming(&self) -> Vec<CourtesyDeleteIncoming> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.courtesy_delete.incoming")?;
+    let output = client.vault_courtesy_delete_incoming(&input)?;
+    crate::codec::lift_record("vault.courtesy_delete.incoming", &output)
+};
+"vault.courtesy_delete.answer" => fn vault_courtesy_delete_answer(&self, input: CourtesyDeleteAnswerRequest) -> CourtesyDeleteIncoming = |client| {
+    let input: oneiron::task_verb::sdk::CourtesyDeleteAnswerRequest = crate::codec::lower_record("vault.courtesy_delete.answer", input)?;
+    let output = client.vault_courtesy_delete_answer(&input)?;
+    crate::codec::lift_record("vault.courtesy_delete.answer", &output)
+};
 "vault.embedding_spaces.list" => fn vault_embedding_spaces_list(&self) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.embedding_spaces.list")?;
     let output = client.vault_embedding_spaces_list(&input)?;
