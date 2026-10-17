@@ -13,11 +13,13 @@ declare const ai: {
 declare function ask(input: object): Promise<unknown>;
 declare function can(input: { ask: object }): Promise<unknown>;
 declare function cancel(input: { task_ref: string }): Promise<unknown>;
-declare const connector: {
+declare const connector: { readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<unknown> } } & {
+  call(input: { arguments?: unknown; mutation?: "preview" | "explicit_mutation"; name: string; tool: string }): Promise<unknown>;
   list(input: { query?: string | null }): Promise<unknown>;
   outbound: {
     schedule(input: { channel: string; content_ref?: string | null; dedupe_key?: string | null; idempotency_key?: string | null; job_ref?: string | null; mention?: { end: number; message: string; start: number; turn: string } | null; occurred_at?: number | null; on_behalf_of?: string | null; target: string; trigger: string; trigger_ref: string; verb: string }): Promise<unknown>;
   };
+  schema(input: { name: string; tool: string }): Promise<unknown>;
   status(input: { name: string }): Promise<unknown>;
 };
 declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
@@ -122,7 +124,7 @@ declare namespace self {
   };
   const spawn: (input: { ask: string; intent_key: string; source: unknown }) => Promise<unknown>;
   const team: {
-    record(input: { axis: "converge" | "diverge"; calls?: number | null; confessions?: number | null; coverage?: { cellsFilled: number; cellsTotal: number } | null; decidedBy: { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number }; members: string[]; roles?: Record<string, number> | null; spend?: number | null; spendCap?: number | null; teamRef: string }): Promise<unknown>;
+    record(input: { axis: "converge" | "diverge"; coverage?: { cellsFilled: number; cellsTotal: number } | null; decidedBy: { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number }; members: string[]; roles?: Record<string, number> | null; teamRef: string }): Promise<unknown>;
     start(input: { intentKey: string; members: { agent: string; briefing?: string | null; intentKey: string }[]; pattern: string; tournament?: string | null }): Promise<unknown>;
   };
   const unfold: (input: { fold: string }) => Promise<unknown>;

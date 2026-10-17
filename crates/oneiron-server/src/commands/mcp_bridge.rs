@@ -4,15 +4,17 @@
 //!
 //! Such a client sends no per-request header, and a slip authenticates
 //! nothing without a fresh holder proof. This process is the holder. It reads
-//! one JSON-RPC message per stdin line, POSTs it to the endpoint the operator
+//! one JSON-RPC message per stdin line, sends it to the endpoint the operator
 //! named with the slip and a holder proof signed for that one request, and
-//! writes the server's answer as one stdout line. Transport and signer are
-//! `oneiron api`'s: the host's curl, both headers on curl's config stdin and
-//! never in argv. The credential comes from an owner-only file or the
-//! environment, and nothing here prints it or lets curl inherit it. Every
-//! request ends within its deadline and every message and answer has a size
-//! limit, so a stalled or oversized exchange costs the agent one typed error
-//! for that request, not the session.
+//! writes the server's answer as one stdout line. It holds one connection to
+//! the server for its life ([`link`]): the server's app-tier socket, or one
+//! pooled HTTP client when the server offers no MCP carrier there or
+//! `--transport http` asks for it; never a process per request. The signer is
+//! `oneiron api`'s. The credential comes from an owner-only file or the
+//! environment, and nothing here prints it. Every request ends within its
+//! deadline and every message and answer has a size limit, so a stalled or
+//! oversized exchange costs the agent one typed error for that request, not
+//! the session.
 //!
 //! Every line goes to the server as the client wrote it, but for one
 //! addition: a `tools/call` whose `_meta` names no `oneiron/invocation` gains
@@ -44,6 +46,8 @@ use serde_json::{Value, json};
 
 use super::api;
 use crate::cli::{McpArgs, McpSurface};
+
+mod link;
 
 /// The one-string form a paired client stores: `v2.cred.{slip}.{seed}`, as
 /// `token agent` and `token read` print it and the SDK's `pair` returns it.
@@ -366,8 +370,8 @@ fn leading_id(head: &[u8]) -> Value {
 }
 
 struct Bridge {
-    /// The server's origin, normalized.
-    base: String,
+    /// The one connection to the server.
+    link: link::Link,
     /// The endpoint every request goes to: the operator's `--surface`, or the
     /// one a probe picked. Unset until then.
     pick: Mutex<Pick>,
@@ -378,8 +382,8 @@ struct Bridge {
     /// How long one request may take, and how long its answer may stall.
     deadline: Duration,
     idle: Duration,
-    /// The two variables the operator named for the credential, which curl
-    /// does not inherit (nor any default credential variable).
+    /// The two variables the operator named for the credential, which no
+    /// wake adapter the bridge runs inherits.
     named_env: Vec<String>,
     /// Tool calls the server answered pending on an ask, by
     /// [`pending_call_key`], to the invocation the ask is on. Locked only
@@ -404,25 +408,22 @@ impl Bridge {
         // Sign once now, so a slip and seed that do not belong together fail
         // at spawn, on the stderr the operator reads, and not on every call.
         api::signed_binding_for_seed(&token, &seed)?;
-        let endpoint = args
-            .surface
-            .map(|surface| format!("{base}{}", surface.path()));
         Ok(Self {
+            link: link::Link::new(&base, args.transport)?,
             pick: Mutex::new(Pick {
-                chosen: endpoint,
+                chosen: args.surface,
                 probing: false,
                 failures: 0,
                 last_failure: None,
             }),
             probed: Condvar::new(),
-            base,
             token,
             seed,
             deadline: Duration::from_secs(args.request_timeout_secs),
             idle: Duration::from_secs(args.idle_timeout_secs),
-            // The slip and seed stay in this process: curl gets the slip and
-            // a signed proof on its config stdin, and no variable either may
-            // be in.
+            // The slip and seed stay in this process: the server gets the
+            // slip and a proof signed for each request, and no variable
+            // either may be in reaches a process the bridge starts.
             named_env: vec![args.secret_env.clone(), args.binding_key_env.clone()],
             pending_calls: Mutex::new(HashMap::new()),
         })
@@ -524,13 +525,12 @@ impl Bridge {
     /// meanwhile wait for that one probe, each no longer than its own
     /// deadline. A probe that gets no result picks nothing: the calls that
     /// waited on it share its answer, and the next request asks again.
-    fn endpoint(&self, until: Instant) -> Result<String, Refusal> {
-        let primary = format!("{}{}", self.base, McpSurface::Primary.path());
+    fn endpoint(&self, until: Instant) -> Result<McpSurface, Refusal> {
         let mut pick = self.pick.lock().unwrap_or_else(PoisonError::into_inner);
         let joined = pick.failures;
         loop {
-            if let Some(chosen) = pick.chosen.as_ref() {
-                return Ok(chosen.clone());
+            if let Some(chosen) = pick.chosen {
+                return Ok(chosen);
             }
             if pick.failures != joined
                 && let Some(failure) = pick.last_failure.clone()
@@ -542,7 +542,7 @@ impl Bridge {
             }
             let left = until.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return Err(self.refusal_for(&primary, api::CaptureCut::Deadline));
+                return Err(self.refusal_for(McpSurface::Primary, link::Cut::Deadline));
             }
             pick = self
                 .probed
@@ -553,14 +553,13 @@ impl Bridge {
         // No lock is held while the probe runs.
         pick.probing = true;
         drop(pick);
-        let probed = self.probe(&primary, until);
+        let probed = self.probe(until);
         let mut pick = self.pick.lock().unwrap_or_else(PoisonError::into_inner);
         pick.probing = false;
         let outcome = match probed {
             Ok(surface) => {
-                let chosen = format!("{}{}", self.base, surface.path());
-                pick.chosen = Some(chosen.clone());
-                Ok(chosen)
+                pick.chosen = Some(surface);
+                Ok(surface)
             }
             Err(failure) => {
                 pick.failures += 1;
@@ -574,9 +573,13 @@ impl Bridge {
 
     /// `/mcp` when its `initialize` says this credential may run code there;
     /// `/mcp/tool-first` otherwise, as for a server too old to say.
-    fn probe(&self, primary: &str, until: Instant) -> Result<McpSurface, Refusal> {
+    fn probe(&self, until: Instant) -> Result<McpSurface, Refusal> {
         let answer = self
-            .post_to(primary, SURFACE_PROBE.as_bytes().to_vec(), until)?
+            .post_to(
+                McpSurface::Primary,
+                SURFACE_PROBE.as_bytes().to_vec(),
+                until,
+            )?
             .answer_to(&json!(SURFACE_PROBE_ID))?;
         let Some(result) = answer.get("result").and_then(Value::as_object) else {
             return Err(Refusal::Refused(answer));
@@ -614,64 +617,64 @@ impl Bridge {
     }
 
     fn post(&self, body: Vec<u8>, until: Instant) -> Result<Reply, Refusal> {
-        let endpoint = self.endpoint(until)?;
-        self.post_to(&endpoint, body, until)
+        let surface = self.endpoint(until)?;
+        self.post_to(surface, body, until)
     }
 
-    /// One POST to `endpoint`, signed for this request alone, that ends by
-    /// `until` whatever the server does.
-    fn post_to(&self, endpoint: &str, body: Vec<u8>, until: Instant) -> Result<Reply, Refusal> {
-        let left = until.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(self.refusal_for(endpoint, api::CaptureCut::Deadline));
+    /// One request to `surface` over the bridge's connection, signed for this
+    /// request alone, that ends by `until` whatever the server does.
+    fn post_to(
+        &self,
+        surface: McpSurface,
+        body: Vec<u8>,
+        until: Instant,
+    ) -> Result<Reply, Refusal> {
+        if until.saturating_duration_since(Instant::now()).is_zero() {
+            return Err(self.refusal_for(surface, link::Cut::Deadline));
         }
-        let binding = api::signed_binding_for_seed(&self.token, &self.seed)
-            .map_err(|error| Refusal::Unreachable(error.to_string()))?;
-        let bounds = api::CaptureBounds {
-            deadline: left,
+        let sign = || {
+            api::signed_binding_for_seed(&self.token, &self.seed).map_err(|error| error.to_string())
+        };
+        let credential = link::Credential {
+            bearer: &self.token,
+            sign: &sign,
+        };
+        let bounds = link::Bounds {
+            until,
             idle: self.idle,
             max_reply_bytes: MAX_REPLY_BYTES,
         };
-        let credential = api::CurlCredential {
-            secret: Some(&self.token),
-            binding: Some(&binding),
-            env: &self.named_env,
-        };
-        let (output, status) = api::post_json_captured(endpoint, credential, body, &bounds)
-            .map_err(|cut| self.refusal_for(endpoint, cut))?;
-        match output.status.code() {
-            // `--fail-with-body`: an HTTP error status, with the server's body.
-            Some(0 | api::CURL_HTTP_ERROR_EXIT) => Ok(Reply {
-                status,
-                body: output.stdout,
-            }),
-            _ => Err(Refusal::Unreachable(format!(
-                "could not reach {endpoint}: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ))),
-        }
+        let exchange = self
+            .link
+            .exchange(surface, &credential, body, &bounds)
+            .map_err(|cut| self.refusal_for(surface, cut))?;
+        Ok(Reply {
+            status: exchange.status,
+            body: exchange.body,
+        })
     }
 
     /// The request's error when its exchange was cut short.
-    fn refusal_for(&self, endpoint: &str, cut: api::CaptureCut) -> Refusal {
+    fn refusal_for(&self, surface: McpSurface, cut: link::Cut) -> Refusal {
+        let endpoint = self.link.endpoint(surface);
         match cut {
-            api::CaptureCut::Curl(error) => Refusal::Unreachable(error.to_string()),
-            api::CaptureCut::Deadline => Refusal::Unreachable(format!(
+            link::Cut::Failed(error) => Refusal::Unreachable(error),
+            link::Cut::Deadline => Refusal::Unreachable(format!(
                 "{endpoint} gave no whole answer within {}s (--request-timeout-secs)",
                 self.deadline.as_secs()
             )),
-            api::CaptureCut::Idle => Refusal::Unreachable(format!(
+            link::Cut::Idle => Refusal::Unreachable(format!(
                 "{endpoint}'s answer stalled for {}s (--idle-timeout-secs)",
                 self.idle.as_secs()
             )),
-            api::CaptureCut::TooLarge => Refusal::TooLarge,
+            link::Cut::TooLarge => Refusal::TooLarge,
         }
     }
 }
 
-/// What the server sent back for one POST.
+/// What the server sent back for one request.
 struct Reply {
-    /// The HTTP status, when curl saw one.
+    /// The HTTP status, when there was one.
     status: Option<u16>,
     body: Vec<u8>,
 }
@@ -715,7 +718,7 @@ impl Reply {
 
 /// The endpoint the bridge picked, and how its probes stand.
 struct Pick {
-    chosen: Option<String>,
+    chosen: Option<McpSurface>,
     /// A probe is running.
     probing: bool,
     /// How many probes ended with no pick, and the last one's failure.

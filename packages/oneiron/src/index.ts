@@ -757,6 +757,10 @@ export class Oneiron {
     list: (input: Facade.ConnectorListRequest): Facade.ConnectorEntry[] => this.#call(() => this.#client.connectorList(input) as Facade.ConnectorEntry[]),
     /** One catalogued connector by name, removed ones included. */
     status: (input: Facade.ConnectorNameRequest): Facade.ConnectorView | null => this.#call(() => this.#client.connectorStatus(input) as Facade.ConnectorView | null),
+    /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
+    call: (input: Facade.ConnectorCallRequest): Facade.ConnectorCallReply => this.#call(() => this.#client.connectorCall(input) as Facade.ConnectorCallReply),
+    /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
+    schema: (input: Facade.ConnectorSchemaRequest): Facade.ConnectorSchemaReply => this.#call(() => this.#client.connectorSchema(input) as Facade.ConnectorSchemaReply),
     outbound: {
       /** Schedules one send through a granted outbound connector, gated and held for delivery. */
       schedule: (input: Facade.OutboundScheduleRequest): Facade.OutboundIntentReceipt => this.#call(() => this.#client.connectorOutboundSchedule(input) as Facade.OutboundIntentReceipt),

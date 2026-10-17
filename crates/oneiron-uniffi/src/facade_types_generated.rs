@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 231 facade rows, 667 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 191.
+// UniFFI census: 233 facade rows, 674 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 193.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -254,6 +254,8 @@ pub struct DiaryReadRecord {
     pub grants: Vec<String>,
     #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
+    #[serde(rename = "source")]
+    pub source: String,
 }
 
 /// `oneiron::memory::diary_read::DiaryReviewState`.
@@ -934,6 +936,46 @@ pub enum ShapeCeiling {
     Proposed,
 }
 
+/// `oneiron::vault_shape::grant::ShapeGrantBound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "domain")]
+pub enum ShapeGrantBound {
+    #[serde(rename = "action")]
+    Action {
+        #[serde(rename = "actor")]
+        actor: String,
+        #[serde(
+            rename = "actor_class",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        actor_class: Option<String>,
+        #[serde(rename = "class")]
+        class: String,
+        #[serde(rename = "selectors")]
+        selectors: Vec<String>,
+        #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+        #[serde(rename = "budget", default, skip_serializing_if = "Option::is_none")]
+        budget: Option<u64>,
+        #[serde(
+            rename = "receipt_required",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        receipt_required: Option<bool>,
+    },
+    #[serde(rename = "disclosure")]
+    Disclosure {
+        #[serde(rename = "audience")]
+        audience: Vec<String>,
+        #[serde(rename = "class")]
+        class: String,
+        #[serde(rename = "selectors")]
+        selectors: Vec<String>,
+    },
+}
+
 /// `oneiron::vault_shape::ShapeTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
@@ -1018,8 +1060,10 @@ pub enum ShapeRow {
     },
     #[serde(rename = "grant")]
     Grant {
-        #[serde(rename = "grant_ref")]
-        grant_ref: String,
+        #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+        grant_ref: Option<String>,
+        #[serde(rename = "bound", default, skip_serializing_if = "Option::is_none")]
+        bound: Option<ShapeGrantBound>,
     },
     #[serde(rename = "sync")]
     Sync {
@@ -1116,6 +1160,13 @@ pub enum ShapeItemState {
     },
     #[serde(rename = "proposed")]
     Proposed,
+    #[serde(rename = "filed")]
+    Filed {
+        #[serde(rename = "proposal_ref")]
+        proposal_ref: String,
+        #[serde(rename = "expires_at")]
+        expires_at: u64,
+    },
     #[serde(rename = "ceremony")]
     Ceremony,
     #[serde(rename = "no_door")]
@@ -10208,6 +10259,127 @@ pub struct ConnectorView {
     pub status_changed_at: Option<u64>,
     #[serde(rename = "budgeted_as_sends")]
     pub budgeted_as_sends: bool,
+}
+
+/// `oneiron::outbound_consent::tool_call::MutationIntent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MutationIntent {
+    #[serde(rename = "preview")]
+    Preview,
+    #[serde(rename = "explicit_mutation")]
+    ExplicitMutation,
+}
+
+/// `oneiron::outbound_consent::connector_call::ConnectorCallRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorCallRequest {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "tool")]
+    pub tool: String,
+    #[serde(rename = "arguments", default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<crate::WireJson>,
+    #[serde(rename = "mutation", default, skip_serializing_if = "Option::is_none")]
+    pub mutation: Option<MutationIntent>,
+}
+
+/// `oneiron::task_verb::sdk_connector_call::ConnectorToolResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorToolResult {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "foreign")]
+    pub foreign: bool,
+    #[serde(rename = "content")]
+    pub content: crate::WireJson,
+    #[serde(
+        rename = "structured_content",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub structured_content: Option<crate::WireJson>,
+    #[serde(rename = "is_error")]
+    pub is_error: bool,
+    #[serde(rename = "rpc_error", default, skip_serializing_if = "Option::is_none")]
+    pub rpc_error: Option<crate::WireJson>,
+}
+
+/// `oneiron::task_verb::sdk_connector_call::ConnectorCallReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "outcome")]
+pub enum ConnectorCallReply {
+    #[serde(rename = "delivered")]
+    Delivered {
+        #[serde(rename = "result", default, skip_serializing_if = "Option::is_none")]
+        result: Option<ConnectorToolResult>,
+        #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
+        reasons: Option<Vec<String>>,
+    },
+    #[serde(rename = "held")]
+    Held {
+        #[serde(rename = "call_ref")]
+        call_ref: String,
+        #[serde(
+            rename = "decision_ref",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        decision_ref: Option<String>,
+        #[serde(rename = "reasons")]
+        reasons: Vec<String>,
+    },
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(
+            rename = "decision_ref",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        decision_ref: Option<String>,
+        #[serde(rename = "reasons")]
+        reasons: Vec<String>,
+    },
+    #[serde(rename = "pending_delivery")]
+    PendingDelivery {
+        #[serde(rename = "call_ref", default, skip_serializing_if = "Option::is_none")]
+        call_ref: Option<String>,
+        #[serde(rename = "reasons")]
+        reasons: Vec<String>,
+    },
+}
+
+/// `oneiron::task_verb::sdk_connector_call::ConnectorSchemaRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorSchemaRequest {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "tool")]
+    pub tool: String,
+}
+
+/// `oneiron::task_verb::sdk_connector_call::ConnectorSchemaReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorSchemaReply {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "foreign")]
+    pub foreign: bool,
+    #[serde(
+        rename = "input_schema",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub input_schema: Option<crate::WireJson>,
+    #[serde(
+        rename = "destructive",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub destructive: Option<bool>,
+    #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
+    pub reasons: Option<Vec<String>>,
 }
 
 /// `oneiron::lens::record_ref::ResolveRecordRefRequest`.
