@@ -289,7 +289,8 @@ side_tables! {
     /// The encoded Loro version vector of the last sealed packet this machine put on its home
     /// for one window. Key: window key.
     SYNC_RESIDENCE_SEALED_PUT: SyncState b"rsp:" Raw;
-    /// The last home arrival number this machine took sealed packets in through (u64be).
+    /// The home this machine relays sealed packets through (its machine id, 16 bytes, zeros for a
+    /// home that proved none) and the last arrival number it took them in through there (u64be).
     /// Key: ().
     SYNC_RESIDENCE_SEALED_TAKEN: SyncState b"rst" Raw;
     /// A sealed packet the home stages from parts until its last one (OF-534 G7): u64be vault
