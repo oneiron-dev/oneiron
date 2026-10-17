@@ -44,6 +44,13 @@ impl Memory<'_> {
         if turn.messages.len() != 1 {
             return Err(MessageStreamError::InvalidRequest("one message required"));
         }
+        // A stream keeps no audience to stamp at its first checkpoint, so a
+        // private thread opens with a witnessed turn (FIX 2951).
+        if turn.thread_audience.is_some() {
+            return Err(MessageStreamError::InvalidRequest(
+                "a private thread opens with a witnessed turn, not a stream",
+            ));
+        }
         let message = &turn.messages[0];
         if message.content.len() > MAX_MESSAGE_STREAM_BYTES {
             return Err(MessageStreamError::BufferOverflow);
@@ -363,6 +370,7 @@ impl Memory<'_> {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn.to_hex()),
                 quote: None,
+                thread_audience: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),
                     author,
@@ -498,6 +506,11 @@ pub(super) fn authorize(
                 return Err(MessageStreamError::InvalidRequest("stream container kind"));
             }
         }
+    }
+    // A private thread's TURN takes words from its audience alone (FIX
+    // 2951); a thread hidden from the writer reads as a missing turn.
+    if !crate::workspace_roster::record_thread_admits_in(vault, txn, seed.turn, seed.actor)? {
+        return Err(Error::EntityNotFound.into());
     }
     let message = seed.message(text.to_owned());
     let envelope = witness_message_envelope(&message);

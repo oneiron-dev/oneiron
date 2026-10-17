@@ -145,10 +145,10 @@ pub(crate) fn validate_put_in_txn(
             || body
                 .member_ids
                 .iter()
-                .any(|person| !chat.persons.contains(person))
+                .any(|person| !chat.persons.contains(&Some(*person)))
             || chat.projects[0] == chat.projects[1]
             || chat.actors[0] == chat.actors[1]
-            || chat.persons[0] == chat.persons[1]
+            || chat.persons[0].is_some_and(|person| chat.persons[1] == Some(person))
         {
             return Err(invalid("leader chat binding"));
         }

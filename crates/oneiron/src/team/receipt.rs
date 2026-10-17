@@ -277,6 +277,10 @@ fn feed_pattern_payoff_in_txn(
     outcome: &TeamOutcome,
 ) -> Result<()> {
     let cell = pattern_cell(skill, &receipt.executor_mix(), &receipt.type_ref);
+    // The planner card read this cell with parent/carried backoff; its first
+    // own result keeps that borrowed prior (ARCH-0053 `#executor-swaps`).
+    let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, wtxn, receipt.project)?;
+    let parents = crate::task_type::TypeTree::from(tree).ancestors(&receipt.type_ref);
     let evidence = LearningEvidence {
         receipt: outcome.receipt.clone(),
         at: outcome.at,
@@ -288,6 +292,13 @@ fn feed_pattern_payoff_in_txn(
         outcome_label: None,
         pack_attribution: None,
     };
+    crate::learning::prior::capture_borrowed_prior_in_txn(
+        vault,
+        wtxn,
+        &cell,
+        &parents,
+        evidence.observation.form(),
+    )?;
     crate::learning::record_evidence_in_txn(vault, wtxn, &cell, &evidence, outcome.at)?;
     Ok(())
 }

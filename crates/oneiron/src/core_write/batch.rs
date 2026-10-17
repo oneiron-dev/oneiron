@@ -81,6 +81,17 @@ impl Vault {
         let mut batch = self.batch();
         let mut entities = Vec::with_capacity(input.entities.len());
         for entity in &input.entities {
+            // A thread binding is its room door's to stamp (FIX 2951).
+            if entity.entity_type == crate::registry::ENTITY_TYPE_TURN
+                && entity
+                    .body
+                    .get(crate::workspace_roster::ROOM_THREAD_KEY)
+                    .is_some()
+            {
+                return Err(MemoryError::bad_request(
+                    "a TURN's room_thread is stamped by its room's thread door",
+                ));
+            }
             let id = write_id(entity.id.as_deref())?;
             let times = core_write_times(
                 entity.occurred_start,

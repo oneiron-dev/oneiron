@@ -409,6 +409,11 @@ impl AttemptQueue<'_> {
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;
+        // A cancelled row is settled: its owner hears it as any other
+        // terminal one does.
+        if matches!(effect, AttemptInterventionEffect::Cancelled) {
+            self.notify_settled_in_txn(wtxn, &record)?;
+        }
 
         Ok(InterveneOutcome { effect, record })
     }
@@ -644,6 +649,7 @@ impl AttemptQueue<'_> {
                             ATTEMPT_RUNTIME_ACTOR,
                         )?;
                         self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
+                        self.notify_settled_in_txn(&mut wtxn, &record)?;
                         mark_rechecked_candidate_not_running(&mut report);
                         report.done += 1;
                         report.landing_force_cancelled += 1;

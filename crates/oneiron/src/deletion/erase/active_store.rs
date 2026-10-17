@@ -37,8 +37,10 @@ impl Vault {
         id: &EntityId,
         request_id: Option<&[u8; 16]>,
     ) -> Result<(bool, Vec<EntityId>)> {
-        // A held record keeps its bytes on every door that purges it.
+        // A held record keeps its bytes on every door that purges it, and a
+        // held world keeps its pads (OF-470).
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
@@ -131,6 +133,7 @@ impl Vault {
     ) -> Result<(bool, bool, bool)> {
         // A soft erase scrubs the body, so a hold refuses it too.
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         // Capture before the body is scrubbed (see the purge).

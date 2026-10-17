@@ -10,10 +10,12 @@
 //!
 //! The fitted half is `learning.setting` ([`crate::learning`]): fitting checks
 //! enter through [`record_setting_check`], the projector folds them over the
-//! seed (the owner's, else the catalog's at the shipped weight) and caches the
-//! vault-scope fit beside its claim. The value in force is the pin, else the
-//! fit once it has own runs, else the owner's seed, else the catalog seed. A
-//! pin fixes the value used while the fit keeps learning underneath it.
+//! seed (the owner's for the cell's scope, else the vault's, else the
+//! catalog's at the shipped weight) and caches each scope's fit beside its
+//! claim. The value in force is the pin, else the fit once it has own runs,
+//! else the owner's seed, else the catalog seed, narrowest scope first
+//! ([`setting_value_scoped`]). A pin fixes the value used while the fit keeps
+//! learning underneath it.
 
 use serde::{Deserialize, Serialize};
 
@@ -334,8 +336,8 @@ pub fn put_setting_row(vault: &Vault, owner: &WriteActor, row: &SettingRow) -> R
 }
 
 /// [`put_setting_row`] over `scope`: a project's or a task type's own seed
-/// or pin, under the same owner rule and bounds. Only a vault seed is the
-/// vault fit's prior, so only it refolds the fit.
+/// or pin, under the same owner rule and bounds. A seed is the prior of its
+/// scope's fit, so a seed at any scope refolds the knob's fits.
 ///
 /// # Errors
 ///
@@ -387,7 +389,7 @@ pub fn put_scoped_setting_row(
             &stored,
         )?;
         // A seed is the fit's prior: every fit over this knob refolds from it.
-        if *scope == SettingScope::Vault {
+        if *scope == SettingScope::Vault || row.mode == SettingMode::Seed {
             crate::learning::project::reproject_setting_cells_in_txn(
                 vault, wtxn, spec.key, row.at,
             )?;
@@ -427,7 +429,7 @@ pub fn clear_scoped_setting_row(
     vault.with_write_txn_grouped(|wtxn| {
         vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
         SETTING.delete(&vault.store, wtxn, &scoped_row_key(key, mode, scope))?;
-        if mode == SettingMode::Seed && *scope == SettingScope::Vault {
+        if mode == SettingMode::Seed {
             let now = crate::unix_seconds_now();
             crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, key, now)?;
         }
@@ -456,13 +458,13 @@ pub(crate) fn setting_value_in_txn(
 }
 
 /// The value in force for `spec` where `project` and `type_ref` apply: the
-/// narrowest pin (the project's, then the type's, then the vault's), else the
-/// narrower seed (the project's, then the type's), else the vault-scope fit
-/// once it has own runs, else the vault's seed, else the catalog seed. The
-/// vault's seed is the vault fit's own prior, so the fit outranks it; a
-/// project or type seed is the owner's word for that scope alone, which no
-/// fit learned from the whole vault overrides. With neither named it is
-/// [`setting_value`].
+/// narrowest pin (the project's, then the type's, then the vault's); else the
+/// project's fit at this type, then its own fit, once either has own runs,
+/// else the project's seed; else the type's fit, else the type's seed; else
+/// the vault-scope fit, else the vault's seed, else the catalog seed. A
+/// scope's seed is its own fit's prior, so that fit outranks it; a project or
+/// type seed is the owner's word for that scope alone, which no fit learned
+/// from a wider scope overrides. With neither named it is [`setting_value`].
 ///
 /// # Errors
 ///
@@ -496,21 +498,74 @@ pub(crate) fn setting_value_scoped_in_txn(
             return Ok(value);
         }
     }
+    let type_node = type_ref
+        .filter(|type_ref| !type_ref.is_root())
+        .map(|type_ref| type_ref.node_id.as_str());
     for scope in scopes.iter().filter(|scope| **scope != SettingScope::Vault) {
+        let fits: Vec<(Option<crate::entity_id::EntityId>, Option<&str>)> = match scope {
+            SettingScope::Project(project) => type_node
+                .map(|node| (Some(*project), Some(node)))
+                .into_iter()
+                .chain([(Some(*project), None)])
+                .collect(),
+            SettingScope::Type(_) => type_node
+                .map(|node| (None, Some(node)))
+                .into_iter()
+                .collect(),
+            SettingScope::Vault => Vec::new(),
+        };
+        for (subject, node) in fits {
+            if let Some(value) = cached_fit(store, txn, spec, subject, node)? {
+                return Ok(value);
+            }
+        }
         if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Seed, scope)? {
             return Ok(value);
         }
     }
-    if let Some(fit) =
-        crate::learning::project::SETTING_FIT.get(store, txn, &spec.key.to_owned())?
-        && fit.runs > 0.0
-        && fit.value.is_finite()
-    {
-        // A fit never leaves the catalog's bounds, so it never widens a floor.
-        return Ok(fit.value.clamp(spec.min, spec.max));
+    if let Some(value) = cached_fit(store, txn, spec, None, None)? {
+        return Ok(value);
     }
     let seed = scoped_row_value(store, txn, spec, SettingMode::Seed, &SettingScope::Vault)?;
     Ok(seed.unwrap_or(spec.seed))
+}
+
+/// The key a setting cell's fit is cached under
+/// (`learning::project::SETTING_FIT`): the knob's key alone for its vault
+/// fit; with the cell's `subject` when it is not the knob's
+/// [`global_setting_subject`]; with its task type's node when that is not the
+/// root. A type names its node only, as a type row does, so it matches at any
+/// tree version.
+pub(crate) fn setting_fit_key(
+    key: &str,
+    subject: Option<crate::entity_id::EntityId>,
+    type_node: Option<&str>,
+) -> String {
+    let mut out = key.to_owned();
+    if let Some(subject) = subject {
+        out.push_str("\0subject\0");
+        out.push_str(&subject.to_hex());
+    }
+    if let Some(node) = type_node {
+        out.push_str("\0type\0");
+        out.push_str(node);
+    }
+    out
+}
+
+/// The cached fit for one scope, once it has own runs.
+fn cached_fit(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    subject: Option<crate::entity_id::EntityId>,
+    type_node: Option<&str>,
+) -> Result<Option<f64>> {
+    Ok(crate::learning::project::SETTING_FIT
+        .get(store, txn, &setting_fit_key(spec.key, subject, type_node))?
+        .filter(|fit| fit.runs > 0.0 && fit.value.is_finite())
+        // A fit never leaves the catalog's bounds, so it never widens a floor.
+        .map(|fit| fit.value.clamp(spec.min, spec.max)))
 }
 
 /// Every owner row as stored, in key order: its scope, the row, and the
@@ -583,17 +638,40 @@ fn scoped_row_value(
         .map(|row| row.value))
 }
 
-/// The owner's seed over `spec` and its weight in runs, if one stands: the
-/// prior a `learning.setting` fit starts from.
+/// The owner's seed over `spec` and its weight in runs for a cell on
+/// `subject` at `type_ref`, if one stands: the prior a `learning.setting` fit
+/// starts from. A project subject's seed comes first, then a non-root type's,
+/// then the vault's; a skill subject has no seed of its own.
 pub(crate) fn owner_seed_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
+    subject: crate::entity_id::EntityId,
+    type_ref: Option<&crate::learning::TypeRef>,
 ) -> Result<Option<(f64, f64)>> {
-    Ok(SETTING
-        .get(store, txn, &row_key(spec.key, SettingMode::Seed))?
-        .filter(|row| (spec.min..=spec.max).contains(&row.value))
-        .and_then(|row| row.weight_runs.map(|weight| (row.value, weight))))
+    let scopes = [SettingScope::Project(subject)]
+        .into_iter()
+        .chain(
+            type_ref
+                .filter(|type_ref| !type_ref.is_root())
+                .cloned()
+                .map(SettingScope::Type),
+        )
+        .chain([SettingScope::Vault]);
+    for scope in scopes {
+        if let Some(seed) = SETTING
+            .get(
+                store,
+                txn,
+                &scoped_row_key(spec.key, SettingMode::Seed, &scope),
+            )?
+            .filter(|row| (spec.min..=spec.max).contains(&row.value))
+            .and_then(|row| row.weight_runs.map(|weight| (row.value, weight)))
+        {
+            return Ok(Some(seed));
+        }
+    }
+    Ok(None)
 }
 
 /// One check that fits a named knob: the value the check found best, on the

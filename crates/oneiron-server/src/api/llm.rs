@@ -325,6 +325,20 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
             admit_owner(&self.0, &mut request).map_err(|refused| refused_error(&refused))?;
         ladder.stream(&run, request, None)
     }
+
+    /// The configured chat models that run on this node or the owner's own
+    /// server; a third-party model is not offered (FIX 1295).
+    fn catalog(&self) -> Vec<oneiron::LlmCatalogEntry> {
+        if self.0.llm.is_none() {
+            return Vec::new();
+        }
+        self.0
+            .ai
+            .chat_catalog()
+            .into_iter()
+            .filter(|entry| oneiron_llm_own_server::advertises(entry.locality))
+            .collect()
+    }
 }
 
 /// An admission refusal as the error the asking node's transport returns.
