@@ -473,7 +473,7 @@ impl<'c> Chain<'c> {
                 };
                 let intent = HookIntent {
                     binding: id,
-                    author: binding.owner,
+                    author: binding.author_id(),
                     outcome_json: verdict.outcome_json.clone().unwrap_or_default(),
                     lineage: self.lineage(id, &key),
                     state: HookIntentState::Pending,
@@ -733,7 +733,7 @@ impl<'c> Chain<'c> {
             receipt_id: store::receipt_id(&run.key),
             receipt_kind: ReceiptKind::Hook,
             occurred_at: self.now / 1_000,
-            actor: Some(binding.owner.to_hex()),
+            actor: Some(binding.author_id().to_hex()),
             on_behalf_of: Some(self.call.actor.to_hex()),
             outcome: run.token.clone(),
             job_ref: None,
