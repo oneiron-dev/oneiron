@@ -64,8 +64,16 @@ impl HostSelfDispatcher<'_> {
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
             })));
         };
+        // A write carries the run's TASK creator, so a TASK it creates runs
+        // inside the creator's lease tree (OF-532).
+        let task_host = if call.verb.writes() {
+            self.task_host_binding()?
+        } else {
+            None
+        };
         let origin =
-            HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?);
+            HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?)
+                .with_task_host(task_host);
         // The call's step names the logical verb its hooks fire once for, the
         // same across replays of the step, and a call a hook's ask parked
         // keeps its invocation into a later step (ARCH-0080 §3). A hook's
