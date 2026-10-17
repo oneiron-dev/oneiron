@@ -12,6 +12,7 @@ use std::io::Cursor;
 use serde::{Deserialize, Serialize};
 
 use crate::booking::agent_api::BookingAvailabilityInput;
+use crate::booking::agent_front::ConstraintFrontConfig;
 use crate::booking::{
     BookingError, BookingLandingContent, ConstraintFieldConfig, EventTypeCard, EventTypeKey,
     MAX_BOOKING_WINDOW_SECS, ThemeTokens,
@@ -89,6 +90,9 @@ pub struct BookingPagePublication {
     /// Never emitted in the public render model.
     pub event_config_hashes: BTreeMap<String, String>,
     pub constraint_field: ConstraintFieldConfig,
+    /// The interactive constraint front's copy and session dials. `None`: the
+    /// page does not serve the front. Never emitted in the public render model.
+    pub constraint_front: Option<ConstraintFrontConfig>,
     pub theme: ThemeTokens,
     pub landing: BookingLandingContent,
     pub initial_availability: PublicBookingAvailability,
@@ -109,6 +113,11 @@ impl BookingPagePublication {
             &self.theme,
         )
         .map_err(|_| "public booking presentation exceeds lens bounds")?;
+        if let Some(front) = &self.constraint_front {
+            front
+                .validate()
+                .map_err(|_| "public booking constraint front copy or caps are invalid")?;
+        }
         self.landing
             .validate()
             .map_err(|_| "public booking landing content is invalid")?;

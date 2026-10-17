@@ -31,6 +31,10 @@ pub(crate) fn public_booking_router() -> Router<Arc<SyncServer>> {
             post(public_booking_availability).fallback(public_booking_not_found_response),
         )
         .route(
+            "/{page_token}/constraint-turn",
+            post(public_booking_constraint_turn).fallback(public_booking_not_found_response),
+        )
+        .route(
             "/{page_token}/verbs/{verb}",
             post(invoke_public_booking_verb).fallback(public_booking_not_found_response),
         )
@@ -186,6 +190,27 @@ async fn public_booking_availability(
     )
     .await
     .map(Json)
+}
+
+/// One constraint-field turn (`super::front`), authorized only by the
+/// published-page capability.
+async fn public_booking_constraint_turn(
+    State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
+    path: Result<Path<String>, PathRejection>,
+    payload: Result<Json<super::front::ConstraintTurnInput>, JsonRejection>,
+) -> Result<Json<super::front::ConstraintTurnResponse>, ApiError> {
+    let Path(token) = path.map_err(|_| public_booking_not_found())?;
+    let (page_ref, publication) = resolve_public_booking_page(&server, &token)?;
+    let input = json_payload(payload)?;
+    let transport = public_http_transport_context(client)?;
+    let authority = oneiron::booking::publication::PublicBookingAuthority {
+        page_ref,
+        publication,
+    };
+    super::front::run_public_constraint_turn(&server, authority, input, &transport)
+        .await
+        .map(Json)
 }
 
 /// A parser-backed allowlist, not a second verb registry.
