@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 308 facade rows, 1188 declarations.
+Census: 308 facade rows, 1192 declarations.
 Inputs: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
@@ -2196,11 +2196,20 @@ class AuthorityAuditRow(TypedDict):
     fold_valid: bool
     issue_codes: NotRequired[list[str]]
 AuthorityAuditOrder = Literal["entry_ref_ascending"]
+class ColdAuthorityAuditRow(TypedDict):
+    entry_ref: EntityId
+    entry_hash: str
+    checkpoint: str
+    signer_key: str
+    seq: int
+    parents: list[str]
+    fold_valid: bool
 class AuthorityAuditPage(TypedDict):
     rows: list[AuthorityAuditRow]
     next_after: NotRequired[EntityId | None]
     order: AuthorityAuditOrder
     scanned: int
+    cold_attested: NotRequired[list[ColdAuthorityAuditRow]]
 class MeshPathReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 MeshPathDirection = Literal["inbound", "outbound"]
@@ -5228,6 +5237,20 @@ class ConnectorCallStatusSettled(TypedDict):
 ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
 class CommitRequest(TypedDict):
     claims: list[ClaimInput]
+RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
+class RecordRefusal(TypedDict):
+    reason: RefusalReason
+    code: str
+    message: str
+    suggestions: list[str]
+    field: str
+class CommitOutcomeLanded(CommitReceipt):
+    outcome: Literal["landed"]
+class CommitOutcomeRefused(TypedDict):
+    outcome: Literal["refused"]
+    refusal: RecordRefusal
+    receipt_ref: NotRequired[str | None]
+CommitOutcome = CommitOutcomeLanded | CommitOutcomeRefused
 class ClaimRefRequest(TypedDict):
     claim_ref: str
 class ForgetPredicateRequest(TypedDict):

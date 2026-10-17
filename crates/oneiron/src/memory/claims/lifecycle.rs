@@ -58,10 +58,10 @@ impl Memory<'_> {
 
     /// Commits claims through the gated candidate path, one individually
     /// gated write per element (C3: per-element decisions; one bad element
-    /// never sinks the others). Rejected elements come back with approval
-    /// `rejected` and do not persist.
-    pub fn commit(&self, claims: &[ClaimInput]) -> MemoryResult<Vec<CommitReceipt>> {
-        Ok(self.commit_all(claims, true, None))
+    /// never sinks the others). A refused element answers its typed refusal
+    /// and persists nothing (OF-063).
+    pub fn commit(&self, claims: &[ClaimInput]) -> MemoryResult<Vec<CommitOutcome>> {
+        Ok(self.commit_all("vault.commit", claims, true, None))
     }
 
     /// Commits one claim with single-cardinality auto-supersede (S3):
