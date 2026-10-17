@@ -40393,8 +40393,43 @@
       "crate-vis": 7,
       "enum": 2,
       "fn": 7,
+      "mod": 1,
+      "re-export": 1,
       "struct": 2,
       "type": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "AgentPackBudgetSplit",
+      "AgentPackCeiling",
+      "AgentPackCompaction",
+      "AgentPackDreaming",
+      "AgentPackKnowledge",
+      "AgentPackMcp",
+      "AgentPackMemoryProfile",
+      "AgentPackOptionalMemory",
+      "AgentPackOptionalMemoryProfile",
+      "AgentPackOutputDecay",
+      "AgentPackPolicy",
+      "AgentPackRefusal",
+      "AgentPackRefusalLevel",
+      "AgentPackScope",
+      "AgentPackSkill",
+      "AgentPackSkillRef",
+      "AgentPackTravelProjection",
+      "AgentPackView",
+      "AgentPackWakeCadence"
+     ],
+     "path": "src/share_travel/agent_pack.rs",
+     "purpose": "The AgentPack a sharer sends to another party (OF-491, FIX 2040): a reference-free projection of an agent…",
+     "surface": {
+      "const": 1,
+      "enum": 8,
+      "fn": 8,
+      "struct": 11
      }
     },
     {
@@ -53364,10 +53399,10 @@
      "purpose": "Revocable brief read grants"
     },
     "share_travel": {
-     "files": 1,
+     "files": 2,
      "impl_vault": true,
-     "largest_src_bucket": "m",
-     "layout": "file",
+     "largest_src_bucket": "L",
+     "layout": "file+dir",
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
@@ -53658,9 +53693,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 175,
+   "over_bar": 176,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3257,
+   "source_files": 3258,
    "test_files": 902
   },
   "oneiron-android": {
