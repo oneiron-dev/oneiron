@@ -91,7 +91,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/resident_tests.rs` | test | s | — | — | — |
 | `src/agent_dispatch/room_join.rs` | src | s | 4 crate-vis | — | Room-bound launches (OF-531) |
 | `src/agent_dispatch/spend_calibration.rs` | src | m | 3 struct · 3 enum · 1 trait · 7 fn · 1 const · 7 crate-vis | AgentSpendCalibration, DollarBasis, ExpectedSpend, LaunchUsdPrices, SpendBasis, UsdPriceTarget, UsdUnitPrice | Per-agent spend calibration, learned from settled launches (OF-532) |
-| `src/agent_dispatch/spend_lease.rs` | src | m | 15 fn · 12 crate-vis | — | Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks) |
+| `src/agent_dispatch/spend_lease.rs` | src | m | 16 fn · 12 crate-vis | — | Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks) |
 | `src/agent_dispatch/spend_record.rs` | src | s | 5 struct · 4 enum · 4 fn · 2 crate-vis | ChildSpend, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement, SpendSignal +1 | Durable spend scopes and their typed reads (OF-532) |
 | `src/agent_dispatch/task_type_tree.rs` | src | m | 4 fn · 1 const · 2 crate-vis | — | The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and… |
 | `src/agent_dispatch/team_shape.rs` | src | s | 1 struct · 1 enum · 8 fn · 4 const | CoordinationPattern, TeamShape | The team-shape skill's engine half (ARCH-0079 #planner, OF-541): the closed shape vocabulary the planner… |
@@ -2203,7 +2203,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/mod.rs` | src | s | 1 re-export | — | Vault-local durable RSI budget ledger |
 | `src/llm/budget/rsi.rs` | src | m | 5 struct · 3 enum · 12 fn | RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose | Vault-local durable reserve/settle/refund ledger for research-loop spend |
 | `src/llm/decision/asks.rs` | src | L | 4 struct · 26 fn · 3 crate-vis | AskAnswer, AskPrior, DecisionAsk, DecisionAsks | The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role… |
-| `src/llm/decision/catalogue.rs` | src | m | 1 struct · 1 fn · 37 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/llm/decision/catalogue.rs` | src | m | 1 struct · 1 fn · 38 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/llm/decision/codec.rs` | src | s | 9 crate-vis | — | Canonical entity references for typed-decision wire records |
 | `src/llm/decision/generated.rs` | src | m | 1 struct · 3 enum · 2 fn | GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep | The generated read: a typed pack answered by one generation on the caller's own backend, for a caller… |
 | `src/llm/decision/held.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | HeldLadder | What a component that outlives one call holds to ask typed questions (a worker thread, a provider a host… |
@@ -2260,10 +2260,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/routing.rs` | src | m | 10 struct · 1 enum · 13 fn · 1 re-export · 1 crate-vis | DescriptionPolicy, DescriptionReask, MeasuredDescription, ModelDescription, OwnerModelLine, ReaskTrigger, RoutedSeat, SeatBirth +3 | Vault-owned description routing above the raw LLM call seam |
 | `src/llm/routing/decisions.rs` | src | s | 1 struct · 1 trait · 2 crate-vis | DescriptionDecisions, DescriptionNotes | The route's fitness grades as typed decisions through the host's ladder, and the note seam beside a routed… |
 | `src/llm/routing/tests.rs` | test | s | — | — | — |
-| `src/llm/run_admission/admission.rs` | src | m | 2 struct · 2 enum · 19 fn · 1 const · 9 crate-vis | RunAdmission, RunCall, RunCallError, RunDenied | One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's… |
+| `src/llm/run_admission/admission.rs` | src | m | 2 struct · 2 enum · 21 fn · 1 const · 9 crate-vis | RunAdmission, RunCall, RunCallError, RunDenied | One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's… |
 | `src/llm/run_admission/declaration.rs` | src | s | 4 struct · 2 enum · 15 fn · 5 crate-vis | BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration | The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid… |
 | `src/llm/run_admission/gate.rs` | src | s | 1 struct · 3 crate-vis | GatedBackend | The run's model backend: every call starts its permit here, before any byte leaves, and leaves a dispatch… |
-| `src/llm/run_admission/host.rs` | src | m | 8 struct · 5 enum · 8 fn · 7 crate-vis | AccountStatus, Allocation, AllocationGrantError, AllocationRef, AllocationRefusal, HostAccount, KeyCustody, OfferBinding +5 | What a host feeds the run admission: the offers it bound, the money a vault may commit and the account's… |
+| `src/llm/run_admission/host.rs` | src | m | 9 struct · 6 enum · 9 fn · 7 crate-vis | AccountStatus, Allocation, AllocationGrantError, AllocationRef, AllocationRefusal, HostAccount, KeyCustody, OfferBinding +7 | What a host feeds the run admission: the offers it bound, the money a vault may commit and the account's… |
 | `src/llm/run_admission/job_maximum.rs` | src | s | 7 struct · 4 enum · 9 fn | AddFundsNotice, CheckpointRef, DeclaredMaximum, JobMaximum, JobSignal, JobStartRefused, MaximumShown, MaximumStop +3 | The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2) |
 | `src/llm/run_admission/media.rs` | src | m | 2 struct · 15 fn · 2 crate-vis | MediaGate, MediaStreamLease | The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its… |
 | `src/llm/run_admission/mod.rs` | src | s | 10 re-export | — | The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through… |
