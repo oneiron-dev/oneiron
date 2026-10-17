@@ -1065,7 +1065,31 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             "executor result storage unavailable".into(),
         ))?;
         Ok(match self.checked_result(target)? {
-            Ok(read) => json!({"output": read.card(storage)?}),
+            Ok(read) => {
+                let mut card = read.card(storage)?;
+                // A whole fold result's card says what the fold covered, as
+                // its store's did: this step's receipt, or its committed one.
+                if read.range().is_none() {
+                    let output = read.output();
+                    let occurrence =
+                        OccurrenceRef::new(read.owner(), &output.path, &output.handle)?;
+                    let staged = self
+                        .receipts
+                        .iter()
+                        .find(|held| held.folded.occurrence == occurrence.occurrence)
+                        .cloned();
+                    let receipt = match staged {
+                        Some(receipt) => Some(receipt),
+                        None => storage.code_run_reader_fold(read.owner(), &output.path)?,
+                    };
+                    if let Some(receipt) =
+                        receipt.filter(|receipt| receipt.folded.handle == output.handle)
+                    {
+                        card["receipt"] = receipt.card();
+                    }
+                }
+                json!({ "output": card })
+            }
             Err(refused) => refused,
         })
     }
@@ -1078,8 +1102,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     ///
     /// With `child`, a readable result is also checked as a spawn's source
     /// would be, writing nothing: the run's own result, then the seat, the
-    /// clock and the scope. The verdict names the children's cutoff and what
-    /// their scope may still spend, or why a spawn would be refused.
+    /// clock and the scope. The verdict names the children's cutoff and the
+    /// meter they spend on (`scope`, with what it may still spend, or
+    /// `host`, the host's own meter, with no figure), or why a spawn would be
+    /// refused.
     fn can_read_result(
         &mut self,
         target: &JsResultTarget,
@@ -1104,12 +1130,16 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                     .gated_write
                     .reader_spawn_seat()
                     .map_or((0, 0), |seat| (seat.window_tokens, seat.memory_bytes));
+                let meter = if available.is_some() { "scope" } else { "host" };
                 verdict["child"] = json!({
                     "cutoff_unix_ms": cutoff,
-                    "spend_available_units": available,
+                    "meter": meter,
                     "window_tokens": window_tokens,
                     "memory_bytes": memory_bytes,
                 });
+                if let Some(available) = available {
+                    verdict["child"]["spend_available_units"] = json!(available);
+                }
             }
             Err(reason) => verdict = json!({"can": false, "reason": reason}),
         }

@@ -246,7 +246,7 @@ impl Vault {
             served: served.into_iter().map(bounded).collect(),
             served_records: Vec::new(),
         };
-        CALL_RECEIPTS.put(&self.store, txn, &id, &receipt)?;
+        CALL_RECEIPTS.put(self, txn, &id, &receipt)?;
         Ok(receipt_ref)
     }
 }

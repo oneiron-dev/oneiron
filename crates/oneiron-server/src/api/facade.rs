@@ -27,6 +27,8 @@
 pub(super) mod action_routes;
 mod agent_verbs;
 mod call_context;
+mod connector_call_doors;
+mod core_write_doors;
 mod decision_ask_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
@@ -51,6 +53,7 @@ mod widen_proposal_doors;
 
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
+pub(crate) use connector_call_doors::connector_call_as;
 pub(crate) use dispatch::call_verb;
 
 use std::sync::Arc;

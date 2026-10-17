@@ -39,7 +39,7 @@ declare interface StoredResult {
   search(pattern: string, opts?: SearchOptions): Promise<SearchReply | WithheldReply>;
   query(q: string | QuerySelection): Promise<QueryReply | WithheldReply>;
   chunks(by: ChunkBy): ResultChunks;
-  describe(): Promise<StoredResult>;
+  describe(): Promise<StoredResult & { receipt?: FoldCoverage }>;
 }
 /** A result as the reads take it: its name (`r7`), its handle, a range of
  * either (`r7#0-4096`, byte offsets, half-open), or a card or chunk. */
@@ -174,7 +174,7 @@ declare interface ChunkRef {
   search(pattern: string, opts?: SearchOptions): Promise<SearchReply | WithheldReply>;
   query(q: string | QuerySelection): Promise<QueryReply | WithheldReply>;
   chunks(by: ChunkBy): ResultChunks;
-  describe(): Promise<StoredResult>;
+  describe(): Promise<StoredResult & { receipt?: FoldCoverage }>;
 }
 declare interface ChunkPage {
   ref: string;
@@ -242,8 +242,9 @@ declare function diff(a: ResultRef, b: ResultRef, opts?: { by?: "lines" | "bytes
     hunks?: { a: [number, number]; b: [number, number]; text: string; edge?: true; coarse?: true }[]; stored?: StoredResult } | { refused: string; ref: string; detail?: unknown }>;
 /** The card of a result of this run, by its name, its handle, a range or its
  * card. An unknown name throws `unknown_handle` with the live names. Start a
- * big result here: its `shape` says which read fits. */
-declare function describe(r: ResultRef): Promise<StoredResult>;
+ * big result here: its `shape` says which read fits. A whole fold result's
+ * card also says what the fold covered (`receipt`), as its store's did. */
+declare function describe(r: ResultRef): Promise<StoredResult & { receipt?: FoldCoverage }>;
 /** Bytes or lines of a result, at most one reply, with `next` to read on.
  * After `search`, slice around a match's `offset`. */
 declare function slice(r: ResultRef, sel: SliceSelection): Promise<SliceReply | WithheldReply>;
@@ -264,10 +265,11 @@ declare function chunks(r: ResultRef, by: ChunkBy): ResultChunks;
 declare function can(input: { read: ResultRef; child?: {} }): Promise<CanReadReply>;
 /** `can({read})`'s answer: the result's ref, size, kind and taint, or why
  * not, with the detail a read of it would refuse with. With `child`, the
- * children's cutoff, what their scope may still spend, the window of the
- * model they run on, in tokens, and the memory one child may hold. */
+ * children's cutoff, the meter they spend on (`scope`, with what it may
+ * still spend, or `host`, the host's own meter, with no figure), the window
+ * of the model they run on, in tokens, and the memory one child may hold. */
 type CanReadReply =
-  | { can: true; ref: string; bytes: number; kind: "text" | "binary"; taint: { state: "clean"; secret: null }; child?: { cutoff_unix_ms: number; spend_available_units: number; window_tokens: number; memory_bytes: number } }
+  | { can: true; ref: string; bytes: number; kind: "text" | "binary"; taint: { state: "clean"; secret: null }; child?: { cutoff_unix_ms: number; meter: "scope" | "host"; spend_available_units?: number; window_tokens: number; memory_bytes: number } }
   | { can: false; reason: "unknown_handle" | "withheld_rows" | "tainted" | "outside_delegated_range" | "reader_task_settled" | "spawn_unbound" | "past_cutoff" | "unmetered" | "denied"; [detail: string]: unknown };
 /** Foreign tier only. Proposals are data; they never commit host writes. */
 declare const propose: {

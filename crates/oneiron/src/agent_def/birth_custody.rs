@@ -119,7 +119,7 @@ pub(crate) fn birth_custody_exists_in_txn(
 ) -> Result<bool> {
     for id in super::birth_dependencies::birth_carriers_for_erased_entity_in_txn(store, txn, child)?
     {
-        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some() {
+        if crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)? {
             return Ok(true);
         }
     }

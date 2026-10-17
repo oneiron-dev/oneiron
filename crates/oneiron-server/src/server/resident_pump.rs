@@ -185,6 +185,12 @@ impl SyncServer {
     fn resident_pass(&self, now: u64) -> Pass {
         let mut pass = Pass::default();
         let vault = self.vault();
+        // OF-533: the waits a pumped run parks on are swept on this recheck,
+        // so a parked ask's deadline lands with no Dreamer enabled.
+        if let Err(error) = vault.settle_code_run_waits() {
+            pass.faults
+                .insert("task waits".to_owned(), error.to_string());
+        }
         let agents = match vault.entities_by_type(ENTITY_TYPE_AGENT_DEF) {
             Ok(agents) => agents,
             Err(error) => {
@@ -382,18 +388,14 @@ fn run_bound(
     }
     // Its model calls and its reader children spend under the attempt's
     // scope. An unmetered attempt's calls stay on the provider's meter, and
-    // it names the scope it would spend under, which is not open, so its
-    // spawns answer `reader_spawn_unmetered`. Its door withholds nothing, so
-    // its children's reads withhold nothing, as its own do.
+    // so do its children's. Its door withholds nothing, so its children's
+    // reads withhold nothing, as its own do.
     let metered = AgentDispatcher::new(vault)
         .spend_scope_for_attempt(status.attempt.id)
         .map_err(text)?;
-    let spend = metered
-        .clone()
-        .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
     let seat = seats.seat(
         run_id,
-        spend,
+        metered.clone(),
         CallerLocality::OnDevice,
         provider.reader_window_tokens(),
     );

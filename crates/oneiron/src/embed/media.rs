@@ -371,14 +371,31 @@ pub(super) fn text_document_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<String>> {
-    if crate::ports::stale_in_txn(&vault.store, txn, id)? {
+    text_document_in(vault, &vault.store, txn, id)
+}
+
+/// [`text_document_in_txn`] read through `store`: base, or a room's view, whose records and
+/// turns compose with base.
+pub(super) fn text_document_in(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<String>> {
+    if crate::ports::stale_in_txn(store, txn, id)? {
         return Ok(None);
     }
-    let Some(row) = vault.store.port_entity_record(txn, id)? else {
+    let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    let Some(payload) =
-        super::embeddable_payload_in_txn(vault, txn, id, row.entity_type, &row.body)?
+    let Some(payload) = super::eligibility::embeddable_payload_in(
+        vault,
+        store,
+        txn,
+        id,
+        row.entity_type,
+        &row.body,
+    )?
     else {
         return Ok(None);
     };

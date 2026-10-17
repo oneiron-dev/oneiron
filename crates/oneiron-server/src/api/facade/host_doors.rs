@@ -16,6 +16,7 @@ use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
+use oneiron::runtime_hooks::HookVerdict;
 use oneiron::task_verb::sdk::{
     AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiVerdict, AiVerdictRequest,
     AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, HookReplayRow,
@@ -64,8 +65,12 @@ pub(crate) use super::wave_doors::*;
 pub(crate) use super::widen_proposal_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::policy_doors::*;
+// The generic connector call's door (ONE-2510), likewise.
+pub(crate) use super::connector_call_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
+// The core write doors (OF-181), likewise.
+pub(crate) use super::core_write_doors::*;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
@@ -377,9 +382,10 @@ pub(crate) async fn ai_verdict(
     .map_err(|_| internal("ai.verdict"))?
 }
 
-/// `vault.hooks.replay`: the owner replays a fact hook over past facts, under
-/// the proof `/v1/owner` takes from the request, on the hook sandbox serve
-/// runs its fact hooks on. A dry run: nothing lands.
+/// `vault.hooks.replay`: the owner replays a hook over past facts or its
+/// saved verb runs, under the proof `/v1/owner` takes from the request, on
+/// the hook sandbox serve runs its hooks on. A dry run: nothing lands. A fact
+/// no run pinned previews a generative hook's verdicts on serve's own ladder.
 pub(crate) async fn vault_hooks_replay(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -393,17 +399,34 @@ pub(crate) async fn vault_hooks_replay(
             &["Serve with fact hooks on (no --no-hooks), on a build with the code sandbox."],
         ));
     };
+    let verdict = replay_verdict(server);
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
         oneiron::task_verb::sdk::replay_hooks_as_owner(
             server.vault(),
             &owner,
             runtime.as_ref(),
+            verdict,
             &input,
         )
     })
     .await
     .map_err(|_| internal("vault.hooks.replay"))?
+}
+
+/// The verdict host a replay's preview asks: the one the fact-hook runner
+/// asks.
+#[cfg(feature = "code-sandbox-wasmtime")]
+fn replay_verdict(server: &Arc<SyncServer>) -> Option<Arc<dyn HookVerdict>> {
+    Some(Arc::new(crate::hook_verdict::ServerHookVerdict::new(
+        server,
+    )))
+}
+
+/// No hook sandbox runs on this build, so no replay reaches a verdict.
+#[cfg(not(feature = "code-sandbox-wasmtime"))]
+fn replay_verdict(_server: &Arc<SyncServer>) -> Option<Arc<dyn HookVerdict>> {
+    None
 }
 
 /// Whom a host-door question is asked for: the slip's principal, or the
@@ -493,6 +516,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.members.accept"
         | "vault.members.decline"
         | "vault.members.withdraw_invitation"
+        | "vault.members.invitation_slip"
         | "vault.shared.object"
         | "vault.shared.withdraw_objection"
         | "vault.shared.started"

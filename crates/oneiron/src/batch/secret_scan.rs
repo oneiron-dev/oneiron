@@ -1,3 +1,4 @@
+mod container;
 mod mask;
 mod shapes;
 mod whole_read;
@@ -5,9 +6,18 @@ mod wordlist;
 
 use heed::{RoTxn, RwTxn};
 
+pub(crate) use self::container::{
+    is_container, masked_copy, scan_members as scan_container_members,
+};
+pub(crate) use self::mask::admit::{
+    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
+    scan_document_in_txn,
+};
 pub(super) use self::mask::mask_batch_ops;
+pub(crate) use self::mask::mask_origin_in_txn;
 pub(crate) use self::mask::side_row::{
-    SidePart, admit_side_parts, admit_side_row, admitted_from, from_named_tree, named_tree,
+    SidePart, admit_side_parts, admit_side_row, admit_typed, admitted_from, from_named_tree,
+    named_tree,
 };
 use self::shapes::Door;
 pub(crate) use self::whole_read::{
@@ -18,7 +28,7 @@ pub(crate) use self::whole_read::{
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, GateError, Result};
-use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
@@ -105,6 +115,11 @@ pub(super) fn scan_batch_ops(
                     continue;
                 }
                 let _secrets_nulled = scan_payload(data)?;
+                // A file's members are read too: a key in a compressed
+                // member is no text in the file's stored bytes.
+                if *entity_type == ENTITY_TYPE_ASSET {
+                    scan_container_members(data)?;
+                }
             }
             BatchOp::ClaimCandidate {
                 candidate,
@@ -137,8 +152,16 @@ pub(super) fn scan_batch_ops(
 
 /// Scans bytes with the serve/export reading of the shared detector, without
 /// exposing values. Snapshot custody, pack screening and every release door
-/// use this; none of them follows the owner's ingest switch.
+/// use this; none of them follows the owner's ingest switch. A container's
+/// members are read by the same rules, and a container the walk cannot read
+/// whole reads as a hit (see `container`).
 pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static str> {
+    release_hit(bytes).or_else(|| container::release_members_hit(bytes))
+}
+
+/// The release rules over one run of bytes: its text, and a known framed
+/// carrier's body.
+fn release_hit(bytes: &[u8]) -> Option<&'static str> {
     let haystack = String::from_utf8_lossy(bytes);
     detect(&haystack, Door::Release).or_else(|| {
         let payload = framed_payload(bytes)?;

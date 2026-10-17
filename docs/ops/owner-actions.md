@@ -345,6 +345,27 @@ and anything else the door finds but cannot place still refuse the whole write.
 way. Each change is receipted with its revision, the owner who made it and the previous
 setting. Only a live owner of the vault can switch it.
 
+## Reveal a secret by its handle
+
+An agent never reads a secret as its value, only as its handle. When it needs the value for its
+model it calls `reveal({handle, why})`. If a standing grant covers this agent's connection, this
+class of secret and this project, the value is delivered with a quiet receipt. Otherwise you are
+asked once: approve once, approve and stop asking (a standing grant on exactly that connection,
+class and project), or deny. A doored or cross-vault credential is never revealed to a model.
+
+```sh
+oneiron api raw GET '/v1/owner/secrets/reveals?pending=true'    # asks, each with its card and expected_digest
+oneiron api raw POST /v1/owner/secrets/reveals/answer \
+  --data '{"reveal": "<32 hex>", "expected_digest": "<64 hex>", "outcome": "once"}'
+oneiron secrets reveal --handle sc12 --reason "rotate the deploy token"   # value to stdout, receipt to stderr
+```
+
+`POST /v1/owner/secrets/reveal` with `{"handle"}` or `{"name"}` and `"reason"` returns the value as
+`value_base64`, in that reply only. Each reveal's receipt names the handle, the class, the why or
+reason, the connection and who answered, never the value. An agent's granted reveal is a 15-minute
+lease to its model connection, and an unanswered ask lapses after an hour. A standing grant is
+revoked in the consent registry like any other.
+
 ## Hand a served repository's origin to another host
 
 A repository this vault serves at `/git/<repo>` has no origin authority until you set one. With
@@ -694,10 +715,13 @@ A candidate is an instruction your publisher ships and you install and pin. The 
 each failure in the vault with the candidate added to the failing agent's instructions, and only
 the fixed or not-fixed result leaves, as `publisher.<id>@<first 16 hex of the pin>`. Nothing
 fetches or installs it. A file that no longer matches its pin stops the server at start. At most
-8 candidates, 16 KiB each; a new candidate is tried on failures from then on, not on old ones.
+8 candidates, 16 KiB each. A newly pinned candidate is also tried once on each past failure that
+still stands: after the server starts, the Coach works through its earlier code-fix work a few
+failures at a time.
 `GET /v1/owner/coach/code-fixes?limit=<n>` lists the Coach's code-fix work, newest first: each
-failure case's heal route, its class, the invented example's verdict and each candidate's fixed
-or not-fixed result. It holds no text of the failure.
+failure case's heal route (`case`), or a blocked report's when the agent's run has no failed case
+(`blocked_report`), its class, the invented example's verdict and each candidate's fixed or
+not-fixed result. It holds no text of the failure.
 
 The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
 `https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
@@ -739,7 +763,13 @@ windows again.
 newest first, each with your label. `POST /v1/owner/self-heal/findings/label` with
 `{"family", "event", "positive"}` labels one finding; a label never changes. Once a family has
 `consecutive` positive labels and one negative, a `t2` detector of that family asks with the
-labeled findings.
+labeled findings. For a `t3` detector, the next pass registers a T2 of the family: it grades each
+window's runs one by one, shown the labeled findings' run facts, beside the `t3`, which keeps
+running. A new label or a reworded detector registers a new revision, which grades windows again.
+When a shipped closed-form T1 detector reproduces every label (today `retrieval.miss.v1` for
+`retrieval_miss`: a confirmed window holds a miss, a rejected one holds none), the revision is
+graduated and its T2 stops running; the T1 already runs in the Coach's nightly tier-1 sweep.
+`GET /v1/owner/self-heal/minted` lists each family's registration and what graduated it.
 
 ## Answer the decision ladder's asks
 
@@ -988,6 +1018,24 @@ Two app writes are verbs as well, so a button and an agent make them the same wa
 - `vault.artifacts.create` with `{"name", "media_type", "content_base64", "run_ref"?,
   "made_by"?}` creates an artifact with its first version. `POST /v1/core/artifacts` runs the
   same door.
+
+The core conversation writes and the atomic batch are verbs too:
+- `vault.conversations.create` creates a conversation. A body that names members also writes
+  its membership, creator and roles, as you.
+- `vault.conversations.turns.create` with `{"conversation", "body", ...}` puts one TURN under a
+  conversation, with its ChildOf edge.
+- `vault.conversations.records.append` appends one TURN to a conversation's DAG, under your
+  name. It takes the same fields as `POST /v1/core/conversations/{id}/records`, plus
+  `conversation` and less `actor`.
+- `vault.batch` with `{"entities": [...]}` commits up to 256 puts at once. An owner-grade
+  credential commits them at owner grade. Any other credential, and an embedded handle, commits
+  them below it, which refuses a put that turns an agent definition back on.
+
+Each REST route (`POST /v1/core/conversations`, `.../{id}/turns`, `.../{id}/records`,
+`/v1/core/batch`) runs its verb as an action of your credential. It runs the verb's own door
+instead when the request is larger than one action argument (16 KiB of JSON), names a room
+turn, or comes from a credential that binds no person or agent. The route picks the path before
+it writes. A TURN write wakes the Dreamer once on either path.
 
 ## Widen proposals
 

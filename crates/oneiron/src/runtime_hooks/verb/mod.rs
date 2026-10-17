@@ -11,6 +11,7 @@
 mod ask;
 mod chain;
 mod credential;
+mod record;
 mod redact;
 mod resume;
 mod served;
@@ -30,6 +31,7 @@ pub use credential::{
     VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope, VerbAskInstrument, VerbAskRefusal,
     VerbAskResumed, VerbAskSavedCall,
 };
+pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
 pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
 pub(crate) use state::{HookDepth, VerbHookState};
 pub use state::{InvocationClaim, InvocationEntry, InvocationOutcome, InvocationWait};

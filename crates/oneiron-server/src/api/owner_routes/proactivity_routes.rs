@@ -11,6 +11,8 @@
 //! `/v1/owner/self-heal/findings` (OF-418) lists one detector's raised T3
 //! findings with the owner's labels and takes the owner's one label on each,
 //! which a `t2` detector of the same family learns from.
+//! `/v1/owner/self-heal/minted` is each family's T2 the detector pass
+//! registered from those labels, and the closed-form T1 that graduated it.
 //! `/v1/owner/coach/code-fixes` (OF-380) is the Coach's code-fix work on each
 //! failure case: the class, the invented example's verdict and each
 //! candidate's fixed or not-fixed result, with no text of the failure.
@@ -35,9 +37,10 @@ use oneiron::dreamer_runner::maintenance::representation::{
     RepresentationCitation, RepresentationRequest, schedule_approved_representation,
 };
 use oneiron::dreamer_runner::maintenance::stewardship::{StewardshipRule, StewardshipRules};
+use oneiron::failure_signals::CodeFixSource;
 use oneiron::memory::OutboundScheduleContext;
 use oneiron::self_heal::detector_pass::MAX_T3_FINDINGS;
-use oneiron::self_heal::distillation::ReviewedFinding;
+use oneiron::self_heal::distillation::{MintedRegistration, ReviewedFinding};
 use oneiron::skill_optimize::{OfferAnswer, OfferAnswerRecord, TrainingOffer};
 use serde::{Deserialize, Serialize};
 
@@ -66,6 +69,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/identity/asks/answer", post(answer_identity_ask))
         .route("/self-heal/findings", get(self_heal_findings))
         .route("/self-heal/findings/label", post(label_self_heal_finding))
+        .route("/self-heal/minted", get(self_heal_minted))
 }
 
 fn now_secs() -> u64 {
@@ -511,6 +515,51 @@ async fn self_heal_findings(
     ))
 }
 
+/// One family's registered T2 as the owner sees it.
+#[derive(Debug, Serialize)]
+struct MintedView {
+    family: String,
+    /// The wording-and-corpus revision, as 64 hex.
+    revision: String,
+    /// The labeled findings it asks with, as 32 hex each.
+    positive: Vec<String>,
+    negative: Vec<String>,
+    registered_at: u64,
+    /// The T1 detector that reproduces every label; while present the T2
+    /// no longer runs.
+    graduated_to: Option<String>,
+}
+
+impl From<MintedRegistration> for MintedView {
+    fn from(registration: MintedRegistration) -> Self {
+        let hex = |ids: &[oneiron::EntityId]| -> Vec<String> {
+            ids.iter().map(|id| id.to_hex()).collect()
+        };
+        Self {
+            revision: blake3::Hash::from_bytes(registration.revision)
+                .to_hex()
+                .to_string(),
+            positive: hex(&registration.positive_events),
+            negative: hex(&registration.negative_events),
+            family: registration.family,
+            registered_at: registration.registered_at,
+            graduated_to: registration.graduated_to,
+        }
+    }
+}
+
+/// `GET /v1/owner/self-heal/minted`: each family's registered T2, by family.
+async fn self_heal_minted(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<MintedView>> {
+    owner(&auth, &server)?;
+    let registrations = blocking(move || Ok(server.vault().minted_registrations()?)).await?;
+    Ok(Json(
+        registrations.into_iter().map(MintedView::from).collect(),
+    ))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LabelFinding {
@@ -528,11 +577,14 @@ struct CodeFixQuery {
     limit: Option<usize>,
 }
 
-/// One case's code-fix work as the owner sees it.
+/// One failure's code-fix work as the owner sees it: a case's, or a blocked
+/// report's whose run has no failed case.
 #[derive(Debug, Serialize)]
 struct CodeFixView {
-    /// The failure case, as 32 hex.
-    case: String,
+    /// The failure case, as 32 hex; absent for a blocked report's work.
+    case: Option<String>,
+    /// The blocked report's receipt, as 32 hex; absent for a case's work.
+    blocked_report: Option<String>,
     /// The proposed heal the work follows, as 32 hex.
     proposal: String,
     route: String,
@@ -558,12 +610,19 @@ async fn code_fixes(
     .await?;
     Ok(Json(
         work.into_iter()
-            .map(|work| CodeFixView {
-                case: work.case_ref,
-                proposal: work.proposal.to_hex(),
-                route: work.route,
-                queued_at: work.queued_at,
-                settled: work.settled,
+            .map(|work| {
+                let (case, blocked_report) = match work.source {
+                    CodeFixSource::Case { case_ref } => (Some(case_ref), None),
+                    CodeFixSource::Blocked { receipt, .. } => (None, Some(receipt.to_hex())),
+                };
+                CodeFixView {
+                    case,
+                    blocked_report,
+                    proposal: work.proposal.to_hex(),
+                    route: work.route,
+                    queued_at: work.queued_at,
+                    settled: work.settled,
+                }
             })
             .collect(),
     ))

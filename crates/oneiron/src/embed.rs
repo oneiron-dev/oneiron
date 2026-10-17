@@ -3,6 +3,7 @@ mod device;
 mod eligibility;
 mod locality;
 mod media;
+mod session_media;
 mod space;
 mod space_move;
 mod space_probe;
@@ -19,13 +20,19 @@ pub(crate) use eligibility::{
 };
 pub(crate) use locality::clear_embedding_locality_in_txn;
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput};
+pub use space::EMBEDDING_SETUP_LEARNED_AT;
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
     KindSlotBindings, MediaRefused,
 };
 pub(crate) use space::{
-    delete_media_vectors_in_txn, delete_text_media_vectors_in_txn, embedding_space_in_txn,
-    search_media_space_in_txn,
+    TEXT_HASH_LEN, delete_media_vectors_in_txn, delete_text_media_vectors_in_txn,
+    embedding_space_in_txn, replay_media_vector_in_txn, search_media_space_in_txn,
+    stage_media_vector_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use space::{
+    embedding_setup_rests_on_sibling, install_replicated_embedding_setup_in_txn,
 };
 pub use space_move::{
     KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_FILL_DEADLINE_SECS,

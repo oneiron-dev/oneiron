@@ -563,7 +563,7 @@ impl OffRecordSession<'_> {
                     // unconditional read sees.
                     let view = self.vault.store.session_view(self.entry.overlay.clone())?;
                     accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
-                    table.put(&self.vault.store, wtxn, key, value)
+                    table.put(self.vault, wtxn, key, value)
                 })
             }
         }
@@ -609,11 +609,7 @@ impl OffRecordSession<'_> {
             RouteTarget::Base => self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
                 route.revalidate()?;
                 let view = self.vault.store.session_view(self.entry.overlay.clone())?;
-                f(
-                    wtxn,
-                    RoutedDbs::Session(&view),
-                    RoutedDbs::Base(&self.vault.store),
-                )
+                f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Base(self.vault))
             }),
         }
     }
@@ -750,8 +746,71 @@ impl OffRecordSession<'_> {
                 table.put(&view, wtxn, key, value)?;
                 counter.put(&view, wtxn, counter_key, &next_counter)?;
             } else {
+                table.put(self.vault, wtxn, key, value)?;
+                counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
+            }
+            Ok((segment, total))
+        })?;
+        if let Some(segment) = segment {
+            segment.commit()?;
+        }
+        Ok(total)
+    }
+
+    /// [`Self::side_table_compare_and_put_with_counter_routed`], with `also`
+    /// writing more rows to the same target in the same transaction, after
+    /// the row and its counter: a turn's code-run replay append, its heal
+    /// tally and the fold receipts it staged commit together or not at all.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the counter-routed put's axes, plus the rows that commit with it"
+    )]
+    pub(crate) fn side_table_compare_and_put_with_counter_routed_and<K, V, C, CK, CV, CC>(
+        &self,
+        route: &SessionWriteRoute,
+        table: &SideTable<K, V, C>,
+        key: &K,
+        value: &V,
+        accepts_current: impl FnOnce(Option<&V>) -> Result<()>,
+        counter: &SideTable<CK, CV, CC>,
+        counter_key: &CK,
+        update_counter: impl FnOnce(Option<CV>, Option<CV>, RouteTarget) -> Result<(CV, u64)>,
+        also: impl FnOnce(&mut heed::RwTxn<'_>, crate::side_table::RoutedDbs<'_>) -> Result<()>,
+    ) -> Result<u64>
+    where
+        K: SideKey,
+        C: SideCodec<V>,
+        CK: SideKey,
+        CC: SideCodec<CV>,
+    {
+        use crate::side_table::RoutedDbs;
+        route.require_recording(&self.session_ref)?;
+        let target = route.target();
+        if target == RouteTarget::Discard {
+            unreachable!("anonymous recording refused above");
+        }
+        let overlay = self.entry.overlay.clone();
+        // A stretch on record writes into base only while its saver holds.
+        let check = self.saver_check_for(route)?;
+        let (segment, total) = self.with_saver_write_txn(check, |wtxn| {
+            let segment = match target {
+                RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
+                RouteTarget::Base | RouteTarget::Discard => None,
+            };
+            route.revalidate()?;
+            let view = self.vault.store.session_view(overlay.clone())?;
+            accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
+            let base = counter.get(&self.vault.store, wtxn, counter_key)?;
+            let delta = self.overlay_counter_delta(counter, counter_key)?;
+            let (next_counter, total) = update_counter(base, delta, target)?;
+            if target == RouteTarget::Overlay {
+                table.put(&view, wtxn, key, value)?;
+                counter.put(&view, wtxn, counter_key, &next_counter)?;
+                also(wtxn, RoutedDbs::Session(&view))?;
+            } else {
                 table.put(&self.vault.store, wtxn, key, value)?;
                 counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
+                also(wtxn, RoutedDbs::Base(self.vault))?;
             }
             Ok((segment, total))
         })?;

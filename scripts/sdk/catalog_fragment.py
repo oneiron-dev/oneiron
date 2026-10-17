@@ -35,7 +35,8 @@ REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 # - REPLY: what a verb call resolves with in code mode. The guest's verb door
 #   decodes the host's whole reply (components/code-run-quickjs/bootstrap.js,
 #   `verb`), and the host writes it as `{output}`, `{denied, reasonCodes}`,
-#   `{failed}` or, for a call that parks and every call past a park,
+#   `{failed, error?}` (`error` only for a code in wire.rs `GUEST_FAILURE_CODES`)
+#   or, for a call that parks and every call past a park,
 #   `{waitId}`, with `budget` added inside a wake pass (wire.rs `reply_body`,
 #   `SelfDispatchResponse::guest_json`). `StoredResult` is runtime.d.ts's card,
 #   which stands in for an output past 512 KiB of JSON.
@@ -45,21 +46,32 @@ REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 #   Today every row answers its output, `ask` and `wait` included.
 # - JSDOC: each verb carries its row's one-line description as its JSDoc, as
 #   every generated TypeScript method does.
+# - VAULT_HOST: an empty interface in the namespace that the `vault` root
+#   extends, so another declaration file can add members to it (the
+#   executor's WIT-root members) by merging, and this text stays valid alone.
+# - CONNECTOR_TOOLS: `connector.<name>.<tool>(args)`, any tool of any
+#   catalogued connector beside the root's fixed members, as
+#   `code_mode_declarations()` renders it. The guest's proxy sends it as
+#   `connector.call`, so it resolves with that row's reply.
 NAMESPACE = 'Sdk'
 REVISION_ALGORITHM = 'sha256'
-REPLY = ('type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true } '
+REPLY = ('type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true; error?: string } '
          '| { waitId: string }) & { budget?: {budget} };')
 REPLY_DOC = ('/** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, '
              'the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */')
 BUDGET = 'crate::dreamer_wake::legibility::BudgetLegibilityEnvelope'
 COORDINATION = ()
 JSDOC = True
+VAULT_HOST = 'VaultHost'
+VAULT_HOST_DOC = ('/** Members the `vault` root holds beside its verbs; another declaration file adds them '
+                  'by merging into this interface. */')
+CONNECTOR_TOOLS = '{{ readonly [name: string]: {{ readonly [tool: string]: (args?: object) => {result} }} }} & '
 # `self.fold` is the one positional verb (ARCH-0067 #folds), as
 # `code_mode_declarations()` and bootstrap.js take it.
 POSITIONAL = {'self.fold': '(span: readonly [number, number], options?: { note?: string | null })'}
 # Names no reached type may take: the fragment's own reply type, and the global
 # it names from inside the namespace.
-TAKEN = ('Reply', 'StoredResult')
+TAKEN = ('Reply', 'StoredResult', VAULT_HOST)
 
 
 class Fragment:
@@ -137,8 +149,17 @@ class Fragment:
             elif node['row'] and not node['children']:
                 out += self.doc(node, '') + f'declare function {root}{self.params(node["row"])}: {self.result(node["row"])};\n'
             else:
-                out += self.doc(node, '') + f'declare const {root}: {self.kind(node, 0)};\n'
+                out += self.doc(node, '') + f'declare const {root}: {self.extends(root, node)}{self.kind(node, 0)};\n'
         return out
+
+    def extends(self, root, node):
+        'What a root\'s constant extends beside its own members.'
+        if root == 'vault':
+            return f'{NAMESPACE}.{VAULT_HOST} & '
+        call = node['children'].get('call')
+        if root == 'connector' and call and call['row']:
+            return CONNECTOR_TOOLS.format(result=self.result(call['row']))
+        return ''
 
     # ---- the text
 
@@ -169,6 +190,7 @@ class Fragment:
         out += ''.join('// ' + line + '\n' for line in self.census())
         out += f'declare namespace {NAMESPACE} {{\n'
         out += '  ' + REPLY_DOC + '\n  ' + REPLY.replace('{budget}', self.budget) + '\n'
+        out += '  ' + VAULT_HOST_DOC + '\n  interface ' + VAULT_HOST + ' {}\n'
         for key in self.inventory.order:
             decl = self.inventory.decls[key]
             params = '<' + ', '.join(decl['params']) + '>' if decl['params'] else ''

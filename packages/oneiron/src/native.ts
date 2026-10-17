@@ -29,6 +29,7 @@ import type {
 export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
+selfFocusScratchpadRecall(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
@@ -84,6 +85,7 @@ vaultSharedReceipt(input: unknown): unknown
 vaultSharedOutcomes(input: unknown): unknown
 vaultSharedDeletion(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
+vaultMembersInvitationSlip(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
@@ -137,6 +139,9 @@ vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
 vaultLensesDefault(input: unknown): unknown
 vaultDisclosureOffer(input: unknown): unknown
+reveal(input: unknown): unknown
+revealWait(input: unknown): unknown
+revealDescribe(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
@@ -222,6 +227,8 @@ vaultDecisionsAsksClimb(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
+connectorCall(input: unknown): unknown
+connectorSchema(input: unknown): unknown
 vaultCommit(input: unknown): unknown
 vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown
@@ -240,6 +247,10 @@ vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
+vaultConversationsCreate(input: unknown): unknown
+vaultConversationsTurnsCreate(input: unknown): unknown
+vaultConversationsRecordsAppend(input: unknown): unknown
+vaultBatch(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown

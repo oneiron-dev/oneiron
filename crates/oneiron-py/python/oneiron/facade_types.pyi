@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 222 facade rows, 764 declarations.
-Inputs: 191 of 222 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 179 of 222 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 49; unread shapes: 1.
+Census: 233 facade rows, 804 declarations.
+Inputs: 197 of 233 fully typed, 35 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 186 of 233 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 59; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -43,6 +43,21 @@ class ReportReceipt(TypedDict):
     duplicate_of: NotRequired[str | None]
     route: ReportRoute
     disclosure: ReportDisclosure
+class ScratchpadRecallRequest(TypedDict):
+    session_id: str
+    query: str
+EntityId = str
+ScratchpadRecallMark = Literal["keep", "scratch"]
+class ScratchpadRecallReplyLine(TypedDict):
+    index: int
+    mark: NotRequired[ScratchpadRecallMark | None]
+    pin: bool
+    text: str
+class ScratchpadRecallReply(TypedDict):
+    pad: NotRequired[EntityId | None]
+    sealed: bool
+    matched: int
+    lines: list[ScratchpadRecallReplyLine]
 class DiaryEntryRequest(TypedDict):
     content: str
     kind: NotRequired[str | None]
@@ -58,7 +73,6 @@ class DiaryEntryReceipt(TypedDict):
     record: NotRequired[RecordRef | None]
 class DiaryReadsRequest(TypedDict):
     limit: NotRequired[int | None]
-EntityId = str
 class DiaryReadRecord(TypedDict):
     read: EntityId
     reader: EntityId
@@ -68,6 +82,7 @@ class DiaryReadRecord(TypedDict):
     entries: list[EntityId]
     grants: list[str]
     request: NotRequired[EntityId | None]
+    source: str
 DiaryReviewState = Literal["pending", "approved", "declined", "used"]
 class DiaryReadRequest(TypedDict):
     request: EntityId
@@ -291,6 +306,9 @@ class PersonRequest(TypedDict):
 class EmptyRequest(TypedDict):
     ...
 ShapeCeiling = Literal["auto", "proposed"]
+ShapeGrantBoundAction = TypedDict("ShapeGrantBoundAction", {"domain": Literal["action"], "actor": str, "actor_class": NotRequired[str | None], "class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": NotRequired[bool]})
+ShapeGrantBoundDisclosure = TypedDict("ShapeGrantBoundDisclosure", {"domain": Literal["disclosure"], "audience": list[str], "class": str, "selectors": list[str]})
+ShapeGrantBound = ShapeGrantBoundAction | ShapeGrantBoundDisclosure
 class ShapeTargetWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -336,7 +354,8 @@ class ShapeRowChannel(TypedDict):
     address: str
 class ShapeRowGrant(TypedDict):
     kind: Literal["grant"]
-    grant_ref: str
+    grant_ref: NotRequired[str]
+    bound: NotRequired[ShapeGrantBound | None]
 class ShapeRowSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
@@ -365,6 +384,10 @@ class ShapeItemStateLanded(TypedDict):
     receipt: str
 class ShapeItemStateProposed(TypedDict):
     state: Literal["proposed"]
+class ShapeItemStateFiled(TypedDict):
+    state: Literal["filed"]
+    proposal_ref: str
+    expires_at: int
 class ShapeItemStateCeremony(TypedDict):
     state: Literal["ceremony"]
 class ShapeItemStateNoDoor(TypedDict):
@@ -372,7 +395,7 @@ class ShapeItemStateNoDoor(TypedDict):
 class ShapeItemStateRefused(TypedDict):
     state: Literal["refused"]
     reason: str
-ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
 class ShapeApplyItem(TypedDict):
     item: ShapePlanItem
     state: ShapeItemState
@@ -1534,7 +1557,12 @@ class SharedVaultChangeMemberLeft(TypedDict):
 SharedVaultChangeOwnerRecoveredBody = TypedDict("SharedVaultChangeOwnerRecoveredBody", {"from": str, "to": str})
 class SharedVaultChangeOwnerRecovered(TypedDict):
     owner_recovered: SharedVaultChangeOwnerRecoveredBody
-SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered
+class SharedVaultChangeRecordErasedBody(TypedDict):
+    record: str
+    redaction: NotRequired[str | None]
+class SharedVaultChangeRecordErased(TypedDict):
+    record_erased: SharedVaultChangeRecordErasedBody
+SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered | SharedVaultChangeRecordErased
 class ExportDiaryRead(TypedDict):
     agent: str
     diaries: int
@@ -1586,6 +1614,11 @@ class InvitationSlip(TypedDict):
 class SharedMemberInvited(TypedDict):
     receipt: SharedActExecutionReceipt
     credential: NotRequired[InvitationSlip | None]
+class InvitationSlipRequest(TypedDict):
+    vault_id: int
+    member: str
+    invitation: str
+    holder_key: str
 class SharedMemberRoleRequest(TypedDict):
     vault_id: int
     member: str
@@ -2063,6 +2096,28 @@ class DisclosureOffered(TypedDict):
     owner_ref: str
     created_at: int
     expires_at: int
+class RevealRequest(TypedDict):
+    handle: str
+    why: str
+class RevealPending(TypedDict):
+    reveal: str
+class RevealWaitRequest(TypedDict):
+    reveal: str
+RevealDecision = Literal["pending", "granted", "denied", "expired"]
+RevealReceipt = TypedDict("RevealReceipt", {"reveal": str, "handle": str, "class": str, "why": str, "connection": NotRequired[str | None], "provider": NotRequired[str | None], "project": NotRequired[str | None], "run": NotRequired[str | None], "answered_by": NotRequired[str | None], "decision": NotRequired[str | None], "lease": NotRequired[str | None], "asked_at": int, "delivered_at": NotRequired[int | None]})
+class RevealWaitAnswer(TypedDict):
+    decision: RevealDecision
+    value: NotRequired[str | None]
+    value_base64: NotRequired[str | None]
+    receipt: NotRequired[RevealReceipt | None]
+class RevealDescribeRequest(TypedDict):
+    handle: str
+class RevealProvenance(TypedDict):
+    record: str
+    place: str
+    kind: str
+    masked_at: int
+RevealHandleCard = TypedDict("RevealHandleCard", {"handle": str, "label": str, "class": str, "status": str, "band": str, "provenance": NotRequired[RevealProvenance | None], "reveal": str, "grant_ref": NotRequired[str | None], "refusal": NotRequired[str | None]})
 BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
 class TravelChoice(TypedDict):
     born_with: NotRequired[list[BornWithField]]
@@ -2114,14 +2169,32 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
+FactSource = Literal["claim_changelog", "settlement"]
 FactPositionHex = str
 FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled"]
+HookPhase = Literal["pre", "post", "fact"]
+class HookReplayCaseFact(TypedDict):
+    on: Literal["fact"]
+    source: FactSource
+    position: FactPositionHex
+    kind: FactKind
+    entity: str
+class HookReplayCaseVerb(TypedDict):
+    on: Literal["verb"]
+    run_key: str
+    invocation: str
+    verb: str
+    phase: HookPhase
+HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
+HookReplayCompare = Literal["same", "differs", "incomplete"]
 class HookReplayOutcomeRan(TypedDict):
     status: Literal["ran"]
     outcome_json: NotRequired[str | None]
     outcome: str
     reason: NotRequired[str | None]
     recorded: NotRequired[str | None]
+    recorded_outcome_json: NotRequired[str | None]
+    compare: HookReplayCompare
     from_memo: bool
     reads_live: bool
 class HookReplayOutcomeMissingHistory(TypedDict):
@@ -2129,9 +2202,7 @@ class HookReplayOutcomeMissingHistory(TypedDict):
     reason: str
 HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeMissingHistory
 class HookReplayRow(TypedDict):
-    position: FactPositionHex
-    kind: FactKind
-    entity: str
+    case: HookReplayCase
     result: HookReplayOutcome
 class ArtifactRefRequest(TypedDict):
     artifact_ref: str
@@ -3459,12 +3530,19 @@ DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "te
 class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
+HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
+class QuestionCriteria(TypedDict):
+    yes_if_all: list[str]
+    no_if_any: list[str]
+    not_a_reason_to_say_no: list[str]
 class GraphAskRequest(TypedDict):
     question: DecisionQuestion
     units: NotRequired[list[EntityId]]
     select: NotRequired[GraphAskSelection | None]
     ceiling: NotRequired[DecisionRung | None]
     unit_deadline_ms: NotRequired[int | None]
+    posture: NotRequired[HostingPrivacyPosture | None]
+    criteria: NotRequired[QuestionCriteria | None]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
     probability: NotRequired[float | None]
@@ -3503,12 +3581,7 @@ QuestionActivation = Literal["one_off", "standing"]
 class RefreshPolicy(TypedDict):
     on_arrival: bool
     every_seconds: NotRequired[int | None]
-class QuestionCriteria(TypedDict):
-    yes_if_all: list[str]
-    no_if_any: list[str]
-    not_a_reason_to_say_no: list[str]
 QuestionAudience = Literal["asker"]
-HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class QuestionMedia(TypedDict):
     images: NotRequired[bool]
     audio: NotRequired[bool]
@@ -3577,6 +3650,28 @@ class QuestionReadRequest(TypedDict):
     version: NotRequired[int | None]
 class QuestionAnswersRequest(TypedDict):
     id: EntityId
+class ArtifactAskStandingUnanswered(TypedDict):
+    state: Literal["unanswered"]
+class ArtifactAskStandingWaiting(TypedDict):
+    state: Literal["waiting"]
+class ArtifactAskStandingKept(TypedDict):
+    state: Literal["kept"]
+    version: int
+class ArtifactAskStandingClosed(TypedDict):
+    state: Literal["closed"]
+ArtifactAskStanding = ArtifactAskStandingUnanswered | ArtifactAskStandingWaiting | ArtifactAskStandingKept | ArtifactAskStandingClosed
+class ArtifactAskRecord(TypedDict):
+    artifact: EntityId
+    question_version: int
+    artifact_version: int
+    asked_at: int
+    proposal_ref: NotRequired[str | None]
+    standing: ArtifactAskStanding
+class QuestionAnswerGraph(AnswerRecord):
+    kind: Literal["graph"]
+class QuestionAnswerArtifact(ArtifactAskRecord):
+    kind: Literal["artifact"]
+QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
 class DecisionAskAnswerRequest(TypedDict):
     seq: int
     answer: DecisionAnswer
@@ -3651,6 +3746,46 @@ class ConnectorView(TypedDict):
     registered_at: int
     status_changed_at: NotRequired[int | None]
     budgeted_as_sends: bool
+MutationIntent = Literal["preview", "explicit_mutation"]
+class ConnectorCallRequest(TypedDict):
+    name: str
+    tool: str
+    arguments: NotRequired[Any]
+    mutation: NotRequired[MutationIntent]
+class ConnectorToolResult(TypedDict):
+    source: str
+    foreign: bool
+    content: Any
+    structured_content: NotRequired[Any | None]
+    is_error: bool
+    rpc_error: NotRequired[Any | None]
+class ConnectorCallReplyDelivered(TypedDict):
+    outcome: Literal["delivered"]
+    result: NotRequired[ConnectorToolResult | None]
+    reasons: NotRequired[list[str]]
+class ConnectorCallReplyHeld(TypedDict):
+    outcome: Literal["held"]
+    call_ref: str
+    decision_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyRefused(TypedDict):
+    outcome: Literal["refused"]
+    decision_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyPendingDelivery(TypedDict):
+    outcome: Literal["pending_delivery"]
+    call_ref: NotRequired[str | None]
+    reasons: list[str]
+ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery
+class ConnectorSchemaRequest(TypedDict):
+    name: str
+    tool: str
+class ConnectorSchemaReply(TypedDict):
+    source: str
+    foreign: bool
+    input_schema: NotRequired[Any | None]
+    destructive: NotRequired[bool | None]
+    reasons: NotRequired[list[str]]
 class CommitRequest(TypedDict):
     claims: list[ClaimInput]
 class ClaimRefRequest(TypedDict):
@@ -3779,6 +3914,68 @@ class ArtifactCreateRequest(TypedDict):
     content_base64: str
     run_ref: NotRequired[str | None]
     made_by: NotRequired[Any | None]
+class CoreWriteTextField(TypedDict):
+    field: str
+    value: str
+class ConversationCreateInput(TypedDict):
+    id: NotRequired[str | None]
+    occurred_start: NotRequired[int | None]
+    occurred_end: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    body: Any
+    text: NotRequired[list[CoreWriteTextField] | None]
+class CoreEntityWriteReceipt(TypedDict):
+    id: str
+    entity_type: int
+    learned_at: int
+    body: Any
+class ConversationTurnCreateInput(TypedDict):
+    conversation: str
+    id: NotRequired[str | None]
+    occurred_start: NotRequired[int | None]
+    occurred_end: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    body: Any
+    text: NotRequired[list[CoreWriteTextField] | None]
+CoreDagAddressMode = Literal["broadcast", "direct"]
+class CoreDagQuoteInput(TypedDict):
+    message: str
+    start: int
+    end: int
+class DagRecordAppendInput(TypedDict):
+    conversation: str
+    parent: NotRequired[str | None]
+    reply_to: NotRequired[str | None]
+    addr: NotRequired[CoreDagAddressMode | None]
+    to: NotRequired[list[str] | None]
+    advance: bool
+    body: Any
+    text: NotRequired[list[CoreWriteTextField] | None]
+    occurred_start: NotRequired[int | None]
+    occurred_end: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    session: NotRequired[str | None]
+    quote: NotRequired[CoreDagQuoteInput | None]
+class DagRecordAppendReceipt(TypedDict):
+    id: str
+    head: NotRequired[str | None]
+    parent: NotRequired[str | None]
+class CoreBatchEntityInput(TypedDict):
+    id: NotRequired[str | None]
+    entity_type: int
+    occurred_start: NotRequired[int | None]
+    occurred_end: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    body: Any
+    text: NotRequired[list[CoreWriteTextField] | None]
+class CoreBatchWriteInput(TypedDict):
+    entities: list[CoreBatchEntityInput]
+class CoreBatchEntityReceipt(TypedDict):
+    id: str
+    entity_type: int
+class CoreBatchWriteReceipt(TypedDict):
+    count: int
+    entities: list[CoreBatchEntityReceipt]
 class BlobArtifactInput(TypedDict):
     id: NotRequired[str | None]
     name: str

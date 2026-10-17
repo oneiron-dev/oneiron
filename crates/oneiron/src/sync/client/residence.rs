@@ -445,14 +445,11 @@ impl SyncClient {
                     .get(txn, &format!("rp:w:{window}"))?
                     .is_some()
                 {
-                    if crate::ports::EntityStoreRead::port_entity_with_raw(
+                    if !crate::ports::EntityStoreRead::port_entity_present(
                         &self.vault.store,
                         txn,
                         &item,
-                        |_| Ok(()),
-                    )?
-                    .is_none()
-                    {
+                    )? {
                         return Err(crate::Error::InvalidKey);
                     }
                     return Ok(());
