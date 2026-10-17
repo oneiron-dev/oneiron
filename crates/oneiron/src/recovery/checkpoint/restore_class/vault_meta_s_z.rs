@@ -86,6 +86,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_OUTCOME, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_RECEIPT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_RECORD, SHARED_VAULT_MEMBERSHIP),
+    // An archive delivered to a removed Owner has left the vault: a restore
+    // neither revives a purged one nor drops one still within its term.
+    (&t::SHARED_ACT_REMOVAL_EXPORT, LIVE),
     (&t::SHARED_VAULT_CREATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_INVITATION, SHARED_VAULT_MEMBERSHIP),
