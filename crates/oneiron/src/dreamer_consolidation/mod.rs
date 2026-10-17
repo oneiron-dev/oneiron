@@ -97,11 +97,13 @@ pub use roles::{
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
 pub use settle::{
-    CONFLICT_SETTLE_DIAL, ConflictReviewScope, ConflictSettleDecisions, ConflictSettleReceipt,
-    ConflictSettlement, OpenConflict, ParkedConflictPass, SettledConflict, settle_parked_conflicts,
+    CONFLICT_SETTLE_DIAL, ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions,
+    ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass,
+    RevertedSettlement, SettledAnswer, SettledConflict, settle_parked_conflicts,
 };
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
+    revert_settlement_in_txn, settled_answers_in_txn,
 };
 pub use support::*;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
