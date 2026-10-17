@@ -30,6 +30,16 @@ mod materialization;
 /// history, and it ends in a typed refusal rather than an unbounded traversal.
 const MAX_SUPERSESSION_CHAIN_WALK: usize = 64;
 
+/// The family a want derived from behaviour is minted into, beside the
+/// user's own statement (ARCH-0003, ruled 2026-07-29).
+const PREFERENCE_PREDICATE_PREFIX: &str = "preference.";
+
+/// OF-023: an `observed` `preference.*` claim is held beside the
+/// `user_stated` one on its key and never outranks or closes it.
+pub(crate) fn is_observed_preference(source: Option<ClaimSource>, predicate: &str) -> bool {
+    source == Some(ClaimSource::Observed) && predicate.starts_with(PREFERENCE_PREDICATE_PREFIX)
+}
+
 /// How a supersession closes its old head: directly, attributed to a typed
 /// door's actor when the old head is MACHINE-born, or through the validated
 /// deferred settlement with its bounded checker.
@@ -332,10 +342,22 @@ impl Vault {
     /// gets its own diagnostic, and non-code user/legacy truth uses the
     /// general claim-body error. Missing old `src` is protected as legacy
     /// user truth for this guard.
+    ///
+    /// An observed preference never closes the user-stated one on its
+    /// predicate (OF-023). The Memory door holds that pair and opens the
+    /// conflict; this guard only refuses, on every closure path.
     pub(crate) fn require_source_trust_supersession_rights(
         new_body: &ClaimBody,
         old_body: &ClaimBody,
     ) -> Result<()> {
+        if is_observed_preference(new_body.source, &new_body.predicate)
+            && old_body.source == Some(ClaimSource::UserStated)
+            && old_body.predicate == new_body.predicate
+        {
+            return Err(Error::InvalidClaimBody(
+                "observed preference cannot supersede a user-stated preference",
+            ));
+        }
         let old_is_protected_user_truth =
             matches!(old_body.source, None | Some(ClaimSource::UserStated));
         if !claim_generated_origin(new_body) || !old_is_protected_user_truth {
