@@ -57,14 +57,20 @@ impl Stash {
         let copy: Box<[u8]> = bytes.into();
         let (data, len) = (copy.as_ptr(), copy.len());
         // A boxed slice's buffer never moves; it frees only when the stash drops.
-        self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(copy);
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(copy);
         unsafe { std::slice::from_raw_parts(data, len) }
     }
 }
 
 impl Drop for Stash {
     fn drop(&mut self) {
-        let kept = self.0.get_mut().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let kept = self
+            .0
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for copy in kept.iter_mut() {
             copy.zeroize();
         }

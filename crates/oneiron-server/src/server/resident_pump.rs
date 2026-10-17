@@ -382,8 +382,7 @@ fn run_bound(
         .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
     let seat = seats.seat(run_id, spend, CallerLocality::OnDevice);
     // One door for the whole run, so its browser lives as long as the run.
-    let door: Arc<dyn AgentVerbDoor> =
-        Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
+    let door: Arc<dyn AgentVerbDoor> = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
