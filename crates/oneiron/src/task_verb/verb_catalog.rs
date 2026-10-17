@@ -10,6 +10,8 @@ pub enum AgentVerb {
     SelfMemoryDiaryReview,
     SelfIdentityAnswer,
     SelfIdentitySettle,
+    SelfInboxList,
+    SelfInboxMark,
     SelfInboxConcern,
     SelfInboxConcernOutcome,
     SelfInboxConcernMove,
@@ -165,6 +167,9 @@ pub enum AgentVerb {
     VaultQuestionsPause,
     VaultQuestionsRead,
     VaultQuestionsAnswers,
+    VaultDecisionsAsksAnswer,
+    VaultDecisionsAsksClimb,
+    SelfDecisionsAsks,
     ConnectorList,
     ConnectorStatus,
     SelfBrowserOpen,
@@ -223,6 +228,9 @@ pub enum AgentVerb {
     VaultArtifactsPut,
     VaultArtifactsAppend,
     VaultArtifactsRead,
+    VaultConsolidationEnqueue,
+    VaultConsolidationStatus,
+    VaultClaimsSeed,
     ConnectorOutboundSchedule,
     VaultNotesCreate,
     VaultNotesFromEntity,
@@ -239,6 +247,8 @@ impl AgentVerb {
         Self::SelfMemoryDiaryReview,
         Self::SelfIdentityAnswer,
         Self::SelfIdentitySettle,
+        Self::SelfInboxList,
+        Self::SelfInboxMark,
         Self::SelfInboxConcern,
         Self::SelfInboxConcernOutcome,
         Self::SelfInboxConcernMove,
@@ -394,6 +404,9 @@ impl AgentVerb {
         Self::VaultQuestionsPause,
         Self::VaultQuestionsRead,
         Self::VaultQuestionsAnswers,
+        Self::VaultDecisionsAsksAnswer,
+        Self::VaultDecisionsAsksClimb,
+        Self::SelfDecisionsAsks,
         Self::ConnectorList,
         Self::ConnectorStatus,
         Self::SelfBrowserOpen,
@@ -452,6 +465,9 @@ impl AgentVerb {
         Self::VaultArtifactsPut,
         Self::VaultArtifactsAppend,
         Self::VaultArtifactsRead,
+        Self::VaultConsolidationEnqueue,
+        Self::VaultConsolidationStatus,
+        Self::VaultClaimsSeed,
         Self::ConnectorOutboundSchedule,
         Self::VaultNotesCreate,
         Self::VaultNotesFromEntity,
@@ -471,6 +487,8 @@ impl AgentVerb {
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
             Self::SelfIdentityAnswer => "self.identity.answer",
             Self::SelfIdentitySettle => "self.identity.settle",
+            Self::SelfInboxList => "self.inbox.list",
+            Self::SelfInboxMark => "self.inbox.mark",
             Self::SelfInboxConcern => "self.inbox.concern",
             Self::SelfInboxConcernOutcome => "self.inbox.concern.outcome",
             Self::SelfInboxConcernMove => "self.inbox.concern.move",
@@ -628,6 +646,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "vault.questions.pause",
             Self::VaultQuestionsRead => "vault.questions.read",
             Self::VaultQuestionsAnswers => "vault.questions.answers",
+            Self::VaultDecisionsAsksAnswer => "vault.decisions.asks.answer",
+            Self::VaultDecisionsAsksClimb => "vault.decisions.asks.climb",
+            Self::SelfDecisionsAsks => "self.decisions.asks",
             Self::ConnectorList => "connector.list",
             Self::ConnectorStatus => "connector.status",
             Self::SelfBrowserOpen => "self.browser.open",
@@ -686,6 +707,9 @@ impl AgentVerb {
             Self::VaultArtifactsPut => "vault.artifacts.put",
             Self::VaultArtifactsAppend => "vault.artifacts.append",
             Self::VaultArtifactsRead => "vault.artifacts.read",
+            Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
+            Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultClaimsSeed => "vault.claims.seed",
             Self::ConnectorOutboundSchedule => "connector.outbound.schedule",
             Self::VaultNotesCreate => "vault.notes.create",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
@@ -701,6 +725,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxList
+                | Self::SelfInboxMark
                 | Self::SelfInboxConcern
                 | Self::SelfInboxConcernOutcome
                 | Self::SelfInboxConcernMove
@@ -856,6 +882,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
+                | Self::VaultDecisionsAsksAnswer
+                | Self::VaultDecisionsAsksClimb
+                | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::VaultCommit
@@ -878,6 +907,9 @@ impl AgentVerb {
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
+                | Self::VaultConsolidationEnqueue
+                | Self::VaultConsolidationStatus
+                | Self::VaultClaimsSeed
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -937,6 +969,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxList
+                | Self::SelfInboxMark
                 | Self::SelfInboxConcern
                 | Self::SelfInboxConcernOutcome
                 | Self::SelfInboxConcernMove
@@ -1092,6 +1126,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
+                | Self::VaultDecisionsAsksAnswer
+                | Self::VaultDecisionsAsksClimb
+                | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::VaultCommit
@@ -1114,6 +1151,9 @@ impl AgentVerb {
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
+                | Self::VaultConsolidationEnqueue
+                | Self::VaultConsolidationStatus
+                | Self::VaultClaimsSeed
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -1139,7 +1179,8 @@ impl AgentVerb {
     pub const fn continuable(self) -> bool {
         matches!(
             self,
-            Self::Describe
+            Self::SelfInboxList
+                | Self::Describe
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
@@ -1164,10 +1205,12 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
                 | Self::VaultQuestionsAnswers
+                | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::VaultCommit
                 | Self::VaultForget
                 | Self::VaultWritesPending
+                | Self::VaultClaimsSeed
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -1177,6 +1220,8 @@ impl AgentVerb {
                 | Self::SelfFocusRefresh
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
+                | Self::SelfInboxList
+                | Self::SelfInboxMark
                 | Self::Describe
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
@@ -1347,6 +1392,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
+                | Self::VaultDecisionsAsksAnswer
+                | Self::VaultDecisionsAsksClimb
+                | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::SelfBrowserOpen
@@ -1397,6 +1445,9 @@ impl AgentVerb {
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
+                | Self::VaultConsolidationEnqueue
+                | Self::VaultConsolidationStatus
+                | Self::VaultClaimsSeed
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -1413,6 +1464,7 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxMark
                 | Self::SelfInboxConcernOutcome
                 | Self::SelfInboxConcernMove
                 | Self::SelfMessage
@@ -1505,6 +1557,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultDecisionsAsksAnswer
+                | Self::VaultDecisionsAsksClimb
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserClickAt
@@ -1531,6 +1585,8 @@ impl AgentVerb {
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
+                | Self::VaultConsolidationEnqueue
+                | Self::VaultClaimsSeed
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -1549,6 +1605,7 @@ impl AgentVerb {
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsAdmit
+                | Self::VaultClaimsSeed
         )
     }
     pub const fn argument_fields(self) -> &'static [&'static str] {
@@ -1562,6 +1619,8 @@ impl AgentVerb {
             Self::SelfMemoryDiaryReview => &["spec"],
             Self::SelfIdentityAnswer => &["spec"],
             Self::SelfIdentitySettle => &["spec"],
+            Self::SelfInboxList => &["spec"],
+            Self::SelfInboxMark => &["spec"],
             Self::SelfInboxConcern => &["spec"],
             Self::SelfInboxConcernOutcome => &["spec"],
             Self::SelfInboxConcernMove => &["spec"],
@@ -1717,6 +1776,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
+            Self::VaultDecisionsAsksAnswer => &["spec"],
+            Self::VaultDecisionsAsksClimb => &["spec"],
+            Self::SelfDecisionsAsks => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -1775,6 +1837,9 @@ impl AgentVerb {
             Self::VaultArtifactsPut => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
+            Self::VaultConsolidationEnqueue => &["spec"],
+            Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultClaimsSeed => &["spec"],
             Self::ConnectorOutboundSchedule => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
@@ -1792,6 +1857,8 @@ impl AgentVerb {
             Self::SelfMemoryDiaryReview => &["spec"],
             Self::SelfIdentityAnswer => &["spec"],
             Self::SelfIdentitySettle => &["spec"],
+            Self::SelfInboxList => &["spec"],
+            Self::SelfInboxMark => &["spec"],
             Self::SelfInboxConcern => &["spec"],
             Self::SelfInboxConcernOutcome => &["spec"],
             Self::SelfInboxConcernMove => &["spec"],
@@ -1947,6 +2014,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
+            Self::VaultDecisionsAsksAnswer => &["spec"],
+            Self::VaultDecisionsAsksClimb => &["spec"],
+            Self::SelfDecisionsAsks => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -2005,6 +2075,9 @@ impl AgentVerb {
             Self::VaultArtifactsPut => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
+            Self::VaultConsolidationEnqueue => &["spec"],
+            Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultClaimsSeed => &["spec"],
             Self::ConnectorOutboundSchedule => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
@@ -2038,6 +2111,12 @@ impl AgentVerb {
             }
             Self::SelfIdentitySettle => {
                 "Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."
+            }
+            Self::SelfInboxList => {
+                "Lists one page of notifications delivered to the bound actor, without marking them."
+            }
+            Self::SelfInboxMark => {
+                "Marks one delivered notification seen or acknowledged for the bound actor."
             }
             Self::SelfInboxConcern => "",
             Self::SelfInboxConcernOutcome => "",
@@ -2438,6 +2517,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "",
             Self::VaultQuestionsRead => "",
             Self::VaultQuestionsAnswers => "",
+            Self::VaultDecisionsAsksAnswer => "",
+            Self::VaultDecisionsAsksClimb => "",
+            Self::SelfDecisionsAsks => "",
             Self::ConnectorList => {
                 "Every live catalogued connector whose name or summary matches the query."
             }
@@ -2566,6 +2648,15 @@ impl AgentVerb {
                 "Appends one version of bytes to a blob artifact's append-only chain."
             }
             Self::VaultArtifactsRead => "Reads one version of a blob artifact's bytes.",
+            Self::VaultConsolidationEnqueue => {
+                "Enqueues one consolidation attempt and returns its durable job reference."
+            }
+            Self::VaultConsolidationStatus => {
+                "Reads the status of one consolidation attempt by its durable job reference."
+            }
+            Self::VaultClaimsSeed => {
+                "Seeds claims through their individual gates, forced proposed, returning one receipt per claim."
+            }
             Self::ConnectorOutboundSchedule => {
                 "Schedules one send through a granted outbound connector, gated and held for delivery."
             }
