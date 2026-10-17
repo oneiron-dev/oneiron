@@ -225,11 +225,11 @@ pub(super) fn dreamer_attempt_status(
     memory.dreamer_attempt_status(&input.job_ref)
 }
 
-/// Each claim through its own gate, forced proposed: one receipt per claim,
-/// never one all-or-nothing batch.
+/// Each claim through its own gate, forced proposed: one landed receipt or
+/// typed refusal per claim, never one all-or-nothing batch.
 pub(super) fn seed_claims(
     memory: &Memory<'_>,
     input: CommitRequest,
-) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
     memory.seed_claims(&input.claims)
 }

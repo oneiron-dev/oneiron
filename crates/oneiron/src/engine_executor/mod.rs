@@ -6,6 +6,7 @@
 //! the pinned component boundary, and every `self.*` import is routed through a
 //! host dispatcher that records the typed bridge call in the durable replay log.
 
+mod cancel;
 mod code_check;
 mod compaction;
 mod compaction_host;
@@ -18,6 +19,7 @@ mod turn_hooks;
 mod types;
 mod wire;
 
+pub use self::cancel::{CANCEL_POLL_SLICE, StepCancellation};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
 #[cfg(test)]

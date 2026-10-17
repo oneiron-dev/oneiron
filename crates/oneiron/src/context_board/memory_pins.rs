@@ -105,7 +105,7 @@ pub(super) fn pinned_row(
     let hydrated = reader.read_projected(&[read], None, |txn, rows| {
         let row = rows.into_iter().next().flatten();
         let Some(found) = &row else {
-            return Ok::<_, crate::Error>((None, None, None));
+            return Ok::<_, crate::Error>((None, None, None, None));
         };
         let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
             &reader.vault().store,
@@ -121,10 +121,11 @@ pub(super) fn pinned_row(
                 .port_short_id_reference(txn, &found.id)?
                 .map(|(short_id, _)| short_id),
         };
-        Ok((row, revision, short_id))
+        let text = pin_text(reader, txn, found)?;
+        Ok((row, revision, short_id, text))
     })?;
     let mut receipt = hydrated.receipt;
-    let (hydrated, source_revision, short_id) = hydrated.value;
+    let (hydrated, source_revision, short_id, text) = hydrated.value;
     let (Some(hydrated), Some(short_id)) = (hydrated, short_id) else {
         return Ok((receipt, None));
     };
@@ -181,6 +182,70 @@ pub(super) fn pinned_row(
             crate::batch::export::served_messagepack_json(claim.value)
         };
         row.snippet = Some(value.to_string());
+    } else if !foreign_row(&row) {
+        row.snippet = text;
     }
     Ok((receipt, Some(row)))
+}
+
+/// The words a pinned TURN, MESSAGE, NOTE or SUMMARY shows, read from its
+/// admitted body in the read's own snapshot; `None` for another type or a
+/// body that shows none. A read by id takes a TURN's row alone, so its words
+/// are the messages `reader` may read, one per line in message order
+/// (`retrieval_visibility`'s by-id rule).
+fn pin_text(
+    reader: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    row: &crate::claim::ReadRow,
+) -> Result<Option<String>> {
+    let Some(body) = &row.body else {
+        return Ok(None);
+    };
+    let text = match row.entity_type {
+        crate::registry::ENTITY_TYPE_TURN => {
+            let Some(messages) =
+                crate::tagging::turn_messages_in_txn(reader.vault(), txn, &row.id)?
+            else {
+                return Ok(None);
+            };
+            let mut readable = Vec::with_capacity(messages.len());
+            for message in messages {
+                let id = crate::EntityId::from_hex(&message.id)?;
+                if reader.is_entity_readable_in(txn, &id)? {
+                    readable.push((id, message.text));
+                }
+            }
+            crate::embed::joined_turn_text(&readable)
+        }
+        crate::registry::ENTITY_TYPE_MESSAGE => crate::tagging::shown_message_text(body),
+        crate::registry::ENTITY_TYPE_NOTE => {
+            crate::note::decode_note_body_in_txn(&reader.vault().store, txn, body)
+                .ok()
+                .map(|note| note.markdown)
+        }
+        crate::registry::ENTITY_TYPE_SUMMARY => summary_text(body),
+        _ => None,
+    };
+    Ok(text.filter(|text| !text.is_empty()))
+}
+
+/// A SUMMARY's text: an epoch's or a scope's, each by its strict codec, else
+/// an ordinary summary's `txt`. A document-backed scope summary's text is
+/// already in its live body.
+fn summary_text(body: &[u8]) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Ordinary {
+        txt: String,
+    }
+    crate::compaction::decode_epoch_summary_body(body)
+        .map(|summary| summary.text)
+        .or_else(|_| {
+            crate::scope_summary::decode_scope_summary_body(body).map(|summary| summary.text)
+        })
+        .ok()
+        .or_else(|| {
+            rmp_serde::from_slice::<Ordinary>(body)
+                .ok()
+                .map(|summary| summary.txt)
+        })
 }

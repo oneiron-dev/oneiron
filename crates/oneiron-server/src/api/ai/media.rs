@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -454,6 +454,7 @@ async fn answered(
     voices: Option<RungVoices>,
 ) -> Response {
     let media = server.ai.model_runtime().media();
+    let hint = media.retry_hint(&request, voices.as_ref());
     let answer = match &voices {
         Some(voices) => media.run_voiced(request, voices).await,
         None => media.run(request).await,
@@ -475,8 +476,26 @@ async fn answered(
         }
         Err(_) if voices.as_ref().is_some_and(RungVoices::withdrawn) => withdrawn(),
         Ok(response) => Json(AiAnswer::new(response)).into_response(),
+        Err(error) if error.is_provider_unavailable() => unavailable(&error, hint.seconds()),
         Err(error) => failure(&error),
     }
+}
+
+/// A call no offer answered (FIX 3194): `provider_unavailable`, with the
+/// seconds until the first offer that could serve it is back as
+/// `retry_after` and `Retry-After`. Nothing keeps the call; its caller sends
+/// it again.
+fn unavailable(error: &LlmError, retry_after: u64) -> Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        [(header::RETRY_AFTER, retry_after.to_string())],
+        Json(serde_json::json!({"error": {
+            "code": "provider_unavailable",
+            "llm": error,
+            "retry_after": retry_after,
+        }})),
+    )
+        .into_response()
 }
 
 macro_rules! media_verb {

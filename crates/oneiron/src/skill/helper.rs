@@ -16,7 +16,8 @@
 //!   promote. [`admit_callable_helper`] activates against the standing
 //!   verdict for the exact content.
 //! - **Stop.** [`suspend_callable_helper`] quarantines a helper on the
-//!   owner's word, so no new pack loads it; the evidence stays.
+//!   owner's word, so no new pack loads it, and cancels every call of it
+//!   already running in this vault (FIX 600); the evidence stays.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -484,6 +485,9 @@ pub fn admit_callable_helper(vault: &Vault, skill: &EntityId, now: u64) -> Resul
 
 /// Quarantines a helper on the owner's word: no new pack loads it, and its
 /// evidence and verdicts stay. Reversible through the ordinary skill doors.
+/// Once the quarantine commits, every call of it running in this vault is
+/// cancelled: each fails with `code_step_cancelled`, and its caller goes on.
+/// It returns once they are signalled, not once their guests have stopped.
 ///
 /// # Errors
 ///
@@ -516,5 +520,8 @@ pub fn suspend_callable_helper(
         },
         now,
     )?;
+    // No new load admits it now, so the live set holds every call of it
+    // that can still run.
+    vault.skill_invocations.cancel_skill(skill);
     Ok(record)
 }
