@@ -20366,6 +20366,7 @@
       "SlideAbstention",
       "SlideJudgment",
       "SlideLocation",
+      "SlideRenderer",
       "SlideReviewAnchor",
       "SlideReviewBase",
       "SlideReviewError",
@@ -20381,10 +20382,11 @@
      "purpose": "Bounded typed review of slide/shape units into one retained comment proposal",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 12,
       "enum": 3,
       "fn": 5,
-      "struct": 11
+      "struct": 11,
+      "trait": 1
      }
     },
     {
@@ -20537,7 +20539,7 @@
      "path": "src/edit_settle/settle.rs",
      "purpose": "Settle Vault transactions",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7
      }
     },
@@ -69120,6 +69122,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/slide_render.rs",
+     "purpose": "The host's review renderer (ARCH-0077 \"Review images\"): LibreOffice Impress headless exports the deck to…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -70096,6 +70108,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "slide_render": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The host's review renderer (ARCH-0077 \"Review images\"): LibreOffice Impress headless exports the deck to…"
+    },
     "test_credentials": {
      "files": 1,
      "impl_vault": false,
@@ -70148,7 +70167,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 552,
+   "source_files": 553,
    "test_files": 182
   },
   "oneiron-spawn": {
