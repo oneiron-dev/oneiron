@@ -480,7 +480,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_host.rs` | src | L | 1 struct · 23 fn · 1 const · 18 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `src/decision_verdict.rs` | src | m | 8 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `src/device_local.rs` | src | s | 6 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
-| `src/device_sync.rs` | src | s | 3 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its… |
+| `src/device_sync.rs` | src | m | 3 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its… |
 | `src/embedded.rs` | src | m | 1 fn · 2 re-export | — | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
 | `src/embedded/engine.rs` | src | m | 4 struct · 20 fn | BlockingEngine, EmbeddedEngine, EmbeddedReply, EmbeddedRequest | The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding |
 | `src/embedder/admitted.rs` | src | s | 6 crate-vis | — | An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and… |

@@ -144,6 +144,7 @@ mod judge_swap;
 mod labels;
 mod offer;
 pub(crate) mod policy;
+mod response_pair;
 mod selection;
 mod tier;
 mod tradeoff_route;
@@ -202,6 +203,7 @@ pub use self::offer::{
     record_training_offer, settle_training_offer, training_offer, training_offer_checks,
     training_offers,
 };
+pub use self::response_pair::{ResponsePairPick, pick_response_pair, response_pair_picks};
 pub use self::selection::{
     SkillOptimizeCandidate, optimize_candidates, optimize_candidates_for_resident,
 };
