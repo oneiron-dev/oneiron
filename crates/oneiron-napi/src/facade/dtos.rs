@@ -429,6 +429,9 @@ pub struct NapiMemoryItem {
     pub facet: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f64>,
+    /// A conversation record's current reactions, one grouped line per glyph;
+    /// empty for every other item.
+    pub reactions: Vec<String>,
     /// For a TURN item, the messages whose words the query matched, best first.
     pub cited_messages: Vec<NapiCitedMessage>,
     /// For a TURN or MESSAGE item, the conversation it is in (32 hex), when
@@ -450,6 +453,9 @@ pub struct NapiCitedMessage {
 pub struct NapiScopeHonesty {
     /// Worlds excluded by the requested scope.
     pub out_of_scope_worlds: Vec<String>,
+    /// The census stopped at its scan cap or at the answer's deadline, so a
+    /// world past it may be missing.
+    pub census_capped: bool,
 }
 
 /// Retrieval accounting (S6).
