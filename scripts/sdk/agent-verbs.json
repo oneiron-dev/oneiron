@@ -1548,13 +1548,13 @@
     },
     {
       "name": "vault.lenses.list",
-      "description": "One page of the vault's lens proposals, each with its slot state from the owner's current selection.",
+      "description": "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees.",
       "input": "crate::lens::LensListRequest",
       "output": "crate::lens::LensListPage",
       "call": "memory.lenses_list(input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "projection_record_scope": true
       },
       "section": false
     },
@@ -1566,7 +1566,7 @@
       "call": "memory.lenses_default(input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "projection_record_scope": true
       },
       "section": false
     },

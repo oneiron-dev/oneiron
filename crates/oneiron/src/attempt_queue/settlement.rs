@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::store::Rows;
 
 use super::AttemptQueue;
-use super::encoding::{decode_record, encode_record};
+use super::encoding::decode_record;
 use super::telemetry::invalid_transition;
 use super::types::{AttemptState, CompleteAttempt, CompleteOutcome, FailAttempt, FailOutcome};
 use super::validate::{validate_failure_reason, validate_lease_owner, validate_transition_lease};
@@ -113,7 +113,7 @@ impl AttemptQueue<'_> {
                 record.last_error = Some(input.reason);
                 record.updated_at = input.now;
                 self.delete_dedupe_entry_for_record(wtxn, &record)?;
-                let encoded = encode_record(&record)?;
+                let encoded = self.encode_in_txn(wtxn, &mut record)?;
                 self.store
                     .attempt_records
                     .put(wtxn, record.id.as_bytes(), &encoded)?;

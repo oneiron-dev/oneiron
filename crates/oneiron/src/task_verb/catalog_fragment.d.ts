@@ -126,7 +126,7 @@ declare namespace Sdk {
   type ContextPackMediaQuery = { space: string; mime: string; bytes_b64: string; kinds?: MediaQueryKind[] };
   type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null };
   type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] };
-  type CitedMessage = { short_id: string; value_text: string };
+  type CitedMessage = { short_id: string; value_text: string; record?: RecordRef | null };
   type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
   type ScopeHonesty = { out_of_scope_worlds: string[]; census_capped?: boolean };
   type RetrievalQuality = "full" | "degraded" | "passthrough";
@@ -1269,7 +1269,7 @@ declare const vault: {
     deactivate(input: Sdk.LensDeactivateRequest): Promise<Sdk.Reply<Sdk.LensActivationReceipt>>;
     /** Composes the default vault lens from the named sources, read under the caller's own scope. */
     default(input: Sdk.LensDefaultRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.GeneratedLens>>>;
-    /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. */
+    /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
     list(input: Sdk.LensListRequest): Promise<Sdk.Reply<Sdk.LensListPage>>;
     /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
     propose(input: Sdk.LensProposeRequest): Promise<Sdk.Reply<Sdk.LensProposalReceipt>>;
