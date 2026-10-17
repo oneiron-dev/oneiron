@@ -63,3 +63,37 @@ pub(super) fn admit_record_use(
     tier_admission(rec.class, requested, binding, floor)?;
     Ok(())
 }
+
+/// The reveal half of the admission rule (OF-560): a reveal puts the value
+/// into a model's context, which is a T1 lease. The class's live floor must
+/// reach T1, and so must the widest binding the record carries: a record
+/// with no binding (a masked secret) is capped by its floor alone, and one
+/// whose every binding is doored is used at its door and never revealed.
+pub(crate) fn reveal_tier_admission(
+    rec: &SecretCustodyAdmission,
+    floor: &SecretCustodyFloor,
+) -> Result<()> {
+    if rec.status != SecretCustodyStatus::Active {
+        return Err(Error::Secret(SecretError::SecretCustodyNotActive {
+            name: rec.name.clone(),
+        }));
+    }
+    let requested = CustodyTier::T1Leased;
+    let band = floor.band_for(rec.class);
+    let binding_ceiling = rec
+        .bindings
+        .iter()
+        .map(|binding| binding.tier_ceiling)
+        .max()
+        .unwrap_or(requested);
+    if requested > band.max || requested > binding_ceiling {
+        return Err(Error::Secret(SecretError::SecretTierDenied {
+            class: rec.class,
+            requested,
+            floor_min: band.min,
+            floor_max: band.max,
+            binding_ceiling,
+        }));
+    }
+    Ok(())
+}

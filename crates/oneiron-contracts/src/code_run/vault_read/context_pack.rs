@@ -15,6 +15,15 @@ pub struct CoreContextPackRequest {
     /// Executor model@revision for pair-specific skill reliability ranking.
     #[serde(default)]
     pub executor_model: Option<String>,
+    /// The task type this pack's work is placed in, a node of the vault's
+    /// type tree at that tree's version: skills rank on their measured
+    /// reliability for that placement and `axis` (OF-184).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_ref: Option<ContextPackTypeRef>,
+    /// The scored axis for `type_ref`; omitted, the skill-outcome axis.
+    /// Refused without `type_ref`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub axis: Option<String>,
     /// Optional BM25 text seed.
     #[serde(default)]
     pub query: Option<String>,
@@ -41,6 +50,14 @@ pub struct CoreContextPackRequest {
     /// Retrieval and serialization budget controls.
     #[serde(default)]
     pub budget: Option<ContextPackBudgetControls>,
+}
+
+/// A task placement: a type-tree node and the tree version it is placed in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ContextPackTypeRef {
+    pub node_id: String,
+    pub tree_version: u32,
 }
 
 impl CoreContextPackRequest {

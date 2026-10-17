@@ -24,6 +24,9 @@ use crate::task_verb::{
 use crate::temporal::TimeRange;
 use crate::{Vault, WriteActor};
 
+/// The most bytes a spawn's intent key holds: its dedupe key's tail.
+pub(super) const SPAWN_INTENT_KEY_MAX_BYTES: usize = 256;
+
 fn invalid() -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
         "code-mode spawn requires its bound parent attempt",
@@ -202,7 +205,7 @@ impl<'a> HostSelfDispatcher<'a> {
         if agent_dispatch_actor(&input)? != self.actor {
             return Err(invalid());
         }
-        if call.intent_key.trim().is_empty() || call.intent_key.len() > 256 {
+        if call.intent_key.trim().is_empty() || call.intent_key.len() > SPAWN_INTENT_KEY_MAX_BYTES {
             return Err(invalid());
         }
         let now = crate::unix_seconds_now();
