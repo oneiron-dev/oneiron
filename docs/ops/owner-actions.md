@@ -1052,7 +1052,9 @@ where the bytes come from.
 
 Text, image and audio each search through a kind slot. An unbound text slot reads the vault's
 own text index. A bound slot reads a declared embedding space, whose id is an `ai.embed` rung id
-(as `GET /v1/ai/options` lists it), then `@where`.
+(as `GET /v1/ai/options` lists it), then `@where`: the `[models]` provider key that binds that
+rung, so one model at two clouds is two spaces. Where the space's model runs is that provider's
+locality. A space whose `@where` names no provider serving its rung embeds nothing.
 
 - `GET /v1/owner/embedding-spaces` lists the declared spaces, the text index, which space each
   slot reads, every move with its last check, and how many probes each kind holds.

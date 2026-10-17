@@ -21,6 +21,9 @@
 //! audio = "google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b@own"
 //! ```
 //!
+//! `@own` is the `[models]` provider key that binds the rung: a space embeds
+//! only through the rung that provider serves.
+//!
 //! `one_space = "<id>"` in place of `[embedding.slots]` is the one-space
 //! preset: every kind the space accepts, text included.
 
