@@ -665,6 +665,10 @@ export class Oneiron {
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
     },
+    critic: {
+      /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
+      review: (input: Facade.CriticReviewSubmit): Facade.CriticReviewOutcome => this.#call(() => this.#client.vaultCriticReview(input) as Facade.CriticReviewOutcome),
+    },
     rooms: {
       /** The caller's rooms its own grants admit; inside a room turn, only that room. */
       list: (): Facade.RoomEntry[] => this.#call(() => this.#client.vaultRoomsList({}) as Facade.RoomEntry[]),
