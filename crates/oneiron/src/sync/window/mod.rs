@@ -106,6 +106,8 @@ pub struct LoadedWindow {
     _observer_a: Subscription,
     /// Observer B subscriptions (entities, edges, tombstones materialization).
     _observer_b: (Subscription, Subscription, Subscription, Subscription),
+    /// Observer B for the custody map (OF-422), on a base window only.
+    _observer_custody: Option<Subscription>,
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
@@ -167,12 +169,17 @@ impl LoadedWindow {
             outbound,
         );
         let observer_b = bridge::register_observer_b(&doc, vault, materializer, key.as_str());
+        let observer_custody = key
+            .world()
+            .is_none()
+            .then(|| bridge::register_custody_observer(&doc, vault, materializer, key.as_str()));
 
         Self {
             doc,
             key,
             _observer_a: observer_a,
             _observer_b: observer_b,
+            _observer_custody: observer_custody,
             observer_a_state,
         }
     }

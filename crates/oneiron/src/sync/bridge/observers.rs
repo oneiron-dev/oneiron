@@ -484,6 +484,26 @@ pub fn register_observer_b_with_tee(
     (entity_sub, edge_sub, tombstone_sub, birth_sub)
 }
 
+/// Observer B for the base window's custody map (OF-422): each owner-signed
+/// custody transition an import changes is judged and written into custody.
+pub(crate) fn register_custody_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let custody_map = doc.get_map(crate::sync::custody::CUSTODY_MAP);
+    subscribe_map_observer(
+        doc,
+        &custody_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::custody::materialize_custody_from_delta,
+        ("custody", None),
+    )
+}
+
 /// Subscribes to a map's changes, filtering out bridge-origin events and
 /// delegating to a materializer function under the materializer lock.
 fn subscribe_map_observer(

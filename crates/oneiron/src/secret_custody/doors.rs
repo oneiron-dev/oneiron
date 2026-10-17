@@ -594,6 +594,33 @@ pub(crate) fn register_custody_in_txn(
     Ok(())
 }
 
+/// Points the name index at record `id`, which a custody transition writes
+/// (OF-422), unless the name belongs to another record here that is not
+/// revoked, or to a revoked one at `generation` or later (a reclaimed name's
+/// generation only climbs). Returns whether the name is the record's.
+pub(super) fn bind_synced_name_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    name: &str,
+    id: &EntityId,
+    generation: u32,
+) -> Result<bool> {
+    if name.is_empty() || name.len() > SECRET_NAME_MAX_BYTES {
+        return Ok(false);
+    }
+    let name = name.to_owned();
+    if let Some(existing) = NAME_INDEX.get(store, wtxn, &name)?
+        && existing != *id
+        && read_secret_custody_admission_in_txn(store, wtxn, &existing)?.is_some_and(|held| {
+            held.status != SecretCustodyStatus::Revoked || held.rotation_generation >= generation
+        })
+    {
+        return Ok(false);
+    }
+    NAME_INDEX.put(store, wtxn, &name, id)?;
+    Ok(true)
+}
+
 /// OF-222: restores one custody record from the owner's own whole-vault
 /// archive under its archived id, inside the import's write transaction and
 /// through every check registration makes. The owner's own archive carries
