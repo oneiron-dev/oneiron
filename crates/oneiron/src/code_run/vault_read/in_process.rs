@@ -76,9 +76,10 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     }
 
     /// Searches `seeds`, which the host embedded from a context pack's
-    /// `media`, beside its text and vector seeds. Without them a pack that
-    /// names `media` is refused with [`MEDIA_UNAVAILABLE_ENGINE_CODE`]: this
-    /// adapter embeds nothing, and never reads such a pack without its media.
+    /// `media` (and, on the one-space preset, from its text query), beside
+    /// its text and vector seeds. Without them a pack that names `media` is
+    /// refused with [`MEDIA_UNAVAILABLE_ENGINE_CODE`]: this adapter embeds
+    /// nothing, and never reads such a pack without its media.
     #[must_use]
     pub fn with_media_seeds(mut self, seeds: &'v [EmbeddedMediaSeed]) -> Self {
         self.media = Some(seeds);
@@ -228,8 +229,19 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         if let Some(vector) = vector {
             builder = builder.search_vector(vector, candidate_limit);
         }
-        if request.media.is_some() {
-            let Some(seeds) = self.media else {
+        match self.media {
+            Some(seeds) => {
+                for seed in seeds {
+                    builder = builder.search_media(
+                        &seed.space,
+                        seed.kind,
+                        &seed.vector,
+                        &seed.kinds,
+                        candidate_limit,
+                    );
+                }
+            }
+            None if request.media.is_some() => {
                 return Err(VaultReadError::Engine {
                     narrowing: None,
                     method: METHOD,
@@ -237,16 +249,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                     message: "this host serves no ai.embed rung for media; retry without media"
                         .to_owned(),
                 });
-            };
-            for seed in seeds {
-                builder = builder.search_media(
-                    &seed.space,
-                    seed.kind,
-                    &seed.vector,
-                    &seed.kinds,
-                    candidate_limit,
-                );
             }
+            None => {}
         }
         let (builder, response_budget) = apply_budget_controls(
             builder,
