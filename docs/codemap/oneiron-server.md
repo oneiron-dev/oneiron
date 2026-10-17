@@ -628,7 +628,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/raw.rs` | src | s | 8 crate-vis | — | The raw `/v1/llm` routes' models and their own meter |
 | `src/models/receipts.rs` | src | s | 1 struct · 1 const · 5 crate-vis | LoggedReceipts | Where the server's run receipts go by default: one structured log line per row |
 | `src/models/rerank.rs` | src | s | 5 crate-vis | — | The rerank transport: the `reranker` role's rungs speak `/v1/rerank`, the indexed-scores protocol… |
-| `src/models/responses_socket.rs` | src | m | 4 crate-vis | — | Responses over a held socket (ARCH-0081 §5) |
+| `src/models/responses_socket.rs` | src | m | 5 crate-vis | — | Responses over a held socket (ARCH-0081 §5) |
 | `src/models/role_route.rs` | src | s | 2 struct · 1 enum · 3 fn | RoleCall, RoleRefusal, RoleRoute | A role-bound call's model under the vault's live model manifest |
 | `src/models/router.rs` | src | s | 1 struct · 6 fn · 5 crate-vis | ModelRouter | Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its… |
 | `src/models/run_backend.rs` | src | s | 1 struct · 1 fn | RunBackend | A ladder as an [`LlmBackend`], for engine code that calls a backend itself (the Dreamer's step layer) |
