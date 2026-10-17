@@ -1803,7 +1803,7 @@
      "purpose": "OF-393: the fan-out launch hold",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -2290,6 +2290,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityRepairOutcome"
+     ],
+     "path": "src/authority/history_repair.rs",
+     "purpose": "Staged repair of missing authority history (OF-469)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -2298,7 +2312,7 @@
      "path": "src/authority/history_transfer.rs",
      "purpose": "Signed-history migration and independently authorized per-vault re-root doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 7,
       "fn": 7,
       "struct": 1
      }
@@ -2536,7 +2550,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 19,
-      "re-export": 30
+      "re-export": 31
      }
     },
     {
@@ -2606,7 +2620,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -34560,6 +34574,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/lmdb_retrieval_inventory.rs",
+     "purpose": "LMDB/session adapter of the retrieval-index inventory port, over the receiver's own tables",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -34596,6 +34618,14 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/lmdb_window_rows.rs",
+     "purpose": "LMDB/session adapter of the window deletion-row port, over the declared `sync_state` families",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -34653,7 +34683,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "re-export": 7
      }
     },
@@ -34731,6 +34761,16 @@
      "purpose": "Query execution options for retrieval ports, independent of storage handles",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/retrieval_index.rs",
+     "purpose": "The retrieval-index inventory port: the physical rows of the vector, HNSW, BM25 and phonetic projections…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -34836,6 +34876,16 @@
      "path": "src/ports/time/tests.rs",
      "purpose": "The store clock's reads, observed through what a caller gets back",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/window_rows.rs",
+     "purpose": "The window deletion-row port: the rows a deletion leaves under a window address",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "s",
@@ -37832,7 +37882,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EvaluationRequest",
@@ -37882,7 +37932,7 @@
      "path": "src/saved_query/filter.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 5,
       "struct": 1
@@ -42322,7 +42372,7 @@
      "path": "src/store/open_gates/hnsw_model_gates.rs",
      "purpose": "HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -42343,7 +42393,7 @@
      "path": "src/store/open_gates/mod.rs",
      "purpose": "`Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "re-export": 2
      }
     },
@@ -48031,6 +48081,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ShapeChannelBinding",
+      "ShapeChannelCustody",
+      "ShapeChannelFulfillment",
+      "ShapeChannelProvision",
+      "ShapeMailScope",
+      "ShapeSelfHeld"
+     ],
+     "path": "src/vault_shape/channel.rs",
+     "purpose": "How a declared channel identity is held, bound and fulfilled, as a seed writes it (ARCH-0063)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ShapeGrantBound"
      ],
      "path": "src/vault_shape/grant.rs",
@@ -48085,7 +48154,7 @@
       "const": 2,
       "enum": 3,
       "fn": 3,
-      "re-export": 5,
+      "re-export": 7,
       "struct": 3
      }
     },
@@ -48119,6 +48188,19 @@
       "crate-vis": 3,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShapeSkillSource"
+     ],
+     "path": "src/vault_shape/skill.rs",
+     "purpose": "Where a declared skill comes from, as a seed writes it (ARCH-0053)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1
      }
     },
     {
@@ -51145,7 +51227,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 130,
+     "files": 131,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52048,7 +52130,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 43,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52197,7 +52279,7 @@
     "saved_query": {
      "files": 14,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
@@ -52524,7 +52606,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 7,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52587,9 +52669,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 153,
+   "over_bar": 154,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3181,
+   "source_files": 3188,
    "test_files": 903
   },
   "oneiron-android": {
@@ -58012,6 +58094,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ArmedLane",
       "CommitmentDeadline",
       "DeadlineSource",
       "HintSignal",
@@ -58024,7 +58107,7 @@
      "purpose": "Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and…",
      "surface": {
       "crate-vis": 3,
-      "enum": 1,
+      "enum": 2,
       "struct": 4,
       "trait": 2
      }
@@ -58055,9 +58138,9 @@
      "path": "src/tick/push.rs",
      "purpose": "Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -61559,7 +61642,7 @@
      "path": "src/embedded.rs",
      "purpose": "The embedded backend: path resolution, the process-local vault registry, and the single-writer lease…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -61594,7 +61677,7 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 14,
+      "fn": 15,
       "mod": 1,
       "re-export": 3,
       "struct": 2
@@ -63037,7 +63120,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -66390,7 +66473,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 12,
       "re-export": 19,
       "struct": 1
@@ -66730,7 +66813,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 11
      }
     },
     {
@@ -67481,6 +67564,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/embedded.rs",
+     "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/embedder/admitted.rs",
      "purpose": "A remote embedder's requests under run admission (ARCH-0053 `#run-admission`)",
      "surface": {
@@ -68034,7 +68127,7 @@
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
       "fn": 3,
-      "mod": 23,
+      "mod": 24,
       "re-export": 1
      }
     },
@@ -69920,7 +70013,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/saved_query_sweep.rs",
-     "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the…",
+     "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…",
      "surface": {
       "crate-vis": 1
      }
@@ -70065,7 +70158,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 3
      }
     },
@@ -71059,6 +71152,13 @@
      "layout": "file",
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
+    "embedded": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…"
+    },
     "embedder": {
      "files": 24,
      "impl_vault": false,
@@ -71218,7 +71318,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the…"
+     "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
      "files": 29,
@@ -71293,7 +71393,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 570,
+   "source_files": 571,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -72082,9 +72182,14 @@
       "ShapeApplyRequest",
       "ShapeCeiling",
       "ShapeChange",
+      "ShapeChannelBinding",
+      "ShapeChannelCustody",
+      "ShapeChannelFulfillment",
+      "ShapeChannelProvision",
       "ShapeGrantBound",
       "ShapeItemClass",
       "ShapeItemState",
+      "ShapeMailScope",
       "ShapeMemberRole",
       "ShapePlan",
       "ShapePlanItem",
@@ -72096,6 +72201,8 @@
       "ShapeRead",
       "ShapeRow",
       "ShapeSeed",
+      "ShapeSelfHeld",
+      "ShapeSkillSource",
       "ShapeTarget",
       "ShareCreateRequest",
       "ShareCreated",
@@ -72270,8 +72377,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 228,
-      "struct": 576
+      "enum": 234,
+      "struct": 577
      }
     },
     {

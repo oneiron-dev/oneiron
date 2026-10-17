@@ -59,10 +59,10 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
-use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::ports::{DeletionMarker, TombstoneStoreRead, WindowAddress, WindowDeletionRows};
 use crate::sync::bridge::Materializer;
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
-use crate::sync::window_rows::{OFF_RECORD_PROMOTE_PICKUP, PENDING_TOMBSTONE, WINDOW_UPDATE};
+use crate::sync::window_rows::{OFF_RECORD_PROMOTE_PICKUP, WINDOW_UPDATE};
 
 fn rejected() -> Error {
     Error::Sync(SyncError::SyncProtocolError {
@@ -156,14 +156,15 @@ pub fn prepare_replacement(
     conflicts.extend(delete_wins(&candidate, &written)?);
     let pending: Vec<_> = {
         let rtxn = vault.store.env.read_txn()?;
-        PENDING_TOMBSTONE
-            .iter_from(&vault.store, &rtxn, format!("{key}:").as_bytes())?
+        vault
+            .store
+            .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(key.as_str()))?
             .filter_map(std::result::Result::ok)
             .collect()
     };
     let tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
-    for (marker, value) in &pending {
-        apply_tombstone_to_indexed_window_doc(&candidate, &tombstones, &marker.id, value)?;
+    for marker in &pending {
+        apply_tombstone_to_indexed_window_doc(&candidate, &tombstones, &marker.id, &marker.raw)?;
     }
     candidate.commit();
     reverse_rematerialize(vault, &candidate, key)?;
