@@ -26578,10 +26578,10 @@
       "DecisionAsks"
      ],
      "path": "src/llm/decision/asks.rs",
-     "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an owner ask that the…",
+     "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 12,
+      "crate-vis": 2,
+      "fn": 16,
       "struct": 4
      }
     },
@@ -26606,7 +26606,7 @@
      "path": "src/llm/decision/codec.rs",
      "purpose": "Canonical entity references for typed-decision wire records",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -26644,17 +26644,25 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "AskAct",
+      "AskRole",
+      "AskRoleResolver",
+      "AskTo",
       "DecisionCall",
       "DecisionLadder",
       "DecisionModel",
       "DecisionPack",
       "DecisionProvider",
+      "HolderKind",
       "HumanDecisionQueue",
       "HumanDecisionRequest",
       "ModelDecisionProvider",
       "PairedAnswer",
       "ProviderCapability",
       "ProviderDecision",
+      "ResolvedRole",
+      "RoleHolder",
+      "RoleRank",
       "RuleDecisionProvider"
      ],
      "path": "src/llm/decision/ladder.rs",
@@ -26662,9 +26670,10 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 14,
-      "struct": 9,
-      "trait": 3
+      "enum": 4,
+      "fn": 18,
+      "struct": 12,
+      "trait": 4
      }
     },
     {
