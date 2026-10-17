@@ -230,7 +230,10 @@ pub(super) async fn serve_with_config(
     // Uncertain identities are decided, or asked of the person (OF-123).
     workers.push(crate::ai_host::identity::spawn(&sync_server));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
-    workers.push(crate::ai_host::coach_heal::spawn(&sync_server));
+    workers.push(crate::ai_host::coach_heal::spawn(
+        &sync_server,
+        config.failure_signals.publisher_candidates()?,
+    ));
     // The nightly Coach jobs that need the host's model or rules (OF-420).
     workers.push(crate::ai_host::coach_host::spawn(&sync_server));
     // Failure signals reach the deployment's publisher (OF-380).

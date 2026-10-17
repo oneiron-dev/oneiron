@@ -15,8 +15,8 @@ pub use self::projection::{
     CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow,
     TasksSection, TasksSectionRows, fold_up_status,
 };
-pub(crate) use self::render::intent_row;
 pub use self::render::{expand_task, failed_lane, render_tasks_section};
+pub(crate) use self::render::{intent_row, label_preview};
 
 pub(crate) use self::authority_state::{
     ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled,
