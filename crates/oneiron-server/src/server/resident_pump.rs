@@ -31,7 +31,7 @@ use oneiron::agent_dispatch::{
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttemptResult};
 use oneiron::code_run::{HostSelfDispatcher, bind_wait_trap};
 use oneiron::compaction::output::OutputContextEntry;
-use oneiron::dreamer_runner::{CompleteDreamerAttempt, ParkDreamerAttempt};
+use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
 };
@@ -600,6 +600,7 @@ fn park_on_wait(
     DreamerRunnerStore::new(vault).park_attempt(ParkDreamerAttempt {
         attempt_id: attempt.id,
         reason: WAITING_PARK_REASON.to_owned(),
+        cause: DreamerParkCause::Signal,
         park_owner: trap_park_owner(&trap.trap_claim_id),
         now,
     })?;

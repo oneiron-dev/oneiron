@@ -21,8 +21,7 @@ mod vet;
 pub(in crate::store) use self::checkpoint_custody::archived_by;
 pub(crate) use self::checkpoint_custody::{
     LiveCustody, MadeDestination, admit_existing_vault_root, host_hold_rows_in_txn,
-    preflight_checkpoint_rows, read_live_custody, refuse_custody_beside,
-    replace_host_holds_in_txn,
+    preflight_checkpoint_rows, read_live_custody, refuse_custody_beside, replace_host_holds_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::checkpoint_custody::{

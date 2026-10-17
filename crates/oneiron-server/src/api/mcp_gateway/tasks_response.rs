@@ -596,6 +596,7 @@ fn mcp_agent_verb_input(
         "self.identity.settle" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.concern" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.concern.outcome" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.concern.move" => a.spec.clone().ok_or_else(invalid),
         "vault.people.list" => a.spec.clone().ok_or_else(invalid),
         "vault.people.get" => a.spec.clone().ok_or_else(invalid),
         "self.message" => a.spec.clone().ok_or_else(invalid),
@@ -955,6 +956,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.inbox.concern.outcome" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.concern.move" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.people.list" => {
@@ -1582,6 +1586,12 @@ async fn execute_agent_verb_listing(
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
     };
+    // OF-063: the off-record session the request named; inside an anonymous
+    // one a reference refusal writes no receipt (Engine ruling 10-17).
+    let memory = match actor.off_record_session.as_deref() {
+        Some(session) => memory.in_off_record_session(session),
+        None => memory,
+    };
     let hooks = crate::api::facade::row_hooks_pre(
         server,
         actor.actor_ref,
@@ -1726,6 +1736,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_inbox_concern_outcome(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.concern.move" => {
+            let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_concern_move(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

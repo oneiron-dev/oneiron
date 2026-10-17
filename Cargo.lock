@@ -8212,6 +8212,7 @@ dependencies = [
 name = "oneiron-llm-gemini"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-core",
  "oneiron",
  "serde_json",
@@ -8507,6 +8508,7 @@ dependencies = [
  "oneiron-keystore",
  "oneiron-linear",
  "oneiron-llm-anthropic",
+ "oneiron-llm-gemini",
  "oneiron-llm-openai",
  "oneiron-llm-own-server",
  "oneiron-llm-systemone",
@@ -8556,7 +8558,11 @@ dependencies = [
 name = "oneiron-uniffi"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "oneiron",
+ "oneiron-remote",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "uniffi",
 ]

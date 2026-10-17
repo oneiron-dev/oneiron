@@ -436,10 +436,10 @@ fn check_edge_residence(
     let mut worlds = [None, None];
     let mut learned = [None, None];
     for (index, id) in [src, tgt].iter().enumerate() {
-        let stored = vault.store.entities.get(&txn, id.as_bytes())?;
+        let stored = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, &txn, id)?;
         let live = map_get_bytes(&entities, &id.to_hex());
         let old = historical.get(id);
-        let raw = if let Some(stored) = stored.as_deref() {
+        let raw = if let Some(stored) = stored.as_deref().map(Vec::as_slice) {
             let header = EntityMetadataHeader::parse(stored)
                 .ok_or(Error::CorruptedIndex("entity metadata"))?;
             if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM

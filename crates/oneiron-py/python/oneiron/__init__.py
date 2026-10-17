@@ -299,6 +299,8 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.self_inbox_concern(json.dumps(spec))))
         def outcome(self, spec):
             return json.loads(_translate(lambda: self._client.self_inbox_concern_outcome(json.dumps(spec))))
+        def move(self, spec):
+            return json.loads(_translate(lambda: self._client.self_inbox_concern_move(json.dumps(spec))))
     class _SelfGrantsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

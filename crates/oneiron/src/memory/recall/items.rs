@@ -127,6 +127,7 @@ impl Memory<'_> {
             crate::vault::ReadMode::Live | crate::vault::ReadMode::Indexed => None,
         };
         let kind = kind_string_for_type(entity_type);
+        let record = Some(crate::lens::RecordRef::from_view(&view));
 
         if entity_type == ENTITY_TYPE_CLAIM {
             let body = crate::claim::decode_claim_body(&body, true)?;
@@ -165,6 +166,7 @@ impl Memory<'_> {
                 reactions: Vec::new(),
                 cited_messages: Vec::new(),
                 conversation_id: None,
+                record,
             }))
         } else {
             let value_text = turn_text
@@ -280,6 +282,7 @@ impl Memory<'_> {
                 reactions,
                 cited_messages,
                 conversation_id,
+                record,
             }))
         }
     }
