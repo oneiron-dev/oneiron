@@ -51,6 +51,7 @@ mod history_routes;
 mod inbox_routes;
 mod legal_hold_routes;
 mod pack_routes;
+mod pad_routes;
 mod peer_confidence_routes;
 mod proactivity_routes;
 mod skill_judge_routes;
@@ -102,6 +103,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(history_routes::routes())
         .merge(inbox_routes::routes())
         .merge(concern_routes::routes())
+        .merge(pad_routes::routes())
         .merge(legal_hold_routes::routes())
         .merge(guest_routes::routes())
         .merge(proactivity_routes::routes())

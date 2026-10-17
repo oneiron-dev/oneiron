@@ -37,6 +37,7 @@ pub use self::peer_wait::{
     send_peer_result_signal,
 };
 pub(crate) use self::trap::wake_trap_in_txn;
+pub(crate) use self::trap_binding::{OpenTrapWait, open_trap_waits};
 pub use self::trap::{
     consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,
     trap_park_owner,
