@@ -2771,7 +2771,7 @@
      "path": "src/authority/task_actor.rs",
      "purpose": "Who may act on one TASK (OF-220): the authority rule the task highway asks before a verb moves a task",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -3398,7 +3398,7 @@
      "path": "src/authority/write_authorization.rs",
      "purpose": "Transaction-bound actor authorization for engine-owned write doors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -15377,9 +15377,9 @@
      "path": "src/conversation/attendee.rs",
      "purpose": "An attendee's first entry into a chat or room (OF-365, ILDF2 P5)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -47575,6 +47575,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ShapeGrantBound"
+     ],
+     "path": "src/vault_shape/grant.rs",
+     "purpose": "A standing grant's bound as a seed writes it (DEC-0006): who, which class, which envelope",
+     "surface": {
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
@@ -47583,7 +47596,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ShapeCeiling",
@@ -47599,7 +47612,7 @@
       "const": 2,
       "enum": 3,
       "fn": 2,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -48397,12 +48410,12 @@
      "purpose": "The room join and consent doors (OF-531)",
      "surface": {
       "crate-vis": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "JoinParticipation",
@@ -52031,7 +52044,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52096,7 +52109,7 @@
    },
    "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3151,
+   "source_files": 3152,
    "test_files": 903
   },
   "oneiron-android": {
@@ -63194,7 +63207,7 @@
      "path": "src/api/context_board/memories.rs",
      "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 26
      }
     },
     {
@@ -65612,6 +65625,7 @@
       "InitArgs",
       "McpArgs",
       "McpSurface",
+      "McpTransport",
       "ProvenanceArgs",
       "ReembedArgs",
       "RevokeArgs",
@@ -65629,7 +65643,7 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 9,
+      "enum": 10,
       "fn": 3,
       "re-export": 10,
       "struct": 21
@@ -65819,13 +65833,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/api.rs",
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -66035,6 +66049,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/mcp_bridge/link.rs",
+     "purpose": "The one connection `oneiron mcp` holds to its server (ARCH-0044 \"anything that loops holds a socket\"; owner…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -67280,6 +67304,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/handler/mcp_socket.rs",
+     "purpose": "MCP on the app-tier socket: `oneiron mcp` holds one `/ws` connection and sends every JSON-RPC message over…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
@@ -67301,7 +67335,7 @@
      "path": "src/handler/mod.rs",
      "purpose": "WebSocket upgrade handler and connection lifecycle",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -70348,7 +70382,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -70439,7 +70473,7 @@
      "purpose": "Deployment-selected feedback transport"
     },
     "handler": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70649,9 +70683,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 39,
+   "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 561,
+   "source_files": 563,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -71340,6 +71374,7 @@
       "ShapeApplyRequest",
       "ShapeCeiling",
       "ShapeChange",
+      "ShapeGrantBound",
       "ShapeItemClass",
       "ShapeItemState",
       "ShapePlan",
@@ -71497,7 +71532,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 190,
+      "enum": 191,
       "struct": 483
      }
     },

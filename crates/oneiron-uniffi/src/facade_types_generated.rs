@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 233 facade rows, 673 generated types.
+// UniFFI census: 233 facade rows, 674 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 193.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
@@ -254,6 +254,8 @@ pub struct DiaryReadRecord {
     pub grants: Vec<String>,
     #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
+    #[serde(rename = "source")]
+    pub source: String,
 }
 
 /// `oneiron::memory::diary_read::DiaryReviewState`.
@@ -934,6 +936,46 @@ pub enum ShapeCeiling {
     Proposed,
 }
 
+/// `oneiron::vault_shape::grant::ShapeGrantBound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "domain")]
+pub enum ShapeGrantBound {
+    #[serde(rename = "action")]
+    Action {
+        #[serde(rename = "actor")]
+        actor: String,
+        #[serde(
+            rename = "actor_class",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        actor_class: Option<String>,
+        #[serde(rename = "class")]
+        class: String,
+        #[serde(rename = "selectors")]
+        selectors: Vec<String>,
+        #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+        #[serde(rename = "budget", default, skip_serializing_if = "Option::is_none")]
+        budget: Option<u64>,
+        #[serde(
+            rename = "receipt_required",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        receipt_required: Option<bool>,
+    },
+    #[serde(rename = "disclosure")]
+    Disclosure {
+        #[serde(rename = "audience")]
+        audience: Vec<String>,
+        #[serde(rename = "class")]
+        class: String,
+        #[serde(rename = "selectors")]
+        selectors: Vec<String>,
+    },
+}
+
 /// `oneiron::vault_shape::ShapeTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
@@ -1018,8 +1060,10 @@ pub enum ShapeRow {
     },
     #[serde(rename = "grant")]
     Grant {
-        #[serde(rename = "grant_ref")]
-        grant_ref: String,
+        #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+        grant_ref: Option<String>,
+        #[serde(rename = "bound", default, skip_serializing_if = "Option::is_none")]
+        bound: Option<ShapeGrantBound>,
     },
     #[serde(rename = "sync")]
     Sync {
@@ -1116,6 +1160,13 @@ pub enum ShapeItemState {
     },
     #[serde(rename = "proposed")]
     Proposed,
+    #[serde(rename = "filed")]
+    Filed {
+        #[serde(rename = "proposal_ref")]
+        proposal_ref: String,
+        #[serde(rename = "expires_at")]
+        expires_at: u64,
+    },
     #[serde(rename = "ceremony")]
     Ceremony,
     #[serde(rename = "no_door")]
