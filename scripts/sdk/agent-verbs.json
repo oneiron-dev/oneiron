@@ -2834,7 +2834,7 @@
       "output": "crate::task_verb::sdk::ConnectorCallReply",
       "call": "crate::task_verb::sdk::connector_call_host_only(memory, &input)?",
       "host_door": true,
-      "host_door_invocation": true,
+      "host_door_caller": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

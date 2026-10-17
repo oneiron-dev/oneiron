@@ -255,12 +255,9 @@ pub enum ConnectorToolSchema {
     Unavailable { reasons: Vec<String> },
 }
 
-/// The tool beneath one grant: the governing key it mints and the tool's
-/// approved schema there.
+/// The tool beneath one grant, for a schema read: the governing key the
+/// grant mints and the tool's approved schema there.
 struct GoverningTool {
-    grant_id: EntityId,
-    grant: StandingOutboundGrant,
-    key_id: EntityId,
     key: ConnectorKeyRecord,
     schema: Value,
 }
@@ -479,11 +476,10 @@ impl Vault {
         let Some(server) = canonical_scoped_server_segment(&route.name) else {
             return Ok(unavailable(refused("connector_name_not_scoped")));
         };
-        let governed =
-            match self.governing_tool(&memory.actor().to_hex(), &server, tool, &mut None)? {
-                Ok(governed) => governed,
-                Err(stop) => return Ok(unavailable(stop)),
-            };
+        let governed = match self.governing_tool(&memory.actor().to_hex(), &server, tool)? {
+            Ok(governed) => governed,
+            Err(stop) => return Ok(unavailable(stop)),
+        };
         let (_, destructive_hint) = self.connector_tool_class(&governed.key, &route, tool)?;
         Ok(ConnectorToolSchema::Approved {
             input_schema: governed.schema,
@@ -586,20 +582,45 @@ impl Vault {
         let Some(endpoint) = host.tool_endpoint(&route) else {
             return Ok(refused("connector_endpoint_not_installed"));
         };
-        let GoverningTool {
-            grant_id,
-            grant,
-            key_id,
-            key,
-            schema,
-        } = match self.governing_tool(
-            &pending.principal_ref,
-            &server,
-            &pending.tool,
-            &mut pending.grant_id,
-        )? {
-            Ok(governed) => governed,
-            Err(stop) => return Ok(stop),
+        let preferred = pending
+            .grant_id
+            .as_deref()
+            .and_then(|hex| EntityId::from_hex(hex).ok());
+        let Some((grant_id, grant)) =
+            self.connector_call_grant(&pending.principal_ref, &server, &pending.tool, preferred)?
+        else {
+            return Ok(held("standing_grant_required"));
+        };
+        pending.grant_id = Some(grant_id.to_hex());
+        // The gate binds the same actor from the same principal reference.
+        let actor = EntityId::from_hex(&pending.principal_ref).unwrap_or(grant_id);
+        let Some(capability) = ScopedCapabilityProvenance::mint(&server, &grant_id) else {
+            return Ok(refused("connector_name_not_scoped"));
+        };
+        let Some((key_id, key)) = self.connector_key_for(capability.connector(), Some(&actor))?
+        else {
+            return Ok(held("connector_key_unregistered"));
+        };
+        match key.status {
+            ConnectorKeyStatus::Active => {}
+            ConnectorKeyStatus::Revoked => return Ok(refused("connector_key_revoked")),
+            ConnectorKeyStatus::Suspended => return Ok(held("connector_key_suspended")),
+            ConnectorKeyStatus::Pending => return Ok(held("connector_key_pending")),
+        }
+        let Some(manifest) = key.retained_manifest.as_ref() else {
+            return Ok(held("connector_manifest_unapproved"));
+        };
+        let Some(schema) = manifest
+            .tools()
+            .iter()
+            .find(|tool| tool.name == pending.tool)
+            .map(|tool| tool.input_schema.clone())
+        else {
+            return Ok(if key.pending_manifest.is_some() {
+                held("connector_manifest_drift")
+            } else {
+                refused("connector_tool_unknown")
+            });
         };
         if key.tool_requires_confirmation(&pending.tool) {
             return Ok(held("connector_manifest_drift"));
@@ -657,33 +678,26 @@ impl Vault {
     }
 
     /// The principal's grant for `server` and `tool`, the governing key it
-    /// mints and the tool's approved schema there: the one resolution a call
-    /// and a schema read share. A stop is the hold or refusal the call meets.
-    /// The grant found is recorded in `grant_slot`, whose prior value is the
-    /// grant preferred.
+    /// mints and the tool's approved schema there, for a schema read. It
+    /// follows `connector_call_step`'s resolution step for step (the same
+    /// grant lookup, capability, governing key, status and manifest checks);
+    /// a stop is the hold or refusal a call meets there.
     fn governing_tool(
         &self,
         principal_ref: &str,
         server: &str,
         tool: &str,
-        grant_slot: &mut Option<String>,
     ) -> Result<std::result::Result<GoverningTool, Step>, IntentLedgerError> {
-        let preferred = grant_slot
-            .as_deref()
-            .and_then(|hex| EntityId::from_hex(hex).ok());
-        let Some((grant_id, grant)) =
-            self.connector_call_grant(principal_ref, server, tool, preferred)?
+        let Some((grant_id, _)) = self.connector_call_grant(principal_ref, server, tool, None)?
         else {
             return Ok(Err(held("standing_grant_required")));
         };
-        *grant_slot = Some(grant_id.to_hex());
         // The gate binds the same actor from the same principal reference.
         let actor = EntityId::from_hex(principal_ref).unwrap_or(grant_id);
         let Some(capability) = ScopedCapabilityProvenance::mint(server, &grant_id) else {
             return Ok(Err(refused("connector_name_not_scoped")));
         };
-        let Some((key_id, key)) = self.connector_key_for(capability.connector(), Some(&actor))?
-        else {
+        let Some((_, key)) = self.connector_key_for(capability.connector(), Some(&actor))? else {
             return Ok(Err(held("connector_key_unregistered")));
         };
         match key.status {
@@ -707,13 +721,7 @@ impl Vault {
                 refused("connector_tool_unknown")
             }));
         };
-        Ok(Ok(GoverningTool {
-            grant_id,
-            grant,
-            key_id,
-            key,
-            schema,
-        }))
+        Ok(Ok(GoverningTool { key, schema }))
     }
 
     /// The principal's live scoped grant for exactly this server and tool:

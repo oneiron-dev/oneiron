@@ -4079,6 +4079,7 @@ async fn connector_call(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "connector.call")?;
+    let caller = facade_actor(auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("connector.call", &value)?;
     let hooks = facade_hooks_pre(server, call, "connector.call", value).await?;
@@ -4086,6 +4087,7 @@ async fn connector_call(
         super::host_doors::connector_call(
             server,
             auth,
+            caller,
             Some(hooks.call().invocation),
             facade_input(hooks.args.clone())?,
         )

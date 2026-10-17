@@ -3918,6 +3918,7 @@ async fn execute_agent_verb_row(
             let output = crate::api::facade::host_doors::connector_call(
                 server,
                 auth,
+                (actor.actor_ref, actor.actor_class),
                 memory.invocation(),
                 input,
             )

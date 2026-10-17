@@ -501,7 +501,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
-        "connector.call" => super::connector_call_doors::connector_caller(auth).map(drop),
         "self.memory.diary.query" => diary_reader(auth).map(drop),
         "vault.decisions.asks.answer" | "vault.decisions.asks.climb" | "self.decisions.asks" => {
             super::decision_ask_doors::holder(auth, verb).map(drop)
