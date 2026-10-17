@@ -4784,6 +4784,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/secret_scan/lift_history/attempts.rs",
+     "purpose": "The attempt records (`job_records`), with the intake events their rows carry",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/secret_scan/lift_history/authored.rs",
      "purpose": "The authored carriers whose writers already mask a new write: an owner-policy ruling or proposal, an eval…",
      "surface": {
@@ -4797,7 +4807,17 @@
      "path": "src/batch/secret_scan/lift_history/carriers.rs",
      "purpose": "Carriers no door rewrites",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/loro_blocks.rs",
+     "purpose": "Loro blocks a carrier stores, read decompressed before the census scans them (OF-067)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -4805,9 +4825,12 @@
      "kind": "src",
      "notable": [
       "LiftCause",
+      "LiftCauseCount",
+      "LiftCloseReason",
       "LiftCounts",
       "LiftFamily",
       "LiftTrigger",
+      "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
       "SecretLiftReceipt",
@@ -4818,9 +4841,39 @@
      "purpose": "The historical lift sweep (OF-067; ARCH-0069 #mask-on-write)",
      "surface": {
       "crate-vis": 3,
-      "enum": 3,
-      "fn": 4,
-      "struct": 6
+      "enum": 4,
+      "fn": 8,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/notice.rs",
+     "purpose": "The needs-you notice of the lift proposals (OF-067)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/proposals.rs",
+     "purpose": "Closing a lift proposal (OF-067)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/record_text.rs",
+     "purpose": "Text a record keeps beside its body and the text it was indexed with, which the records census reads too…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -4830,7 +4883,7 @@
      "path": "src/batch/secret_scan/lift_history/records.rs",
      "purpose": "The entity table",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -4850,7 +4903,7 @@
      "path": "src/batch/secret_scan/lift_history/side_rows.rs",
      "purpose": "The side tables the catalog classes as authored",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -30820,7 +30873,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 29,
+      "crate-vis": 30,
       "enum": 3,
       "fn": 4,
       "re-export": 10,
@@ -31698,7 +31751,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BodyCell",
@@ -31708,7 +31761,7 @@
       "XlsxBodyOp"
      ],
      "path": "src/office_body/xlsx.rs",
-     "purpose": "The XLSX body inside its Loro document, schema 1 (ARCH-0075: \"XLSX is a map keyed by sheet and address\")",
+     "purpose": "The XLSX body inside its Loro document, schema 2 (ARCH-0075: \"XLSX is a map keyed by sheet and address\")",
      "surface": {
       "crate-vis": 7,
       "enum": 1,
@@ -35044,7 +35097,9 @@
      "notable": [],
      "path": "src/ports/lmdb_retrieval_inventory.rs",
      "purpose": "LMDB/session adapter of the retrieval-index inventory port, over the receiver's own tables",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -38742,7 +38797,7 @@
      "purpose": "The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 2,
       "re-export": 1,
@@ -40152,7 +40207,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BornWithField",
@@ -43526,7 +43581,7 @@
      "purpose": "Durable admission txn, attempt payload codec, dispatch handoff, and status reads",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 4,
       "fn": 11,
       "struct": 5,
@@ -43567,6 +43622,7 @@
      "path": "src/surface_event/mod.rs",
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)",
      "surface": {
+      "crate-vis": 1,
       "re-export": 5
      }
     },
@@ -44966,7 +45022,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 2
      }
@@ -44980,6 +45036,20 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GrantTravel"
+     ],
+     "path": "src/sync/selector/born_with.rs",
+     "purpose": "Born-with text on a copy to another vault (OF-491)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -45058,8 +45128,8 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 10,
-      "re-export": 5
+      "crate-vis": 11,
+      "re-export": 6
      }
     },
     {
@@ -48223,7 +48293,7 @@
      "path": "src/vault/entity_revision/pending_index.rs",
      "purpose": "Caller-supplied index inputs retained until atomic idle publication",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -48317,7 +48387,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 7,
       "struct": 1
      }
@@ -48423,7 +48493,7 @@
      "path": "src/vault/transactions.rs",
      "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 26
      }
     },
@@ -51859,7 +51929,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 120,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52995,7 +53065,7 @@
     "share_travel": {
      "files": 1,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
@@ -53098,7 +53168,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53287,9 +53357,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 169,
+   "over_bar": 170,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3232,
+   "source_files": 3238,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58361,7 +58431,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "XlsxArea",
@@ -58372,6 +58442,7 @@
       "XlsxLock",
       "XlsxName",
       "XlsxSheet",
+      "XlsxSheetPlan",
       "XlsxStyle",
       "XlsxValue"
      ],
@@ -58380,18 +58451,23 @@
      "surface": {
       "const": 2,
       "enum": 4,
-      "fn": 10,
-      "struct": 6
+      "fn": 11,
+      "re-export": 1,
+      "struct": 7
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SheetFate"
+     ],
      "path": "src/xlsx_shift.rs",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -58538,14 +58614,14 @@
     "xlsx_body": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file",
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")"
     },
     "xlsx_shift": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…"
     }
@@ -63933,7 +64009,7 @@
      "path": "src/ai_host/step.rs",
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -66108,6 +66184,16 @@
      "notable": [],
      "path": "src/api/owner_routes/secret_found_routes.rs",
      "purpose": "`/v1/owner/secrets/found*`: the owner's side of the found-key notice (OF-560)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/secret_lift_routes.rs",
+     "purpose": "`/v1/owner/secrets/lift*`: the owner's side of the historical lift sweep's proposals (OF-067)",
      "surface": {
       "crate-vis": 1
      }
@@ -71944,7 +72030,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 297,
+     "files": 298,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72331,7 +72417,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 589,
+   "source_files": 590,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -72890,6 +72976,8 @@
       "LensSlot",
       "LensSlotDecision",
       "LiftCause",
+      "LiftCauseCount",
+      "LiftCloseReason",
       "LiftCounts",
       "LiftFamily",
       "LiftTrigger",
@@ -73155,6 +73243,7 @@
       "ScratchpadRecallReply",
       "ScratchpadRecallReplyLine",
       "ScratchpadRecallRequest",
+      "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
       "SecretLiftProposal",
@@ -73380,8 +73469,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 245,
-      "struct": 611
+      "enum": 246,
+      "struct": 613
      }
     },
     {
