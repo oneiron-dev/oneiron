@@ -380,9 +380,11 @@ impl Vault {
         )]));
         session_claim.evidence = body.evidence.clone();
         let mut txn = self.store.env.write_txn()?;
-        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &session_claim_id)?
-            .is_none()
-        {
+        if !crate::ports::EntityStoreRead::port_entity_present(
+            &self.store,
+            &txn,
+            &session_claim_id,
+        )? {
             put_journal_claim(
                 self,
                 &mut txn,
@@ -392,7 +394,7 @@ impl Vault {
                 row.created_at,
             )?;
         }
-        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &actor)?.is_none() {
+        if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &actor)? {
             return Err(Error::EntityNotFound);
         }
         put_journal_claim(self, &mut txn, row.id, actor, &body, row.created_at)?;
@@ -428,7 +430,7 @@ impl Vault {
             || critique.candidate_ref != id.to_hex()
             || critique.out_of_scope
             || row.critiques.len() >= 64
-            || crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &critic)?.is_none()
+            || !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &critic)?
         {
             return Err(invalid(
                 "critic is unbound, self-reviewing, or proposal is closed",

@@ -55,7 +55,7 @@ pub(super) fn apply_claim_candidate(
         ));
     }
     if let crate::claim::ClaimSubject::Entity(subject_id) = subject
-        && crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &subject_id)?.is_none()
+        && !crate::ports::EntityStoreRead::port_entity_present(store, wtxn, &subject_id)?
     {
         return Err(Error::EntityNotFound);
     }
@@ -73,7 +73,7 @@ pub(super) fn apply_claim_candidate(
     // The default stamps a birth. A candidate re-put over a stored claim keeps
     // the facet that claim was born with.
     let default_facet = claim_candidate_birth_facet(store, wtxn, &id)?;
-    let had_prior = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?.is_some();
+    let had_prior = crate::ports::EntityStoreRead::port_entity_present(store, wtxn, &id)?;
     let body = candidate.into_claim_body(envelope, default_facet)?;
     let data = crate::claim::encode_claim_body(&body)?;
     if had_prior {
