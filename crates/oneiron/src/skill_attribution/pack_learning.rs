@@ -78,6 +78,15 @@ pub fn project_anchored_pack_outcome(
         .collect();
     let key = receipt_id(attempt_receipt, &outcome.receipt, &outcome.axis);
     vault.with_write_txn_grouped(|txn| {
+        // A matched-fork check recorded for this run and axis counts as the
+        // skill's contribution, though it landed after the receipt froze.
+        let fields = super::contribution::with_recorded_checks_in_txn(
+            &vault.store,
+            txn,
+            attempt_receipt,
+            &outcome.axis,
+            fields.clone(),
+        )?;
         if let Some(previous) = CREDIT_RECEIPT.get(&vault.store, txn, &key)? {
             if previous.anchor != anchor
                 || previous.succeeded != outcome.succeeded
@@ -212,7 +221,7 @@ pub fn project_anchored_pack_outcome(
     })
 }
 
-fn require_loaded_skill(
+pub(super) fn require_loaded_skill(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     receipt: &ReceiptRecord,

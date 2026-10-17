@@ -145,6 +145,16 @@ pub const LEARNING_BORROWED_PRIOR_RUNS: SettingSpec = SettingSpec {
     seed: 2.0,
 };
 
+/// The share of credited runs whose followed skills get a matched-fork
+/// contribution check (ARCH-0037 #lineage-credit): each check regenerates a
+/// step twice, with and without the skill. Zero checks none.
+pub const CONTRIBUTION_CHECK_RATE: SettingSpec = SettingSpec {
+    key: "contribution_check_rate",
+    min: 0.0,
+    max: 1.0,
+    seed: 0.1,
+};
+
 /// The spawn planner's solo-first gate floor (ARCH-0079 #planner, OF-541):
 /// when solo's measured success rate for a task type is at or above this,
 /// a team must clear [`PLANNER_SOLO_MARGIN`] past solo to displace it.
@@ -182,6 +192,7 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     CREDIT_ENABLED,
     CREDIT_DEPTH_CAP,
     CREDIT_CHECK_EVERY_HOP,
+    CONTRIBUTION_CHECK_RATE,
     AUDIT_RATE,
     LEARNING_WINDOW_HALF_LIFE_DAYS,
     LEARNING_SHIPPED_PRIOR_RUNS,
