@@ -35,6 +35,9 @@ pub struct CatalogRefresh {
     pub conflicts: Vec<ModelId>,
     /// Why a node was not asked, or did not answer. Its rows stay.
     pub unreached: Vec<String>,
+    /// Models a node that answered no longer offers: their rows from it are
+    /// gone, so no call routes there.
+    pub withdrawn: Vec<ModelId>,
 }
 
 /// The row for a model `peer` offers: an own-server route at the price the
@@ -69,6 +72,33 @@ pub(super) fn mesh_row(peer: MachineId, mut entry: LlmCatalogEntry) -> Option<Mo
         tokens_per_o200k: None,
     };
     row.validate().ok().map(|()| row)
+}
+
+/// Removes the rows discovery wrote for `peer`'s models that are not in
+/// `offered`, its answer now, and returns those models. A row another node's
+/// answer rewrote since is that node's and stays.
+pub(super) fn prune(
+    vault: &Vault,
+    peer: MachineId,
+    offered: &[ModelId],
+) -> oneiron::Result<Vec<ModelId>> {
+    let peer = peer.to_hex();
+    let mut withdrawn = Vec::new();
+    for row in vault.model_registry_rows()? {
+        if row.wire == ModelWireFormat::OwnServer
+            && row
+                .catalog
+                .metadata
+                .get(MESH_PEER)
+                .and_then(JsonValue::as_str)
+                == Some(peer.as_str())
+            && !offered.contains(&row.catalog.model)
+            && vault.remove_model_registry_row(&row)?
+        {
+            withdrawn.push(row.catalog.model);
+        }
+    }
+    Ok(withdrawn)
 }
 
 /// Writes `row` unless the vault routes its model another way. A row
