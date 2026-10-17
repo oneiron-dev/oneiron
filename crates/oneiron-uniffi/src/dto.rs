@@ -94,7 +94,7 @@ pub struct WitnessTurn {
     pub conversation_ref: String,
     /// Turn ref (create-or-get); omitted means a fresh turn.
     pub turn_ref: Option<String>,
-    /// A quote on a project room's thread reply: a scalar span of one MESSAGE
+    /// A quote on any non-imported room turn at base: a scalar span of one MESSAGE
     /// in the room. Omitted means no quote.
     pub quote: Option<QuoteSpan>,
     /// A new project room thread root's audience, as 32-hex PERSON and
