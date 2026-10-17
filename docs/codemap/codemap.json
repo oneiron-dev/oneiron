@@ -2246,7 +2246,7 @@
      "path": "src/authority/federation_activation.rs",
      "purpose": "Grant activation under the folded pact states",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -2897,7 +2897,7 @@
      "path": "src/authority/slip_vault/courtesy.rs",
      "purpose": "The host's signature on a courtesy deletion ask and on its answer (OF-273)",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -22540,7 +22540,7 @@
      "path": "src/federation/membership_gate.rs",
      "purpose": "Transaction-bound shared-vault membership write authorization",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 1
      }
@@ -22560,7 +22560,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 2,
       "re-export": 15
      }
@@ -22781,17 +22781,18 @@
       "SharedActOutcome",
       "SharedVaultChange",
       "SharedVaultDeletion",
+      "SignedSharedActOutcome",
       "TransferOwnershipPlan"
      ],
      "path": "src/federation/shared_act/mod.rs",
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
-      "const": 2,
+      "const": 3,
       "crate-vis": 4,
       "enum": 2,
-      "fn": 10,
+      "fn": 11,
       "re-export": 2,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -22830,9 +22831,9 @@
      "purpose": "Terminal-pact per-world stale stamping (FED-04)",
      "surface": {
       "const": 3,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -29484,7 +29485,7 @@
      "path": "src/memory/claims/commit.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -29495,7 +29496,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 4,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -44392,7 +44393,7 @@
      "path": "src/sync/federation_burst/mod.rs",
      "purpose": "Peer-relative federation admission with durable, automatically replayable work",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 1,
       "re-export": 2,
