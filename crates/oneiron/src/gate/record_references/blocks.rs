@@ -129,8 +129,7 @@ impl Blocks {
         let heading = opening && atx_heading(rest);
         let starts_paragraph = !self.in_paragraph || heading;
         let ends = heading
-            || (opening
-                && (thematic_break(rest) || (self.in_paragraph && setext_underline(rest))));
+            || (opening && (thematic_break(rest) || (self.in_paragraph && setext_underline(rest))));
         self.in_paragraph = !ends;
         Line::Inline {
             from,

@@ -2519,7 +2519,16 @@ async fn vault_lenses_list(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    {
+        let (worlds, facets) = auth.verified_slip().map_or(
+            (
+                oneiron::federation::ScopeAxis::All,
+                oneiron::federation::ScopeAxis::All,
+            ),
+            |proof| (proof.scope().worlds.clone(), proof.scope().facets.clone()),
+        );
+        auth.require_record_scope_carried(worlds, facets)?;
+    }
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -2539,7 +2548,16 @@ async fn vault_lenses_default(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    {
+        let (worlds, facets) = auth.verified_slip().map_or(
+            (
+                oneiron::federation::ScopeAxis::All,
+                oneiron::federation::ScopeAxis::All,
+            ),
+            |proof| (proof.scope().worlds.clone(), proof.scope().facets.clone()),
+        );
+        auth.require_record_scope_carried(worlds, facets)?;
+    }
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(

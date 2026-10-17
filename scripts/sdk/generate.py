@@ -1289,9 +1289,9 @@ def uniffi_export(row, types, census):
     name, method = json.dumps(row['name']), row['name'].replace('.', '_')
     signature = row.get('uniffi')
     if 'call' not in row:
-        declaration = ', '.join(arg + ': ' + typ for arg, typ in signature['args'].items())
-        unused = ', '.join('&' + arg for arg in signature['args'])
-        return f'{name} => fn {method}(&self, {declaration}) -> {signature["output"]} = |_client| {{\n    let _ = ({unused},);\n    definition_only({name})\n}};\n'
+        # Every UniFFI row is callable (the last definition rows took calls in
+        # #2049), so the binding keeps no fail-closed stub for one.
+        raise ValueError(f'{row["name"]}: a definition row has no UniFFI export until it takes a call')
     binding = row.get('binding') or {}
     typed_args = binding['args'] if binding.get('args') and binding.get('wire') != 'json' else None
     engine_input = rust_type(row['input'])
@@ -1357,7 +1357,7 @@ def uniffi_export(row, types, census):
     return f'{name} => fn {method}({receiver}) -> {output} = |client| {{\n{body}}};\n'
 
 def uniffi_facade(facade_rows):
-    'The UniFFI verb surface (every facade row, then the definition rows it still names) and its generated types.'
+    'The UniFFI verb surface (every facade row; a definition row is refused) and its generated types.'
     rows = facade_rows + [row for row in DEFINITIONS if 'uniffi' in row]
     if any('uniffi' in row for row in ROWS if row not in facade_rows):
         raise ValueError('only a facade row carries a uniffi signature')

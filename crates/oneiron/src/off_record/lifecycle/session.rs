@@ -113,9 +113,9 @@ impl<'vault> OffRecordSessionVault<'vault> {
         owner: &crate::consent::AuthenticatedOwner,
     ) -> Result<OffRecordSession<'vault>> {
         let actor = owner.revalidate(self.vault)?;
-        let entry =
-            self.vault
-                .enter_anonymous_session_entry(session_ref, backend, Some(actor))?;
+        let entry = self
+            .vault
+            .enter_anonymous_session_entry(session_ref, backend, Some(actor))?;
         Ok(self.handle(session_ref.to_owned(), entry))
     }
 

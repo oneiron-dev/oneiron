@@ -299,7 +299,9 @@ impl Memory<'_> {
                     after,
                     limit,
                     with_compiled,
-                    |txn, record, skill_id| proposal_admitted_in(vault, &read, txn, record, skill_id),
+                    |txn, record, skill_id| {
+                        proposal_admitted_in(vault, &read, txn, record, skill_id)
+                    },
                 )
             })?
             .value)

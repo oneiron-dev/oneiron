@@ -1078,6 +1078,35 @@ struct FacadeErrorBody {
     hook: Option<Box<VerbHookStop>>,
 }
 
+/// The OpenAPI mirror of a facade refusal's body ([`FacadeErrorEnvelope`]):
+/// the engine's `MemoryError` as the wire carries it, `code` spelled as the
+/// engine spells it. A route that answers with [`FacadeApiError`] names it as
+/// that refusal's body.
+#[derive(utoipa::ToSchema)]
+#[expect(
+    dead_code,
+    reason = "OpenAPI schema mirror; a refusal serializes FacadeErrorEnvelope"
+)]
+pub(crate) struct MemoryErrorEnvelopeSchema {
+    error: MemoryErrorBodySchema,
+    narrowing: Option<crate::api::read_receipt::ReadReceiptSchema>,
+}
+
+/// The OpenAPI mirror of [`FacadeErrorBody`].
+#[derive(utoipa::ToSchema)]
+#[expect(
+    dead_code,
+    reason = "OpenAPI schema mirror; a refusal serializes FacadeErrorBody"
+)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MemoryErrorBodySchema {
+    code: String,
+    message: String,
+    request_id: String,
+    suggestions: Vec<String>,
+    receipt_ref: Option<String>,
+}
+
 impl FacadeApiError {
     fn new(
         status: StatusCode,

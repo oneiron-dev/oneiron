@@ -71,7 +71,9 @@ impl Vault {
             backend,
             budget_bytes,
             OffRecordMode::OffRecord,
-            room.map_or(SessionStart::Alone(None), |(room, by)| SessionStart::InRoom(room, by)),
+            room.map_or(SessionStart::Alone(None), |(room, by)| {
+                SessionStart::InRoom(room, by)
+            }),
             &self.store.clock,
         )
     }
