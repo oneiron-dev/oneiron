@@ -385,6 +385,9 @@ class Oneiron:
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
+        def settings(self) -> "Oneiron._VaultSettingsVerbs":
+            return Oneiron._VaultSettingsVerbs(self._client)
+        @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs":
             return Oneiron._VaultLensesVerbs(self._client)
         @property
@@ -643,6 +646,9 @@ class Oneiron:
             self._client = client
         def revoke(self, spec):
             return json.loads(_translate(lambda: self._client.vault_guests_revoke(json.dumps(spec))))
+        def mint_slip(self, spec):
+            """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
+            return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -661,6 +667,24 @@ class Oneiron:
         def lift_and_erase(self, spec):
             """The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
+    class _VaultSettingsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def learning(self) -> "Oneiron._VaultSettingsLearningVerbs":
+            return Oneiron._VaultSettingsLearningVerbs(self._client)
+    class _VaultSettingsLearningVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."""
+            return json.loads(_translate(lambda: self._client.vault_settings_learning(json.dumps(spec))))
+        def put(self, spec):
+            """The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope."""
+            return json.loads(_translate(lambda: self._client.vault_settings_learning_put(json.dumps(spec))))
+        def clear(self, spec):
+            """The owner clears one learned-setting row of a key, mode and scope."""
+            return json.loads(_translate(lambda: self._client.vault_settings_learning_clear(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

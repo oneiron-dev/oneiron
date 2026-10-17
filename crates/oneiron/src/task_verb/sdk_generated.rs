@@ -302,6 +302,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.guests.mint_slip",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GuestSlipMintRequest,
+                >(),
+            ),
+            (
                 "vault.authority.handoff_alarms",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -335,6 +341,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.legal_holds.lift_and_erase",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+                >(),
+            ),
+            (
+                "vault.settings.learning",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning_setting_doors::LearningSettingsRequest,
+                >(),
+            ),
+            (
+                "vault.settings.learning.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning_setting_doors::LearningSettingPut,
+                >(),
+            ),
+            (
+                "vault.settings.learning.clear",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning_setting_doors::LearningSettingClear,
                 >(),
             ),
             (
@@ -1008,6 +1032,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
             (
+                "self.leader.advice",
+                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
+            ),
+            (
+                "self.leader.pattern",
+                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderPatternInput>(
+                ),
+            ),
+            (
                 "self.skills.call",
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),
@@ -1483,6 +1516,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.guests.mint_slip" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.authority.handoff_alarms" => &[],
         "vault.authority.handoff_alarms.acknowledge" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -1508,6 +1548,27 @@ pub fn mcp_arguments_schema_from_input(
         "vault.legal_holds.list" => &[],
         "vault.legal_holds.log" => &[],
         "vault.legal_holds.lift_and_erase" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.learning" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.learning.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.learning.clear" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2491,6 +2552,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
+        "vault.guests.mint_slip" => {
+            let _input: crate::task_verb::sdk::GuestSlipMintRequest = decode(value.clone())?;
+        }
         "vault.authority.handoff_alarms" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -2511,6 +2575,17 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.legal_holds.lift_and_erase" => {
             let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
+                decode(value.clone())?;
+        }
+        "vault.settings.learning" => {
+            let _input: crate::learning_setting_doors::LearningSettingsRequest =
+                decode(value.clone())?;
+        }
+        "vault.settings.learning.put" => {
+            let _input: crate::learning_setting_doors::LearningSettingPut = decode(value.clone())?;
+        }
+        "vault.settings.learning.clear" => {
+            let _input: crate::learning_setting_doors::LearningSettingClear =
                 decode(value.clone())?;
         }
         "vault.lenses.propose" => {
@@ -3045,6 +3120,7 @@ pub fn invoke(
             encode(vault_members_withdraw_invitation(memory, decode(value)?)?)
         }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
+        "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
         }
@@ -3057,6 +3133,13 @@ pub fn invoke(
         "vault.legal_holds.log" => encode(vault_legal_holds_log(memory, decode(value)?)?),
         "vault.legal_holds.lift_and_erase" => {
             encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
+        }
+        "vault.settings.learning" => encode(vault_settings_learning(memory, decode(value)?)?),
+        "vault.settings.learning.put" => {
+            encode(vault_settings_learning_put(memory, decode(value)?)?)
+        }
+        "vault.settings.learning.clear" => {
+            encode(vault_settings_learning_clear(memory, decode(value)?)?)
         }
         "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
@@ -3871,6 +3954,12 @@ pub fn vault_guests_revoke(
 ) -> MemoryResult<crate::receipt::GuestRevokeResponse> {
     crate::task_verb::sdk::revoke_guest_embedded(memory, input)
 }
+pub fn vault_guests_mint_slip(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GuestSlipMintRequest,
+) -> MemoryResult<crate::task_verb::sdk::GuestSlipMinted> {
+    crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)
+}
 pub fn vault_authority_handoff_alarms(
     memory: &Memory<'_>,
     _input: EmptyRequest,
@@ -3937,6 +4026,39 @@ pub fn vault_legal_holds_lift_and_erase(
         &memory.embedded_owner("vault.legal_holds.lift_and_erase")?,
         input,
     )
+}
+pub fn vault_settings_learning(
+    memory: &Memory<'_>,
+    input: crate::learning_setting_doors::LearningSettingsRequest,
+) -> MemoryResult<crate::learning_setting_doors::LearningSettingsView> {
+    crate::learning_setting_doors::learning_settings_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.settings.learning")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_settings_learning_put(
+    memory: &Memory<'_>,
+    input: crate::learning_setting_doors::LearningSettingPut,
+) -> MemoryResult<crate::learning_setting_doors::LearningSettingsView> {
+    crate::learning_setting_doors::put_learning_setting_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.settings.learning.put")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_settings_learning_clear(
+    memory: &Memory<'_>,
+    input: crate::learning_setting_doors::LearningSettingClear,
+) -> MemoryResult<crate::learning_setting_doors::LearningSettingsView> {
+    crate::learning_setting_doors::clear_learning_setting_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.settings.learning.clear")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_lenses_propose(
     memory: &Memory<'_>,
