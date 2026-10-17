@@ -41,6 +41,7 @@ mod harness;
 pub(crate) mod home_digests;
 pub(crate) mod identity;
 mod judge_swap;
+mod lens_callbacks;
 mod local_vision;
 mod policy;
 pub(crate) mod self_heal_detectors;
@@ -62,6 +63,7 @@ pub(crate) mod waves;
 mod weave_lens;
 mod workflows;
 
+pub(crate) use lens_callbacks::{LensCallback, queue_lens_callback};
 pub(crate) use local_vision::LocalVisionModel;
 pub(crate) use policy::route_dreamer_extraction;
 pub use status::{

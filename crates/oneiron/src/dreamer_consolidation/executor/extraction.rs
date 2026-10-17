@@ -30,13 +30,13 @@ impl ConsolidationExecutor<'_> {
     /// reply contract, with the NOTE's markdown as the only source. Its
     /// byte ranges count over that markdown, so the review can check each
     /// one against the exact text it read.
-    /// `sealed_pad` is a sealed scratchpad's review: `Some(keep)`, `keep`
-    /// when a line is marked `keep` (ARCH-0032 #scratchpad-marks).
+    /// `sealed_pad` is a sealed scratchpad's review and how it asks for
+    /// the pad's `keep` lines (ARCH-0032 #scratchpad-marks).
     pub(in crate::dreamer_consolidation) fn note_request(
         call: &RoleCall<'_>,
         note: EntityId,
         markdown: &str,
-        sealed_pad: Option<bool>,
+        sealed_pad: Option<PadAsk>,
         scope: &crate::llm::Scope,
     ) -> Result<LlmRequest> {
         let id = bytes_to_hex_lower(note.as_bytes());
@@ -47,18 +47,27 @@ impl ConsolidationExecutor<'_> {
              header. Also give the object a key \"importance\": a number from 0 to 1 \
              for how much the note itself matters to keep."
         );
-        if let Some(keep) = sealed_pad {
-            rule.push_str(
-                " The note is a sealed scratchpad. Blank lines held text its writer \
-                 marked scratch: cite none of them.",
-            );
-            if keep {
+        match sealed_pad {
+            Some(PadAsk::First { keep }) => {
                 rule.push_str(
-                    " A line headed [keep] or [pin keep] states a fact its writer asked \
-                     to keep: extract each one.",
+                    " The note is a sealed scratchpad. Blank lines held text its writer \
+                     marked scratch: cite none of them.",
                 );
+                if keep {
+                    rule.push_str(
+                        " A line headed [keep] or [pin keep] states a fact its writer \
+                         asked to keep: extract each one.",
+                    );
+                }
+                rule.push_str(" Decide each other line on its own.");
             }
-            rule.push_str(" Decide each other line on its own.");
+            Some(PadAsk::Missed) => rule.push_str(
+                " The note is a sealed scratchpad, asked again. Blank lines were read \
+                 before or marked scratch: cite none of them. Each line left is headed \
+                 [keep] or [pin keep]: a fact its writer asked to keep that the last \
+                 review grounded no belief in. Extract each one.",
+            ),
+            None => {}
         }
         Self::request_over(call, Some(rule), format!("note {id}\n{markdown}"), scope)
     }
@@ -301,6 +310,17 @@ impl ConsolidationExecutor<'_> {
         }
         (candidates, waiting)
     }
+}
+
+/// How a sealed scratchpad's review asks for its `keep` lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::dreamer_consolidation) enum PadAsk {
+    /// The first read: scratch lines blanked; `keep` when a line is marked
+    /// `keep`.
+    First { keep: bool },
+    /// The one re-ask (FIX 2240): only the `keep` lines the last review
+    /// grounded no belief in are left; every other line is blank.
+    Missed,
 }
 
 /// What the correction pack decided for one parsed candidate: the listed
