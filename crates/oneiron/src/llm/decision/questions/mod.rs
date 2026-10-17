@@ -1,6 +1,7 @@
 //! Versioned questions, scoped answer receipts, and bound outcome labels.
 
 mod arrival;
+mod artifact_refresh;
 mod graph_ask;
 mod health_ask;
 mod outcomes;
@@ -15,6 +16,9 @@ mod task_ask;
 mod standing_tests;
 
 pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
+pub use artifact_refresh::{
+    ArtifactRefreshBatch, ArtifactRefreshFailure, refresh_due_artifact_questions,
+};
 pub(crate) use graph_ask::validate_decision as validate_unit_decision;
 pub use graph_ask::{
     GraphAnswerer, GraphAskFailure, GraphAskReceipts, GraphAskResult, GraphContextSource,

@@ -40,7 +40,8 @@ pub use self::codec::{
 };
 pub(crate) use self::dispatcher::{ExecutorCallSite, check_write_gate_against_vault};
 pub use self::dispatcher::{
-    GatedActorWrite, HostPlannerBinding, HostSelfDispatcher, SELF_MEMORY_SEARCH_MAX_RESULTS,
+    GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
+    SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,

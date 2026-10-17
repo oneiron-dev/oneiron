@@ -34,7 +34,7 @@ pub(crate) use self::envelope::check_write_gate_against_vault;
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
 use self::human_speech::HumanWaitDispatchTarget;
-pub use self::leader::HostPlannerBinding;
+pub use self::leader::{HostPlannerBinding, HostPlannerDecisions};
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
 pub(crate) use self::reader_spawn::ReaderChildBinding;
 

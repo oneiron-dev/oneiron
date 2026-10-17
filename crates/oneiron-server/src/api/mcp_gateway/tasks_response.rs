@@ -652,6 +652,7 @@ fn mcp_agent_verb_input(
             }
             Ok(Value::Object(map))
         }
+        "tasks.wave" => a.spec.clone().ok_or_else(invalid),
         "tasks.update" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -1069,6 +1070,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("assignee") {
                 arguments.insert("assignee".to_owned(), value.clone());
             }
+        }
+        "tasks.wave" => {
+            arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.update" => {
             if let Some(value) = input.get("task_ref") {
@@ -1776,6 +1780,15 @@ async fn execute_agent_verb_listing(
         Some(session) => memory.in_off_record_session(session),
         None => memory,
     };
+    // Rule 5: a task-work row takes its one turn here, for MCP and code mode
+    // alike, and holds it through its hooks and its row.
+    let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool)
+        .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work)
+    {
+        Some(server.admit_task_work(actor.actor_ref).await)
+    } else {
+        None
+    };
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
     let (output, source, carrier, epoch) =
         execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
@@ -2063,6 +2076,18 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
                 oneiron::task_verb::sdk::tasks_create(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.wave" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("tasks.wave", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TaskWaveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::tasks_wave(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

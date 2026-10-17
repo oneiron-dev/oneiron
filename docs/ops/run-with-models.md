@@ -561,6 +561,30 @@ whose answer or failure it holds. When no checker loads, code mode runs unchecke
 server logs why. The checker binary is trusted configuration, like any path
 in this file; the programs it checks are not.
 
+### Planned spawns (`[models.planner]`)
+
+An agent run the server leases can ask for help with
+`self.agents.spawn({need, ...})` and have the vault's planner pick the shape:
+the model, the pattern and the width. Its leader calls
+(`self.leader.advice`, `self.leader.pattern`) read the same planner. Each
+seat joins a model this host serves to the AGENT_DEF that runs on it:
+
+```toml
+[models.planner]
+top = 3                      # optional; shapes the leader's advice returns by default
+
+[[models.planner.seats]]
+model = "anthropic/claude-sonnet-5-5@1"  # an engine model ID, one seat per model
+agent = "sys.team_lead"                  # a seeded definition's logical ID, or an AGENT_DEF hex ID
+```
+
+The planned child runs the chosen seat's definition, its type placed on the
+need's text. The pick and the placement go through the host's decision
+ladder (section 13), each on its own 10-second clock. A seat whose
+definition this vault does not hold is skipped, with a log line. With no
+seat, the server lends no planner: a spawn that names an `agent` runs it
+directly, and a planned spawn or a leader call answers `planner_unbound`.
+
 ## 7. Raw calls
 
 With `[models]` set, `/v1/llm/generate` and `/v1/llm/stream` call any
@@ -911,9 +935,12 @@ The verbs, each the owner's and checked against the vault's inference policy:
   `{"kind": "image" | "audio", "media_type": ..., "data": "<base64>"}`. The
   answer is `{"model", "parts", "usage"}`.
 - `POST /v1/ai/video` answers `202` with a job ticket; `GET
-  /v1/ai/video/{job}` polls it (a finished job answers with its clip, once)
-  and `DELETE` stops it. A job's permit is held while it renders and settled
-  when it ends.
+  /v1/ai/video/{job}` polls it, and `DELETE` stops it or drops it once it
+  ended. A job's permit is held while it renders and settled when it ends.
+  The server keeps each job in the vault: a restart loses none (the next
+  poll takes a running job up again on a fresh permit, and sends nothing
+  again), and a finished job answers with its clip on every poll, a lost
+  reply's included, until it is deleted.
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
 

@@ -68,6 +68,8 @@ pub struct McpQuickJsProvider {
     /// Builds each run's compaction seat; none keeps every window raw.
     compaction: Option<RunCompactionSeat>,
     seat_router: Option<(SeatDecisions, String)>,
+    /// The seats a leased agent's planned spawns choose among.
+    planner: Option<crate::config::models::PlannerSettings>,
     /// Each run's clock is frozen at its first start, and a resumed run keeps
     /// it; otherwise every run shares the configured frozen clock.
     clock_from_first_start: bool,
@@ -144,6 +146,7 @@ impl McpQuickJsProvider {
             config,
             compaction: None,
             seat_router: None,
+            planner: None,
             clock_from_first_start: false,
             injected: None,
             code_check: None,
@@ -217,6 +220,13 @@ impl McpQuickJsProvider {
         self.seat_router = Some((decisions, facet.into()));
         self
     }
+
+    /// Lend leased agent runs the host's planner over `planner`'s seats.
+    #[must_use]
+    pub fn with_planner(mut self, planner: crate::config::models::PlannerSettings) -> Self {
+        self.planner = Some(planner);
+        self
+    }
 }
 
 impl McpCodeModeProvider for McpQuickJsProvider {
@@ -228,6 +238,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn seat_facet(&self) -> Option<&str> {
         self.seat_router.as_ref().map(|(_, facet)| facet.as_str())
+    }
+    fn planner(&self) -> Option<&crate::config::models::PlannerSettings> {
+        self.planner.as_ref()
     }
     fn code_check(&self) -> Option<&ShadowCheck> {
         self.code_check.as_deref()
