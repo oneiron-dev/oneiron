@@ -34,6 +34,10 @@ pub const HOOK_PASS_ENTRIES: usize = 256;
 /// How often the runner re-reads its cursors without a change notice: not
 /// every claim write notifies.
 pub const HOOK_RUNNER_TICK: Duration = Duration::from_secs(2);
+/// Admits one runner pass, or refuses it with `None`; the pass holds what it
+/// returns until it ends. Managed serve hands in its reap freeze, so a frozen
+/// vault runs no hook and a pass in flight keeps it from reading quiescent.
+pub type HookPassAdmission = std::sync::Arc<dyn Fn() -> Option<Box<dyn Send>> + Send + Sync>;
 /// The largest input a memo row pins.
 const MAX_PINNED_INPUT: usize = 256 * 1024;
 const MAX_OUTCOME_BYTES: usize = 64 * 1024;
@@ -174,13 +178,15 @@ impl FactHookRunner {
     /// Runs passes until `shutdown` turns true. It subscribes to the vault's
     /// change notice before the first pass, catches up from every cursor at
     /// start, then wakes on a notice or every [`HOOK_RUNNER_TICK`]. Each pass
-    /// runs on a blocking thread. `verdict` answers generative hooks'
+    /// runs on a blocking thread, under one `admit`; a refused pass waits
+    /// for the next notice or tick. `verdict` answers generative hooks'
     /// `ai.verdict`.
     #[cfg(feature = "sync")]
     pub fn spawn(
         vault: std::sync::Arc<Vault>,
         runtime: std::sync::Arc<dyn HookBodyRuntime>,
         verdict: Option<std::sync::Arc<dyn HookVerdict>>,
+        admit: HookPassAdmission,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
         use std::sync::Arc;
@@ -196,25 +202,35 @@ impl FactHookRunner {
                 if *shutdown.borrow() {
                     break;
                 }
-                let (pass_runner, pass_vault, pass_runtime) = (
-                    Arc::clone(&runner),
-                    Arc::clone(&vault),
-                    Arc::clone(&runtime),
-                );
-                let pass = tokio::task::spawn_blocking(move || {
-                    pass_runner.run_pass(&pass_vault, pass_runtime.as_ref(), HOOK_PASS_ENTRIES)
-                })
-                .await;
-                let more = match pass {
-                    Ok(Ok(report)) => report.more,
-                    Ok(Err(error)) => {
-                        tracing::warn!(%error, "fact hook pass failed");
-                        false
+                let more = match admit() {
+                    Some(admission) => {
+                        let (pass_runner, pass_vault, pass_runtime) = (
+                            Arc::clone(&runner),
+                            Arc::clone(&vault),
+                            Arc::clone(&runtime),
+                        );
+                        let pass = tokio::task::spawn_blocking(move || {
+                            let _admission = admission;
+                            pass_runner.run_pass(
+                                &pass_vault,
+                                pass_runtime.as_ref(),
+                                HOOK_PASS_ENTRIES,
+                            )
+                        })
+                        .await;
+                        match pass {
+                            Ok(Ok(report)) => report.more,
+                            Ok(Err(error)) => {
+                                tracing::warn!(%error, "fact hook pass failed");
+                                false
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, "fact hook pass did not finish");
+                                false
+                            }
+                        }
                     }
-                    Err(error) => {
-                        tracing::warn!(%error, "fact hook pass did not finish");
-                        false
-                    }
+                    None => false,
                 };
                 if more {
                     continue;
