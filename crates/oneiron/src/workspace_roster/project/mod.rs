@@ -88,8 +88,9 @@ pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
 pub use leader_chat::{LEADER_CHAT_RULE_PREDICATE, LeaderChat};
 pub(crate) use leader_chat::{
     admit_turn as admit_leader_chat_turn, admit_witness as admit_leader_chat_witness,
-    chat_allowed as leader_chat_allowed, permit_record as permit_leader_chat_record,
-    permitted_record as leader_chat_record_permitted, settle_record as settle_leader_chat_record,
+    bound_reader_in as leader_chat_reader_in, chat_allowed as leader_chat_allowed,
+    permit_record as permit_leader_chat_record, permitted_record as leader_chat_record_permitted,
+    settle_record as settle_leader_chat_record,
     validate_local_turns as validate_local_leader_chat_turns,
     verify_existing_turn as verify_existing_leader_chat_turn,
 };
