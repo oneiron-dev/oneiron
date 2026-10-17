@@ -10651,7 +10651,7 @@
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 8,
       "struct": 1
      }
@@ -10890,9 +10890,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "AgentSpawnInput",
       "LeaderAdviceInput",
       "LeaderPatternInput",
       "MemoryClaimInput",
@@ -10902,6 +10903,9 @@
       "MemoryTimeRange",
       "ReaderSpawnInput",
       "SkillCallInput",
+      "SpawnCare",
+      "SpawnKnob",
+      "SpawnPattern",
       "TaskRefuseDomain",
       "TaskRefuseInput",
       "TaskWaitSetRequest"
@@ -10910,8 +10914,9 @@
      "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "enum": 1,
-      "struct": 11
+      "enum": 4,
+      "fn": 1,
+      "struct": 12
      }
     },
     {
