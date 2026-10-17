@@ -3308,7 +3308,7 @@ impl AgentVerb {
             }
             Self::AiVideo => "Starts a video render as a provider job and answers with its ticket.",
             Self::AiVideoPoll => {
-                "Where a video job stands; a finished one answers with its clip, once."
+                "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."
             }
             Self::AiVideoCancel => "Stops a video job at its provider.",
             Self::AiVerdict => {

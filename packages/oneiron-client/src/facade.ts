@@ -768,7 +768,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "ai.transcribe": { description: "Text out of speech audio, from the host's transcription model.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.embed": { description: "One embedding vector per input text, from the host's embedding model.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.video": { description: "Starts a video render as a provider job and answers with its ticket.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "ai.video.poll": { description: "Where a video job stands; a finished one answers with its clip, once.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "ai.video.poll": { description: "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "ai.video.cancel": { description: "Stops a video job at its provider.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.verdict": { description: "The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.graph.ask": { description: "", scope: "Write", proposes: true, hostDoor: true, section: false },
@@ -1569,7 +1569,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       embed: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.embed">[K] => invoke("ai.embed", input, options, newInvocation()),
       /** Starts a video render as a provider job and answers with its ticket. */
       video: Object.assign((input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.video">[K] => invoke("ai.video", input, options, newInvocation()), {
-        /** Where a video job stands; a finished one answers with its clip, once. */
+        /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
         poll: (input: Facade.AiVideoJobRequest, options?: O): FacadeReturns<"ai.video.poll">[K] => invoke("ai.video.poll", input, options, newInvocation()),
         /** Stops a video job at its provider. */
         cancel: (input: Facade.AiVideoJobRequest, options?: O): FacadeReturns<"ai.video.cancel">[K] => invoke("ai.video.cancel", input, options, newInvocation()),

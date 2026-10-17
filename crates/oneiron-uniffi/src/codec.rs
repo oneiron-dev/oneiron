@@ -488,6 +488,7 @@ impl Lift<engine::MemoryReceipt> for FacadeReceipt {
     fn lift(value: engine::MemoryReceipt) -> Result<Self, OneironError> {
         Ok(Self {
             receipt_ref: value.receipt_ref,
+            kind: value.kind,
             outcome: value.outcome,
             created_at: signed_seconds("created_at", value.created_at)?,
             reason_codes: value.reason_codes,
@@ -495,6 +496,7 @@ impl Lift<engine::MemoryReceipt> for FacadeReceipt {
             actor_ref: value.actor_ref,
             content_kind: value.content_kind,
             claim_ref: value.claim_ref,
+            fields: value.fields.into_iter().collect(),
         })
     }
 }

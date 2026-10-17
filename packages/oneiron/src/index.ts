@@ -283,8 +283,8 @@ export class Oneiron {
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
-    /** Governance receipts, newest first. */
-    receipts: Object.assign((limit: number = 100): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit)), {
+    /** Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds. */
+    receipts: Object.assign((limit: number = 100, kinds?: string[]): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit, kinds)), {
       /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
       get: (input: Facade.CallReceiptRequest): Facade.CallReceipt | null => this.#call(() => this.#client.vaultReceiptsGet(input) as Facade.CallReceipt | null),
     }),
@@ -847,7 +847,7 @@ export class Oneiron {
     embed: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiEmbed(input) as Facade.AiAnswer),
     /** Starts a video render as a provider job and answers with its ticket. */
     video: Object.assign((input: Facade.AiCallRequest): Facade.AiVideoTicket => this.#call(() => this.#client.aiVideo(input) as Facade.AiVideoTicket), {
-      /** Where a video job stands; a finished one answers with its clip, once. */
+      /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
       poll: (input: Facade.AiVideoJobRequest): Facade.AiVideoJob => this.#call(() => this.#client.aiVideoPoll(input) as Facade.AiVideoJob),
       /** Stops a video job at its provider. */
       cancel: (input: Facade.AiVideoJobRequest): Facade.AiVideoCancelled => this.#call(() => this.#client.aiVideoCancel(input) as Facade.AiVideoCancelled),

@@ -63,7 +63,7 @@ vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
 vaultExport(input: unknown): unknown
-vaultReceipts(limit: number | undefined): FacadeReceipt[]
+vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
 vaultReceiptsGet(input: unknown): unknown
 vaultKvGet(requestJson: string): string

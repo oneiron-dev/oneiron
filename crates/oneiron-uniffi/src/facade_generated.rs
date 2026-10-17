@@ -171,9 +171,9 @@ export_facade! {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
-"vault.receipts" => fn vault_receipts(&self, limit: u32) -> Vec<FacadeReceipt> = |client| {
+"vault.receipts" => fn vault_receipts(&self, limit: u32, kinds: Option<Vec<String>>) -> Vec<FacadeReceipt> = |client| {
     let limit: usize = limit.lower()?;
-    let output = client.vault_receipts(limit)?;
+    let output = client.vault_receipts(limit, kinds.as_deref().unwrap_or_default())?;
     Lift::lift(output)
 };
 "vault.images.view" => fn vault_images_view(&self, input: ImageViewRequest) -> PulledImage = |client| {
