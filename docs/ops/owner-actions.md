@@ -62,8 +62,10 @@ is written under a hidden partial name and renamed into place only once complete
 is sealed: the records and the result bodies they name are one file of encrypted chunks under a
 key derived from the vault's data key, and a restore checks the whole file before it makes
 anything. The first backup mints that data key, wrapped to this device's keystore, when the vault
-has none; a rehearsal or a restore on this device unlocks it from that wrap (see *Limits*). The
-install that takes a backup signs it, and a restore checks that signature first.
+has none; a rehearsal or a restore on this device unlocks it from that wrap, and one on another
+host from a password, passkey or escrow wrap the backup carries (*The vault key on a new host*).
+The install that takes a backup signs it, and a restore checks that signature first. While any
+legal hold stands, no backup is pruned, whatever `keep` says.
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment:
@@ -697,6 +699,50 @@ from the ladder's, the case is kept for the Coach, which tunes when the
 ladder asks you. Sending the same answer again changes nothing. A different
 answer to an answered ask is refused.
 
+## The vault key on a new host
+
+A vault's data key unlocks from any of its wraps: this device's keystore, the vault password, a
+passkey's PRF output, or an escrow recipient whose seed a recovery box keeps. Every backup carries
+the wraps (never the key), so a host with none of the vault's keystore slots restores from one of
+the others. Secrets are read from stdin, or an owner-only `--secret-file`, exactly as given but
+for one trailing line break; a PRF output or a seed is 32 bytes, raw, hex or base64url.
+
+```sh
+oneiron vault-key status                       # the key and its wraps; a passkey's lists its PRF input
+printf %s "$PASSWORD" | oneiron vault-key set-password
+oneiron vault-key prf-input my-yubikey         # the input to evaluate the passkey's PRF at
+oneiron vault-key add-passkey my-yubikey --secret-file prf.bin
+oneiron vault-key add-escrow usb --box-dir /Volumes/KEY/oneiron-box
+oneiron vault-key signer > signer.json         # the pin another host trusts this vault's backups by
+oneiron vault-key remove passkey:my-yubikey    # the last wrap stays
+```
+
+A passkey's PRF input is `BLAKE3-derive_key("oneiron/vault-key-passkey-prf-input/v1", vault id ‖
+credential name)`: the vault and the name fix it, so the same authenticator gives the same output
+on any host. A running server takes the same steps at `/v1/owner/vault-key` (`GET` for the wraps,
+`GET /prf-input?credential=NAME`, `POST /passkeys`, `POST /password`, `POST /device`,
+`POST /remove`, `POST /unlock`, `GET /signer`).
+
+An escrow wrap seals to a hybrid key grown from a 32-byte seed; the recovery box keeps the seed.
+`--box-dir DIR` keeps it at `DIR/<vault id>/<label>.seed`, owner-only (removable media, your own
+box). `--box-command PROGRAM` hands it to a program: `PROGRAM store <vault id> <label>` reads the
+seed as 64 hex digits on stdin, and `PROGRAM release <vault id> <label>` prints it after its own
+sign-in. A hosted recovery box plugs in that way.
+
+On the new host:
+
+```sh
+oneiron restore BACKUP --inspect               # what unlocks it, with each passkey's PRF input
+printf %s "$PASSWORD" | oneiron restore BACKUP --unlock password --trust signer.json
+oneiron restore BACKUP --unlock passkey --credential my-yubikey --secret-file prf.bin --trust signer.json
+oneiron restore BACKUP --unlock escrow --label usb --box-dir /Volumes/KEY/oneiron-box --trust signer.json
+```
+
+Every unlock but this device's needs `--trust`: a host holding no signer seed has no other ground
+to trust a backup on, and a backup's own head is never trusted. Where no vault is at the
+configured path, the restore makes it there, unlocks its key the same way and wraps it to this
+install's keystore. Where one is, it restores over it as above, or rehearses with `--rehearse`.
+
 ## Contact disclosure
 
 A contact sees only what you cleared it for. An agent or the companion can only offer you a
@@ -892,9 +938,12 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 - To cut someone's access, revoke their slip; a revocation is authority and survives a restore.
   Deleting a person who is not a vault owner or member is content, and an older backup brings
   that person back.
-- Backups open only on the device that took them for now: the CLI unlocks the backup's key with
-  this device's keystore (the `[keystore]` settings), and takes no password, passkey or escrow
-  secret yet. A server with `[keystore] backend = "off"` cannot take a backup.
+- A server with `[keystore] backend = "off"` cannot take a backup.
 - A backup is signed (Ed25519 and SLH-DSA) by the install that took it, and chained to the one
-  before it. A restore refuses a signer it does not trust: the CLI trusts only the signers this
-  device's keystore holds, so a backup another machine signed does not restore here yet.
+  before it. A restore refuses a signer it does not trust: the CLI trusts the signers this
+  device's keystore holds, or exactly the ones `--trust` pins.
+- A restore onto a new host brings no exterior key custody with it: gate receipts sealed under
+  claim keys the old host kept do not come back.
+- Host-order legal holds cross a restore over a vault, a rehearsal and `--activate` from the live
+  vault. A restore where no vault is cannot read them; the hosting side carries them
+  (`Vault::carried_host_order_holds`, `Vault::install_carried_host_order_holds`).
