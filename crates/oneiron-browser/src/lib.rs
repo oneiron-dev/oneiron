@@ -27,6 +27,7 @@ mod library;
 mod mcp;
 #[cfg(feature = "driver")]
 mod outline;
+mod receipt_evidence;
 #[cfg(feature = "driver")]
 mod session;
 
@@ -40,6 +41,7 @@ pub use library::{
 };
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
+pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
 #[cfg(feature = "driver")]
 pub use session::{BrowserGuest, BrowserSession};
 
@@ -84,7 +86,8 @@ pub struct Observation {
 }
 
 /// One effect's receipt: what acted, on which page, under which press, and
-/// the screenshot taken as its evidence when one could be captured.
+/// the screenshot taken as its evidence when one could be captured, with
+/// where the host kept it when the session has a receipt sink.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EffectReceipt {
     pub seq: u64,
@@ -101,6 +104,8 @@ pub struct EffectReceipt {
     pub press: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screenshot_evidence: Option<ReceiptEvidence>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -171,10 +176,13 @@ pub struct SelectInput {
     pub option: String,
 }
 
-/// Waits until some row matches `role` and `name`, as `find` matches them.
+/// Waits until some row `targets` names is on the page, or, with none named,
+/// some row matches `role` and `name`, as `find` matches them.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WaitForInput {
+    #[serde(default)]
+    pub targets: Vec<String>,
     #[serde(default)]
     pub role: Option<String>,
     #[serde(default)]
@@ -887,6 +895,7 @@ pub trait BrowserDriver: Send {
                     timeout_ms,
                 } => self
                     .wait_for(WaitForInput {
+                        targets: Vec::new(),
                         role,
                         name,
                         timeout_ms,
@@ -1065,15 +1074,16 @@ impl Routine<'_> {
                     .collect()
             };
             if !locate && candidates.is_empty() {
-                // One bounded wait for the step's role and name, then a fresh
-                // look. Named targets come from a page already read, and a
-                // window with no tree grows none, so neither waits.
+                // One bounded wait for the step's targets, or its role and
+                // name, then a fresh look. A window with no tree grows no
+                // rows, so it does not wait.
                 let wait = self.wait_ms();
-                if waited || !step.targets.is_empty() || page.no_tree || wait == 0 {
+                if waited || page.no_tree || wait == 0 {
                     return Err(no_row());
                 }
                 waited = true;
                 let rows = driver.wait_for(WaitForInput {
+                    targets: step.targets.clone(),
                     role: step.role.clone(),
                     name: step.name.clone(),
                     timeout_ms: Some(wait),
@@ -1216,6 +1226,17 @@ impl WaitForInput {
         FindInput {
             role: self.role.clone(),
             name: self.name.clone(),
+        }
+    }
+
+    /// Whether `row` is one the wait is for: a row `targets` names, or, with
+    /// none named, a row `role` and `name` match.
+    #[must_use]
+    pub fn matches(&self, row: &Row) -> bool {
+        if self.targets.is_empty() {
+            self.query().matches(row)
+        } else {
+            self.targets.contains(&row.target)
         }
     }
 }

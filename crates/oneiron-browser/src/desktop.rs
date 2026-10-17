@@ -27,9 +27,9 @@ use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, DesktopWindow,
     EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HotkeyInput,
     ImageOutput, KeyInput, NoDecider, Observation, ObserveInput, OpenInput, PointInput, PressMode,
-    RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, ScrollInput,
-    SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput, WindowInput,
-    WindowsInput, WindowsOutput, ZoomInput,
+    ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger,
+    ScrollInput, SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput,
+    WindowInput, WindowsInput, WindowsOutput, ZoomInput,
 };
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
 use serde_json::{Value, json};
@@ -161,6 +161,7 @@ pub struct DesktopSession {
     receipts: Vec<EffectReceipt>,
     receipt_seq: u64,
     decider: Option<Box<dyn RoutineDecider>>,
+    receipt_sink: Option<Box<dyn ReceiptEvidenceSink>>,
     /// The window the session reads and acts on.
     window: Option<WindowKey>,
     seq: u64,
@@ -351,6 +352,7 @@ impl DesktopSession {
             receipts: Vec::new(),
             receipt_seq: 0,
             decider: None,
+            receipt_sink: None,
             window: None,
             seq: 0,
             history: VecDeque::new(),
@@ -362,6 +364,11 @@ impl DesktopSession {
     /// Gives the session's batches the host's routine decider.
     pub fn set_decider(&mut self, decider: Box<dyn RoutineDecider>) {
         self.decider = Some(decider);
+    }
+
+    /// Gives the session the host's keeper of receipt screenshots.
+    pub fn set_receipt_sink(&mut self, sink: Box<dyn ReceiptEvidenceSink>) {
+        self.receipt_sink = Some(sink);
     }
 
     /// What the guest's container proved, for the run's receipt.
@@ -648,7 +655,7 @@ impl DesktopSession {
             })
             .ok()
             .map(|shot| shot.image);
-        let receipt = EffectReceipt {
+        let mut receipt = EffectReceipt {
             seq: self.receipt_seq,
             verb: verb.to_owned(),
             url: observation.url.clone(),
@@ -658,7 +665,20 @@ impl DesktopSession {
             effect_class: effect_class.map(str::to_owned),
             press: press.as_str().to_owned(),
             screenshot,
+            screenshot_evidence: None,
         };
+        // The pixels are kept before the receipt is stored, while the
+        // session still holds them.
+        if let Some(mut sink) = self.receipt_sink.take() {
+            if let Some(png) = receipt
+                .screenshot
+                .as_deref()
+                .and_then(|image| self.image(image))
+            {
+                receipt.screenshot_evidence = Some(sink.keep(&receipt, png));
+            }
+            self.receipt_sink = Some(sink);
+        }
         self.receipts.push(receipt.clone());
         observation.receipt = Some(receipt);
     }
@@ -693,13 +713,13 @@ impl DesktopSession {
             .ok_or_else(|| BrowserError::NoImage(image.to_owned()))
     }
 
-    fn matching(&mut self, find: &FindInput) -> Result<Vec<Row>, BrowserError> {
+    fn matching(&mut self, keep: impl Fn(&Row) -> bool) -> Result<Vec<Row>, BrowserError> {
         Ok(self
             .snapshot(false)?
             .lines
             .into_iter()
             .map(|line| line.row)
-            .filter(|row| find.matches(row))
+            .filter(keep)
             .collect())
     }
 
@@ -1020,7 +1040,7 @@ impl BrowserDriver for DesktopSession {
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError> {
         self.live()?;
         Ok(FindOutput {
-            rows: self.matching(&input)?,
+            rows: self.matching(|row| input.matches(row))?,
         })
     }
 
@@ -1154,10 +1174,9 @@ impl BrowserDriver for DesktopSession {
             .timeout_ms
             .map_or(WAIT_DEFAULT, |ms| Duration::from_millis(ms.into()));
         let bound = wanted.min(self.wait_cap);
-        let query = input.query();
         let start = Instant::now();
         loop {
-            let rows = self.matching(&query)?;
+            let rows = self.matching(|row| input.matches(row))?;
             let waited = start.elapsed();
             if !rows.is_empty() || waited >= bound {
                 let timed_out = rows.is_empty();

@@ -152,6 +152,7 @@ declare const vault: {
         gate(input: { profile?: string | null }): Promise<unknown>;
         merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[]; scope?: object | null; landing?: "merge" | "switch" | null; made_by?: unknown }): Promise<unknown>;
         oracle(input: { receipt: object }): Promise<unknown>;
+        preview(input: { artifact_ref: string; slides: number[] }): Promise<unknown>;
         review(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
       };
       edit(input: { artifact_ref: string; base?: number[] | null; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] } | { format: "pptx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
@@ -462,6 +463,11 @@ declare const vault: {
     lens(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
     link: {
       wrong(input: { source_ref: string; kind: string; target_ref: string }): Promise<unknown>;
+    };
+    owner: {
+      link: {
+        wrong(input: { source_ref: string; kind: string; target_ref: string }): Promise<unknown>;
+      };
     };
     report(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
   };

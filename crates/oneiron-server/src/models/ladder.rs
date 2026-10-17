@@ -841,6 +841,20 @@ impl OfferLadder {
             .map(|(response, _)| response)
     }
 
+    /// [`Self::generate_exact_within`] waiting as [`Self::generate_while`]
+    /// does, for the vault's longest wait: a call a durable seat bound,
+    /// which its one model answers or nothing does.
+    pub async fn generate_exact(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+    ) -> LlmResult<LlmResponse> {
+        let budget = Duration::from_secs(self.rests.max_wait_secs());
+        self.generate_exact_within(run, request, selector, &|| true, budget)
+            .await
+    }
+
     /// [`Self::generate_within`] for a caller that must know the model it
     /// named is the one that answered (an exact-model decision, OF-184):
     /// only a ladder that is one picked model takes the call, and no owner's
