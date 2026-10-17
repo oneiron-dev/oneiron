@@ -66354,7 +66354,7 @@
      "path": "src/handler/app_tier.rs",
      "purpose": "Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
