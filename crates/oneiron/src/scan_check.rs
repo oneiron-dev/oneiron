@@ -324,6 +324,17 @@ impl ScanCount {
         })
     }
 
+    /// Starts counting `scan` of `scope` against `threshold`, for a scan
+    /// whose caller's own policy row names when it asks.
+    pub(crate) fn start_at(scan: EngineScan, scope: &[u8], threshold: u64) -> Self {
+        Self {
+            scan,
+            scope: scope.to_vec(),
+            threshold,
+            rows: 0,
+        }
+    }
+
     /// Counts one row read.
     pub(crate) fn row(&mut self) {
         self.rows = self.rows.saturating_add(1);

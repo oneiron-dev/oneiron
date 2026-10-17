@@ -164,6 +164,7 @@ pub(super) fn canonical_witness_executor_turn(
             &crate::memory::WitnessTurn {
                 conversation_ref: conversation_id.to_hex(),
                 turn_ref: Some(turn_id.to_hex()),
+                quote: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message_id.to_hex()),
                     author: crate::memory::WitnessAuthor::Companion,
