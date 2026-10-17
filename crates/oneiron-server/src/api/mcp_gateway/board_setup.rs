@@ -192,7 +192,7 @@ pub(super) struct McpBoardState {
     /// truncation count above is a lower bound rather than a census.
     source_exhausted: bool,
     /// The hook blocks this board carries, spent only when it goes out.
-    hooks: McpBoardHooks,
+    pub(super) hooks: McpBoardHooks,
 }
 
 impl McpBoardState {
@@ -303,19 +303,46 @@ impl McpBoardOmissions {
 
 /// The hook blocks one rendered board carries (ARCH-0080 §11, OF-579): the
 /// blocks whose rows it shows, and the receipt its pinned MEMORIES rows owe.
-/// A board rendered for its epoch alone spends neither; setup's page one
-/// records the receipt before it goes out and spends the blocks once it has.
+/// A board rendered for its epoch alone spends neither. Setup's page one, a
+/// `self.focus.refresh` and a keyed `describe` record the receipt before
+/// their result goes out and spend the blocks once it has; a code-mode
+/// board read does both as its answer returns to the run.
 #[derive(Default)]
-struct McpBoardHooks {
+pub(super) struct McpBoardHooks {
+    /// The blocks naming a TASKS row the board shows.
     blocks: std::collections::BTreeSet<oneiron::EntityId>,
     receipt: Option<crate::api::context_board::PinsReceipt>,
+    /// The blocks naming a pinned MEMORIES row the board shows.
+    memory_blocks: std::collections::BTreeSet<oneiron::EntityId>,
 }
 
 impl McpBoardHooks {
+    /// The share of these hooks a keyed `describe` of section `key` shows:
+    /// the TASKS blocks for TASKS, the MEMORIES blocks and receipt for a
+    /// MEMORIES section, and none for any other. A MEMORIES section takes
+    /// every world's share.
+    pub(super) fn shown_by(self, key: &str) -> Self {
+        match key.split_once(' ').map_or(key, |(name, _)| name) {
+            "TASKS" => Self {
+                blocks: self.blocks,
+                ..Self::default()
+            },
+            "MEMORIES" => Self {
+                receipt: self.receipt,
+                memory_blocks: self.memory_blocks,
+                ..Self::default()
+            },
+            _ => Self::default(),
+        }
+    }
+
     /// The owner's receipt for what the hook rows disclose under a contact's
     /// standing clearance, recorded before the board goes out, as the HTTP
     /// board records it. A receipt that fails refuses the result.
-    async fn record_receipt(&mut self, server: &SyncServer) -> Result<(), McpGatewayError> {
+    pub(super) async fn record_receipt(
+        &mut self,
+        server: &SyncServer,
+    ) -> Result<(), McpGatewayError> {
         match self.receipt.take() {
             Some(receipt) => receipt
                 .record(&server.vault)
@@ -327,8 +354,10 @@ impl McpBoardHooks {
 
     /// Spends one delivery of each block a board that went out carried. A
     /// failed record leaves the block to show again, never to vanish unseen.
-    fn spend(&self, server: &SyncServer) {
-        if let Err(error) = server.vault.record_board_hook_deliveries(&self.blocks) {
+    pub(super) fn spend(&self, server: &SyncServer) {
+        let blocks: std::collections::BTreeSet<_> =
+            self.blocks.union(&self.memory_blocks).copied().collect();
+        if let Err(error) = server.vault.record_board_hook_deliveries(&blocks) {
             tracing::warn!(kind = ?error.kind(), "mcp board hook delivery record failed");
         }
     }
@@ -467,10 +496,11 @@ fn mcp_board_sections(
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &children,
     );
-    let (mut tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, served)?;
+    let (mut tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, pins, served)?;
     let mut hooks = McpBoardHooks {
         blocks: tasks.tag_hook_pins(pins),
         receipt: None,
+        memory_blocks: std::collections::BTreeSet::new(),
     };
     // The engine's own footer states the render WINDOW's truncation and
     // whether its scan was exhausted. That is a different fact from the scope
@@ -489,9 +519,7 @@ fn mcp_board_sections(
         .map_err(mcp_board_frame_error)?;
     let mut sections = vec![verb_section, worlds_section];
     if let Some(memories) = mcp_pinned_memories(server, actor, pins)? {
-        hooks
-            .blocks
-            .extend(memories.section.hook_blocks_delivered(pins));
+        hooks.memory_blocks = memories.section.hook_blocks_delivered(pins);
         served.extend_from_slice(memories.receipt.delivered());
         sections.extend(
             oneiron::context_board::assemble_memories_sections(&memories.section)
