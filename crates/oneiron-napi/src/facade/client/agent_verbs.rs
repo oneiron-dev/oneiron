@@ -271,13 +271,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
-    pub fn vault_receipts(&self, limit: Option<f64>) -> napi::Result<Vec<NapiGateReceipt>> {
+    pub fn vault_receipts(
+        &self,
+        limit: Option<f64>,
+        kinds: Option<Vec<String>>,
+    ) -> napi::Result<Vec<NapiGateReceipt>> {
         let limit = limit
             .map(limit_to_engine)
             .transpose()
             .map_err(facade_error)?
             .unwrap_or(100);
-        let output = self.inner.vault_receipts(limit).map_err(facade_error)?;
+        let kinds = kinds.unwrap_or_default();
+        let output = self
+            .inner
+            .vault_receipts(limit, &kinds)
+            .map_err(facade_error)?;
         output
             .into_iter()
             .map(|item| gate_receipt_from_engine(item).map_err(boundary_error))
@@ -416,6 +424,42 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn vault_campaign_program_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.program.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_program_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.program.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_program_update(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.program.update", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_program_archive(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.program.archive", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_weave_report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.weave.report", input)
@@ -440,6 +484,33 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.weave.link.wrong", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_owner_link_wrong(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.owner.link.wrong", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_item_wrong(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.item.wrong", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_owner_item_wrong(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.owner.item.wrong", input)
             .map_err(facade_error)
     }
     #[napi]

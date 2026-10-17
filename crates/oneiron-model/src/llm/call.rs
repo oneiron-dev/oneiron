@@ -145,6 +145,11 @@ pub struct TierPrecedence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purpose_default: Option<ModelTierRef>,
     pub global_default: ModelTierRef,
+    /// The seat the call came through, named on its usage event. Never a
+    /// resolution input: a manifest-bound call names its role's seat here
+    /// while the manifest's tier still binds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat: Option<ModelTierRef>,
 }
 
 impl TierPrecedence {
@@ -155,6 +160,13 @@ impl TierPrecedence {
             .or(self.vault_policy.as_ref())
             .or(self.purpose_default.as_ref())
             .unwrap_or(&self.global_default)
+    }
+
+    /// The seat a call's usage is metered to: its named seat, else its seat
+    /// override.
+    #[must_use]
+    pub fn metered_seat(&self) -> Option<&ModelTierRef> {
+        self.seat.as_ref().or(self.per_seat.as_ref())
     }
 }
 

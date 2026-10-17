@@ -3329,7 +3329,7 @@ dependencies = [
 [[package]]
 name = "formualizer-common"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=f01d8effe81747841f9a0ea9ac595789140cfbf6#f01d8effe81747841f9a0ea9ac595789140cfbf6"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
 dependencies = [
  "chrono",
 ]
@@ -3337,7 +3337,7 @@ dependencies = [
 [[package]]
 name = "formualizer-eval"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=f01d8effe81747841f9a0ea9ac595789140cfbf6#f01d8effe81747841f9a0ea9ac595789140cfbf6"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -3364,7 +3364,7 @@ dependencies = [
 [[package]]
 name = "formualizer-macros"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=f01d8effe81747841f9a0ea9ac595789140cfbf6#f01d8effe81747841f9a0ea9ac595789140cfbf6"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
 dependencies = [
  "formualizer-common",
  "proc-macro2",
@@ -3375,7 +3375,7 @@ dependencies = [
 [[package]]
 name = "formualizer-parse"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=f01d8effe81747841f9a0ea9ac595789140cfbf6#f01d8effe81747841f9a0ea9ac595789140cfbf6"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
 dependencies = [
  "formualizer-common",
  "once_cell",
@@ -3385,7 +3385,7 @@ dependencies = [
 [[package]]
 name = "formualizer-workbook"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=f01d8effe81747841f9a0ea9ac595789140cfbf6#f01d8effe81747841f9a0ea9ac595789140cfbf6"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
 dependencies = [
  "calamine",
  "chrono",
@@ -7975,6 +7975,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "blake3",
+ "flate2",
  "libc",
  "memchr",
  "oneiron-spawn",

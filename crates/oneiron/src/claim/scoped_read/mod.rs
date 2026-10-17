@@ -54,14 +54,15 @@ mod weave_serve;
 pub(crate) use claim_admission::ClaimReadStatus;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
-pub use weave_correction::WeaveLinkCorrection;
+pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
 pub use weave_serve::{
-    WeaveDigestRequest, WeaveDigestView, WeaveItemView, WeaveLinkCorrectionView, WeaveReaderKind,
-    WeaveReaderRef, WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveSectionInput,
-    WeaveSectionView, WeaveWrongLinkRequest,
+    WeaveDigestFramed, WeaveDigestRequest, WeaveDigestView, WeaveItemCorrectionView, WeaveItemView,
+    WeaveLinkCorrectionView, WeaveReaderKind, WeaveReaderRef, WeaveReportRequest, WeaveReportView,
+    WeaveScheduleView, WeaveSectionInput, WeaveSectionView, WeaveWrongItemRequest,
+    WeaveWrongLinkRequest,
 };
 
 mod access_gate;

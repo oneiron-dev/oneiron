@@ -3,7 +3,8 @@
 //! seat drafts the invented example and the candidate fix, and replays the
 //! failing agent with no tools, under the Coach's fix and under each of the
 //! publisher's pinned candidates. The engine asks every judgment on the
-//! decision ladder and decides what may leave. The Coach pays for the calls,
+//! Coach's own seat (else the host's decision ladder) and decides what may
+//! leave. The Coach pays for the calls,
 //! on one budget per case.
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -14,7 +15,7 @@ use oneiron::dreamer_runner::maintenance::code_fix::{
     CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, PublisherCandidate,
 };
 use oneiron::failure_signals::{InventedMessage, InventedRole};
-use oneiron::llm::decision::DecisionRung;
+use oneiron::llm::decision::HeldLadder;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
@@ -24,6 +25,7 @@ use oneiron::{
 use serde::Deserialize;
 
 use super::CHAT_ROLE;
+use super::coach_heal::{coach_dial, coach_ladder};
 use super::coach_health::coach_role;
 use crate::models::ModelRuntime;
 use crate::server::SyncServer;
@@ -61,10 +63,13 @@ pub(super) fn run(
 ) -> oneiron::Result<()> {
     let vault = server.vault();
     let host = server.decision_host();
+    let coach = coach_ladder(server);
     let decisions = CodeFixDecisions {
-        ladder: host.ladder().ladder(),
+        ladder: coach
+            .as_ref()
+            .map_or_else(|| host.ladder().ladder(), HeldLadder::ladder),
         principal,
-        dial: host.dial(DecisionRung::Big),
+        dial: coach_dial(server, coach.as_ref()),
         bands: host.bands(),
         budget: DECIDE_BUDGET,
     };
@@ -176,6 +181,16 @@ impl<'a> HostModels<'a> {
         role: ModelRole,
         messages: Vec<LlmMessage>,
     ) -> oneiron::Result<Option<String>> {
+        Ok(self.generate_served(role, messages)?.map(|(text, _)| text))
+    }
+
+    /// [`Self::generate`], with the model of the rung that answered,
+    /// fallback included.
+    pub(super) fn generate_served(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+    ) -> oneiron::Result<Option<(String, String)>> {
         let Some(seat) = self.runtime.seat(role) else {
             return Ok(None);
         };
@@ -201,21 +216,20 @@ impl<'a> HostModels<'a> {
         let Ok(call) = self.runtime.admit_role(self.vault, role, request) else {
             return Ok(None);
         };
-        let response = self
+        let (response, served) = self
             .handle
-            .block_on(call.ladder.generate(&self.run, call.request, None))
+            .block_on(call.ladder.generate_served(&self.run, call.request, None))
             .map_err(|error| Error::InvalidConfig(format!("a Coach call failed: {error}")))?;
-        Ok(Some(
-            response
-                .message
-                .content
-                .iter()
-                .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect(),
-        ))
+        let text = response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        Ok(Some((text, served.as_str().to_owned())))
     }
 }
 

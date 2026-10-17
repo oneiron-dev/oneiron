@@ -5,8 +5,10 @@
 //! flags the Dreamer's tuning config for a retune. Neither deploys anything.
 pub mod action_mode;
 pub mod agent_health;
+mod calibration_asks;
 pub mod coach;
 pub mod coach_heal;
+pub mod coach_learning;
 mod coach_repair;
 pub mod code_fix;
 mod curator;
@@ -19,9 +21,11 @@ pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 mod person_threshold;
 mod proposals;
 mod strength;
+pub use calibration_asks::COACH_CALIBRATION_ASKS_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 mod retrieval_policy;
+pub mod seal_checks;
 pub mod stewardship;
 #[cfg(test)]
 mod tests;
@@ -182,6 +186,9 @@ pub(crate) fn execute(
         }
         agent_health::COACH_AGENT_HEALTH_FACET => {
             agent_health::run(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        calibration_asks::COACH_CALIBRATION_ASKS_FACET => {
+            calibration_asks::run(ctx.vault)?;
         }
         _ => return Err(invalid()),
     }

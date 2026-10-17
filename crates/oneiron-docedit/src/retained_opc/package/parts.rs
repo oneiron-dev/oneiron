@@ -188,6 +188,46 @@ impl Package {
         })
     }
 
+    /// Drop each content type default whose extension no part has any more
+    /// (after a removal took the last part that had it).
+    pub fn prune_defaults(&mut self) -> Result<()> {
+        self.transact(|package| {
+            let bytes = package
+                .part(TYPES)?
+                .ok_or(Error::Edit("content types missing"))?;
+            let tree = XmlTree::parse(&bytes, package.limits.xml)
+                .map_err(|_| Error::Edit("content types unreadable"))?;
+            tree.root(CONTENT_TYPES, "Types")
+                .map_err(|_| Error::Edit("content types unreadable"))?;
+            let used: BTreeSet<String> = package
+                .names()
+                .filter_map(|name| name.rsplit('/').next()?.rsplit_once('.'))
+                .map(|(_, extension)| extension.to_ascii_lowercase())
+                .collect();
+            let unused: Vec<_> = tree
+                .children(0)
+                .filter(|(_, node)| {
+                    node.is(CONTENT_TYPES, "Default")
+                        && node.attr("Extension").is_some_and(|extension| {
+                            !used.contains(&extension.to_ascii_lowercase())
+                        })
+                })
+                .map(|(_, node)| node.span.clone())
+                .collect();
+            if unused.is_empty() {
+                return Ok(());
+            }
+            let mut value = Vec::with_capacity(bytes.len());
+            let mut at = 0;
+            for span in unused {
+                value.extend_from_slice(&bytes[at..span.start]);
+                at = span.end;
+            }
+            value.extend_from_slice(&bytes[at..]);
+            package.write_metadata(TYPES, value)
+        })
+    }
+
     /// Every part name reachable from `source` (`""` is the package) through
     /// internal relationships, `source` itself included when it is a part. A
     /// target the archive does not hold is named but leads nowhere.
@@ -208,8 +248,7 @@ impl Package {
     }
 
     /// Remove `source`'s relationship `id`. Its target stays in the archive,
-    /// unreachable: a cache the opening application rebuilds when it is
-    /// missing (a workbook's calculation chain) goes this way.
+    /// unreachable, until [`Self::remove_part`] takes it out.
     pub fn unrelate(&mut self, source: &str, id: &str) -> Result<()> {
         let rels = rels_name(source);
         let bytes = self

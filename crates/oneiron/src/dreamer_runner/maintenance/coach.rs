@@ -79,6 +79,10 @@ pub const COACH_CODE_FIX_FACET: &str = "coach.code_fix";
 /// its own kept judgments, or another judge's shadow pass over them, which
 /// rules whether that judge takes over.
 pub const COACH_JUDGE_SWAP_FACET: &str = "coach.judge_swap";
+/// The seal's checks (ARCH-0079, OF-544): each pending confession recheck
+/// and drawn random audit, checked on the host by a judge other than the
+/// model that produced the result (see [`super::seal_checks`]).
+pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
 /// Tradeoff routing (FIX-LIST 817): each pending project-bound skill tradeoff
 /// ask is handed to the leader of every project board it reached, to ask on
 /// one of that project's TASKs.
@@ -88,16 +92,17 @@ pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_thresh
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 6] = [
+const HOST_FACETS: [&str; 7] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
     COACH_TRAINING_OFFER_FACET,
     COACH_JUDGE_SWAP_FACET,
     COACH_TRADEOFF_ROUTE_FACET,
+    COACH_SEAL_CHECKS_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 7] = [
+const MAINTENANCE_FACETS: [&str; 8] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -105,6 +110,7 @@ const MAINTENANCE_FACETS: [&str; 7] = [
     COACH_RESEARCH_SELECT_FACET,
     COACH_LEARNING_SWEEP_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
+    super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 const READ_HARDENING_RUNS: usize = 256;
@@ -395,7 +401,9 @@ impl Vault {
     }
 
     /// Records what the receipts since showed against one offer's promise,
-    /// under the leased `coach.offer_check` attempt its check date queued.
+    /// under the leased `coach.offer_check` attempt its check date queued. A
+    /// check that read whether the promise held is an outcome for the
+    /// Coach's own offer record; an unknown one is none.
     pub fn run_coach_offer_check(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -404,7 +412,19 @@ impl Vault {
     ) -> Result<crate::skill_optimize::OfferCheck> {
         self.require_coach_attempt(attempt, COACH_OFFER_CHECK_FACET)?;
         let offer = offer_check_target(&attempt.status.payload.input)?;
-        crate::skill_optimize::record_offer_check(self, &offer, input, now)
+        let check = crate::skill_optimize::record_offer_check(self, &offer, input, now)?;
+        if let Some(held) = check.held {
+            super::coach_learning::record_coach_outcome(
+                self,
+                super::coach_learning::COACH_OFFER_AXIS,
+                format!("offer_check:{}", check.id.to_hex()),
+                check.at,
+                crate::learning::Anchor::WorldOutcome,
+                held,
+                now,
+            )?;
+        }
+        Ok(check)
     }
 
     /// The leased attempt is this facet's, stamped for the Coach.

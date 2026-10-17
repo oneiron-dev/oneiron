@@ -22,7 +22,7 @@ pub enum OwnRateKind {
     TaskCreate,
     /// Claims an agent wrote as Auto.
     AutoWrite,
-    /// Wrong-link reports one owner filed on one weave link.
+    /// Wrong labels one reader filed on one weave link or item.
     WeaveCorrection,
     /// Consult fan-out requests by one actor, one count per request.
     ConsultFanout,

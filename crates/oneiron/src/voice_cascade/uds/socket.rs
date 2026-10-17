@@ -3,7 +3,7 @@ use std::fs::{self, File, Permissions};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixListener;
 use std::path::{Component, Path, PathBuf};
 
@@ -27,34 +27,39 @@ impl SocketGuard {
     /// directory, owned by the effective uid with no group/other access.
     /// `socket_name` must be a single filename of at most 48 bytes.
     /// Refuses all symlink components, traversal and preexisting entries.
-    /// Linux uses a pinned fd path; other Unix platforms fail closed.
+    /// Linux binds through a pinned fd path. macOS binds by pathname, checked
+    /// before and after to still name the pinned directory, and the socket
+    /// to have landed in it; the owner-only directory's own uid could still
+    /// race a rename between the checks. Other Unix platforms fail closed.
     pub fn bind(runtime_dir: &Path, socket_name: &OsStr) -> io::Result<Self> {
         validate_name(socket_name)?;
         let directory = open_directory(runtime_dir)?;
-        let address = descriptor_path(&directory, socket_name)?;
-        match fs::symlink_metadata(&address) {
-            Ok(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "socket path occupied",
-                ));
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+        let address = bind_address(&directory, runtime_dir, socket_name)?;
+        if entry_at(&directory, socket_name)?.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "socket path occupied",
+            ));
         }
         // bind does not replace an entry that appears after the existence check.
         // Owner-only runtime permissions protect the socket before chmod.
         let listener = UnixListener::bind(&address)?;
-        let metadata = fs::symlink_metadata(&address)?;
-        if !metadata.file_type().is_socket() {
+        let Some((true, dev, ino)) = entry_at(&directory, socket_name)? else {
             return Err(io::Error::other("socket identity changed"));
+        };
+        if !cfg!(target_os = "linux") {
+            same_directory(&directory, runtime_dir)?;
+            let named = fs::symlink_metadata(&address)?;
+            if (named.dev(), named.ino()) != (dev, ino) {
+                return Err(io::Error::other("socket identity changed"));
+            }
         }
         let guard = Self {
             listener: Some(listener),
             directory,
             name: socket_name.to_owned(),
             path: runtime_dir.join(socket_name),
-            identity: Some((metadata.dev(), metadata.ino())),
+            identity: Some((dev, ino)),
             shutdown: Shutdown::default(),
         };
         fs::set_permissions(&address, Permissions::from_mode(0o600))?;
@@ -114,18 +119,12 @@ impl SocketGuard {
         let Some(identity) = self.identity.take() else {
             return Ok(());
         };
-        let address = descriptor_path(&self.directory, &self.name)?;
-        match fs::symlink_metadata(&address) {
-            Ok(metadata)
-                if metadata.file_type().is_socket()
-                    && (metadata.dev(), metadata.ino()) == identity =>
-            {
-                fs::remove_file(address)
+        match entry_at(&self.directory, &self.name)? {
+            Some((true, dev, ino)) if (dev, ino) == identity => {
+                unlink_at(&self.directory, &self.name)
             }
             // A foreign replacement is not ours to remove, including symlinks.
-            Ok(_) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
+            Some(_) | None => Ok(()),
         }
     }
 }
@@ -152,14 +151,79 @@ fn validate_name(name: &OsStr) -> io::Result<()> {
     Ok(())
 }
 
-fn descriptor_path(directory: &File, name: &OsStr) -> io::Result<PathBuf> {
-    if !cfg!(target_os = "linux") {
+/// Where the socket is bound: the pinned directory's fd path on Linux, its
+/// pathname on macOS once that still names the pinned directory.
+fn bind_address(directory: &File, runtime_dir: &Path, name: &OsStr) -> io::Result<PathBuf> {
+    if cfg!(target_os = "linux") {
+        return Ok(PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name));
+    }
+    if !cfg!(target_os = "macos") {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "descriptor-relative socket binding requires Linux",
+            "socket binding needs Linux or macOS",
         ));
     }
-    Ok(PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name))
+    same_directory(directory, runtime_dir)?;
+    Ok(runtime_dir.join(name))
+}
+
+/// `runtime_dir`, unfollowed, is still the pinned directory.
+fn same_directory(directory: &File, runtime_dir: &Path) -> io::Result<()> {
+    let pinned = directory.metadata()?;
+    let named = fs::symlink_metadata(runtime_dir)?;
+    if !named.is_dir() || (named.dev(), named.ino()) != (pinned.dev(), pinned.ino()) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "runtime directory moved",
+        ));
+    }
+    Ok(())
+}
+
+/// The pinned directory's entry `name`, unfollowed: whether it is a socket,
+/// and its device and inode.
+#[allow(clippy::unnecessary_cast)]
+fn entry_at(directory: &File, name: &OsStr) -> io::Result<Option<(bool, u64, u64)>> {
+    let name = c_name(name)?;
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: directory is a live descriptor, name is NUL-terminated, and
+    // stat is writable storage for one libc::stat.
+    let rc = unsafe {
+        libc::fstatat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if rc != 0 {
+        let error = io::Error::last_os_error();
+        return match error.kind() {
+            io::ErrorKind::NotFound => Ok(None),
+            _ => Err(error),
+        };
+    }
+    // SAFETY: fstatat succeeded, so it filled stat.
+    let stat = unsafe { stat.assume_init() };
+    Ok(Some((
+        stat.st_mode & libc::S_IFMT == libc::S_IFSOCK,
+        stat.st_dev as u64,
+        stat.st_ino as u64,
+    )))
+}
+
+fn unlink_at(directory: &File, name: &OsStr) -> io::Result<()> {
+    let name = c_name(name)?;
+    // SAFETY: directory is a live descriptor and name is NUL-terminated.
+    if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn c_name(name: &OsStr) -> io::Result<CString> {
+    CString::new(name.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid socket name"))
 }
 
 fn open_directory(path: &Path) -> io::Result<File> {

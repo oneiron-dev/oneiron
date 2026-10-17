@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 320 code-mode rows (302 host rows, 18 run rows), 1098 declarations.
-// Replies: 259 fully typed, 47 typed down to an opaque serde_json::Value leaf, 13 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 328 code-mode rows (309 host rows, 19 run rows), 1118 declarations.
+// Replies: 267 fully typed, 46 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
 declare namespace Sdk {
@@ -272,7 +272,7 @@ declare namespace Sdk {
   type CallReceiptRequest = { receipt_ref: string };
   type CallTransport = "http_facade" | "mcp" | "ws";
   type CallOutcome = "ok" | { refused: { code: string } };
-  type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; served: string[]; served_records?: RecordRef[] };
+  type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; served: string[]; served_records?: RecordRef[] };
   type KeyValueAddress = { namespace: string[]; key: string };
   type KeyValueItem = { namespace: string[]; key: string; value: unknown; created_at: number; updated_at: number; revision: string };
   type KeyValuePut = { namespace: string[]; key: string; value: unknown; request_id: string; source?: string };
@@ -280,6 +280,17 @@ declare namespace Sdk {
   type KeyValueDeleteReceipt = { existed: boolean; receipt_refs: string[] };
   type KeyValueSearch = { namespace_prefix?: string[]; filter?: Record<string, unknown> | null; limit?: number; offset?: number };
   type KeyValueNamespaces = { prefix?: string[]; suffix?: string[]; max_depth?: number | null; limit?: number; offset?: number };
+  type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean };
+  type CampaignProgramStepSpec = { step_ref: string; channel: string; sender_ref: string; basis_evidence: string; outbound?: CampaignProgramOutboundSpec | null };
+  type CampaignProgramAudienceSpec = { query_ref: string; entry_step_ref: string };
+  type CreateCampaignProgramRequest = { schema_version?: number; campaign_ref: string; name: string; steps?: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null };
+  type CampaignProgramLifecycle = "active" | "archived";
+  type CampaignProgramDefinitionView = { schema_version: number; owner_actor: string; campaign_ref: string; name: string; definition_version: number; lifecycle: CampaignProgramLifecycle; steps: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null };
+  type CampaignProgramRecord = { program_ref: string; definition: CampaignProgramDefinitionView; automatic_intake: boolean; created_at: number; updated_at: number };
+  type CampaignProgramReadRequest = { campaign_ref: string; program_ref: string };
+  type CampaignProgramReadResult = { found: boolean; record?: CampaignProgramRecord | null };
+  type UpdateCampaignProgramRequest = { campaign_ref: string; program_ref: string; expected_definition_version: number; name: string; steps: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null };
+  type ArchiveCampaignProgramRequest = { campaign_ref: string; program_ref: string; expected_definition_version: number };
   type WeaveSectionKind = "changes" | "projects" | "open_asks" | "links" | "conflicts" | "exceptions" | "admissions" | "budgets" | "sieve_score" | "digest";
   type WeaveSectionInput = { kind: WeaveSectionKind; predicates?: string[]; edge_kinds?: string[] };
   type WeaveReportRequest = { sections: WeaveSectionInput[] };
@@ -288,6 +299,7 @@ declare namespace Sdk {
   type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[] };
   type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt };
   type WeaveDigestRequest = { scheduled_for?: number | null };
+  type GeneratedUiCatalog = "lens_atom_kit";
   type LensText = string;
   type LensTextSpan = { type: "literal"; value: LensText } | { type: "interpolation"; value: { key: string; fallback: LensText } };
   type TextBlockAtom = { spans: LensTextSpan[] };
@@ -338,11 +350,6 @@ declare namespace Sdk {
   type LensAtom = LensAtomWire;
   type SelfUiBindableProperty = "checked" | "selected" | "value" | "text";
   type SelfUiBinding = { stateKey: string; property: SelfUiBindableProperty };
-  type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] };
-  type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode };
-  type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number };
-  type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: GeneratedLens | null; lens_refused?: WeaveLensRefusal | null };
-  type GeneratedUiCatalog = "lens_atom_kit";
   type GeneratedUiNode = { id: string; parent?: string | null; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; childRefs?: string[] };
   type GeneratedUiActionTier = "local" | "deterministic_tool" | "model_round_trip";
   type GeneratedUiActionDeclaration = { elementId: string; actionId: string; tier: GeneratedUiActionTier; action: SelfUiAction };
@@ -351,9 +358,15 @@ declare namespace Sdk {
   type GeneratedUiArchiveReason = "completed" | "expired" | "dismissed" | "superseded";
   type GeneratedUiCardLifecycle = { phase: GeneratedUiCardPhase; revision: number; archiveReason?: GeneratedUiArchiveReason | null };
   type GeneratedUiRender = { protocolVersion: number; catalog: GeneratedUiCatalog; cardId: string; root: string; nodes: GeneratedUiNode[]; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot; lifecycle: GeneratedUiCardLifecycle };
+  type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] };
+  type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode };
   type LensFrameCard = { card_id: string; render: GeneratedUiRender; lens: GeneratedLens };
+  type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number };
+  type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: LensFrameCard | null; lens_refused?: WeaveLensRefusal | null };
   type WeaveWrongLinkRequest = { source_ref: string; kind: string; target_ref: string };
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
+  type WeaveWrongItemRequest = { item: string; item_ref: string; project_ref?: string | null };
+  type WeaveItemCorrectionView = { label_ref: string; item: string; item_ref: string; project_ref?: string | null; actor_ref: string; recorded_at: number };
   type PackFileInput = { path: string; text: string };
   type PackPutRequest = { files: PackFileInput[] };
   type PackPutOutcome = "installed" | "candidate" | "blocked";
@@ -769,7 +782,8 @@ declare namespace Sdk {
   type AiOptionsRequest = { operation?: string | null; inputs?: string[] };
   type AiOptions = { options: unknown[]; media_units_left?: number | null };
   type AiPart = { kind: "text"; text: string } | { kind: "image"; media_type: string; data: string } | { kind: "audio"; media_type: string; data: string } | { kind: "video"; media_type: string; data?: string | null; uri?: string | null } | { kind: "embedding"; vector: number[] };
-  type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown> };
+  type AiVoice = { kind: "stock"; name: string } | { kind: "bank"; voice_id: string; include_generated?: boolean };
+  type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null };
   type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown };
   type AiAnswer = { model: string; parts: AiPart[]; usage: MediaUsage };
   type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed";
@@ -798,7 +812,7 @@ declare namespace Sdk {
   type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
   type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number };
   type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null };
-  type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline";
+  type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget";
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
   type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null };
   type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
@@ -868,7 +882,7 @@ declare namespace Sdk {
   type PointInput = { image: string; x: number; y: number };
   type TypeInput = { ref: string; text: string; clear?: boolean };
   type SelectInput = { ref: string; option: string };
-  type WaitForInput = { role?: string | null; name?: string | null; timeout_ms?: number | null };
+  type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null };
   type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number };
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
   type ExpectOutput = { met: boolean; row?: Row | null };
@@ -890,7 +904,7 @@ declare namespace Sdk {
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
   type WorkflowCheck = "solved" | "replay";
   type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; unmet?: number[]; replay?: BatchOutput | null };
-  type LibraryRetireInput = { workflow: string };
+  type LibraryRetireInput = { workflow: string; reason?: string | null };
   type LibraryRetireOutput = { retired: LibraryCard };
   type LibraryRunInput = { workflow: string; args?: Record<string, string> };
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
@@ -980,7 +994,10 @@ declare namespace Sdk {
   type DeckNodeView = { id: NodeId; kind: NodeKind; parent?: NodeId | null; name?: string | null; imported: boolean; geometry: GeometryProps; placeholder?: [string, number] | null; preset?: Preset | null; payload?: NodePayload | null; text?: TextBody | null; made_by?: string | null };
   type DeckBodyView = { frontier: number[]; version: number; nodes: DeckNodeView[] };
   type OfficeBodyView = { format: "docx"; body: DocxBodyView } | { format: "xlsx"; body: XlsxBodyView } | { format: "pptx"; body: DeckBodyView };
+  type OfficeBodyCommitsRequest = { artifact_ref: string; actor_ref?: string | null };
   type TextCommitReceipt = { document: string; peer: number; start: number; end: number; made_by: MadeBy };
+  type OfficeBodyCommitGap = "receipt_missing";
+  type OfficeBodyCommitView = { actor?: string | null; receipt?: TextCommitReceipt | null; reason?: OfficeBodyCommitGap | null };
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
   type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
@@ -1011,9 +1028,10 @@ declare namespace Sdk {
   type ApproveScope = { this_actor: string } | { this_run_and_children: string } | { one_item: string };
   type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
   type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
-  type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null };
+  type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
+  type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
   type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[] };
   type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
@@ -1106,6 +1124,8 @@ declare namespace Sdk {
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
   type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null };
+  type TeamSubmitInput = { team: string; outputRevision: string };
+  type TeamSubmitAnswer = { team: string; outputRevision: string; reviewClaim: string; alreadySubmitted: boolean };
   type ReaderSpawnInput = { source: unknown; ask: string; intent_key: string };
   type ReaderSpawnReceipt = { task: EntityId; attempt: string; run: EntityId; cutoff_unix_ms: number; state: string; replay: boolean };
   type TaskWaitSetRequest = { tasks: string[]; all?: boolean | null; n_of?: number | null; until?: number | null; step_key: string };
@@ -1132,7 +1152,7 @@ declare const ai: {
   video: ((input: Sdk.AiCallRequest) => Promise<Sdk.AiVideoTicket | StoredResult>) & {
     /** Stops a video job at its provider. */
     cancel(input: Sdk.AiVideoJobRequest): Promise<Sdk.AiVideoCancelled | StoredResult>;
-    /** Where a video job stands; a finished one answers with its clip, once. */
+    /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
     poll(input: Sdk.AiVideoJobRequest): Promise<Sdk.AiVideoJob | StoredResult>;
   };
 };
@@ -1209,7 +1229,7 @@ declare namespace self {
     type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until some page row matches a role and name. */
+    /** Waits until a page row its refs name, or else some row matching a role and name, is there. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Zooms into a rectangle of a held image. */
     zoom(input: Sdk.ZoomInput): Promise<Sdk.ImageOutput | StoredResult>;
@@ -1249,7 +1269,7 @@ declare namespace self {
     type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until some window row matches a role and name. */
+    /** Waits until a window row its refs name, or else some row matching a role and name, is there. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Moves the session onto another desktop window and observes it. */
     window(input: Sdk.WindowInput): Promise<Sdk.Observation | StoredResult>;
@@ -1322,6 +1342,7 @@ declare namespace self {
   const team: {
     record(input: Sdk.TeamRecordInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
     start(input: Sdk.TeamStartInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
+    submit(input: Sdk.TeamSubmitInput): Promise<Sdk.TeamSubmitAnswer | StoredResult>;
   };
   const unfold: (input: Sdk.FoldUnfoldInput) => Promise<Sdk.FoldReply<Sdk.FoldUnfolded> | StoredResult>;
   /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
@@ -1350,8 +1371,8 @@ declare const vault: Sdk.VaultHost & {
     /** Appends one version of bytes to a blob artifact's append-only chain. */
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.BlobVersionView | StoredResult>;
     body: {
-      /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
-      commits(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.TextCommitReceipt[] | StoredResult>;
+      /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone. */
+      commits(input: Sdk.OfficeBodyCommitsRequest): Promise<Sdk.OfficeBodyCommitView[] | StoredResult>;
       deck: {
         /** Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep. */
         export(input: Sdk.DeckExportRequest): Promise<Sdk.DeckExportView | StoredResult>;
@@ -1386,8 +1407,8 @@ declare const vault: Sdk.VaultHost & {
       head(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.OfficeBodyHead | null | StoredResult>;
       /** Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document. */
       import(input: Sdk.OfficeBodyImportRequest): Promise<Sdk.OfficeBodyHead | StoredResult>;
-      /** The workbook an XLSX body's export would land now, recalculated and read back; nothing lands. */
-      preview(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.XlsxPreview | StoredResult>;
+      /** The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands. */
+      preview(input: Sdk.OfficeBodyPreviewRequest): Promise<Sdk.XlsxPreview | StoredResult>;
       proposal: {
         /** An office proposal on the artifact: its opener and run, each member fork with its verdict and answer, and its settlement. */
         read(input: Sdk.OfficeBodyProposalRequest): Promise<Sdk.OfficeBodyProposal | StoredResult>;
@@ -1439,6 +1460,18 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
   batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.CoreBatchWriteReceipt | StoredResult>;
+  campaign: {
+    program: {
+      /** Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops. */
+      archive(input: Sdk.ArchiveCampaignProgramRequest): Promise<Sdk.CampaignProgramRecord | StoredResult>;
+      /** Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns. */
+      create(input: Sdk.CreateCampaignProgramRequest): Promise<Sdk.CampaignProgramRecord | StoredResult>;
+      /** One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now. */
+      read(input: Sdk.CampaignProgramReadRequest): Promise<Sdk.CampaignProgramReadResult | StoredResult>;
+      /** Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops. */
+      update(input: Sdk.UpdateCampaignProgramRequest): Promise<Sdk.CampaignProgramRecord | StoredResult>;
+    };
+  };
   claims: {
     /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
     admit(input: Sdk.AdmitImportedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
@@ -1852,13 +1885,27 @@ declare const vault: Sdk.VaultHost & {
     put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
   };
   weave: {
-    /** One of the bound actor's saved weave digests, or the newest, under the current read policy. */
+    /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
     digest(input: Sdk.WeaveDigestRequest): Promise<Sdk.WeaveDigestView | null | StoredResult>;
+    item: {
+      /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
+      wrong(input: Sdk.WeaveWrongItemRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
+    };
     /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
     lens(input: Sdk.WeaveReportRequest): Promise<Sdk.LensFrameCard | StoredResult>;
     link: {
       /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
       wrong(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.WeaveLinkCorrectionView | StoredResult>;
+    };
+    owner: {
+      item: {
+        /** The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
+        wrong(input: Sdk.WeaveWrongItemRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
+      };
+      link: {
+        /** The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays. */
+        wrong(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.WeaveLinkCorrectionView | StoredResult>;
+      };
     };
     /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
     report(input: Sdk.WeaveReportRequest): Promise<Sdk.WeaveReportView | StoredResult>;
