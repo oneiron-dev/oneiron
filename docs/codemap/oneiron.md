@@ -918,7 +918,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/vault_read/contract.rs` | src | s | 2 enum · 1 trait · 4 fn · 1 re-export · 1 crate-vis | VaultReadClient, VaultReadRequest, VaultReadResponse | The vault-read request / response carriers and the sealed client, generated from the contract table in… |
 | `src/code_run/vault_read/dispatch.rs` | src | s | 1 crate-vis | — | The one validated dispatch path: runtime stop, validation, then the sealed backend call |
 | `src/code_run/vault_read/error.rs` | src | s | 1 re-export · 7 crate-vis | — | The vault-read error vocabulary and its stable engine codes |
-| `src/code_run/vault_read/in_process.rs` | src | m | 2 struct · 4 fn · 1 const · 1 crate-vis | EmbeddedMediaSeed, InProcessVaultReadAdapter | The in-process adapter: scoped reads against a live vault plus retrieval-budget control |
+| `src/code_run/vault_read/in_process.rs` | src | m | 2 struct · 5 fn · 1 const · 1 crate-vis | EmbeddedMediaSeed, InProcessVaultReadAdapter | The in-process adapter: scoped reads against a live vault plus retrieval-budget control |
 | `src/code_run/vault_read/mod.rs` | src | s | 6 re-export · 5 crate-vis | — | One Rust vault-read contract whose behavior does not change with deployment topology (ONE-1433) |
 | `src/code_run/vault_read/projection.rs` | src | s | 5 crate-vis | — | Turning vault-side records into the contract's response shapes |
 | `src/code_run/vault_read/remote.rs` | src | s | 2 struct · 1 trait · 1 fn · 1 crate-vis | CloudVaultReadAdapter, WireTransport, WireTransportVaultReadAdapter | Transport-injected and cloud adapters over the same validated dispatch |
@@ -3279,7 +3279,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_reliability/priors.rs` | src | s | 3 crate-vis | — | Weighted starting points for skill cells |
 | `src/skill_reliability/projector.rs` | src | m | 3 fn · 4 const · 3 crate-vis | — | Project attributed skill outcomes into the shared learning.reliability cells |
 | `src/skill_reliability/provenance.rs` | src | s | 2 fn · 1 crate-vis | — | Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the… |
-| `src/skill_reliability/read.rs` | src | m | 2 struct · 8 fn · 11 crate-vis | ExecutorReliability, SkillReliabilityQuery | Skill reliability reads use learning cells, never SkillRecord confidence |
+| `src/skill_reliability/read.rs` | src | m | 2 struct · 9 fn · 11 crate-vis | ExecutorReliability, SkillReliabilityQuery | Skill reliability reads use learning cells, never SkillRecord confidence |
 | `src/skill_reliability/resident.rs` | src | s | 1 fn | — | Per-resident version bandit over independently attributed fork receipts |
 | `src/skill_reliability/tests.rs` | test | L | — | — | — |
 | `src/skill_reliability/tests/resident.rs` | test | s | — | — | — |

@@ -11367,7 +11367,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -41296,7 +41296,7 @@
      "purpose": "Skill reliability reads use learning cells, never SkillRecord confidence",
      "surface": {
       "crate-vis": 11,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -54535,6 +54535,7 @@
       "ContextPackDepthControls",
       "ContextPackMediaQuery",
       "ContextPackRetrievalBudgetControls",
+      "ContextPackTypeRef",
       "CoreContextPackRequest",
       "MediaQueryKind"
      ],
@@ -54543,7 +54544,7 @@
      "surface": {
       "enum": 1,
       "fn": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -62922,7 +62923,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
      }
     },
     {
