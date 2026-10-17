@@ -112,6 +112,11 @@ pub struct CourtesyDeleteIncoming {
     /// The worlds named; empty asks about everything the pact delivered.
     pub worlds: Vec<CourtesyDeleteAskedWorld>,
     pub epoch_cutoff: u64,
+    /// The records this vault still holds that the ask covers: delivered by
+    /// the pact at or before the cutoff, in a named world, or in any world
+    /// when none is named (FIX 321). The owner picks from them; nothing is
+    /// deleted on receipt.
+    pub candidates: Vec<String>,
     /// RFC 3339.
     pub requested: String,
     /// RFC 3339.
