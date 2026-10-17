@@ -249,7 +249,7 @@ pub(crate) fn is_sub_session_record(
     }
 }
 
-pub(super) fn is_thread_record(store: &Store, txn: &RoTxn<'_>, record: &EntityId) -> Result<bool> {
+pub(crate) fn is_thread_record(store: &Store, txn: &RoTxn<'_>, record: &EntityId) -> Result<bool> {
     match live_entity_row_in_txn(store, txn, record)? {
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_TURN,
