@@ -74,7 +74,7 @@ pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 pub use hosted_speech::HostedCloner;
-pub(crate) use http::mark_cloud_node;
+pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::ServedOffer;
