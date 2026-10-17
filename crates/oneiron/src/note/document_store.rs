@@ -152,10 +152,13 @@ impl Memory<'_> {
         pins: &[NotePin],
     ) -> MemoryResult<EntityRefReceipt> {
         let markdown = markdown.into();
+        let kind = NoteKind::Plugin("brief".into());
+        self.vault()
+            .check_auto_note_birth(&kind, self.actor_class(), &markdown)?;
         let id = self.vault().new_entity_id()?;
         let actor = WriteActor::new(self.actor(), self.actor_class());
         let body = encode_note_body(&NoteBody {
-            kind: NoteKind::Plugin("brief".into()),
+            kind,
             author_ref: self.actor(),
             markdown: markdown.clone(),
             source_revision_ref: *id.as_bytes(),

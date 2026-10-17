@@ -131,6 +131,15 @@ pub(super) fn persist(
         None => None,
     };
     crate::batch::secret_scan::scan_metadata_field(&doc.text())?;
+    // A NOTE written on this plane keeps the NOTE door's body bound and its
+    // seal (OF-073 stage 1).
+    if vault.get_entity_type_in_txn(txn, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {
+        let read: &RoTxn<'_> = txn;
+        let moved = before.is_some_and(|before| before.encode() != doc.doc.oplog_vv().encode());
+        crate::note::check_doc_plane_note_commit_in_txn(store, read, *entity, &doc.text(), || {
+            Ok(moved || text_changed(store, read, entity, doc)?)
+        })?;
+    }
     vault.ensure_text_index_trusted()?;
     crate::vault::ensure_text_index_manifest_matches_wtxn(store, txn, &vault.analyzer)?;
     let birth = h.generation == 0;

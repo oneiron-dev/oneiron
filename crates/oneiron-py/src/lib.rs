@@ -1988,6 +1988,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_notes_seal(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.notes.seal")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.seal", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
 
     // END GENERATED AGENT VERBS
 }

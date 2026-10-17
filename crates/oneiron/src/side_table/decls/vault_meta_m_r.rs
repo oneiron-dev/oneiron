@@ -72,6 +72,9 @@ side_tables! {
     NOTE_PROPOSAL_BUNDLE: VaultMeta b"note_proposal:v1:" Named;
     /// Durable head-move (merge/switch/reject) receipt. Key: id16(receipt id).
     NOTE_RECEIPT: VaultMeta b"note_receipt:v1:" Named;
+    /// A NOTE's seal: the head document and frontier it froze, its sealer and time (ARCH-0032
+    /// lifecycle). Key: id16(note).
+    NOTE_SEAL: VaultMeta b"note_seal:v1:" Named;
     /// One live office body commit's receipt: peer, operation span and MadeBy. Key: id16 (artifact
     /// or fork) + u64be (sequence).
     OFFICE_BODY_COMMIT: VaultMeta b"office_body:commit:v1:" Named;

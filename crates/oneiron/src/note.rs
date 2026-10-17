@@ -74,11 +74,13 @@ impl NoteKind {
 pub(crate) mod documents;
 pub(crate) mod erase;
 mod kinds;
+mod lifecycle;
 pub(crate) mod recovery;
 pub(crate) mod storage;
 pub(crate) use kinds::validate_registered_kind;
 mod proposals;
 mod verbs;
+mod write_gate;
 pub use documents::{
     NoteAnchor, NoteDocument as NoteProgramDocument, NoteEdit as NoteProgramEdit,
     NoteEditOutcome as NoteProgramEditOutcome, NoteVersion,
@@ -87,7 +89,10 @@ pub(crate) use kinds::descriptor_in_txn;
 pub use kinds::{
     ContextDefault, DISSENT_NOTE_KIND, ExtractionDefault, NoteKindDescriptor, RetentionDefault,
 };
+pub(crate) use lifecycle::{note_sealed_in_txn, seal_note_in_txn};
+pub use lifecycle::{NoteLifecycleStatus, NoteSeal, NoteSealRequest};
 pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};
+pub(crate) use write_gate::check_doc_plane_note_commit_in_txn;
 const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 
 /// A decoded NOTE body.

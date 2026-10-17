@@ -654,6 +654,8 @@ export class Oneiron {
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
       edit: (input: Facade.EditNoteRequest): Facade.NoteEditOutcome => this.#call(() => this.#client.vaultNotesEdit(input) as Facade.NoteEditOutcome),
+      /** Seals one NOTE: its document freezes, and a later edit opens a fork. */
+      seal: (request: Facade.NoteSealRequest): Facade.NoteSeal => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSeal(keyedJson(request))) as Facade.NoteSeal; return result }),
     },
   }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */

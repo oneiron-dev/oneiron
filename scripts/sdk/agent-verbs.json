@@ -4007,6 +4007,36 @@
       "section": false
     },
     {
+      "name": "vault.notes.seal",
+      "description": "Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays.",
+      "refs": ["/note_ref"],
+      "input": "crate::note::NoteSealRequest",
+      "output": "crate::note::NoteSeal",
+      "call": "memory.seal_note(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Seals one NOTE: its document freezes, and a later edit opens a fork.\n",
+          "ts": "/** Seals one NOTE: its document freezes, and a later edit opens a fork. */",
+          "py": "Seals one NOTE: its document freezes, and a later edit opens a fork."
+        }
+      }
+    },
+    {
       "name": "self.fold",
       "input": "crate::compaction::FoldMarkInput",
       "output": "crate::compaction::FoldReply<crate::compaction::FoldMarked>",

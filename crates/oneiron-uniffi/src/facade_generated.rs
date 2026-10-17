@@ -1110,4 +1110,9 @@ export_facade! {
     let output = client.vault_notes_edit(&input)?;
     crate::codec::lift_record("vault.notes.edit", &output)
 };
+"vault.notes.seal" => fn vault_notes_seal(&self, input: NoteSealRequest) -> NoteSeal = |client| {
+    let input: oneiron::note::NoteSealRequest = crate::codec::lower_record("vault.notes.seal", input)?;
+    let output = client.vault_notes_seal(&input)?;
+    crate::codec::lift_record("vault.notes.seal", &output)
+};
 }

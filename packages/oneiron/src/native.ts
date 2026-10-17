@@ -250,6 +250,7 @@ connectorOutboundSchedule(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown
+vaultNotesSeal(requestJson: string): string
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient
