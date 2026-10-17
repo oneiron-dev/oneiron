@@ -350,14 +350,14 @@
     },
     {
       "name": "describe",
-      "description": "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named.",
+      "description": "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named.",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
       "outputs_by_input": {
         "fold": "crate::compaction::FoldReply<crate::compaction::FoldDescription>"
       },
-      "mcp_served": "input.task_ref.as_deref().and_then(|id| oneiron::EntityId::from_hex(id).ok())",
-      "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else if input.vault { memory.describe_vault(&input)? } else if input.key.is_some() { Err(MemoryError::bad_request(\"describe(card key) expands a board card, which only a live board session holds\"))? } else if input.fold.is_some() { Err(MemoryError::bad_request(\"describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
+      "mcp_served": "oneiron::task_verb::sdk::describe_named_rows(&input)",
+      "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else if input.vault { memory.describe_vault(&input)? } else if input.key.is_some() { Err(MemoryError::bad_request(\"describe(card key) expands a board card, which only a live board session holds\"))? } else if input.fold.is_some() { Err(MemoryError::bad_request(\"describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds\"))? } else if input.handle.is_some() || input.after.is_some() { crate::task_verb::sdk::describe_handle_status(memory, &input)? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
       "mcp_fields": {
         "task_ref": "task_ref",
@@ -365,7 +365,9 @@
         "vault": "vault",
         "session_id": "session_id",
         "key": "key",
-        "frame_epoch": "frame_epoch"
+        "frame_epoch": "frame_epoch",
+        "handle": "handle",
+        "after": "after"
       },
       "mcp_required_fields": [],
       "mcp_result": "mcp_describe_result(output)?",
@@ -397,7 +399,7 @@
     },
     {
       "name": "tasks.create",
-      "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal.",
+      "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway.",
       "prose_links": ["/label", "/spec"],
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
@@ -407,7 +409,10 @@
       "mcp_fields": {
         "spec": "spec",
         "label": "label",
-        "assignee": "assignee"
+        "assignee": "assignee",
+        "intent_key": "intent_key",
+        "brief": "brief",
+        "ttl": "ttl"
       },
       "mcp_required_fields": [
         "spec"
@@ -485,6 +490,28 @@
       },
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
       "call": "memory.tasks_update_request(&input)?",
+      "scope": "Write",
+      "mcp_scope": "addressed",
+      "mcp_fields": {
+        "spec": "$",
+        "task_ref": "=task_ref"
+      },
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "task_ref"
+        ]
+      },
+      "section": true
+    },
+    {
+      "name": "tasks.accept",
+      "description": "Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports.",
+      "refs": ["/task_ref"],
+      "input": "crate::task_verb::TaskAccept",
+      "output": "crate::task_verb::TaskCallReceipt",
+      "mcp_served": "[input.task_ref]",
+      "call": "memory.tasks_accept(input)?",
       "scope": "Write",
       "mcp_scope": "addressed",
       "mcp_fields": {
@@ -1038,6 +1065,58 @@
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.remove",
+      "description": "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate.",
+      "input": "PackRemoveRequest",
+      "output": "crate::skill_hub::pack_catalog::PackInstallReceipt",
+      "call": "crate::task_verb::sdk::remove_pack_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.connectors.subscriptions.put",
+      "description": "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.",
+      "input": "ChannelSubscriptionRequest",
+      "output": "crate::connector_key::ChannelMessageSubscription",
+      "call": "crate::task_verb::sdk::subscribe_channel_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.connectors.subscriptions.list",
+      "description": "An agent's connector event subscriptions, standing and revoked, for the owner.",
+      "input": "ChannelSubscriptionsRequest",
+      "output": "crate::task_verb::sdk::ChannelSubscriptions",
+      "call": "crate::task_verb::sdk::channel_subscriptions_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.connectors.subscriptions.revoke",
+      "description": "The owner stops one connector event subscription; the agent's key for the channel stays.",
+      "input": "ChannelSubscriptionRevokeRequest",
+      "output": "crate::task_verb::sdk::ChannelSubscriptionRevoked",
+      "call": "crate::task_verb::sdk::revoke_channel_subscription_embedded(memory, input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {
@@ -2804,6 +2883,8 @@
       "input": "crate::workspace_roster::ProjectCardConfirmRequest",
       "output": "crate::workspace_roster::ProjectMintReceipt",
       "call": "memory.projects_confirm(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "mcp_fields": {"spec": "$"},
       "mcp_scope": "unrestricted",
@@ -3109,7 +3190,7 @@
     },
     {
       "name": "vault.workspace.work_companion.set",
-      "description": "The owner sets a workspace's work_companion policy in person.",
+      "description": "The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person.",
       "input": "WorkCompanionSetRequest",
       "output": "crate::workspace_roster::WorkCompanionPolicy",
       "call": "memory.workspace_work_companion_set(&input.workspace_ref, input.policy)?",
@@ -3162,7 +3243,7 @@
     },
     {
       "name": "ai.options",
-      "description": "The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left.",
+      "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.",
       "input": "AiOptionsRequest",
       "output": "crate::task_verb::sdk::AiOptions",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
@@ -3845,6 +3926,17 @@
       "output": "oneiron_browser::Observation",
       "call": "driver.window(input)?",
       "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.handover",
+      "description": "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record.",
+      "input": "oneiron_browser::HandoverInput",
+      "output": "oneiron_browser::HandoverOutput",
+      "call": "driver.handover(input)?",
+      "scope": "Write",
       "context": "browser",
       "mcp": "none",
       "section": false
@@ -5308,6 +5400,14 @@
       "scope": "Read",
       "context": "run",
       "effect": "Leader"
+    },
+    {
+      "name": "self.leader.split",
+      "input": "crate::code_run::LeaderSplitInput",
+      "output": "crate::code_run::LeaderSplitOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "LeaderSplit"
     },
     {
       "name": "self.skills.call",

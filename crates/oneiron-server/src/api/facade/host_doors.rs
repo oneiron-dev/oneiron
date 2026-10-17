@@ -31,10 +31,12 @@ use oneiron::{
 use oneiron::lens::{LensActivateRequest, LensDeactivateRequest};
 use oneiron::receipt::LensActivationReceipt;
 use oneiron::task_verb::sdk::{
-    PackSetupAnswerRequest, PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
+    ChannelSubscriptionRequest, ChannelSubscriptionRevokeRequest, ChannelSubscriptionRevoked,
+    ChannelSubscriptions, ChannelSubscriptionsRequest, PackRemoveRequest, PackSetupAnswerRequest,
+    PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
 };
 
-use crate::api::ai::{VoiceRefusal, bind_voice};
+use crate::api::ai::{VoiceRefusal, bind_voice, caller_options};
 use crate::auth::CoreAuth;
 use crate::builtin_host::HostConnectionChecks;
 use crate::server::SyncServer;
@@ -83,6 +85,8 @@ pub(crate) use super::reaction_doors::*;
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
 pub(crate) use super::critic_review_doors::*;
+// The owner's project-card tap door (OF-501), likewise.
+pub(crate) use super::project_card_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -103,6 +107,75 @@ pub(crate) async fn vault_packs_put(
     })
     .await
     .map_err(|_| internal("vault.packs.put"))?
+}
+
+/// `vault.packs.remove`: the owner removes an installed pack, under the
+/// proof `/v1/owner/packs/remove` takes. Answers the removed receipt.
+pub(crate) async fn vault_packs_remove(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PackRemoveRequest,
+) -> MemoryResult<oneiron::skill_hub::pack_catalog::PackInstallReceipt> {
+    let owner = owner_proof(auth, server, "vault.packs.remove")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::remove_pack_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.packs.remove"))?
+}
+
+/// `vault.connectors.subscriptions.put`: the owner subscribes an agent to
+/// the messages a built-in channel's pack routes to it (OF-519), as
+/// `POST /v1/owner/connectors/subscriptions` does.
+pub(crate) async fn vault_connectors_subscriptions_put(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionRequest,
+) -> MemoryResult<oneiron::connector_key::ChannelMessageSubscription> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.put")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::subscribe_channel_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.put"))?
+}
+
+/// `vault.connectors.subscriptions.list`: an agent's connector event
+/// subscriptions, standing and revoked, for the owner.
+pub(crate) async fn vault_connectors_subscriptions_list(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionsRequest,
+) -> MemoryResult<ChannelSubscriptions> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.list")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::channel_subscriptions_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.list"))?
+}
+
+/// `vault.connectors.subscriptions.revoke`: the owner stops a subscription;
+/// its key stays.
+pub(crate) async fn vault_connectors_subscriptions_revoke(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionRevokeRequest,
+) -> MemoryResult<ChannelSubscriptionRevoked> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.revoke")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::revoke_channel_subscription_as_owner(
+            server.vault(),
+            &owner,
+            &input,
+        )
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.revoke"))?
 }
 
 /// `vault.artifacts.review_slides`: reviews an artifact's head through the
@@ -261,11 +334,12 @@ pub(crate) async fn vault_mesh_path_receipts(
     .map_err(|_| internal("vault.mesh.path_receipts"))?
 }
 
-/// `ai.options`: the rows a call could use, where each runs, what it takes,
-/// the rates its native counts settle at, and what the media meter has left.
+/// `ai.options`: the rows the credential could call now, where each runs,
+/// what it takes, its price, the rates its native counts settle at, and
+/// what its meter has left (FIX 2942).
 pub(crate) async fn ai_options(
     server: &Arc<SyncServer>,
-    _auth: &CoreAuth,
+    auth: &CoreAuth,
     input: AiOptionsRequest,
 ) -> MemoryResult<AiOptions> {
     let operation = input
@@ -288,16 +362,16 @@ pub(crate) async fn ai_options(
             })?;
         inputs.insert(modality);
     }
-    let runtime = server.ai.model_runtime();
-    let options = runtime
-        .ai_options(operation, &inputs)
+    let listed = caller_options(server, auth.is_owner_grade(), operation, &inputs);
+    let options = listed
+        .options
         .into_iter()
         .map(serde_json::to_value)
         .collect::<Result<_, _>>()
         .map_err(|_| internal("ai.options"))?;
     Ok(AiOptions {
         options,
-        media_units_left: runtime.media().units_left(),
+        media_units_left: listed.media_units_left,
     })
 }
 
@@ -601,6 +675,10 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
         "vault.packs.put"
+        | "vault.packs.remove"
+        | "vault.connectors.subscriptions.put"
+        | "vault.connectors.subscriptions.list"
+        | "vault.connectors.subscriptions.revoke"
         | "vault.authority.audit"
         | "vault.mesh.path_receipts"
         | "vault.hooks.replay"

@@ -51,8 +51,20 @@ export type WitnessTurn = {
   messages: WitnessMessage[]
   /** Unix seconds; omitted is stamped at the call boundary. */
   occurredAt?: number
+  /** A quote on a project room's thread reply: a span of one MESSAGE in the room. */
+  quote?: QuoteSpan
   /** A new project room thread root's audience (32-hex ids); fixed once set. */
   threadAudience?: string[]
+}
+
+/** The quoted span of one MESSAGE: half-open Unicode scalar indices, never UTF-16 units. */
+export type QuoteSpan = {
+  /** The quoted MESSAGE (not the TURN that holds it), as 32 hex. */
+  message: string
+  /** First quoted scalar. */
+  start: number
+  /** One past the last quoted scalar. */
+  end: number
 }
 
 /** Receipt for one witnessed turn. */
@@ -370,12 +382,21 @@ class WitnessMessage(TypedDict):
     is_visible: NotRequired[bool]
     order: int
 
+class QuoteSpan(TypedDict):
+    # The quoted MESSAGE (not the TURN that holds it), as 32 hex.
+    message: str
+    # Half-open Unicode scalar indices into its text.
+    start: int
+    end: int
+
 class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
     messages: list[WitnessMessage]
     # Unix seconds; omitted is stamped at the call boundary.
     occurred_at: NotRequired[int]
+    # A quote on a project room's thread reply: a span of one MESSAGE in the room.
+    quote: NotRequired[QuoteSpan | None]
     # A new project room thread root's audience; fixed once set.
     thread_audience: NotRequired[list[str] | None]
 
@@ -588,7 +609,11 @@ LensFrameToolReply = TypedDict(
     "LensFrameToolReply",
     {"outcome": Any, "readReceipt": Facade.ScopedReadReceipt},
 )
-LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply
+LensFrameCallbackReply = TypedDict(
+    "LensFrameCallbackReply",
+    {"queued": bool, "callbackId": str},
+)
+LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply | LensFrameCallbackReply
 
 class CloseLensFrameReply(TypedDict):
     closed: bool
@@ -752,6 +777,8 @@ class Oneiron:
         def weave(self) -> "Oneiron._VaultWeaveVerbs": ...
         @property
         def packs(self) -> "Oneiron._VaultPacksVerbs": ...
+        @property
+        def connectors(self) -> "Oneiron._VaultConnectorsVerbs": ...
         @property
         def authority(self) -> "Oneiron._VaultAuthorityVerbs": ...
         @property
@@ -935,6 +962,8 @@ class Oneiron:
     class _VaultPacksVerbs:
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
+        def remove(self, spec: Facade.PackRemoveRequest) -> Facade.PackInstallReceipt:
+            """The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."""
         @property
         def setup(self) -> "Oneiron._VaultPacksSetupVerbs": ...
     class _VaultPacksSetupVerbs:
@@ -946,6 +975,16 @@ class Oneiron:
             """The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."""
         def verify(self, spec: Facade.PackSetupVerifyRequest) -> Facade.PackSetupReceipt:
             """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""
+    class _VaultConnectorsVerbs:
+        @property
+        def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs": ...
+    class _VaultConnectorsSubscriptionsVerbs:
+        def put(self, spec: Facade.ChannelSubscriptionRequest) -> Facade.ChannelMessageSubscription:
+            """The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."""
+        def list(self, spec: Facade.ChannelSubscriptionsRequest) -> Facade.ChannelSubscriptions:
+            """An agent's connector event subscriptions, standing and revoked, for the owner."""
+        def revoke(self, spec: Facade.ChannelSubscriptionRevokeRequest) -> Facade.ChannelSubscriptionRevoked:
+            """The owner stops one connector event subscription; the agent's key for the channel stays."""
     class _VaultAuthorityVerbs:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
             """One page of the dated authority log audit: grants, revokes and confirms, for the owner."""
@@ -1298,7 +1337,7 @@ class Oneiron:
         def get(self, spec: Facade.WorkspaceRefRequest) -> Facade.WorkCompanionPolicy:
             """A workspace's work_companion policy, readable by every member it governs."""
         def set(self, spec: Facade.WorkCompanionSetRequest) -> Facade.WorkCompanionPolicy:
-            """The owner sets a workspace's work_companion policy in person."""
+            """The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."""
     class _VaultGraphVerbs:
         def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
     class _VaultQuestionsVerbs:
@@ -1349,11 +1388,13 @@ class Oneiron:
         def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
-            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
+            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""
         def wave(self, spec: Facade.TaskWaveRequest) -> Facade.TaskWaveReceipt:
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
         def update(self, spec: Facade.TaskUpdateRequest) -> Facade.TaskUpdateReceipt:
             """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
+        def accept(self, spec: Facade.TaskAccept) -> Facade.TaskCallReceipt:
+            """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
@@ -1367,7 +1408,7 @@ class Oneiron:
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
     class _AiVerbs:
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
-            """The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left."""
+            """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
             """One image out of the host's image model; reference images make it an edit."""
         def speech(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:

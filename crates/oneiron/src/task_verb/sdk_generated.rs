@@ -180,6 +180,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<TaskUpdateRequest>(),
             ),
             (
+                "tasks.accept",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAccept>(),
+            ),
+            (
                 "vault.witness",
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
@@ -300,6 +304,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.packs.put",
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
+            ),
+            (
+                "vault.packs.remove",
+                crate::code_run::vault_read::request_schema::<PackRemoveRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.put",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.list",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionsRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.revoke",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionRevokeRequest>(),
             ),
             (
                 "vault.packs.setup.prepare",
@@ -1340,6 +1360,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<oneiron_browser::WindowInput>(),
             ),
             (
+                "self.desktop.handover",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::HandoverInput>(),
+            ),
+            (
                 "vault.commit",
                 crate::code_run::vault_read::request_schema::<CommitRequest>(),
             ),
@@ -1654,6 +1678,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "self.leader.split",
+                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderSplitInput>(),
+            ),
+            (
                 "self.skills.call",
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),
@@ -1906,6 +1934,14 @@ pub fn mcp_arguments_schema_from_input(
                 "frame_epoch".to_owned(),
                 schema.pointer("/properties/frame_epoch")?.clone(),
             );
+            properties.insert(
+                "handle".to_owned(),
+                schema.pointer("/properties/handle")?.clone(),
+            );
+            properties.insert(
+                "after".to_owned(),
+                schema.pointer("/properties/after")?.clone(),
+            );
             &[]
         }
         "tasks.create" => {
@@ -1921,6 +1957,15 @@ pub fn mcp_arguments_schema_from_input(
                 "assignee".to_owned(),
                 schema.pointer("/properties/assignee")?.clone(),
             );
+            properties.insert(
+                "intent_key".to_owned(),
+                schema.pointer("/properties/intent_key")?.clone(),
+            );
+            properties.insert(
+                "brief".to_owned(),
+                schema.pointer("/properties/brief")?.clone(),
+            );
+            properties.insert("ttl".to_owned(), schema.pointer("/properties/ttl")?.clone());
             &["spec"]
         }
         "tasks.wave" => {
@@ -1959,6 +2004,17 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "tasks.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "task_ref".to_owned(),
+                schema.pointer("/properties/task_ref")?.clone(),
+            );
+            &["spec", "task_ref"]
+        }
+        "tasks.accept" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2145,6 +2201,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.remove" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.revoke" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3813,6 +3897,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.update" => {
             let _input: TaskUpdateRequest = decode(value.clone())?;
         }
+        "tasks.accept" => {
+            let _input: crate::task_verb::TaskAccept = decode(value.clone())?;
+        }
         "vault.witness" => {
             let input: crate::memory::WitnessTurn = decode(value.clone())?;
             crate::memory::caps::check_witness_turn(&input)?;
@@ -3909,6 +3996,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
+        }
+        "vault.packs.remove" => {
+            let _input: PackRemoveRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.put" => {
+            let _input: ChannelSubscriptionRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.list" => {
+            let _input: ChannelSubscriptionsRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.revoke" => {
+            let _input: ChannelSubscriptionRevokeRequest = decode(value.clone())?;
         }
         "vault.packs.setup.prepare" => {
             let _input: PackSetupRequest = decode(value.clone())?;
@@ -4550,6 +4649,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.desktop.window" => {
             let _input: oneiron_browser::WindowInput = decode(value.clone())?;
         }
+        "self.desktop.handover" => {
+            let _input: oneiron_browser::HandoverInput = decode(value.clone())?;
+        }
         "vault.commit" => {
             let input: CommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
@@ -4792,6 +4894,7 @@ pub fn invoke(
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
+        "tasks.accept" => encode(tasks_accept(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
@@ -4830,6 +4933,17 @@ pub fn invoke(
             encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
         }
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.packs.remove" => encode(vault_packs_remove(memory, decode(value)?)?),
+        "vault.connectors.subscriptions.put" => {
+            encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
+        }
+        "vault.connectors.subscriptions.list" => {
+            encode(vault_connectors_subscriptions_list(memory, decode(value)?)?)
+        }
+        "vault.connectors.subscriptions.revoke" => encode(vault_connectors_subscriptions_revoke(
+            memory,
+            decode(value)?,
+        )?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
         "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
         "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
@@ -5357,6 +5471,10 @@ pub fn invoke_browser(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
+        "self.desktop.handover" => serde_json::to_value(self_desktop_handover(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
         _ => {
             return Err(oneiron_browser::BrowserError::Input(format!(
                 "{verb} is not a browser verb"
@@ -5568,6 +5686,8 @@ pub fn describe(
         Err(MemoryError::bad_request(
             "describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds",
         ))?
+    } else if input.handle.is_some() || input.after.is_some() {
+        crate::task_verb::sdk::describe_handle_status(memory, &input)?
     } else {
         memory.describe(
             input
@@ -5631,6 +5751,18 @@ pub fn tasks_update(
         &["/task_ref"],
     )?;
     memory.tasks_update_request(&input)
+}
+pub fn tasks_accept(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskAccept,
+) -> MemoryResult<crate::task_verb::TaskCallReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "tasks.accept",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.tasks_accept(input)
 }
 pub fn vault_witness(
     memory: &Memory<'_>,
@@ -5827,6 +5959,30 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_packs_remove(
+    memory: &Memory<'_>,
+    input: PackRemoveRequest,
+) -> MemoryResult<crate::skill_hub::pack_catalog::PackInstallReceipt> {
+    crate::task_verb::sdk::remove_pack_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_put(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionRequest,
+) -> MemoryResult<crate::connector_key::ChannelMessageSubscription> {
+    crate::task_verb::sdk::subscribe_channel_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_list(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionsRequest,
+) -> MemoryResult<crate::task_verb::sdk::ChannelSubscriptions> {
+    crate::task_verb::sdk::channel_subscriptions_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_revoke(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::ChannelSubscriptionRevoked> {
+    crate::task_verb::sdk::revoke_channel_subscription_embedded(memory, input)
 }
 pub fn vault_packs_setup_prepare(
     memory: &Memory<'_>,
@@ -7404,6 +7560,12 @@ pub fn self_desktop_window(
     input: oneiron_browser::WindowInput,
 ) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
     driver.window(input)
+}
+pub fn self_desktop_handover(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::HandoverInput,
+) -> Result<oneiron_browser::HandoverOutput, oneiron_browser::BrowserError> {
+    driver.handover(input)
 }
 pub fn vault_commit(
     memory: &Memory<'_>,

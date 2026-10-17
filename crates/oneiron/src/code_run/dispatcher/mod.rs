@@ -9,6 +9,7 @@ mod memory_verbs;
 mod reader_spawn;
 mod summarize;
 mod team_submit;
+mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
 mod wake_policy;
@@ -91,6 +92,9 @@ pub struct HostSelfDispatcher<'a> {
     /// The host's planner (OF-541, OF-389): what a planned spawn and the
     /// leader's calls read. Host configuration; no guest call reaches it.
     pub(super) planner: Option<HostPlannerBinding<'a>>,
+    /// The host's slip issuer, which signs the leader's subproject spawn
+    /// (OF-389). Host configuration; no guest call reaches it.
+    pub(super) slip_issuer: Option<&'a crate::authority::HostSlipIssuer>,
     /// The model provider the host's ladder says answered the run's last
     /// turn, whose program is the one running (OF-560). Host-internal: only
     /// [`Self::observe_model_provider`] sets it, from the served receipt,
@@ -218,6 +222,7 @@ impl<'a> HostSelfDispatcher<'a> {
             reader_spawn: None,
             reader_child: None,
             planner: None,
+            slip_issuer: None,
             model_provider: RefCell::new(None),
             fold_log: fold_verbs::FoldLog::Site,
         })

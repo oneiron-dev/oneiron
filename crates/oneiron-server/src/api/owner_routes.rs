@@ -46,8 +46,10 @@ mod connector_consent_routes;
 mod connector_subscription_routes;
 pub(super) mod cooperative_deletion_routes;
 mod decision_ask_routes;
+mod desktop_takeover_routes;
 mod diary_routes;
 mod disclosure_routes;
+mod dreamer_routes;
 mod embedding_space_routes;
 mod federation_connect_routes;
 mod guest_routes;
@@ -117,6 +119,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(connector_subscription_routes::routes())
         .merge(diary_routes::routes())
         .merge(disclosure_routes::routes())
+        .merge(dreamer_routes::routes())
         .merge(embedding_space_routes::routes())
         .merge(history_routes::routes())
         .merge(house_routes::routes())
@@ -134,6 +137,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(cooperative_deletion_routes::routes())
         .merge(federation_connect_routes::routes())
         .merge(decision_ask_routes::routes())
+        .merge(desktop_takeover_routes::routes())
         .merge(peer_confidence_routes::routes())
         .merge(skill_judge_routes::routes())
         .merge(wire_health_routes::routes())

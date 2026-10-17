@@ -226,6 +226,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn tasks_accept(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.accept", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_witness(&self, turn: NapiWitnessTurnInput) -> napi::Result<NapiWitnessReceipt> {
         let turn = turn.into_engine()?;
         let output = self.inner.vault_witness(&turn).map_err(facade_error)?;
@@ -559,6 +565,39 @@ impl NativeClient {
     pub fn vault_packs_put(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.packs.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_remove(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.remove", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_subscriptions_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.subscriptions.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_subscriptions_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.subscriptions.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_subscriptions_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.subscriptions.revoke", input)
             .map_err(facade_error)
     }
     #[napi]

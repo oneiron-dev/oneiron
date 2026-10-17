@@ -49,6 +49,10 @@ struct WitnessTurnInput {
     turn_ref: Option<String>,
     messages: Vec<WitnessMessageInput>,
     occurred_at: Option<f64>,
+    /// A quote on a project room's thread reply (OF-460): a span of one
+    /// MESSAGE in the room; omitted ⇒ no quote.
+    #[serde(default)]
+    quote: Option<oneiron::conversation_dag::QuoteSpan>,
     /// A new project room thread root's audience; omitted ⇒ it reads as its
     /// room does.
     #[serde(default)]
@@ -80,7 +84,7 @@ impl WitnessTurnInput {
         Ok(WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
-            quote: None,
+            quote: self.quote,
             thread_audience: self.thread_audience,
             messages,
             occurred_at,
@@ -503,6 +507,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn tasks_accept(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.accept")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.accept", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_witness(&self, py: Python<'_>, turn_json: &str) -> PyResult<String> {
         let turn_json = decode::<WitnessTurnInput>(turn_json, "witness turn")?
             .into_engine()
@@ -742,6 +753,55 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.packs.put")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.packs.put", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_remove(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.remove")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.remove", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_subscriptions_put(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.subscriptions.put")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.subscriptions.put", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_subscriptions_list(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.subscriptions.list")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.subscriptions.list", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_subscriptions_revoke(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.subscriptions.revoke")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.subscriptions.revoke", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

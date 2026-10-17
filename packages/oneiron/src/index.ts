@@ -55,11 +55,13 @@ export interface LensFrameEventRequest {
 /**
  * What a lens-card event answers. There is no discriminator: a local action
  * answers the card's new `$state`, a deterministic tool its outcome and the
- * scoped read of its entity arguments.
+ * scoped read of its entity arguments, and a model round trip the callback
+ * queued for the agent that emitted the card.
  */
 export type LensFrameEventReply =
   | { readonly $state: Facade.GeneratedUiStateSnapshot }
   | { readonly outcome: unknown; readonly readReceipt: Facade.ScopedReadReceipt }
+  | { readonly queued: boolean; readonly callbackId: string }
 
 /** What a lens-card close answers: whether the server held its frame. */
 export interface CloseLensFrameReply {
@@ -401,6 +403,8 @@ export class Oneiron {
     packs: {
       /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
+      /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
+      remove: (input: Facade.PackRemoveRequest): Facade.PackInstallReceipt => this.#call(() => this.#client.vaultPacksRemove(input) as Facade.PackInstallReceipt),
       setup: {
         /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
         prepare: (input: Facade.PackSetupRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupPrepare(input) as Facade.PackSetupReceipt),
@@ -410,6 +414,16 @@ export class Oneiron {
         answer: (input: Facade.PackSetupAnswerRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupAnswer(input) as Facade.PackSetupReceipt),
         /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
         verify: (input: Facade.PackSetupVerifyRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupVerify(input) as Facade.PackSetupReceipt),
+      },
+    },
+    connectors: {
+      subscriptions: {
+        /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
+        put: (input: Facade.ChannelSubscriptionRequest): Facade.ChannelMessageSubscription => this.#call(() => this.#client.vaultConnectorsSubscriptionsPut(input) as Facade.ChannelMessageSubscription),
+        /** An agent's connector event subscriptions, standing and revoked, for the owner. */
+        list: (input: Facade.ChannelSubscriptionsRequest): Facade.ChannelSubscriptions => this.#call(() => this.#client.vaultConnectorsSubscriptionsList(input) as Facade.ChannelSubscriptions),
+        /** The owner stops one connector event subscription; the agent's key for the channel stays. */
+        revoke: (input: Facade.ChannelSubscriptionRevokeRequest): Facade.ChannelSubscriptionRevoked => this.#call(() => this.#client.vaultConnectorsSubscriptionsRevoke(input) as Facade.ChannelSubscriptionRevoked),
       },
     },
     authority: {
@@ -799,7 +813,7 @@ export class Oneiron {
       work_companion: {
         /** A workspace's work_companion policy, readable by every member it governs. */
         get: (input: Facade.WorkspaceRefRequest): Facade.WorkCompanionPolicy => this.#call(() => this.#client.vaultWorkspaceWorkCompanionGet(input) as Facade.WorkCompanionPolicy),
-        /** The owner sets a workspace's work_companion policy in person. */
+        /** The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person. */
         set: (input: Facade.WorkCompanionSetRequest): Facade.WorkCompanionPolicy => this.#call(() => this.#client.vaultWorkspaceWorkCompanionSet(input) as Facade.WorkCompanionPolicy),
       },
     },
@@ -886,12 +900,14 @@ export class Oneiron {
   /** Describes one task's card, or the whole TASKS section when no task is named. */
   describe(taskRef?: string): TaskDescription { return this.#call(() => this.#client.describe({task_ref: taskRef}) as TaskDescription) }
   readonly tasks = {
-    /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal. */
+    /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway. */
     create: (input: Facade.TaskCreateRequest): Facade.TaskCreateReceipt => this.#call(() => this.#client.tasksCreate(input) as Facade.TaskCreateReceipt),
     /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
     wave: (input: Facade.TaskWaveRequest): Facade.TaskWaveReceipt => this.#call(() => this.#client.tasksWave(input) as Facade.TaskWaveReceipt),
     /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. */
     update: (input: Facade.TaskUpdateRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
+    /** Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports. */
+    accept: (input: Facade.TaskAccept): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksAccept(input) as Facade.TaskCallReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
     answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
@@ -913,7 +929,7 @@ export class Oneiron {
   /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly ai = {
-    /** The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left. */
+    /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
     options: (input: Facade.AiOptionsRequest): Facade.AiOptions => this.#call(() => this.#client.aiOptions(input) as Facade.AiOptions),
     /** One image out of the host's image model; reference images make it an edit. */
     image: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiImage(input) as Facade.AiAnswer),

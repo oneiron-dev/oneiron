@@ -32,7 +32,8 @@ pub struct LensFrameEventRequest {
 
 /// What an event answers. The wire has no discriminator: a local action
 /// answers the card's new `$state`, a deterministic tool its outcome and the
-/// scoped read of its entity arguments.
+/// scoped read of its entity arguments, and a model round trip the callback
+/// queued for the agent that emitted the card.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum LensFrameEventReply {
@@ -49,6 +50,15 @@ pub enum LensFrameEventReply {
         /// The principal's scoped read of the action's entity arguments.
         #[serde(rename = "readReceipt")]
         read_receipt: ScopedReadReceipt,
+    },
+    /// A model round trip went back to the agent that emitted the card, as
+    /// its next turn (`202`). A replay answers the same callback.
+    Callback {
+        /// False once the agent's run that carried it has finished.
+        queued: bool,
+        /// The agent run that carries the callback.
+        #[serde(rename = "callbackId")]
+        callback_id: String,
     },
 }
 
@@ -75,7 +85,8 @@ impl OneironClient {
     /// rendered it, under this handle's credential. `request.event.cardId`
     /// must name the same card. A card the server holds no frame for
     /// (closed, evicted, or held before a restart) refuses `NOT_FOUND`:
-    /// render the lens again. A model round-trip action refuses
+    /// render the lens again. A model round-trip action queues its callback
+    /// for the agent that emitted the card; a card no agent emitted refuses
     /// `INVALID_STATE`. An embedded handle refuses `BAD_REQUEST`.
     pub fn lens_frame_event(
         &self,
