@@ -19507,7 +19507,7 @@
      "purpose": "Tournament wire types, their validating constructors, and the pinned bounds",
      "surface": {
       "const": 4,
-      "crate-vis": 11,
+      "crate-vis": 10,
       "enum": 3,
       "fn": 12,
       "struct": 14
@@ -19981,13 +19981,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "AmendmentAuditFixture"
+      "AmendmentAuditFixture",
+      "AmendmentAuditRecord"
      ],
      "path": "src/edit_distance/attribution/audit.rs",
      "purpose": "Held-out judge audit (Blind Curator guard)",
      "surface": {
-      "fn": 4,
-      "struct": 1
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -20045,7 +20046,7 @@
      "path": "src/edit_distance/attribution/taxonomy.rs",
      "purpose": "Amendment taxonomy: classes, causes, evidence and judgment types",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 12,
       "struct": 4,
@@ -40928,14 +40929,34 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AttributionAuditRecord",
       "AttributionAuditReport",
       "AuditFixture"
      ],
      "path": "src/skill_attribution/audit.rs",
      "purpose": "Held-out defect-injection audit: fixtures, the generic harness, and the pass-rate report",
      "surface": {
-      "fn": 5,
-      "struct": 2
+      "fn": 6,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuditAnswerSource",
+      "AuditBatch",
+      "AuditCase",
+      "FloorFit",
+      "RawAnswer"
+     ],
+     "path": "src/skill_attribution/calibration.rs",
+     "purpose": "OF-542: `attribution_unclear_floor` learned from the held-out judge audits (ARCH-0056 §5: refit from judge…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 2,
+      "struct": 3
      }
     },
     {
@@ -40945,7 +40966,7 @@
      "path": "src/skill_attribution/codec.rs",
      "purpose": "Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -40988,7 +41009,7 @@
      "purpose": "Classification: the deterministic rule tier, the host's decisions for the model tier through the shared…",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 2,
       "trait": 1
@@ -41030,8 +41051,8 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 8,
-      "re-export": 13
+      "crate-vis": 10,
+      "re-export": 14
      }
     },
     {
@@ -41091,7 +41112,7 @@
      "path": "src/skill_attribution/split.rs",
      "purpose": "The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -53747,7 +53768,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -54022,7 +54043,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3280,
+   "source_files": 3281,
    "test_files": 902
   },
   "oneiron-android": {
