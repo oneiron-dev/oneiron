@@ -102,6 +102,19 @@ pub(super) async fn bind(
         models: Arc::clone(runtime),
         guard,
     });
+    // A reader child's calls take the same admission, on its own child
+    // scope's guard in place of code mode's.
+    let reader_meter: crate::mcp::ReaderMeter = {
+        let vault = Arc::clone(server.vault());
+        let models = Arc::clone(runtime);
+        Arc::new(move |guard: BudgetGuard| {
+            Arc::new(CodeModeBackend {
+                vault: Arc::clone(&vault),
+                models: Arc::clone(&models),
+                guard,
+            }) as Arc<dyn LlmBackend>
+        })
+    };
     let config = EngineExecutorConfig {
         // Each run's id and task replace these.
         run_id: EntityId::now(),
@@ -115,7 +128,9 @@ pub(super) async fn bind(
         limits: EngineExecutorLimits::default(),
     };
     let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
-        Ok(provider) => provider.with_clock_from_first_start(),
+        Ok(provider) => provider
+            .with_clock_from_first_start()
+            .with_reader_meter(reader_meter),
         Err(error) => {
             tracing::error!(%error, "code mode's executor config is invalid");
             return server;
