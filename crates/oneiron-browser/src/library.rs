@@ -155,6 +155,9 @@ pub struct LibraryRunOutput {
 #[serde(deny_unknown_fields)]
 pub struct LibraryRetireInput {
     pub workflow: String,
+    /// Why it leaves; the library keeps it with the retire.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// The program a retire took out, as its card read then.
@@ -178,9 +181,13 @@ pub trait WorkflowLibrary: Send {
     ) -> Result<String, BrowserError>;
     /// Counts one library run, and whether it met its postcondition.
     fn record_run(&mut self, workflow: &str, met: bool) -> Result<(), BrowserError>;
-    /// Takes a program out of the library; `None` when none is filed under
-    /// `workflow`.
-    fn retire(&mut self, workflow: &str) -> Result<Option<LibraryCard>, BrowserError>;
+    /// Takes a program out of the library for `reason`; `None` when none is
+    /// filed under `workflow`.
+    fn retire(
+        &mut self,
+        workflow: &str,
+        reason: Option<&str>,
+    ) -> Result<Option<LibraryCard>, BrowserError>;
 }
 
 impl WorkflowProgram {

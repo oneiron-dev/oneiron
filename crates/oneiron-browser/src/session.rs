@@ -468,7 +468,7 @@ impl BrowserDriver for BrowserSession {
     ) -> Result<LibraryRetireOutput, BrowserError> {
         let library = self.library.as_mut().ok_or_else(no_library)?;
         let retired = library
-            .retire(&input.workflow)?
+            .retire(&input.workflow, input.reason.as_deref())?
             .ok_or(BrowserError::NoWorkflow(input.workflow))?;
         Ok(LibraryRetireOutput { retired })
     }

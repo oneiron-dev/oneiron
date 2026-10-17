@@ -8,7 +8,7 @@
 //! program, stamped with its task type (OF-543). It is kept here rather than
 //! as a TASK entity, so filing it routes no work; running it is the browser
 //! verb `self.browser.library.run`, and `self.browser.library.retire` takes
-//! it out.
+//! it out, keeping the record it had with whose word, when and why.
 
 use std::cmp::Reverse;
 
@@ -26,6 +26,11 @@ use crate::task_type::{PlacementDecisions, PlacementRequest, place_type_ref};
 /// The library's programs. Key: the site's BLAKE3 hash, then the program's id.
 const WORKFLOWS: SideTable<([u8; 32], EntityId), WorkflowRecord, Named> =
     SideTable::new(&side_table::BROWSER_WORKFLOW);
+
+/// What each retire took out. Key: the program's id (a refile after a retire
+/// takes a new one).
+const RETIRED: SideTable<EntityId, RetiredWorkflow, Named> =
+    SideTable::new(&side_table::BROWSER_WORKFLOW_RETIRED);
 
 /// Whether only the caller whose run filed a program may retire it. A filed
 /// program is the vault's: any caller the library serves may run or refile
@@ -63,6 +68,17 @@ impl WorkflowRecord {
             failures: self.failures,
         }
     }
+}
+
+/// A program a retire took out: the record it had, whose word retired it,
+/// when, and why.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetiredWorkflow {
+    pub record: WorkflowRecord,
+    pub retired_by: EntityId,
+    pub retired_at: u64,
+    /// The retiring caller's reason, when it gave one.
+    pub reason: Option<String>,
 }
 
 fn site_key(site: &str) -> [u8; 32] {
@@ -213,13 +229,20 @@ pub enum Retired {
     NotFiler,
 }
 
-/// Takes the program filed under `id` out of the library, at `by`'s word.
-/// A later solved run that passes both checks files it afresh, with no runs.
+/// Takes the program filed under `id` out of the library, at `by`'s word at
+/// `at`, for `reason`, and keeps the record it had with them. A later solved
+/// run that passes both checks files it afresh, with no runs.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub fn retire_workflow(vault: &Vault, id: EntityId, by: EntityId) -> Result<Retired> {
+pub fn retire_workflow(
+    vault: &Vault,
+    id: EntityId,
+    by: EntityId,
+    reason: Option<&str>,
+    at: u64,
+) -> Result<Retired> {
     let Some(filed) = workflow(vault, id)? else {
         return Ok(Retired::NotFiled);
     };
@@ -232,6 +255,26 @@ pub fn retire_workflow(vault: &Vault, id: EntityId, by: EntityId) -> Result<Reti
             return Ok(Retired::NotFiler);
         }
         WORKFLOWS.delete(&vault.store, wtxn, &key)?;
-        Ok(Retired::Taken(Box::new(record)))
+        let trace = RetiredWorkflow {
+            record,
+            retired_by: by,
+            retired_at: at,
+            reason: reason
+                .map(str::trim)
+                .filter(|reason| !reason.is_empty())
+                .map(str::to_owned),
+        };
+        RETIRED.put(vault, wtxn, &id, &trace)?;
+        Ok(Retired::Taken(Box::new(trace.record)))
     })
+}
+
+/// What the retire of `id` kept, if one took it out.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn retired_workflow(vault: &Vault, id: EntityId) -> Result<Option<RetiredWorkflow>> {
+    let rtxn = vault.store.env.read_txn()?;
+    RETIRED.get(&vault.store, &rtxn, &id)
 }
