@@ -92,6 +92,11 @@ pub fn decode_enrollment_attempt_payload(bytes: &[u8]) -> Result<CampaignEnrollm
 /// transitions, so the newest one would inherit the oldest one's queue row and
 /// then never execute — an advisory key silently deciding what gets enrolled.
 ///
+/// It also covers the campaign and the program: one query feeds several
+/// programs, each campaign with its own epoch sequence, so two programs' entries
+/// at the same epoch are different work, and neither's settled or failed row
+/// may stand in for the other's.
+///
 /// # Errors
 ///
 /// [`Error::EntityNotFound`] when the membership event ref does not resolve.
@@ -102,8 +107,11 @@ pub fn enrollment_dedupe_key(
     let event = campaign_enrollment_event(vault, payload.membership_event_ref)?
         .ok_or(Error::EntityNotFound)?;
     let mut hasher = Sha256::new();
-    hasher.update(b"oneiron.campaign.enrollment.dedupe.v1");
+    hasher.update(b"oneiron.campaign.enrollment.dedupe.v2");
     hasher.update(event.query_ref.as_bytes());
+    hasher.update(event.campaign_ref.as_bytes());
+    hasher.update(payload.campaign_program_ref.as_bytes());
+    hasher.update(payload.program_step_ref.as_bytes());
     hasher.update(event.entity_ref.as_bytes());
     hasher.update(event.epoch.to_be_bytes());
     hasher.update(event.transition.as_str().as_bytes());

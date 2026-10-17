@@ -30,7 +30,8 @@ use oneiron::llm::decision::{
 use oneiron::llm::image::ImageBytes;
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{
-    BlobArtifactInput, ImageViewRequest, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult,
+    BlobArtifactInput, BlobVersionView, ImageViewRequest, MEMORY_CODE_INTERNAL, Memory,
+    MemoryError, MemoryResult,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
@@ -322,21 +323,13 @@ fn contract(request: &AiVerdictRequest) -> MemoryResult<AnswerContract> {
 /// at the bytes' hash, which is the version's own. A caller that may not
 /// write keeps the pin on the run, and the pixels go with its browser.
 fn kept(reader: &Memory<'_>, handle: &str, image: DecisionImage) -> DecisionImage {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
-    let run = image.evidence.id.to_hex();
-    let stored = reader
-        .put_blob_artifact(&BlobArtifactInput {
-            id: None,
-            name: format!("decision screenshot {handle}"),
-            media_type: image.image.media_type.clone(),
-            occurred_at: now,
-            learned_at: None,
-        })
-        .and_then(|artifact| {
-            reader.append_blob_version(&artifact.id_hex, &image.image.bytes, Some(&run), now, None)
-        });
+    let stored = keep_screenshot(
+        reader,
+        &image.evidence.id.to_hex(),
+        format!("decision screenshot {handle}"),
+        image.image.media_type.clone(),
+        &image.image.bytes,
+    );
     let artifact = match stored.map(|version| EntityId::from_hex(&version.artifact_ref)) {
         Ok(Ok(artifact)) => artifact,
         Ok(Err(_)) => return image,
@@ -352,6 +345,29 @@ fn kept(reader: &Memory<'_>, handle: &str, image: DecisionImage) -> DecisionImag
         },
         ..image
     }
+}
+
+/// A screenshot's pixels as a new blob artifact `writer` writes, named
+/// `name`, with `bytes` as its one version, made by run `run`. The version
+/// names the exact bytes (its hash) where the artifact's head may move.
+pub(crate) fn keep_screenshot(
+    writer: &Memory<'_>,
+    run: &str,
+    name: String,
+    media_type: String,
+    bytes: &[u8],
+) -> MemoryResult<BlobVersionView> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let artifact = writer.put_blob_artifact(&BlobArtifactInput {
+        id: None,
+        name,
+        media_type,
+        occurred_at: now,
+        learned_at: None,
+    })?;
+    writer.append_blob_version(&artifact.id_hex, bytes, Some(run), now, None)
 }
 
 /// The call's budget, and the Unix milliseconds it ends at: the time left

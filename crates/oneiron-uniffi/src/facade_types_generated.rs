@@ -3,9 +3,9 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 259 facade rows, 822 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 219.
-// WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
+// UniFFI census: 262 facade rows, 837 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 221.
+// WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
@@ -3608,6 +3608,22 @@ pub struct GeneratedLens {
     pub root: crate::WireJson,
 }
 
+/// `oneiron::claim::scoped_read::weave_lens::WeaveLensRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveLensRefusal {
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "skill_ref")]
+    pub skill_ref: String,
+    #[serde(rename = "skill_version")]
+    pub skill_version: String,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "refused_at")]
+    pub refused_at: u64,
+}
+
 /// `oneiron::claim::scoped_read::weave_serve::WeaveDigestView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WeaveDigestView {
@@ -3621,6 +3637,12 @@ pub struct WeaveDigestView {
     pub narrowing: ScopedReadReceipt,
     #[serde(rename = "lens", default, skip_serializing_if = "Option::is_none")]
     pub lens: Option<GeneratedLens>,
+    #[serde(
+        rename = "lens_refused",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lens_refused: Option<WeaveLensRefusal>,
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::WeaveWrongLinkRequest`.
@@ -6355,15 +6377,6 @@ pub struct LensDefaultRequest {
     pub threads: Option<Vec<String>>,
     #[serde(rename = "as_of", default, skip_serializing_if = "Option::is_none")]
     pub as_of: Option<u64>,
-}
-
-/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `GeneratedLens`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ScopedReadResultGeneratedLens {
-    #[serde(rename = "value")]
-    pub value: GeneratedLens,
-    #[serde(rename = "narrowing")]
-    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron_authority::federation::scope::ScopeAxis` with `T` = `ScopeId`.
@@ -10603,6 +10616,14 @@ pub struct DecisionReceipt {
     pub time: Option<DecisionTime>,
     #[serde(rename = "images", default, skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<ImagePin>>,
+    #[serde(rename = "think_row", default, skip_serializing_if = "Option::is_none")]
+    pub think_row: Option<u32>,
+    #[serde(
+        rename = "person_row",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub person_row: Option<u32>,
 }
 
 /// `oneiron::llm::decision::types::HumanAskReason`.
@@ -12571,6 +12592,20 @@ pub enum DeckOp {
         #[serde(rename = "geometry")]
         geometry: GeometryProps,
     },
+    #[serde(rename = "set_preset")]
+    SetPreset {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "preset")]
+        preset: Preset,
+    },
+    #[serde(rename = "set_payload")]
+    SetPayload {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "payload")]
+        payload: NodePayload,
+    },
     #[serde(rename = "replace_opaque")]
     ReplaceOpaque {
         #[serde(rename = "part")]
@@ -12640,6 +12675,12 @@ pub struct OfficeBodyForkOpenRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub run_root_ref: Option<String>,
+    #[serde(
+        rename = "proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_ref: Option<String>,
 }
 
 /// `oneiron::office_body::ForkState`.
@@ -12764,6 +12805,8 @@ pub struct OfficeBodyDiff {
     pub base: Vec<u8>,
     #[serde(rename = "head")]
     pub head: Vec<u8>,
+    #[serde(rename = "fork_head")]
+    pub fork_head: Vec<u8>,
     #[serde(rename = "proposal")]
     pub proposal: Vec<BlockChange>,
     #[serde(rename = "current")]
@@ -12782,6 +12825,185 @@ pub struct OfficeBodyForkMergeRequest {
     pub fork_ref: String,
     #[serde(rename = "reviewed_head")]
     pub reviewed_head: Vec<u8>,
+    #[serde(rename = "reviewed_fork")]
+    pub reviewed_fork: Vec<u8>,
+}
+
+/// `oneiron::office_body::verbs::OfficeBodyProposalRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyProposalRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+}
+
+/// `oneiron::office_body::consent::ProposalHeader`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProposalHeader {
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "opener")]
+    pub opener: String,
+    #[serde(rename = "run_root", default, skip_serializing_if = "Option::is_none")]
+    pub run_root: Option<String>,
+    #[serde(rename = "opened_at")]
+    pub opened_at: u64,
+}
+
+/// `oneiron::office_body::consent::MemberVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MemberVerdict {
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "landed")]
+    Landed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "let_go")]
+    LetGo,
+}
+
+/// `oneiron::office_body::consent::AnsweringAuthority`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum AnsweringAuthority {
+    #[serde(rename = "word")]
+    Word {
+        #[serde(rename = "person")]
+        person: String,
+    },
+    #[serde(rename = "grant")]
+    Grant {
+        #[serde(rename = "grant_ref")]
+        grant_ref: String,
+        #[serde(rename = "decision")]
+        decision: String,
+    },
+}
+
+/// `oneiron::office_body::consent::MemberAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MemberAnswer {
+    #[serde(rename = "by")]
+    pub by: AnsweringAuthority,
+    #[serde(rename = "caller")]
+    pub caller: String,
+    #[serde(rename = "head")]
+    pub head: Vec<u8>,
+    #[serde(rename = "fork_head")]
+    pub fork_head: Vec<u8>,
+    #[serde(rename = "landed", default, skip_serializing_if = "Option::is_none")]
+    pub landed: Option<Vec<u8>>,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::office_body::consent::ProposalMember`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProposalMember {
+    #[serde(rename = "fork")]
+    pub fork: String,
+    #[serde(rename = "opener")]
+    pub opener: String,
+    #[serde(rename = "run_root", default, skip_serializing_if = "Option::is_none")]
+    pub run_root: Option<String>,
+    #[serde(rename = "verdict")]
+    pub verdict: MemberVerdict,
+    #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<MemberAnswer>,
+}
+
+/// `oneiron::office_body::consent::BundleVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BundleVerdict {
+    #[serde(rename = "landed")]
+    Landed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "mixed")]
+    Mixed,
+    #[serde(rename = "let_go")]
+    LetGo,
+}
+
+/// `oneiron::office_body::consent::ProposalSettlement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProposalSettlement {
+    #[serde(rename = "verdict")]
+    pub verdict: BundleVerdict,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `oneiron::office_body::consent::OfficeBodyProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OfficeBodyProposal {
+    #[serde(rename = "header")]
+    pub header: ProposalHeader,
+    #[serde(rename = "members")]
+    pub members: Vec<ProposalMember>,
+    #[serde(
+        rename = "settlement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub settlement: Option<ProposalSettlement>,
+}
+
+/// `oneiron::office_body::consent::SettleVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SettleVerdict {
+    #[serde(rename = "accept")]
+    Accept,
+    #[serde(rename = "reject")]
+    Reject,
+}
+
+/// `oneiron_docedit::live::pptx::ApproveScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ApproveScope {
+    #[serde(rename = "this_actor")]
+    ThisActor(String),
+    #[serde(rename = "this_run_and_children")]
+    ThisRunAndChildren(String),
+    #[serde(rename = "one_item")]
+    OneItem(String),
+}
+
+/// `oneiron::office_body::verbs::OfficeBodyReviewedFork`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyReviewedFork {
+    #[serde(rename = "fork_ref")]
+    pub fork_ref: String,
+    #[serde(rename = "reviewed_fork")]
+    pub reviewed_fork: Vec<u8>,
+}
+
+/// `oneiron::office_body::verbs::OfficeBodyProposalSettleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyProposalSettleRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "verdict")]
+    pub verdict: SettleVerdict,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ApproveScope>,
+    #[serde(rename = "reviewed_head")]
+    pub reviewed_head: Vec<u8>,
+    #[serde(rename = "reviewed")]
+    pub reviewed: Vec<OfficeBodyReviewedFork>,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// `oneiron::office_body::verbs::OfficeBodyExportVerbRequest`.
@@ -12963,6 +13185,11 @@ pub enum Conflict {
         #[serde(rename = "part")]
         part: String,
     },
+    #[serde(rename = "payload_vs_payload")]
+    PayloadVsPayload {
+        #[serde(rename = "node")]
+        node: u64,
+    },
 }
 
 /// `oneiron_docedit::live::pptx::RelationshipChange`.
@@ -13036,6 +13263,8 @@ pub struct DeckDiff {
     pub formatting_changed: Vec<u64>,
     #[serde(rename = "geometry_changed")]
     pub geometry_changed: Vec<u64>,
+    #[serde(rename = "payload_changed")]
+    pub payload_changed: Vec<u64>,
     #[serde(rename = "opaque_changed")]
     pub opaque_changed: Vec<OpaqueChange>,
     #[serde(rename = "affected_slides")]
@@ -13071,17 +13300,6 @@ pub struct DeckReviewView {
         skip_serializing_if = "Option::is_none"
     )]
     pub evidence_refusal: Option<String>,
-}
-
-/// `oneiron_docedit::live::pptx::ApproveScope`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ApproveScope {
-    #[serde(rename = "this_actor")]
-    ThisActor(String),
-    #[serde(rename = "this_run_and_children")]
-    ThisRunAndChildren(String),
-    #[serde(rename = "one_item")]
-    OneItem(String),
 }
 
 /// `oneiron_docedit::live::pptx::Landing`.
@@ -13165,6 +13383,8 @@ pub struct DeckExportView {
     pub changed_parts: Vec<String>,
     #[serde(rename = "record", default, skip_serializing_if = "Option::is_none")]
     pub record: Option<OfficeBodyExportRecord>,
+    #[serde(rename = "proposed", default, skip_serializing_if = "Option::is_none")]
+    pub proposed: Option<PendingProposalView>,
 }
 
 /// `oneiron::office_body::pptx::verbs::DeckGateRequest`.
@@ -13224,6 +13444,48 @@ pub struct DeckGateView {
 pub struct DeckOracleRequest {
     #[serde(rename = "receipt")]
     pub receipt: OracleReceipt,
+}
+
+/// `oneiron::office_body::pptx::preview::DeckPreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeckPreviewRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "slides")]
+    pub slides: Vec<u64>,
+}
+
+/// `oneiron::office_body::pptx::preview::DeckPreviewSlide`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckPreviewSlide {
+    #[serde(rename = "slide")]
+    pub slide: u64,
+    #[serde(rename = "media_type")]
+    pub media_type: String,
+    #[serde(rename = "image_hash")]
+    pub image_hash: String,
+    #[serde(rename = "content_base64")]
+    pub content_base64: String,
+}
+
+/// `oneiron::office_body::pptx::preview::DeckPreview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckPreview {
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+    #[serde(rename = "profile")]
+    pub profile: String,
+    #[serde(rename = "projector")]
+    pub projector: String,
+    #[serde(rename = "export_key")]
+    pub export_key: String,
+    #[serde(rename = "renderer")]
+    pub renderer: String,
+    #[serde(rename = "provisional")]
+    pub provisional: bool,
+    #[serde(rename = "slides")]
+    pub slides: Vec<DeckPreviewSlide>,
 }
 
 /// `oneiron::task_verb::sdk_memory::CreateNoteRequest`.
