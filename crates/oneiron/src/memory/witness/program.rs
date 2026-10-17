@@ -363,19 +363,23 @@ impl Memory<'_> {
         // OF-063 prose links (Engine ruling 10-17): every AI-written message
         // this program lands, whatever door it came through, is read for
         // links its writer cannot resolve, receipt-only and before the writer
-        // opens. An overlay landing is a non-anonymous off-record session (an
-        // anonymous one was refused above), so its room speech keeps its
-        // receipt; only an anonymous session keeps none. An imported turn is
-        // a source's words, not this writer's.
-        if !matches!(
+        // opens; the receipt is written only once the turn has landed (Engine
+        // ruling 10-18: landed speech only). An overlay landing is a
+        // non-anonymous off-record session (an anonymous one was refused
+        // above), so its room speech keeps its receipt; only an anonymous
+        // session keeps none. An imported turn is a source's words, not this
+        // writer's.
+        let unlinked_prose = if matches!(
             landing,
             Landing::Base {
                 imported: Some(_),
                 ..
             }
         ) {
-            crate::gate::record_references::admit_witness_prose(self, turn);
-        }
+            Vec::new()
+        } else {
+            crate::gate::record_references::witness_prose_unlinked(self, turn)
+        };
         let plan = self.plan_witness(turn, &landing, door, admit)?;
         let held = match &landing {
             Landing::Base { held, .. } => *held,
@@ -397,6 +401,7 @@ impl Memory<'_> {
             let mut quoted: Option<crate::conversation_dag::QuotedReply> = None;
             let admission = match &sink {
                 WitnessSink::Base(_) => {
+                    let mut thread = None;
                     let person_author = match self.base_guards_in_txn(&plan, wtxn, prepare)? {
                         BaseGuards::HardDeleted(id) => return Ok(Landed::HardDeleted(id)),
                         BaseGuards::Clear {
@@ -404,10 +409,12 @@ impl Memory<'_> {
                             person_author,
                             leader_project: project,
                             quoted: proven,
+                            thread: binding,
                         } => {
                             mint_conversation = absent;
                             leader_project = project;
                             quoted = proven;
+                            thread = binding;
                             // The importer is not the author of the source's words.
                             person_author.filter(|_| plan.imported.is_none())
                         }
@@ -418,6 +425,7 @@ impl Memory<'_> {
                         wtxn,
                         person_author,
                         quoted.as_ref(),
+                        thread.as_ref(),
                     )?
                 }
                 // Host-derived ids are create-or-verify in the COMPOSED
@@ -425,16 +433,41 @@ impl Memory<'_> {
                 // overlay segment installs, and a divergent body or parent
                 // leaves no journal or index delta.
                 WitnessSink::Overlay(overlay) => {
+                    // A private thread opens on the room's base, where its
+                    // root is stamped (FIX 2951); an overlay opens none.
+                    if plan.turn.thread_audience.is_some() {
+                        return Err(MemoryError::bad_request(
+                            "a private thread opens on the room itself, not in a session overlay",
+                        ));
+                    }
                     let rostered = room_speech.is_some();
                     let person_author =
                         self.overlay_guards_in_txn(&plan, overlay, rostered, wtxn)?;
-                    self.admit_witness_in_txn(
+                    let admission = self.admit_witness_in_txn(
                         &plan,
                         &overlay.read_view()?,
                         wtxn,
                         person_author,
                         None,
-                    )?
+                        None,
+                    )?;
+                    // A stored private thread's TURN takes words from its
+                    // audience alone, as on base.
+                    if let AdmittedTurn::Existing(record) = &admission.turn
+                        && let Some(binding) =
+                            crate::workspace_roster::thread_binding(&record.body)?
+                        && !crate::workspace_roster::thread_root_readable_in(
+                            self.vault,
+                            wtxn,
+                            binding.root,
+                            &[self.actor],
+                        )?
+                    {
+                        return Err(MemoryError::not_found(
+                            "the witnessed turn no longer exists",
+                        ));
+                    }
+                    admission
                 }
             };
             let landed = match &sink {
@@ -546,7 +579,7 @@ impl Memory<'_> {
             Ok(landed)
         })?;
 
-        match landed {
+        let answer = match landed {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),
             Landed::Base(receipt) => {
                 // A stretch on record took this turn into base; a copy of the
@@ -561,6 +594,11 @@ impl Memory<'_> {
                         .collect();
                     session.note_on_record_messages(plan.turn_id, &messages);
                 }
+                // A room row this turn extended reaches the room's live window
+                // after commit: an append-only extension re-puts no TURN for
+                // the live mirror to carry. No room row, no window: a no-op.
+                #[cfg(feature = "sync")]
+                self.vault.refresh_room_turn_in_live_window(&plan.turn_id);
                 Ok(receipt)
             }
             Landed::Overlay { segment, aliases } => {
@@ -573,7 +611,11 @@ impl Memory<'_> {
                 }
                 overlay_receipt(&plan, aliases)
             }
+        };
+        if answer.is_ok() {
+            crate::gate::record_references::receipt_landed_prose(self, &unlinked_prose);
         }
+        answer
     }
 
     fn plan_witness<'t>(
@@ -670,8 +712,9 @@ impl Memory<'_> {
     /// The in-transaction half both landings share: the ONE-1686 door on every
     /// envelope, then the create-or-verify checks against `dbs` (base for a
     /// base landing, the composed room view for an overlay one). A minted TURN
-    /// carries `person_author` as its immutable byline and `quoted`, a room
-    /// thread reply's proven quote, in its first body (OF-460).
+    /// carries `person_author` as its immutable byline, `quoted`, a room
+    /// thread reply's proven quote, in its first body (OF-460), and `thread`,
+    /// its thread binding (FIX 2951).
     fn admit_witness_in_txn<'p>(
         &self,
         plan: &'p WitnessPlan<'_>,
@@ -679,6 +722,7 @@ impl Memory<'_> {
         wtxn: &heed::RoTxn<'_>,
         person_author: Option<EntityId>,
         quoted: Option<&crate::conversation_dag::QuotedReply>,
+        thread: Option<&crate::workspace_roster::ThreadBinding>,
     ) -> MemoryResult<WitnessAdmission<'p>> {
         // ONE-1686 (RT-04): the approval-ceiling door, before ANY row stages.
         // The policy manifest is resolved from THIS transaction's snapshot, so
@@ -770,12 +814,18 @@ impl Memory<'_> {
             // call has none to stamp, and the scanner reads this key to score
             // the turn's role.
             None => match plan.speaker {
-                Some(speaker) => AdmittedTurn::Mint {
-                    body: match &plan.imported {
+                Some(speaker) => {
+                    let body = match &plan.imported {
                         Some(stamp) => encode_imported_turn_body(speaker, stamp.source)?,
                         None => encode_witness_turn_body(speaker, person_author, quoted)?,
-                    },
-                },
+                    };
+                    AdmittedTurn::Mint {
+                        body: match thread {
+                            Some(binding) => crate::workspace_roster::stamp_thread(&body, binding)?,
+                            None => body,
+                        },
+                    }
+                }
                 None => {
                     return Err(MemoryError::bad_request(
                         "a new witnessed turn needs one non-system speaker",

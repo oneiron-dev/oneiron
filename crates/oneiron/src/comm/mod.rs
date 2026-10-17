@@ -45,10 +45,14 @@ pub(crate) use self::consent::{
     supersede_party_opt_out_head_in_txn,
 };
 pub use self::descriptor::{
-    CLAIM_CLASS_DESCRIPTOR_BODY_KEYS, ClaimClassDescriptor, ClaimWriteClass, EnforcementStamp,
-    claim_class_descriptor_id, decode_claim_class_descriptor, encode_claim_class_descriptor,
+    CLAIM_CLASS_DESCRIPTOR_BODY_KEYS, ClaimClassDescriptor, ClaimSubjectKind, ClaimValidatorKind,
+    ClaimWriteClass, EnforcementStamp, claim_class_descriptor_id, decode_claim_class_descriptor,
+    encode_claim_class_descriptor,
 };
-pub(crate) use self::descriptor::{is_restrictive_comm_predicate, seed_claim_class_descriptors};
+pub(crate) use self::descriptor::{
+    check_claim_against_descriptor_in_txn, is_restrictive_comm_predicate,
+    seed_claim_class_descriptors,
+};
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
     CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,

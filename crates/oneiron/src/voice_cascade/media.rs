@@ -1,11 +1,12 @@
 //! The cascade's speech and hearing on the host's media seats (OF-410).
 //! [`MediaTtsAdapter`] and [`MediaAsrAdapter`] are the cascade's TTS and ASR
-//! ports over `ai.speech` and `ai.transcribe`. Each SUBMITS bounded work to
-//! a [`VoiceMediaQueue`] and never waits. The host's [`VoiceMediaWorker`]
-//! runs that work outside the session lock through its [`AiMediaDoor`], so
-//! every call is admitted on its own permit, sent through its run's media
-//! gate and settled in its native units (characters spoken, seconds heard),
-//! as every other media call is.
+//! ports over `ai.speech` and `ai.transcribe`. Each SUBMITS work to a
+//! [`VoiceMediaQueue`] and never waits; the queue never refuses it for room
+//! or size (Rule 5). The host's [`VoiceMediaWorker`] runs that work outside
+//! the session lock through its [`AiMediaDoor`], so every call is admitted
+//! on its own permit, sent through its run's media gate and settled in its
+//! native units (characters spoken, seconds heard), as every other media
+//! call is.
 //!
 //! A route ([`MediaVoiceRoute`]) is one media rung. The host picks it before
 //! any work from the vault's voice row for the lane
@@ -21,13 +22,17 @@
 //! before its audio is handed back.
 //!
 //! These calls are buffered: one call per flushed sentence and one per cut
-//! utterance. Live partial transcripts (Soniox) ride a [`LeasedAsrStream`]
-//! instead: one permit per bounded stream, opened through the host's
-//! [`VoiceStreamDoor`], with each chunk of audio metered on its lease before
-//! it leaves and the audio settled when the stream ends or is cancelled.
+//! utterance. A sentence past one call's text bound is spoken as several
+//! calls, its audio joined in order; an utterance at one call's length is
+//! cut there and the rest starts the next. Live partial transcripts
+//! (Soniox) ride a [`LeasedAsrStream`] instead: one permit per bounded
+//! stream, opened through the host's [`VoiceStreamDoor`], with each chunk of
+//! audio metered on its lease before it leaves and the audio settled when
+//! the stream ends or is cancelled.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 use std::time::Instant;
 
@@ -35,6 +40,7 @@ use tokio::sync::mpsc;
 
 use super::{
     AsrEvent, AsrEventKind, AsrStream, GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient,
+    speakable,
 };
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -47,9 +53,10 @@ use crate::llm::{CallEnvelope, LlmResult, ModelId, ModelLocality, ModelTierRef, 
 use crate::voice_identity::ref_bank::{VoiceRefFence, VoiceRegisterClip, VoiceRenderGrant};
 
 /// The most text one spoken call carries: a flushed sentence, with room.
+/// A longer one is spoken as several calls, its audio joined in order.
 pub const MAX_SENTENCE_BYTES: usize = 8 * 1024;
-/// The longest utterance one transcription call carries; the host cuts
-/// sooner.
+/// The longest utterance one transcription call carries. The host cuts
+/// sooner; audio past it is cut there and starts the next utterance.
 pub const MAX_UTTERANCE_SECONDS: u32 = 120;
 /// The most audio one live stream holds its permit for. A longer live
 /// session ends its stream and opens the next on a fresh permit.
@@ -87,7 +94,7 @@ impl MediaVoiceRoute {
         }
     }
 
-    fn request(&self, part: MediaPart, voice: Option<MediaVoice>) -> MediaRequest {
+    pub(super) fn request(&self, part: MediaPart, voice: Option<MediaVoice>) -> MediaRequest {
         let operation = self.operation();
         let mut params = BTreeMap::new();
         if operation == AiOperation::Speech {
@@ -288,8 +295,8 @@ pub enum VoiceMediaWork {
 }
 
 /// FIFO, nonblocking admission: one work item or nothing. An error admits
-/// nothing, and no call runs inside `try_submit`. A cancel goes ahead of
-/// queued work and is never refused for room.
+/// nothing, and no call runs inside `try_submit`. No work is refused for
+/// room (Rule 5), and a cancel goes ahead of queued work.
 pub trait VoiceMediaQueue {
     fn try_submit(&mut self, work: VoiceMediaWork) -> Result<()>;
 }
@@ -312,18 +319,28 @@ pub enum VoiceMediaOutput {
     Heard { submission: u64, event: AsrEvent },
 }
 
-/// A bounded channel from adapters to one worker. Clone the sender for each
-/// generation's adapter; the worker serves them all in order. Cancels ride a
-/// lane of their own, so a full queue never keeps a stop from the worker.
+/// A channel from adapters to one worker. Clone the sender for each
+/// generation's adapter; the worker serves them all in order. `capacity` is
+/// the pace a producer that waits keeps ([`VoiceMediaSender::has_room`]);
+/// past it the queue still takes work (Rule 5: a full queue never refuses).
+/// Cancels ride a lane of their own, so queued work never keeps a stop from
+/// the worker.
 #[must_use]
 pub fn voice_media_channel(capacity: usize) -> (VoiceMediaSender, VoiceMediaWorker) {
-    let (sender, receiver) = mpsc::channel(capacity.max(1));
+    let (sender, receiver) = mpsc::unbounded_channel();
     let (stop, stops) = mpsc::unbounded_channel();
+    let queued = Arc::new(AtomicUsize::new(0));
     (
-        VoiceMediaSender { work: sender, stop },
+        VoiceMediaSender {
+            work: sender,
+            stop,
+            queued: Arc::clone(&queued),
+            capacity: capacity.max(1),
+        },
         VoiceMediaWorker {
             work: receiver,
             stops,
+            queued,
             pending: VecDeque::new(),
             cancelled: BTreeSet::new(),
         },
@@ -332,15 +349,19 @@ pub fn voice_media_channel(capacity: usize) -> (VoiceMediaSender, VoiceMediaWork
 
 #[derive(Clone)]
 pub struct VoiceMediaSender {
-    work: mpsc::Sender<VoiceMediaWork>,
+    work: mpsc::UnboundedSender<VoiceMediaWork>,
     stop: mpsc::UnboundedSender<GenerationEpoch>,
+    /// Items sent and not yet taken by the worker.
+    queued: Arc<AtomicUsize>,
+    capacity: usize,
 }
 
 impl VoiceMediaSender {
-    /// Whether the queue takes one more item now.
+    /// Whether the queue holds less than its pace now. A producer may wait
+    /// for room; the queue takes work either way.
     #[must_use]
     pub fn has_room(&self) -> bool {
-        self.work.capacity() > 0
+        self.queued.load(Ordering::Acquire) < self.capacity
     }
 }
 
@@ -352,17 +373,20 @@ impl VoiceMediaQueue for VoiceMediaSender {
                 .send(generation)
                 .map_err(|_| invalid("media worker stopped"));
         }
-        self.work.try_send(work).map_err(|error| match error {
-            mpsc::error::TrySendError::Full(_) => invalid("media queue full"),
-            mpsc::error::TrySendError::Closed(_) => invalid("media worker stopped"),
+        self.queued.fetch_add(1, Ordering::AcqRel);
+        self.work.send(work).map_err(|_| {
+            self.queued.fetch_sub(1, Ordering::AcqRel);
+            invalid("media worker stopped")
         })
     }
 }
 
 /// Runs queued voice media work, in order, through the host's door.
 pub struct VoiceMediaWorker {
-    work: mpsc::Receiver<VoiceMediaWork>,
+    work: mpsc::UnboundedReceiver<VoiceMediaWork>,
     stops: mpsc::UnboundedReceiver<GenerationEpoch>,
+    /// The senders' count of items not yet taken from `work`.
+    queued: Arc<AtomicUsize>,
     pending: VecDeque<VoiceMediaWork>,
     cancelled: BTreeSet<GenerationEpoch>,
 }
@@ -398,29 +422,19 @@ impl VoiceMediaWorker {
                     request,
                     voice,
                 } => {
-                    let failed = |error: String| VoiceMediaOutput::SpeechFailed {
-                        generation,
-                        submission,
-                        error,
-                    };
-                    if voice.as_ref().is_some_and(|voice| !voice.is_current(vault)) {
-                        deliver(failed("voice withdrawn, evicted or stale".into()));
-                        continue;
-                    }
-                    let Some(answer) = self.call(door.call(request), Some(generation)).await else {
+                    let Some(spoken) = self
+                        .speak(door, vault, generation, request, voice.as_ref())
+                        .await
+                    else {
                         continue;
                     };
-                    let spoken = answer
-                        .map_err(|error| error.to_string())
-                        .and_then(|response| {
-                            if voice.as_ref().is_some_and(|voice| !voice.is_current(vault)) {
-                                return Err("voice withdrawn, evicted or stale".into());
-                            }
-                            spoken_frame(generation, &response).map_err(|error| error.to_string())
-                        });
                     deliver(match spoken {
                         Ok(frame) => VoiceMediaOutput::Pcm { submission, frame },
-                        Err(error) => failed(error),
+                        Err(error) => VoiceMediaOutput::SpeechFailed {
+                            generation,
+                            submission,
+                            error,
+                        },
                     });
                 }
                 VoiceMediaWork::Transcribe {
@@ -442,12 +456,55 @@ impl VoiceMediaWorker {
         }
     }
 
+    /// Speaks one queued sentence: one call per piece within
+    /// [`MAX_SENTENCE_BYTES`], in order, their audio joined into one frame.
+    /// A banked voice withdrawn before a piece goes, or before its audio
+    /// comes back, ends the sentence unspoken. `None` when the generation
+    /// was cancelled first.
+    async fn speak(
+        &mut self,
+        door: &dyn AiMediaDoor,
+        vault: &Vault,
+        generation: GenerationEpoch,
+        request: MediaRequest,
+        voice: Option<&BankVoiceBinding>,
+    ) -> Option<std::result::Result<PcmFrame, String>> {
+        let withdrawn = || voice.is_some_and(|voice| !voice.is_current(vault));
+        let mut spoken: Option<PcmFrame> = None;
+        for piece in speech_pieces(request) {
+            if withdrawn() {
+                return Some(Err("voice withdrawn, evicted or stale".into()));
+            }
+            let response = match self.call(door.call(piece), Some(generation)).await? {
+                Ok(response) => response,
+                Err(error) => return Some(Err(error.to_string())),
+            };
+            if withdrawn() {
+                return Some(Err("voice withdrawn, evicted or stale".into()));
+            }
+            let frame = match spoken_frame(generation, &response) {
+                Ok(frame) => frame,
+                Err(error) => return Some(Err(error.to_string())),
+            };
+            spoken = Some(match spoken.take() {
+                None => frame,
+                Some(mut joined) if joined.sample_rate == frame.sample_rate => {
+                    joined.samples.extend(frame.samples);
+                    joined
+                }
+                Some(_) => return Some(Err("speech pieces came back at different rates".into())),
+            });
+        }
+        Some(spoken.ok_or_else(|| "speech has no words to say".to_owned()))
+    }
+
     /// Takes what is already queued, stops first, without waiting.
     fn drain(&mut self) {
         while let Ok(generation) = self.stops.try_recv() {
             self.take(VoiceMediaWork::Cancel { generation });
         }
         while let Ok(work) = self.work.try_recv() {
+            self.queued.fetch_sub(1, Ordering::AcqRel);
             self.take(work);
         }
     }
@@ -459,7 +516,11 @@ impl VoiceMediaWorker {
             if let Poll::Ready(Some(generation)) = self.stops.poll_recv(cx) {
                 return Poll::Ready(Some(VoiceMediaWork::Cancel { generation }));
             }
-            self.work.poll_recv(cx)
+            let polled = self.work.poll_recv(cx);
+            if let Poll::Ready(Some(_)) = &polled {
+                self.queued.fetch_sub(1, Ordering::AcqRel);
+            }
+            polled
         })
         .await
     }
@@ -496,7 +557,10 @@ impl VoiceMediaWorker {
             }
             while open {
                 match self.work.poll_recv(cx) {
-                    Poll::Ready(Some(work)) => self.take(work),
+                    Poll::Ready(Some(work)) => {
+                        self.queued.fetch_sub(1, Ordering::AcqRel);
+                        self.take(work);
+                    }
                     Poll::Ready(None) => open = false,
                     Poll::Pending => break,
                 }
@@ -508,6 +572,27 @@ impl VoiceMediaWorker {
         })
         .await
     }
+}
+
+/// A speech request whose text is past one call's bound, as one request per
+/// piece in order; any other request as itself.
+fn speech_pieces(request: MediaRequest) -> Vec<MediaRequest> {
+    let text = match request.parts.as_slice() {
+        [MediaPart::Text { text }] if text.len() > MAX_SENTENCE_BYTES => Some(text.clone()),
+        _ => None,
+    };
+    let Some(text) = text else {
+        return vec![request];
+    };
+    speakable::pieces(&text, MAX_SENTENCE_BYTES)
+        .into_iter()
+        .map(|piece| MediaRequest {
+            parts: vec![MediaPart::Text {
+                text: piece.to_owned(),
+            }],
+            ..request.clone()
+        })
+        .collect()
 }
 
 /// A spoken answer's audio as one PCM frame of its generation: mono 16-bit
@@ -586,7 +671,8 @@ enum Phase {
 }
 
 /// The cascade's TTS port on a speech route. One adapter owns one
-/// generation; each flushed sentence is one `ai.speech` call.
+/// generation; each flushed sentence is one `ai.speech` call, or several
+/// past [`MAX_SENTENCE_BYTES`].
 pub struct MediaTtsAdapter<Q> {
     vault: Arc<Vault>,
     route: MediaVoiceRoute,
@@ -754,10 +840,9 @@ impl<Q: VoiceMediaQueue> TtsSeamClient for MediaTtsAdapter<Q> {
         }
         match command {
             TtsCommand::Text { text, .. } => {
-                if text.is_empty()
-                    || text.len() > MAX_SENTENCE_BYTES.saturating_sub(self.buffer.len())
-                {
-                    return Err(invalid("empty or oversized text"));
+                // A long sentence is split into calls at flush, never refused.
+                if text.is_empty() {
+                    return Err(invalid("empty text"));
                 }
                 self.buffer.push_str(&text);
             }
@@ -850,12 +935,21 @@ impl<Q: VoiceMediaQueue> MediaAsrAdapter<Q> {
 }
 
 impl<Q: VoiceMediaQueue> AsrStream for MediaAsrAdapter<Q> {
-    fn accept_audio(&mut self, pcm: &[u8]) -> Result<()> {
+    /// Audio past one call's [`MAX_UTTERANCE_SECONDS`] is not refused: the
+    /// utterance is cut at that length, on a whole frame, and the rest
+    /// starts the next.
+    fn accept_audio(&mut self, mut pcm: &[u8]) -> Result<()> {
         if self.ended {
             return Err(invalid("audio after end"));
         }
-        if pcm.len() > self.max_bytes().saturating_sub(self.buffer.len()) {
-            return Err(invalid("utterance too long; cut it sooner"));
+        let block = usize::from(self.channels) * 2;
+        let max = self.max_bytes();
+        while self.buffer.len() + pcm.len() > max {
+            let room = max.saturating_sub(self.buffer.len());
+            let (head, rest) = pcm.split_at(room - room % block);
+            self.buffer.extend_from_slice(head);
+            self.cut()?;
+            pcm = rest;
         }
         self.buffer.extend_from_slice(pcm);
         Ok(())

@@ -30,9 +30,13 @@ mod rulings;
 pub(crate) use ruling_integrity::{
     guard_ruling_overwrite, reject_ruling_delete, validate_ruling_claim,
 };
+mod own_device;
 mod pending_act;
 mod shared_act;
 mod shared_creation;
+pub(crate) use own_device::is_own_device_grant;
+pub use own_device::own_device_residence_scope;
+pub(crate) mod vault_id_decimal;
 pub use pending_act::{
     ActExecution, PendingActMatured, PendingActStarted, PendingAuthorityAct, SharedActPolicy,
     SharedActPrecedence,
@@ -42,9 +46,11 @@ pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_act::{
     DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind, EraseAskStatus,
     NOTIFICATION_PRODUCER_ERASE_ASK, REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy,
-    RemoveOwnerPlan, SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt,
-    SharedActExport, SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation,
-    SharedInvitationState, SharedVaultChange, SharedVaultDeletion, TransferOwnershipPlan,
+    RemovalExportDelivery, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
+    SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt, SharedActExport,
+    SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState,
+    SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
+    shared_act_outcome_transcript,
 };
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
 mod guest;
@@ -84,11 +90,13 @@ pub use self::relationships::{
     bind_member_person, default_retrieval_bands, default_trust_tier, put_member_relationship_label,
     relationship_trust_class, resolve_member_relationship,
 };
+#[allow(unused_imports)] // The sync lane's materialization calls it (FIX 321).
+pub(crate) use self::stale::register_foreign_world_for_pact_in;
 pub use self::stale::{
     FEDERATION_STALE_KEY_PREFIX, FEDERATION_WORLD_KEY_PREFIX, FederationStaleReason,
     WORLD_STALE_STAMP_LEN, WorldStaleStamp, apply_federation_stale_stamps,
     decode_world_stale_stamp, encode_world_stale_stamp, foreign_world_stale_stamp,
-    world_stale_marker,
+    registered_foreign_worlds_for_pact, world_stale_marker,
 };
 pub(crate) use self::stale::{StaleSweepWatch, note_authority_row};
 

@@ -42,6 +42,11 @@ pub(crate) use judge_supersession::set_pre_writer_hook;
 pub(crate) use judge_supersession::{
     judgment_displaced, judgment_displaced_in_txn, judgment_judge_in_txn,
 };
+mod contribution;
+pub use contribution::{
+    ContributionCandidate, ContributionCheckRecord, ContributionFork, ContributionPair,
+    contributed, contribution_check_candidates, record_contribution_pair,
+};
 mod late_credit;
 mod pack_learning;
 pub use late_credit::{LateCreditReceipt, LateCreditShare, late_credit_receipt};
@@ -101,8 +106,10 @@ use crate::error::{Error, Result};
 use rmpv::Value;
 
 mod host;
-pub use host::bind_agent_run_attribution;
 pub(crate) use host::run_executor_model;
+pub use host::{bind_agent_run_attribution, witness_agent_run_close};
+mod run_writes;
+pub(crate) use run_writes::{enter_run_writes, note_run_derivations_in_txn, run_derivations};
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,

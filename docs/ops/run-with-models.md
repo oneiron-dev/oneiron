@@ -114,7 +114,11 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `audio_input`,
-`reasoning`; `audio_input` sends a chat message's audio clips as `input_audio`,
+`assistant_prefill`, `reasoning`; `assistant_prefill` lets Continue send the
+saved reply as an open trailing assistant message instead of an instruction to
+go on, and only counts when every rung of the ladder has it: list it only for a
+model whose endpoint and serving template continue a trailing assistant message
+(no model has it by default); `audio_input` sends a chat message's audio clips as `input_audio`,
 WAV or MP3, on OpenAI-compatible providers only, and no provider has it unless
 the list says so; a `local-openai-compat` provider declares `streaming`, `json_response` and
 `reasoning` unless the list is written out), `model_capabilities` (one wire
@@ -209,8 +213,10 @@ conversation again in full. The owner can turn storing on with
 `POST /v1/owner/settings/models` and `{"responses_store": true}` (`GET` reads
 it): each turn then goes with `store = true`, the provider keeps the response,
 and a new socket resumes a conversation from its last stored response, sending
-only the new items. The server remembers the last stored response of the 32
-most recent conversations per provider, until restart. A socket is
+only the new items. The server keeps each conversation's last stored response
+in the vault, as this deployment's own state (never synced, and left out of a
+checkpoint), so a resume also survives a restart; a turn whose response the
+provider has since dropped goes whole. A socket is
 replaced 5 minutes before its age limit (60 minutes at OpenAI, 59 at xAI).
 Idle sockets wait 10 minutes for a next turn, at most 8 per provider. A
 call whose socket will not open, or that carries audio, goes out over
@@ -370,6 +376,15 @@ proposals, with the cleanup view to restore any of them. Each proposal and
 your accept or reject count in the healer oversight receipts
 (`/v1/owner/healer/oversight`).
 
+The Coach's nightly room upkeep (`coach.room_upkeep`) reads only the rooms
+a grant lets the Coach read, and there only turn refs and times, never words.
+A room whose readable turns moved since its last pass gets its summary
+declared on the scope-summary path, when the Coach reads the room's whole
+conversation; the Dreamer writes the summary and nothing is posted. A thread
+with open TASKs that has been quiet for a day gets one Proposed
+`coach.room_upkeep.nudge` finding, addressed to the room's host, in the owner
+run tray. The Coach never speaks in a room; a nudge is the host's to voice.
+
 The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
 detectors (refused Dreamer consolidations, consent storms and denials,
 per-actor write drift) over the last day of Gate receipts, and the read-side
@@ -385,14 +400,21 @@ one.
 ## 4. Chat
 
 `POST /v1/ai/chat` with `{"conversation_ref": "<32-hex>", "text": "…"}` (plus
-optional `history`) streams NDJSON: `accepted`, one `delta` per text chunk,
-`done`, then `saved` with the message receipt. The same deltas reach every
-owner socket on `/ws` as transient presence. Only the final message is written
-to the vault, once. The credential needs read and write scope, and must be
-able to read the answering agent's definition. It is checked for the whole
-turn: once it is revoked or expires, the body sends one
-`{"type":"error","code":"credential_revoked"}` line and ends, the model call
-stops, and the message is cancelled rather than saved as an answer. The seeded
+optional `history`) answers by default with the whole message once it is saved:
+`{conversation_ref, turn_id, message_id, text, incomplete, finish_reason}`.
+`turn_id` is the assistant turn that Continue and Retry name. A reply cut short
+(a crash, a failed stream, a length stop) is still one saved message: it answers
+`incomplete: true` with exactly the text that was saved. With `"stream": true`
+the answer is NDJSON instead: `accepted`, one `delta` per text chunk, `done`,
+then `saved` with the message receipt, and the same deltas reach every owner
+socket on `/ws` as transient presence. A whole answer keeps its partials
+private. Either way each delta is checkpointed in the message before it is
+published, and a client that goes away does not stop the turn. The credential
+needs read and write scope, and must be able to read the answering agent's
+definition. It is checked for the whole turn. Once it is revoked or expires, a
+streamed body sends one `{"type":"error","code":"credential_revoked"}` line
+and ends, a whole answer is refused with 403 `credential_revoked`, and the
+message is cancelled rather than saved as an answer. The seeded
 default agent answers; an owner-grade credential may name another with
 `agent_ref`, which must be live, approved and enabled. A turn still running
 at shutdown gets a grace to finish, then its message is cancelled, not left
@@ -711,8 +733,16 @@ run), the child's birth fails. It is never moved to another model. The pick
 and the placement go through the host's decision ladder (section 13), each on
 its own 10-second clock. A seat whose definition this vault does not hold is
 skipped, with a log line. With no seat, the server lends no planner: a spawn
-that names an `agent` runs it directly, and a planned spawn or a leader call
-answers `planner_unbound`.
+that names an `agent` runs it directly, and a planned spawn or a leader's
+advice or pattern call answers `planner_unbound`.
+
+A leader's `self.leader.split({leader?, slice?})` reads no planner. It splits
+the TASK her run realizes into a subproject under that TASK's project (her
+lease names both), led by `leader` (herself when unset) over `slice` (the
+parent's when unset). The parent still sees one checkbox. The server signs the
+spawn with its host key: the managed issuer, or the one `auth_secret` derives;
+a host with neither answers `slip_issuer_unbound`. A TASK wraps one child, so a
+retry answers the same child.
 
 ## 7. Raw calls
 
@@ -1066,9 +1096,17 @@ width is not its space's declared width.
 
 The verbs, each the owner's and checked against the vault's inference policy:
 
-- `GET /v1/ai/options?operation=image&inputs=text,image`: every row that
-  serves the call (text seats' rungs too), where it runs, what it takes, its
-  rates, and `media_units_left`.
+- `GET /v1/ai/options?operation=image&inputs=text,image`: every row the
+  caller could call now (text seats' rungs too), where it runs, what it
+  takes, its rates, `cost` (its price per million tokens as the vault's model
+  registry holds it; `null` when no registered row prices it), `units_left`
+  (what the meter its call spends has left: the raw routes' for a text row,
+  the media meter for the rest), and `media_units_left`. A caller the `ai.*`
+  doors refuse (anyone not owner-grade, a run's agent too) gets no rows. A row
+  the vault's inference policy refuses is left out, as is a rung whose
+  provider is down, whose one probation request is out, or that a limit
+  holds, until it is back. The facade's and MCP's `ai.options` list the same
+  rows.
 - `POST /v1/ai/image`, `/speech`, `/transcribe`, `/embed`:
   `{"prompt": "...", "input": [parts], "references": [parts], "params": {...},
   "model": "<row or seat id>"}`. A part is `{"kind": "text", "text": ...}` or
@@ -1092,12 +1130,24 @@ A speech call can name its voice: `"voice": {"kind": "stock", "name":
 "voice_id": "...", "include_generated": false}` for a banked identity. A
 banked voice lives in the vault's reference bank. A provider sees only the id
 of the clone recorded for its target, and the target is the rung's provider
-name in `[models.providers]`. The call renders on the first rung of its
-ladder whose target holds a current clone, and on that rung alone. With no
-such rung the call answers `409 voice_not_provisioned`. If the voice is
-withdrawn or its clone re-recorded while the call renders, it answers `409
-voice_withdrawn` and the audio is not returned. A call that names a voice
-names no `voice` param, and only a speech call names one.
+name in `[models.providers]`. The call binds the voice on every rung of its
+ladder whose target already holds a current clone (or, on a rung that
+renders from the bank's refs, the identity's fenced clip) under consent still
+in force. It goes only to those rungs, in ladder order, each in its own
+binding. When one is down, rate-limited or out of quota, the call moves to the
+next rung that holds the voice, never to one that does not. No voice is cloned
+and no consent is asked mid-call, and the owner's fallback (`use_fallback`)
+takes no voiced call. When no rung that holds the voice answers within the
+vault's longest wait, the call ends with the provider's failure (`502
+provider_unavailable` here), and a repeat call after recovery renders. With no
+rung holding the voice, the call answers `409 voice_not_provisioned`. Each
+rung's binding is checked again before the call goes out on it. If the voice
+is withdrawn or its clone re-recorded while the call renders, or everywhere
+while it waits, it answers `409 voice_withdrawn` and no audio is returned. A
+stock voice (or a raw `voice` param) is one provider's name: it stays on the
+first rung whose row serves the call. A call that names a voice names no
+`voice` param, and only a speech call names one. Each receipt lists a rung
+it skipped for the voice as `voice_not_held`.
 
 The speech seat also takes the hosted voice tiers, which are not
 OpenAI-compatible. A `cartesia` provider speaks Cartesia's `POST /tts/bytes`
@@ -1338,17 +1388,32 @@ The same seat answers `ai.verdict` over an image: name its view handle as
 caller's own scoped read, the image rides the receipt as an evidence ref
 with its body version, and the call starts at the Local rung on a run of its
 own. There the seat answers a Choice (`{"choice", "confidence"}`), a yes/no
-(`{"p_yes"}`) or, with `"locate": true`, a Box. A Score abstains. A rung
-above Local that reads no image is skipped.
+(`{"p_yes"}`) or a Box; a Point is the Box's centre. A rung above Local that
+reads no image is skipped.
+
+The request's `contract` says what the answer is: `{"kind": "noul"}` (yes or
+no with P(yes), when absent), `{"kind": "choice", "options": [...]}`,
+`{"kind": "score", "min": 1, "max": 5}` (one number in that range, in the
+units and direction the question names), or `{"kind": "box"}` /
+`{"kind": "point"}` (where the target sits in `image`, as fractions of it
+from its top left). The call starts at the first rung whose provider takes
+its contract over its images, so a Score starts above the rungs that read
+none. No image seat reads a score: a score over an image is refused, never
+asked without its image. A Box or Point asks the host's presence question
+first. A confident no answers `{"kind": "box", "value": null}` (or `point`),
+and the answer carries `presence`, that step with its own P(yes); `p` is
+the coordinates' confidence, and empty when they were not read.
 
 A code-mode program drives a routine browser or computer step through the
-same verb (the CUA-S1 pattern): `"routine": true` makes `options` the step's
-candidates (1 to 61), and the ladder also offers `NONE`, `reobserve` and
-`too complicated, ask up`. The answer gains an `outcome`: one of
+same verb (the CUA-S1 pattern): `"routine": true` makes a Choice's
+`options` the step's candidates (1 to 61), and the ladder also offers
+`NONE`, `reobserve` and `too complicated, ask up`; a routine Box or Point
+acts where it finds the target. The answer gains an `outcome`: one of
 `{"outcome": "act", "candidate"}`, `{"outcome": "point", "x", "y", "found"}`
-(a routine Box's centre, as fractions of the image), `{"outcome": "none"}`,
-`{"outcome": "reobserve"}` or `{"outcome": "ask_up", "reason"}`. A routine
-step's Box that finds no target reads as `none`. A ladder abstain reads as
+(a routine Point, or a Box's centre, as fractions of the image),
+`{"outcome": "none"}`, `{"outcome": "reobserve"}` or
+`{"outcome": "ask_up", "reason"}`. A routine step's Box or Point that finds
+no target reads as `none`. A ladder abstain reads as
 `ask_up`, with the ladder's reason (uncertain, deadline, no rung). The
 program passes the count of NONE and reobserve outcomes in a row as
 `"misses"`, and `"screenshot": true` says the next observation takes a
@@ -1361,7 +1426,8 @@ effect leaves the vault: at a cut it abstains and goes up.
 A computer step runs on the run's own desktop guest, a Linux desktop the
 `[desktop]` section names (`runtime`, a digest-pinned `image` built from
 `crates/oneiron-container/guest/desktop`, and the same bounds as
-`[browser]`). The section is refused on macOS: the guest never runs on, or
+`[browser]`). Its `build.sh` builds the image on a Linux host, pushes it
+nowhere, and prints the local image id to pin (its README.md). The section is refused on macOS: the guest never runs on, or
 drives, the owner's own desktop. A program drives it with `self.desktop.*`:
 the browser's verbs over one window's accessibility tree (`open` takes
 `app:<name>` from the guest's app set), plus `key`, `hotkey`, `scroll`,
@@ -1372,6 +1438,20 @@ locates its target in a `no_accessibility_tree` screenshot. A Return, or
 typed text with a line break, takes the press of a send, and every effect's
 receipt screenshot has its password fields blacked out before it is held.
 The desktop rides the `oneiron.browser` pack and its grants.
+
+The owner can take a run's desktop over and hand it back. A program asks
+with `self.desktop.handover({reason})`, or the owner takes it unasked, at
+`/v1/owner/desktops`: `GET` lists the bound run desktops with who has each
+and the agent's ask; `POST take`, `screen` (the whole display as a PNG,
+unmasked, never kept), `input` (`{"run", "action": {"kind": "click" |
+"type" | "key" | "hotkey" | "scroll", ...}}` at that PNG's pixels) and
+`return` each take `{"run"}`. While the agent waits on its ask and while the
+owner holds the desktop, every desktop verb refuses `desktop_taken_over` (a
+batch stops `NEEDS_YOU`) and no receipt screenshot is taken. Handing it back
+writes the takeover's record (who, the ask, when it was taken and returned,
+how many inputs) as the run's `desktop_takeover` sandbox receipt, and the
+agent's next desktop answer carries it as `takeover`. The desktop lives as
+long as the run's door: one `execute_code` entry, or a resident run.
 
 ## 11. When a provider refuses for a limit
 
@@ -1747,6 +1827,13 @@ Answers never go to the owner's queue: the slide door holds its ceiling at
 Big. On a server the engine's
 `Memory::artifacts_ask_through` answers these asks. Until its door is in the
 SDK table, `vault.artifacts.review_slides` is the only door that serves one.
+
+A `vault.artifacts.review_slides` unit may name no image (neither
+`review_image` nor `review_image_ref`). On a host with the LibreOffice slide
+renderer, the door then renders that slide from the head itself, on local CPU
+and unmetered, and saves the host renderer's name on the judgment. Without the
+renderer, or when the render fails, the unit is read for its structure only
+and abstains. It is never refused. A unit that names both images is refused.
 
 ## 14. Tagger tiers and the teacher's handoff
 

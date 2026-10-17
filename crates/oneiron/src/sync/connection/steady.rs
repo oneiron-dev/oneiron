@@ -265,12 +265,17 @@ impl SyncConnection {
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
                             // (OF-469). Any machine whose rows name history it
-                            // lacks takes it too.
+                            // lacks takes it too, and so does one whose pairing
+                            // pinned a checkpoint it has yet to adopt.
                             if (config.residence_mode == crate::sync::SyncResidenceMode::Opened
                                 || !manager
                                     .vault()
                                     .authority_missing_history()
-                                    .is_ok_and(|missing| missing.is_complete()))
+                                    .is_ok_and(|missing| missing.is_complete())
+                                || crate::sync::client::pinned_checkpoint_pending(
+                                    manager.vault(),
+                                    &config,
+                                ))
                                 && let Err(error) =
                                     crate::sync::client::catch_up_authority(manager.vault(), &config)
                                         .await
@@ -352,8 +357,10 @@ impl SyncConnection {
                 }
 
                 // A confirmed leave ends the lane for good (OF-158): what it
-                // buffered is queued, to be counted and discarded.
-                _ = left_rx.wait_for(|left| *left) => {
+                // buffered is queued, to be counted and discarded. The borrow
+                // `wait_for` returns goes before the close frame's await, so
+                // the loop stays `Send` for a host that spawns it.
+                () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
                     flush_to_queue(&self.queue, &mut debounce_buffer);
                     let _ = write.send(Message::Close(None)).await;
                     return LoopExit::Shutdown;

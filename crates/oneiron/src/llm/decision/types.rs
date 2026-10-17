@@ -31,13 +31,17 @@ pub enum DecisionClass {
     Provenance,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AnswerContract {
+    /// Yes or no, with P(yes).
     Noul,
+    /// One of `options`.
     Choice {
         options: Vec<String>,
     },
+    /// One number from `min` to `max` (both included, `min` below `max`), in the units and
+    /// direction the question names.
     Score {
         min: f64,
         max: f64,
@@ -307,6 +311,10 @@ pub struct DecisionReceipt {
     /// when the dial reached the person under a PersonThreshold row, else none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub person_row: Option<u32>,
+    /// The rule row whose answer stands, as id@revision: set when the Rule rung answered
+    /// from a host rule row (ARCH-0040, "a rule row as id@version"), else none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<super::HostRuleRef>,
 }
 
 /// What one measurement read of one image: the pixels as handed in, where they sit in

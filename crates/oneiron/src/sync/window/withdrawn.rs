@@ -128,10 +128,21 @@ pub(super) fn scrub_withdrawn_generation_carriers(
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<bool> {
-    let cutoffs = {
+    let (cutoffs, floors) = {
         let rtxn = vault.store.env.read_txn()?;
-        crate::deletion::withdrawn_generation_cutoffs_in_txn(&vault.store, &rtxn)?
+        (
+            crate::deletion::withdrawn_generation_cutoffs_in_txn(&vault.store, &rtxn)?,
+            crate::compaction::epoch_floors_in_txn(&vault.store, &rtxn)?,
+        )
     };
+    // Each cutoff rides the windows that carry its artifact, so another
+    // machine of this vault owes the same sweep (OF-013), and each epoch
+    // floor the windows that carry its session, so it numbers past the same
+    // removed epoch (FIX 2867).
+    let mirrored = crate::sync::withdrawn_cutoffs::mirror_withdrawn_cutoffs(doc, &cutoffs)?;
+    if crate::sync::withdrawn_cutoffs::mirror_epoch_floors(doc, &floors)? || mirrored {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
     let found = replace_withdrawn_carriers(vault, doc, &cutoffs)?;
     if found.replaced == 0 && found.held.is_empty() {
         return Ok(false);

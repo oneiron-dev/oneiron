@@ -9,6 +9,7 @@ mod memory_verbs;
 mod reader_spawn;
 mod summarize;
 mod team_submit;
+mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
 mod wake_policy;
@@ -91,6 +92,9 @@ pub struct HostSelfDispatcher<'a> {
     /// The host's planner (OF-541, OF-389): what a planned spawn and the
     /// leader's calls read. Host configuration; no guest call reaches it.
     pub(super) planner: Option<HostPlannerBinding<'a>>,
+    /// The host's slip issuer, which signs the leader's subproject spawn
+    /// (OF-389). Host configuration; no guest call reaches it.
+    pub(super) slip_issuer: Option<&'a crate::authority::HostSlipIssuer>,
     /// The model provider the host's ladder says answered the run's last
     /// turn, whose program is the one running (OF-560). Host-internal: only
     /// [`Self::observe_model_provider`] sets it, from the served receipt,
@@ -218,6 +222,7 @@ impl<'a> HostSelfDispatcher<'a> {
             reader_spawn: None,
             reader_child: None,
             planner: None,
+            slip_issuer: None,
             model_provider: RefCell::new(None),
             fold_log: fold_verbs::FoldLog::Site,
         })
@@ -389,6 +394,11 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Result<SelfDispatchOutcome> {
         // A hook's view of an earlier call is never this call's.
         *self.hook_view.borrow_mut() = None;
+        // A leased run's writes in this call are its own derivations (OF-540).
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
         // The descriptor bridge answers before the policy probe and the door:
         // a descriptor is no effect, so neither rules on it. Its own verb
         // hooks run around it on canonical storage, reading as the run's

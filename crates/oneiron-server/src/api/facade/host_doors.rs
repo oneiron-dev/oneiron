@@ -22,7 +22,6 @@ use oneiron::task_verb::sdk::{
     AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, HookReplayRow,
     HooksReplayRequest, PackPutReceipt, PackPutRequest,
 };
-use oneiron::voice_cascade::media::BankVoiceBinding;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, EdgeActorClass, EntityId, FatalLlmError, LlmError,
     ModelId, ModelTierRef, ResponseFormat, RetryableLlmError, TierPrecedence,
@@ -31,12 +30,15 @@ use oneiron::{
 use oneiron::lens::{LensActivateRequest, LensDeactivateRequest};
 use oneiron::receipt::LensActivationReceipt;
 use oneiron::task_verb::sdk::{
-    PackSetupAnswerRequest, PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
+    ChannelSubscriptionRequest, ChannelSubscriptionRevokeRequest, ChannelSubscriptionRevoked,
+    ChannelSubscriptions, ChannelSubscriptionsRequest, PackRemoveRequest, PackSetupAnswerRequest,
+    PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
 };
 
-use crate::api::ai::{VoiceRefusal, bind_voice};
+use crate::api::ai::{VoiceRefusal, bind_voice, caller_options};
 use crate::auth::CoreAuth;
 use crate::builtin_host::HostConnectionChecks;
+use crate::models::RungVoices;
 use crate::server::SyncServer;
 
 // The shared-vault doors live beside these; the generated callers name them here.
@@ -45,6 +47,8 @@ pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_member_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
+// The owner's courtesy delete doors (OF-273) too.
+pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::guest_doors::*;
 // The weave lens's human doors, likewise.
@@ -79,8 +83,14 @@ pub(crate) use super::secret_use_doors::*;
 pub(crate) use super::reaction_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
+// The critic review door (OF-352), likewise.
+pub(crate) use super::critic_review_doors::*;
+// The owner's project-card tap door (OF-501), likewise.
+pub(crate) use super::project_card_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
+// The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
+pub(crate) use crate::api::context_board::{vault_explain_gate, vault_explain_memory};
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
@@ -99,10 +109,80 @@ pub(crate) async fn vault_packs_put(
     .map_err(|_| internal("vault.packs.put"))?
 }
 
+/// `vault.packs.remove`: the owner removes an installed pack, under the
+/// proof `/v1/owner/packs/remove` takes. Answers the removed receipt.
+pub(crate) async fn vault_packs_remove(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PackRemoveRequest,
+) -> MemoryResult<oneiron::skill_hub::pack_catalog::PackInstallReceipt> {
+    let owner = owner_proof(auth, server, "vault.packs.remove")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::remove_pack_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.packs.remove"))?
+}
+
+/// `vault.connectors.subscriptions.put`: the owner subscribes an agent to
+/// the messages a built-in channel's pack routes to it (OF-519), as
+/// `POST /v1/owner/connectors/subscriptions` does.
+pub(crate) async fn vault_connectors_subscriptions_put(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionRequest,
+) -> MemoryResult<oneiron::connector_key::ChannelMessageSubscription> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.put")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::subscribe_channel_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.put"))?
+}
+
+/// `vault.connectors.subscriptions.list`: an agent's connector event
+/// subscriptions, standing and revoked, for the owner.
+pub(crate) async fn vault_connectors_subscriptions_list(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionsRequest,
+) -> MemoryResult<ChannelSubscriptions> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.list")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::channel_subscriptions_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.list"))?
+}
+
+/// `vault.connectors.subscriptions.revoke`: the owner stops a subscription;
+/// its key stays.
+pub(crate) async fn vault_connectors_subscriptions_revoke(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionRevokeRequest,
+) -> MemoryResult<ChannelSubscriptionRevoked> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.revoke")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::revoke_channel_subscription_as_owner(
+            server.vault(),
+            &owner,
+            &input,
+        )
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.revoke"))?
+}
+
 /// `vault.artifacts.review_slides`: reviews an artifact's head through the
 /// host's decide() ladder as the bound actor, from the host's starting dial
-/// and bands, and holds the proposal for Keep or Discard. The ladder runs on
-/// a blocking thread, one call per unit.
+/// and bands, and holds the proposal for Keep or Discard. A unit with no
+/// image is rendered by the host's LibreOffice renderer when it has one. The
+/// ladder and the render run on a blocking thread, one call per unit.
 pub(crate) async fn vault_artifacts_review_slides(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -124,6 +204,9 @@ pub(crate) async fn vault_artifacts_review_slides(
             ),
             host.dial(oneiron::llm::decision::DecisionRung::Big),
             &host.bands(),
+            crate::slide_render::host_renderer().map(|renderer| {
+                renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
+            }),
         )
     })
     .await
@@ -136,6 +219,45 @@ fn slide_reviewer(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "a slide review binds its proposal to an authenticated principal",
+            &["Present a slip paired from a link created with --principal-ref."],
+        )
+    })
+}
+
+/// `vault.artifacts.ask`: asks one typed question over an artifact's units
+/// (sheet rows, paragraphs or folder items) through the host's decide()
+/// ladder as the bound actor, from the host's starting dial and bands, and
+/// holds the answers as one proposal for Keep or Discard. The ladder runs on
+/// a blocking thread, one call per unit, as `vault.artifacts.review_slides`.
+pub(crate) async fn vault_artifacts_ask(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::blob_artifact::ArtifactAskSubmit,
+) -> MemoryResult<oneiron::blob_artifact::ArtifactAskOutcome> {
+    let (actor, class) = artifact_asker(auth)?;
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
+            .at(auth.locality());
+        let host = server.decision_host();
+        memory.artifacts_ask_through(
+            &input,
+            &crate::decision_artifact::HostUnitDecider::new(&server, class, "vault.artifacts.ask"),
+            host.dial(oneiron::llm::decision::DecisionRung::Big),
+            &host.bands(),
+        )
+    })
+    .await
+    .map_err(|_| internal("vault.artifacts.ask"))?
+}
+
+/// The principal an artifact ask binds its proposal to.
+fn artifact_asker(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "an artifact ask binds its proposal to an authenticated principal",
             &["Present a slip paired from a link created with --principal-ref."],
         )
     })
@@ -196,11 +318,32 @@ pub(crate) async fn vault_authority_audit(
     .map_err(|_| internal("vault.authority.audit"))?
 }
 
-/// `ai.options`: the rows a call could use, where each runs, what it takes,
-/// the rates its native counts settle at, and what the media meter has left.
+/// `vault.mesh.path_receipts`: the newest path receipts this machine's
+/// paired-machine mesh left, newest first and bounded, the owner's view
+/// under the proof `/v1/owner` takes from the request.
+pub(crate) async fn vault_mesh_path_receipts(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::MeshPathReceiptsRequest,
+) -> MemoryResult<Vec<oneiron::sync::mesh_path::MeshPathReceipt>> {
+    let _owner = owner_proof(auth, server, "vault.mesh.path_receipts")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        server
+            .vault()
+            .mesh_path_receipts(input.bound())
+            .map_err(MemoryError::from)
+    })
+    .await
+    .map_err(|_| internal("vault.mesh.path_receipts"))?
+}
+
+/// `ai.options`: the rows the credential could call now, where each runs,
+/// what it takes, its price, the rates its native counts settle at, and
+/// what its meter has left (FIX 2942).
 pub(crate) async fn ai_options(
     server: &Arc<SyncServer>,
-    _auth: &CoreAuth,
+    auth: &CoreAuth,
     input: AiOptionsRequest,
 ) -> MemoryResult<AiOptions> {
     let operation = input
@@ -223,43 +366,50 @@ pub(crate) async fn ai_options(
             })?;
         inputs.insert(modality);
     }
-    let runtime = server.ai.model_runtime();
-    let options = runtime
-        .ai_options(operation, &inputs)
+    let listed = caller_options(server, auth.is_owner_grade(), operation, &inputs);
+    let options = listed
+        .options
         .into_iter()
         .map(serde_json::to_value)
         .collect::<Result<_, _>>()
         .map_err(|_| internal("ai.options"))?;
     Ok(AiOptions {
         options,
-        media_units_left: runtime.media().units_left(),
+        media_units_left: listed.media_units_left,
     })
 }
 
 /// One media call's answer, from its seat's ladder. A banked voice
-/// withdrawn or re-recorded while it rendered is not handed back.
+/// withdrawn or re-recorded while it rendered, on the rung that answered, is
+/// not handed back; nor is a call that found the voice withdrawn everywhere
+/// while it waited (FIX 1746).
 async fn answered(
     server: &SyncServer,
     auth: &CoreAuth,
     operation: AiOperation,
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
-    let (request, binding) = admit(server, auth, operation, input)?;
-    let response = server
-        .ai
-        .model_runtime()
-        .media()
-        .run(request)
-        .await
-        .map_err(|error| failure(operation, &error))?;
-    if binding.is_some_and(|binding| !binding.is_current(&server.vault)) {
-        return Err(MemoryError::new(
+    let (request, voices) = admit(server, auth, operation, input)?;
+    let media = server.ai.model_runtime().media();
+    let answer = match &voices {
+        Some(voices) => media.run_voiced(request, voices).await,
+        None => media.run(request).await,
+    };
+    let withdrawn = || {
+        MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             "the voice was withdrawn or its clone replaced while it rendered",
             &["Provision the voice again, then repeat the call."],
-        ));
+        )
+    };
+    match answer {
+        Ok(_) if voices.as_ref().is_some_and(|voices| !voices.answered_current()) => {
+            Err(withdrawn())
+        }
+        Err(_) if voices.as_ref().is_some_and(RungVoices::withdrawn) => Err(withdrawn()),
+        Ok(response) => Ok(response.into()),
+        Err(error) => Err(failure(operation, &error)),
     }
-    Ok(response.into())
 }
 
 /// `ai.image`: one image out; reference images make it an edit.
@@ -357,23 +507,25 @@ pub(crate) async fn ai_video_cancel(
 /// `self.memory.diary.query`: the caller reads an agent's diary, stating a
 /// reason the agent sees in its read log (`Memory::read_agent_diary`). The
 /// caller's `diary.read` Grants decide what it gets. A person reads with
-/// their authentication, so the vault owner's own credential carries the
-/// proof `/v1/owner` takes from the request; any other caller passes none
-/// and the gate decides: an agent or system reads as itself, and a person
-/// without the proof is refused.
+/// their authentication: the vault owner's own credential carries the proof
+/// `/v1/owner` takes from the request, and any other verified human carries
+/// their own person proof ([`super::shared_act_doors::person`], OF-490), so
+/// their own Grant decides. Any other caller passes none and the engine door
+/// decides: an agent or system reads as itself, and a person without a proof
+/// is refused.
 pub(crate) async fn self_memory_diary_query(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::task_verb::sdk::DiaryQueryRequest,
 ) -> MemoryResult<oneiron::task_verb::sdk::DiaryQueryOutcome> {
-    let owner = crate::api::owner_routes::owner(auth, server).ok();
     let (actor, class) = diary_reader(auth)?;
     let server = Arc::clone(server);
     let auth = auth.clone();
     tokio::task::spawn_blocking(move || {
+        let proof = super::shared_act_doors::person(&server, &auth, "self.memory.diary.query").ok();
         let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
             .at(auth.locality());
-        oneiron::task_verb::sdk::diary_query_as(&memory, owner.as_ref(), input)
+        oneiron::task_verb::sdk::diary_query_as(&memory, proof.as_ref(), input)
     })
     .await
     .map_err(|_| internal("self.memory.diary.query"))?
@@ -534,7 +686,12 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
         "vault.packs.put"
+        | "vault.packs.remove"
+        | "vault.connectors.subscriptions.put"
+        | "vault.connectors.subscriptions.list"
+        | "vault.connectors.subscriptions.revoke"
         | "vault.authority.audit"
+        | "vault.mesh.path_receipts"
         | "vault.hooks.replay"
         | "vault.lenses.activate"
         | "vault.lenses.deactivate"
@@ -549,6 +706,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.legal_holds.list"
         | "vault.legal_holds.log"
         | "vault.legal_holds.lift_and_erase"
+        | "vault.courtesy_delete.send"
+        | "vault.courtesy_delete.sent"
+        | "vault.courtesy_delete.incoming"
+        | "vault.courtesy_delete.answer"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"
@@ -583,6 +744,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
+        "vault.artifacts.ask" => artifact_asker(auth).map(drop),
         "self.memory.diary.query" => diary_reader(auth).map(drop),
         "vault.decisions.asks.answer" | "vault.decisions.asks.climb" | "self.decisions.asks" => {
             super::decision_ask_doors::holder(auth, verb).map(drop)
@@ -612,7 +774,7 @@ fn admit(
     auth: &CoreAuth,
     operation: AiOperation,
     input: AiCallRequest,
-) -> MemoryResult<(MediaRequest, Option<BankVoiceBinding>)> {
+) -> MemoryResult<(MediaRequest, Option<RungVoices>)> {
     owner_grade(auth, MEDIA_OWNERS)?;
     let media = server.ai.model_runtime().media();
     let Some((seat, _)) = media.seat(operation) else {
@@ -637,7 +799,7 @@ fn admit(
     if media.locality(operation, &model).is_none() {
         return Err(unserved(&model));
     }
-    let (voice, binding) =
+    let (voice, voices) =
         bind_voice(server, operation, &mut model, input.voice).map_err(voice_refused)?;
     let Some(locality) = media.locality(operation, &model) else {
         return Err(unserved(&model));
@@ -704,7 +866,7 @@ fn admit(
     // The world a caller names does not vouch for what it sends: a
     // fallback judges the call as naming none, as a raw text call is.
     request.envelope.scope.world = None;
-    Ok((request, binding))
+    Ok((request, voices))
 }
 
 /// A refused voice, under the facade's codes: a banked voice no rung holds

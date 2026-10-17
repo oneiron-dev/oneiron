@@ -1,5 +1,6 @@
 //! One durable proactivity digest per vault cadence, with intent-bound urgent wakes.
 //! A regular digest also carries the cleanup cron's after-notice (OF-449).
+use super::applied::{MaintenanceInverse, MaintenanceRevert};
 use super::invalid;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -16,12 +17,18 @@ const PRESENTATION: SideTable<(), ProactivityPresentation, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_PRESENTATION);
 const POLICY_CONFIRMED: SideTable<EntityId, [u8; 32], side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CONFIRMED);
-/// Per-recipient time of the last digest that delivered judge asks.
+/// Per-recipient time of the last digest that delivered judge or eval label asks.
 const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_JUDGE_ASKS);
 /// Generic proposed claim written through the existing gated agent memory
 /// verb. It changes NO settings until the owner confirms its exact revision.
+/// A Dreamer-born one applies at once instead (OF-023), through
+/// [`Vault::apply_dreamer_proactivity_policy`], and the owner reverts it.
 pub const PROACTIVITY_POLICY_REQUEST_PREDICATE: &str = "dreamer.proactivity.policy_request";
+/// The cadence row's name in a revert's settings list.
+const CADENCE_ROW: &str = "cadence";
+/// The presentation row's name in a revert's settings list.
+const PRESENTATION_ROW: &str = "presentation";
 /// Producer name of a delivered digest's inbox NOTIFICATION.
 pub const DIGEST_NOTIFICATION_PRODUCER: &str = "dreamer.digest";
 /// The derived group pending training offers (OF-577) render under.
@@ -165,13 +172,15 @@ impl DigestCleanup {
 pub struct ProactivityDigest {
     pub id: [u8; 32],
     pub created_at: u64,
-    /// The authenticated reader the judge asks are addressed to; `None` for
-    /// the ownerless timer projection, which carries no asks.
+    /// The authenticated reader the asks are addressed to; `None` for the
+    /// ownerless timer projection, which carries no asks.
     #[serde(with = "crate::serialize::entity_ref::optional")]
     pub recipient: Option<EntityId>,
     pub urgent: bool,
     pub groups: BTreeMap<String, Vec<DigestProposal>>,
     pub judge_asks: Vec<crate::skill_optimize::JudgeAsk>,
+    /// The recipient's eval label asks, paid from what the judge asks left.
+    pub eval_label_asks: Vec<crate::skill_optimize::EvalLabelAsk>,
     /// Pending training offers not carried by an earlier digest.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offers: Vec<DigestOffer>,
@@ -272,6 +281,48 @@ impl Vault {
         Ok(())
     }
 
+    /// Applies a Dreamer-born policy request at once (OF-023, owner ruling
+    /// 10-18: "autoapply + revert rather than holdout"): the one exception to
+    /// the owner-only cadence and presentation rows. The request is checked as
+    /// the owner setters check it; `attempt` must be a verified Dreamer
+    /// attempt, never the Coach's, and `evidence` the records it read. Both
+    /// rows, the request's finding at Auto, the prior rows as its inverse and
+    /// the receipt commit together; a replay returns the finding and applies
+    /// nothing. When the Gate parks the finding, it lands Proposed and changes
+    /// nothing until the owner confirms it, as an agent's request does.
+    pub fn apply_dreamer_proactivity_policy(
+        &self,
+        attempt: crate::attempt_queue::AttemptId,
+        request: &ProactivityPolicyRequest,
+        evidence: &[EntityId],
+        now: u64,
+    ) -> Result<EntityId> {
+        request.claim_value()?;
+        let stamp = self
+            .dreamer_attempt_authority(attempt)?
+            .ok_or_else(invalid)?;
+        let subject = crate::vault::embedded_owner_actor_id()?;
+        let value = serde_json::to_value(request).map_err(|_| invalid())?;
+        let finding = super::proposals::land(self, &stamp.facet, attempt, |landing| {
+            self.with_write_txn_grouped(|txn| {
+                landing.land_in_txn(
+                    self,
+                    txn,
+                    &super::proposals::Finding {
+                        subject,
+                        predicate: PROACTIVITY_POLICY_REQUEST_PREDICATE,
+                        value: &value,
+                        evidence,
+                    },
+                    now,
+                    |txn| apply_policy_in_txn(self, txn, request),
+                )
+            })
+        })?;
+        self.store.notify_proactivity_changes();
+        Ok(finding)
+    }
+
     /// Subscribe before the first deadline read. Every notification means
     /// "re-read committed state", never "deliver a wake".
     pub fn subscribe_proactivity_changes(&self) -> tokio::sync::watch::Receiver<u64> {
@@ -305,8 +356,8 @@ impl Vault {
 
     /// The deadline source calls this on a timer wake. No owner credential is
     /// minted by the background job: this is a projection, not a policy edit.
-    /// Judge asks stay pending here; they reach only their responsible
-    /// human's authenticated digest read.
+    /// Judge and eval label asks stay pending here; they reach only their
+    /// responsible human's authenticated digest read.
     pub fn emit_due_proactivity_digest(
         &self,
         now: u64,
@@ -366,9 +417,9 @@ impl Vault {
                 .last_regular
                 .map(|last| last.saturating_add(cadence.period_secs));
             let due = next.is_none_or(|next| now >= next);
-            // Judge asks spend one human's funded minutes, so each recipient
-            // keeps its own mark on the shared vault cadence: one person's
-            // digest never consumes another's.
+            // Judge and eval label asks spend one human's funded minutes, so
+            // each recipient keeps its own mark on the shared vault cadence:
+            // one person's digest never consumes another's.
             let asks_due = match &recipient {
                 Some(actor) => load_ask_mark(self, &*txn, actor)?
                     .is_none_or(|last| now >= last.saturating_add(cadence.period_secs)),
@@ -414,11 +465,13 @@ impl Vault {
                     .unwrap_or(group);
                 groups.entry(display_group).or_default().push(proposal);
             }
-            let judge_asks = match recipient {
-                Some(actor) if asks_due => {
-                    crate::skill_optimize::take_digest_asks_in_txn(self, txn, actor, now)?
-                }
-                _ => Vec::new(),
+            // Judge asks are paid first; eval label asks spend what remains.
+            let (judge_asks, eval_label_asks) = match recipient {
+                Some(actor) if asks_due => (
+                    crate::skill_optimize::take_digest_asks_in_txn(self, txn, actor, now)?,
+                    crate::skill_optimize::take_digest_eval_asks_in_txn(self, txn, actor, now)?,
+                ),
+                _ => (Vec::new(), Vec::new()),
             };
             // Offers ride the regular cadence; an urgent wake is about its intent.
             let offers = if due {
@@ -447,7 +500,11 @@ impl Vault {
             } else {
                 Vec::new()
             };
-            if groups.is_empty() && judge_asks.is_empty() && offers.is_empty() && cleanup.is_none()
+            if groups.is_empty()
+                && judge_asks.is_empty()
+                && eval_label_asks.is_empty()
+                && offers.is_empty()
+                && cleanup.is_none()
             {
                 return Ok(None);
             }
@@ -528,6 +585,7 @@ impl Vault {
                 urgent: is_urgent,
                 groups,
                 judge_asks,
+                eval_label_asks,
                 offers,
                 cleanup,
                 health_cards,
@@ -576,7 +634,8 @@ impl Vault {
                 state.last_digest_id = Some(digest.id);
                 STATE.put(&self.store, txn, &(), &state)?;
             }
-            if let Some(actor) = recipient.filter(|_| !digest.judge_asks.is_empty()) {
+            let asked = !digest.judge_asks.is_empty() || !digest.eval_label_asks.is_empty();
+            if let Some(actor) = recipient.filter(|_| asked) {
                 JUDGE_ASK_MARK.put(&self.store, txn, &actor, &now)?;
             }
             Ok(Some(digest))
@@ -636,6 +695,7 @@ fn digest_id(digest: &ProactivityDigest) -> Result<[u8; 32]> {
         digest.recipient,
         &digest.groups,
         &digest.judge_asks,
+        &digest.eval_label_asks,
         &digest.offers,
         &digest.cleanup,
         digest.urgent,
@@ -826,6 +886,70 @@ impl crate::store::Store {
             *suspended = Some(generation);
         }
     }
+}
+
+/// The shared rows one Dreamer-born policy request replaced (OF-023): each
+/// row's prior value (`None`: unset, so the defaults) and the value applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProactivityPolicyInverse {
+    prior_cadence: Option<ProactivityCadence>,
+    prior_presentation: Option<ProactivityPresentation>,
+    cadence: ProactivityCadence,
+    presentation: ProactivityPresentation,
+}
+
+/// The Dreamer's setter: the owner setters' checks, then both rows, in the
+/// finding's write. Returns the prior rows as the inverse.
+fn apply_policy_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: &ProactivityPolicyRequest,
+) -> Result<MaintenanceInverse> {
+    request.claim_value()?;
+    let inverse = ProactivityPolicyInverse {
+        prior_cadence: CADENCE.get(&vault.store, &*txn, &())?,
+        prior_presentation: PRESENTATION.get(&vault.store, &*txn, &())?,
+        cadence: request.cadence.clone(),
+        presentation: request.presentation.clone(),
+    };
+    CADENCE.put(&vault.store, txn, &(), &request.cadence)?;
+    PRESENTATION.put(vault, txn, &(), &request.presentation)?;
+    Ok(MaintenanceInverse::ProactivityPolicy(Box::new(inverse)))
+}
+
+/// Puts back each row the request applied that still holds what it applied;
+/// a row a later write changed is left as it is and listed. The caller
+/// signals the change after commit.
+pub(super) fn revert_policy_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    inverse: &ProactivityPolicyInverse,
+    out: &mut MaintenanceRevert,
+) -> Result<()> {
+    if CADENCE.get(&vault.store, &*txn, &())?.as_ref() == Some(&inverse.cadence) {
+        match &inverse.prior_cadence {
+            Some(row) => CADENCE.put(&vault.store, txn, &(), row)?,
+            None => {
+                CADENCE.delete(&vault.store, txn, &())?;
+            }
+        }
+        out.settings.push(CADENCE_ROW.to_owned());
+    } else {
+        out.left_alone.push(CADENCE_ROW.to_owned());
+    }
+    if PRESENTATION.get(&vault.store, &*txn, &())?.as_ref() == Some(&inverse.presentation) {
+        match &inverse.prior_presentation {
+            Some(row) => PRESENTATION.put(vault, txn, &(), row)?,
+            None => {
+                PRESENTATION.delete(&vault.store, txn, &())?;
+            }
+        }
+        out.settings.push(PRESENTATION_ROW.to_owned());
+    } else {
+        out.left_alone.push(PRESENTATION_ROW.to_owned());
+    }
+    Ok(())
 }
 
 fn load_policy_proposal(

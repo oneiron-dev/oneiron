@@ -1,5 +1,5 @@
 //! `oneiron import folder attach|rescan|detach|list`: a folder of markdown
-//! notes that stays attached to the vault (OF-554, ARCH-0027).
+//! notes and PDFs that stays attached to the vault (OF-554, ARCH-0027).
 //!
 //! `attach` is the owner's one act: it records the folder and lands its notes
 //! as `import notes` would. From then on `oneiron serve` rescans every
@@ -224,6 +224,10 @@ fn rescan(
     let mut counts = NoteCounts::default();
     let mut notes = super::read_folder(folder, &mut counts, MAX_FOLDER_BYTES)?;
     notes.retain(|note| included(&source.include, &note.path));
+    let raw_hashes = notes
+        .iter()
+        .filter_map(|note| Some((note.path.clone(), note.raw_hash.clone()?)))
+        .collect::<HashMap<_, _>>();
     let ledger = vault.folder_source_files(&source.folder)?;
     let seen = notes
         .iter()
@@ -238,11 +242,9 @@ fn rescan(
         .filter(|file| std::fs::symlink_metadata(folder.join(&file.path)).is_err())
         .map(|file| file.path.clone())
         .collect::<Vec<_>>();
-    anyhow::ensure!(
-        !notes.is_empty() || missing.is_empty(),
-        "{} reads empty; nothing was retracted. Detach it to let its notes go",
-        source.folder
-    );
+    // A folder emptied of its last file retracts that file too (ARCH-0027).
+    // Retraction archives, and a returning file restores its note, so a
+    // mount point read empty loses nothing.
     let standings = vault.imported_note_standings(
         &source.folder,
         &notes
@@ -279,7 +281,7 @@ fn rescan(
             Some(label) if known => label.clone(),
             _ => source.kind.clone(),
         };
-        let title = super::choose_title(vault, owner, note, &mut taken, &mut titles)?;
+        let title = super::choose_title(vault, &source.folder, note, &mut taken, &mut titles)?;
         new.push(ImportedNote {
             path: note.path.clone(),
             kind,
@@ -296,6 +298,7 @@ fn rescan(
             links,
             present,
             missing,
+            raw_hashes,
         },
     )?)
 }

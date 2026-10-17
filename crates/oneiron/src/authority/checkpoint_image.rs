@@ -17,6 +17,14 @@
 //! rather than decided, and a build that a local sequence floor would decide
 //! refuses. Covered rows a later fold reads whole travel as their canonical
 //! signed bytes: the signed wire codec has no serde form.
+//!
+//! An archive manifest is a virtual content set, not a location: its id is a
+//! domain-separated BLAKE3 over the vault id and the exact ascending covered
+//! rows it lists ([`authority_archive_id`]), and its custodians are machines
+//! of the same vault, each by its id and the machine key a connection proves
+//! it by. A builder names only itself, for the covered rows it physically
+//! holds: custody locates bytes, never chooses roots or grants permission,
+//! and is no proof of a durable copy. Raw history stays local and whole.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
@@ -36,6 +44,8 @@ pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint
 pub const AUTHORITY_CHECKPOINT_V2_ID_CONTEXT: &str = "oneiron/authority/checkpoint-v2/id/v1";
 /// The largest encoded image a vault writes or decodes.
 pub const AUTHORITY_CHECKPOINT_V2_MAX_BYTES: usize = 64 * 1024 * 1024;
+/// The context of an archive's content id ([`authority_archive_id`]).
+pub const AUTHORITY_ARCHIVE_ID_CONTEXT: &str = "oneiron/authority/archive/id/v1";
 
 /// One covered row, as a fold past the image reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,11 +57,36 @@ pub struct AuthorityCheckpointRow {
     pub parents: Vec<AuthorityEntryHash>,
     /// The world of a side-branch row.
     pub world: Option<EntityId>,
-    /// The canonical signed body of a row a fold past the image reads whole
-    /// (an approval, a revocation, a handoff, a machine profile, a world-key
-    /// record); None for every other row.
+    /// Whether the row is a slip op (a mint, a slip revocation or a
+    /// consumption): a store door counts a slip issuer's slip ops toward no
+    /// bound.
+    pub slip_op: bool,
+    /// The canonical signed body of a row a fold or a store door past the
+    /// image reads whole (an approval, a binding, a confirm, a revocation, a
+    /// handoff, an enrollment, the genesis, a root record, a machine profile,
+    /// a world edit or a world-key record); None for every other row.
     #[serde(with = "body_bytes")]
     pub body: Option<Vec<u8>>,
+}
+
+/// Whether an image carries the canonical signed body of a covered row of
+/// `op`'s kind: each row a fold past the image reads whole
+/// ([`super::fold_resume::is_projected`]: an approval, a binding, a confirm,
+/// a device revocation, a handoff, a machine profile, a world-key record),
+/// and each row a store door past it reads whole to judge a new row: the
+/// genesis and each device enrollment the consent structure rests on, the
+/// root records that name owner anchors, the actor revocations a signer's
+/// revocations count, and the world edits that may be a stranger's.
+pub(super) fn carries_body(op: &AuthorityOp) -> bool {
+    super::fold_resume::is_projected(op)
+        || matches!(
+            op,
+            AuthorityOp::Genesis { .. }
+                | AuthorityOp::EnrollDevice { .. }
+                | AuthorityOp::OwnerRoot(_)
+                | AuthorityOp::RevokeActor { .. }
+                | AuthorityOp::WorldPrivacy(_)
+        )
 }
 
 /// The fold the image commits: the settled once fold before any install's
@@ -126,14 +161,103 @@ pub struct AuthorityCheckpointUnresolved {
     pub stale_approvals: Vec<AuthorityEntryHash>,
 }
 
-/// One cold archive that holds covered rows' original signed scaffold.
+/// One cold archive that holds covered rows' original signed scaffold: a
+/// content set and the machines that hold it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityArchiveManifest {
-    /// The archive's content id.
+    /// The archive's content id: [`authority_archive_id`] of this vault and
+    /// `rows`.
     pub archive: [u8; 32],
     /// The covered rows it holds, ascending.
     pub rows: Vec<AuthorityEntryHash>,
+    /// The machines that hold them, ascending, at least one. Advertised
+    /// availability: a reader fetches and verifies each row itself.
+    pub custodians: Vec<AuthorityArchiveCustodian>,
+}
+
+/// A machine of the same vault that holds an archive's rows: its id and the
+/// machine key a connection proves it by ([`PeerMachine::Proven`]). A
+/// locator only: never a checkpoint root, a quorum key or a permission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityArchiveCustodian {
+    pub machine: EntityId,
+    pub proof_key: [u8; 32],
+}
+
+/// What an archive id commits: one vault's exact signed rows, by hash. Each
+/// row hash commits that row's canonical signed bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorityArchiveContent {
+    pub vault_id: AuthorityVaultId,
+    /// Ascending, unique and nonempty.
+    pub rows: Vec<AuthorityEntryHash>,
+}
+
+/// An archive's content id: `BLAKE3-derive_key(AUTHORITY_ARCHIVE_ID_CONTEXT,
+/// vault_id ‖ row count (u64 BE) ‖ each row hash, ascending)`. A virtual
+/// content-set commitment: not a location, a checkpoint id or a proof that
+/// any copy is durable. Rows that are empty, unsorted or repeated refuse.
+pub fn authority_archive_id(content: &AuthorityArchiveContent) -> Result<[u8; 32]> {
+    archive_id_of(&content.vault_id, &content.rows)
+}
+
+fn archive_id_of(vault_id: &AuthorityVaultId, rows: &[AuthorityEntryHash]) -> Result<[u8; 32]> {
+    if rows.is_empty() || !ascending(rows) {
+        return Err(refused("authority archive content"));
+    }
+    let mut hasher = blake3::Hasher::new_derive_key(AUTHORITY_ARCHIVE_ID_CONTEXT);
+    hasher.update(vault_id);
+    hasher.update(&u64::try_from(rows.len()).unwrap_or(u64::MAX).to_be_bytes());
+    for row in rows {
+        hasher.update(row);
+    }
+    Ok(*hasher.finalize().as_bytes())
+}
+
+/// The one local-custody manifest a builder writes: `held_covered`, the
+/// covered rows this vault physically holds in original signed bytes
+/// (ascending), with this install's own proved machine as the only
+/// custodian. None when it holds none of them or no machine of its own is
+/// proved here: an image never names custody it cannot stand behind.
+pub(super) fn local_archive_manifest(
+    vault_id: &AuthorityVaultId,
+    held_covered: Vec<AuthorityEntryHash>,
+    custodian: Option<AuthorityArchiveCustodian>,
+) -> Result<Option<AuthorityArchiveManifest>> {
+    let Some(custodian) = custodian.filter(|_| !held_covered.is_empty()) else {
+        return Ok(None);
+    };
+    Ok(Some(AuthorityArchiveManifest {
+        archive: archive_id_of(vault_id, &held_covered)?,
+        rows: held_covered,
+        custodians: vec![custodian],
+    }))
+}
+
+/// This install's own machine as an archive custodian, when `fold` proves
+/// it: the install's machine id, with the signer loaded for it, whose
+/// machine key is the one `fold` names for that machine
+/// ([`AuthorityFold::machine_proof_key`]). None before the install has a
+/// machine, with no signer loaded, or when the fold names another key.
+pub(super) fn local_archive_custodian_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+) -> Result<Option<AuthorityArchiveCustodian>> {
+    let Some(machine) = crate::identity::read_machine_id_in_txn(vault, txn)? else {
+        return Ok(None);
+    };
+    let Some(signer) = vault
+        .loaded_install_signer()
+        .filter(|signer| signer.machine == machine)
+    else {
+        return Ok(None);
+    };
+    let proof_key = signer.machine_key.verifying_key().to_bytes();
+    Ok((fold.machine_proof_key(machine) == Some(proof_key))
+        .then_some(AuthorityArchiveCustodian { machine, proof_key }))
 }
 
 /// A portable authority checkpoint image (OF-469, checkpoint v2).
@@ -156,11 +280,17 @@ pub struct AuthorityCheckpointV2 {
     pub(super) aggregate: CheckpointAggregate,
     pub(super) safety: CheckpointSafety,
     pub unresolved: AuthorityCheckpointUnresolved,
-    /// Empty while no cold archive exists.
+    /// The archives that hold covered rows' original signed scaffold,
+    /// ascending by archive id. A builder writes at most one of its own: the
+    /// covered rows it holds, with itself as custodian.
     pub archive_manifests: Vec<AuthorityArchiveManifest>,
     /// The root policy the image was built under. A verifier takes its
     /// policy from its own pin, never from here.
     pub root_policy: CheckpointRootPolicy,
+    /// The owner-root pin of the install that built the image: its fold
+    /// counted world keys and local reads under that pin. An adopter's own
+    /// pin must equal it.
+    pub building_pin: Option<PinnedRoot>,
     /// The previous image's id in this vault's local chain.
     pub parent: Option<[u8; 32]>,
 }
@@ -291,6 +421,7 @@ impl AuthorityCheckpointV2 {
                 row_body_matches(hash, row, body)?;
             }
         }
+        self.shape_graph()?;
         if !self
             .rows
             .keys()
@@ -298,6 +429,46 @@ impl AuthorityCheckpointV2 {
             .eq(self.frontier.iter())
         {
             return Err(refused("checkpoint image frontier"));
+        }
+        Ok(())
+    }
+
+    /// The covered rows form one acyclic graph whose only parentless row is
+    /// the genesis, so every covered row descends from it: a second root or
+    /// a cycle refuses. Parent membership is checked before this.
+    fn shape_graph(&self) -> Result<()> {
+        let mut children = BTreeMap::<&AuthorityEntryHash, Vec<&AuthorityEntryHash>>::new();
+        let mut waiting = BTreeMap::<&AuthorityEntryHash, usize>::new();
+        let mut ready = Vec::new();
+        for (hash, row) in &self.rows {
+            let parents: BTreeSet<_> = row.parents.iter().collect();
+            for parent in &parents {
+                children.entry(*parent).or_default().push(hash);
+            }
+            if parents.is_empty() {
+                if *hash != self.genesis {
+                    return Err(refused("checkpoint image has a second parentless row"));
+                }
+                ready.push(hash);
+            } else {
+                waiting.insert(hash, parents.len());
+            }
+        }
+        let mut reached = 0_usize;
+        while let Some(hash) = ready.pop() {
+            reached += 1;
+            for child in children.get(hash).into_iter().flatten() {
+                let count = waiting
+                    .get_mut(*child)
+                    .ok_or_else(|| refused("checkpoint image coverage graph"))?;
+                *count -= 1;
+                if *count == 0 {
+                    ready.push(*child);
+                }
+            }
+        }
+        if reached != self.rows.len() {
+            return Err(refused("checkpoint image coverage has a cycle"));
         }
         Ok(())
     }
@@ -339,7 +510,8 @@ impl AuthorityCheckpointV2 {
     }
 
     /// The unresolved closure and the archive manifests: sorted, unique, and
-    /// each list on the side of `covered` it names.
+    /// each list on the side of `covered` it names; each manifest's id is its
+    /// rows' content id, and its custodians ascend, unique, at least one.
     fn shape_held_back(&self) -> Result<()> {
         let covered = |hash: &AuthorityEntryHash| self.rows.contains_key(hash);
         let unresolved = &self.unresolved;
@@ -377,6 +549,12 @@ impl AuthorityCheckpointV2 {
                 manifest.rows.is_empty()
                     || !ascending(&manifest.rows)
                     || !manifest.rows.iter().all(covered)
+                    || archive_id_of(&self.vault_id, &manifest.rows).ok() != Some(manifest.archive)
+                    || manifest.custodians.is_empty()
+                    || manifest
+                        .custodians
+                        .windows(2)
+                        .any(|pair| pair[0] >= pair[1])
             })
         {
             return Err(refused("checkpoint image archive manifests"));
@@ -385,8 +563,8 @@ impl AuthorityCheckpointV2 {
     }
 }
 
-/// A carried body is the canonical signed row its summary names, and a row a
-/// fold past the image reads whole.
+/// A carried body is the canonical signed row its summary names, and a row
+/// the image carries whole.
 fn row_body_matches(
     hash: &AuthorityEntryHash,
     row: &AuthorityCheckpointRow,
@@ -398,7 +576,8 @@ fn row_body_matches(
         || entry.seq != row.seq
         || entry.parent_hashes != row.parents
         || super::world_privacy::side_world(&entry.op) != row.world
-        || !super::fold_resume::is_projected(&entry.op)
+        || super::log_budget::is_slip_op(&entry.op) != row.slip_op
+        || !carries_body(&entry.op)
     {
         return Err(refused("checkpoint image row body"));
     }
@@ -553,6 +732,20 @@ impl Vault {
             .collect();
         unsettled_handoffs.sort_unstable();
         unsettled_handoffs.dedup();
+        // Custody is proved on the fold under the building install's pin,
+        // before the image drops it. Every covered row here is held.
+        let custodian = local_archive_custodian_in_txn(self, txn, &once)?;
+        let archive_manifests = local_archive_manifest(
+            &vault_id,
+            covered
+                .iter()
+                .filter(|hash| held.contains_key(*hash))
+                .copied()
+                .collect(),
+            custodian,
+        )?
+        .into_iter()
+        .collect();
         let unresolved = AuthorityCheckpointUnresolved {
             held: uncovered.into_iter().collect(),
             missing: missing.into_iter().collect(),
@@ -575,7 +768,8 @@ impl Vault {
                     seq: entry.seq,
                     parents: entry.parent_hashes.clone(),
                     world: super::world_privacy::side_world(&entry.op),
-                    body: super::fold_resume::is_projected(&entry.op).then(|| body.clone()),
+                    slip_op: super::log_budget::is_slip_op(&entry.op),
+                    body: carries_body(&entry.op).then(|| body.clone()),
                 };
                 Ok((*hash, row))
             })
@@ -596,8 +790,9 @@ impl Vault {
             },
             safety,
             unresolved,
-            archive_manifests: Vec::new(),
+            archive_manifests,
             root_policy: self.checkpoint_root_policy_in_txn(txn)?,
+            building_pin: pin,
             parent: None,
         };
         // One serde round trip normalizes what a decoder would (an empty

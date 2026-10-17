@@ -28,8 +28,11 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState}
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
-use crate::learning::{TeamEvent, project_run_coordination, team_events_from_attempts};
-use crate::learning_setting::{SettingSpec, setting_value_scoped_in_txn};
+use crate::learning::{
+    DuplicateLabeller, DuplicateWork, DuplicateWorkKind, TeamEvent, label_duplicate_work,
+    project_run_coordination, team_events_from_attempts,
+};
+use crate::learning_setting::{SettingSpec, setting_value_in_scope_in_txn};
 use crate::llm::run_admission::LeaseUnit;
 use crate::llm::{DreamerTrapKind, OpenTrapWait, open_trap_waits};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
@@ -452,8 +455,8 @@ impl DialBook {
     }
 }
 
-/// The dials one project and task type resolve to. A type row matches its
-/// node at any tree version.
+/// The dials one project and task type resolve to: goal, project, task type,
+/// then vault rows (OF-542). A type row matches its node at any tree version.
 fn read_dials(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -465,7 +468,7 @@ fn read_dials(
         tree_version: 0,
     });
     let value = |spec: &SettingSpec| {
-        setting_value_scoped_in_txn(&vault.store, rtxn, spec, project, type_ref.as_ref())
+        setting_value_in_scope_in_txn(vault, rtxn, spec, project, type_ref.as_ref())
     };
     Ok(Dials {
         review: value(&HEALTH_REVIEW)? >= 0.5,
@@ -542,14 +545,9 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         since,
         now,
     ));
-    findings.extend(duplicate_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &book,
-        since,
-        now,
-    )?);
+    let (duplicates, digest_pairs) =
+        duplicate_findings(vault, &dispatched, &attempts, &book, since, now)?;
+    findings.extend(duplicates);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
     findings.extend(widen_denial_findings(
         vault,
@@ -582,7 +580,8 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
             .map_or(finding.window.0, |record| {
                 record.claimed_at.unwrap_or(record.created_at)
             });
-        finding.blocked = said_blocked(vault, finding.subject, finding.task, began)?;
+        finding.blocked =
+            said_blocked(vault, finding.subject, finding.task, began, finding.attempt)?;
     }
 
     // Each finding's DIAGNOSTIC, in its own write: the event door opens one.
@@ -590,6 +589,7 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     for finding in &findings {
         emitted.push(emit(vault, finding)?);
     }
+    label_digest_pairs(vault, &digest_pairs, &findings, &emitted, &attempts)?;
 
     // Recipients from live authority: the project's effective leader, the
     // spawner by dispatch lineage, and the vault's live owners.
@@ -741,9 +741,11 @@ fn live_attempt(
 }
 
 /// `loop`: one actor's identical `(verb, request_digest)` calls in a row, with
-/// no other call by that actor between them. A call receipt names no attempt,
-/// so the card's task is none. An agent run's own calls leave no receipt and
-/// are judged per attempt (`run_loop`).
+/// no other call by that actor between them and no new input: two calls
+/// whose inputs were both captured repeat only on an equal action digest
+/// ([`same_inputs`]). A call receipt names no attempt, so the card's task is
+/// none. An agent run's own calls leave no receipt and are judged per attempt
+/// (`run_loop`).
 fn loop_findings(
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
     dispatched: &Dispatches,
@@ -760,7 +762,12 @@ fn loop_findings(
             let end = rows[start..]
                 .iter()
                 .position(|(_, row)| {
-                    row.verb != first.verb || row.request_digest != first.request_digest
+                    row.verb != first.verb
+                        || row.request_digest != first.request_digest
+                        || !same_inputs(
+                            row.action_digest.as_deref(),
+                            first.action_digest.as_deref(),
+                        )
                 })
                 .map_or(rows.len(), |offset| start + offset);
             let run = &rows[start..end];
@@ -797,6 +804,17 @@ fn loop_findings(
         }
     }
     out
+}
+
+/// No new input between two equal calls, by their action digests: both
+/// captured and equal. A call whose inputs were not captured (it reads the
+/// world, or names too many entities) shows no input change, so its
+/// arguments alone decide.
+fn same_inputs(first: Option<&str>, second: Option<&str>) -> bool {
+    match (first, second) {
+        (Some(first), Some(second)) => first == second,
+        _ => true,
+    }
 }
 
 /// `silent`: a leased attempt whose actor made no call within the dial, with
@@ -838,7 +856,7 @@ fn silent_findings(
             || traps.contains_key(id)
             || runner.parked_attempt(record.id)?.is_some();
         let task = task_of(record);
-        if waiting || said_blocked(vault, dispatch.actor, task, claimed)? {
+        if waiting || said_blocked(vault, dispatch.actor, task, claimed, Some(record.id))? {
             continue;
         }
         let Some(attempt) = entity(record.id) else {
@@ -1097,12 +1115,14 @@ fn p90(mut values: Vec<u64>) -> u64 {
 }
 
 /// Whether the agent said it was stuck: its TASK is Blocked, or it filed a
-/// blocked report (`self.report_blocked`) at or after `since`.
+/// blocked report (`self.report_blocked`) at or after `since` that is
+/// unbound or bound to `attempt`.
 fn said_blocked(
     vault: &Vault,
     actor: EntityId,
     task: Option<EntityId>,
     since: u64,
+    attempt: Option<AttemptId>,
 ) -> Result<bool> {
     let recent = {
         let rtxn = vault.store.env.read_txn()?;
@@ -1130,9 +1150,12 @@ fn said_blocked(
         }
         recent
     };
-    // The report reader opens its own snapshot.
+    // The report reader opens its own snapshot. A report the host bound to
+    // another attempt of the same agent speaks for that one only.
     for id in recent {
-        if crate::code_run::blocked::read_blocked_receipt(vault, &id)?.is_some() {
+        if crate::code_run::blocked::read_blocked_receipt(vault, &id)?
+            .is_some_and(|receipt| receipt.speaks_for(attempt))
+        {
             return Ok(true);
         }
     }
@@ -1146,10 +1169,11 @@ const fn unix_secs(at: u64) -> u64 {
 }
 
 /// `duplicate_work`: each attempt that ran an action another attempt ran
-/// first on the same inputs, unplanned (`duplicate`, OF-568), and the run's
-/// audit-labelled duplicates. The card goes on the agent that did the second
-/// piece of work, once per attempt, unless that work cost less than its
-/// `health.dup.min_cost` (its launch scope's spend, children included).
+/// first on the same inputs, unplanned (`duplicate`, OF-568), and its team's
+/// audit-labelled redundant duplicates. The card goes on the agent that did
+/// the second piece of work, once per attempt, unless that work cost less
+/// than its `health.dup.min_cost` (its launch scope's spend, children
+/// included). Every digest pair comes back too, for its label.
 fn duplicate_findings(
     vault: &Vault,
     dispatched: &Dispatches,
@@ -1157,7 +1181,7 @@ fn duplicate_findings(
     book: &DialBook,
     since: u64,
     now: u64,
-) -> Result<Vec<Finding>> {
+) -> Result<(Vec<Finding>, Vec<duplicate::DigestPair>)> {
     let dispatcher = AgentDispatcher::new(vault);
     let cheap = |record: &AttemptRecord, dispatch: &Dispatched| -> Result<bool> {
         let floor = book.of(Some(dispatch)).dup_min_cost;
@@ -1171,7 +1195,15 @@ fn duplicate_findings(
     };
     let mut out = Vec::new();
     let mut found = BTreeSet::new();
-    for (key, firsts) in duplicate::digest_duplicates(vault, dispatched, attempts, since)? {
+    let pairs = duplicate::digest_duplicates(vault, dispatched, attempts, since)?;
+    let mut repeats: BTreeMap<[u8; 16], BTreeSet<[u8; 16]>> = BTreeMap::new();
+    for pair in pairs
+        .iter()
+        .filter(|pair| pair.kind == DuplicateWorkKind::Redundant)
+    {
+        repeats.entry(pair.second).or_default().insert(pair.first);
+    }
+    for (key, firsts) in repeats {
         let (Some(record), Some(dispatch)) = (attempts.get(&key), dispatched.get(&key)) else {
             continue;
         };
@@ -1185,22 +1217,30 @@ fn duplicate_findings(
         found.insert(key);
         out.push(dup_finding(record, dispatch, evidence));
     }
-    let runs: BTreeSet<&str> = dispatched
+    // Labels are kept per team, by its stamp's reference, not a queue run.
+    let teams: BTreeSet<String> = dispatched
         .keys()
         .filter_map(|id| attempts.get(id))
         .filter(|record| record.updated_at >= since)
-        .filter_map(|record| record.run_id.as_deref())
+        .filter_map(team_of)
         .collect();
-    for run in runs {
-        let cost = project_run_coordination(vault, run, now)?;
+    for team in &teams {
+        let cost = project_run_coordination(vault, team, now)?;
         for label in &cost.duplicate_work {
+            // Only a redundant repeat is waste; a planned check is not. The
+            // recipe's own labels restate its digest findings above.
+            if label.kind != DuplicateWorkKind::Redundant
+                || label.labelled_by == DuplicateLabeller::Health
+            {
+                continue;
+            }
             // A work reference is the TASK the attempt did, or the attempt.
             let does = |reference: &str| {
                 dispatched.iter().find_map(|(key, dispatch)| {
                     attempts
                         .get(key)
                         .filter(|record| {
-                            record.run_id.as_deref() == Some(run)
+                            team_of(record).as_ref() == Some(team)
                                 && (record.task_ref.as_deref() == Some(reference)
                                     || crate::entity_id::bytes_to_hex_lower(key) == reference)
                         })
@@ -1219,11 +1259,68 @@ fn duplicate_findings(
                     .flatten()
                     .filter_map(|record| entity(record.id))
                     .collect();
-            evidence.extend(EntityId::from_hex(&label.audit_receipt).ok());
+            evidence.extend(EntityId::from_hex(&label.receipt).ok());
             out.push(dup_finding(record, dispatch, evidence));
         }
     }
-    Ok(out)
+    Ok((out, pairs))
+}
+
+/// The team an attempt's dispatch stamped it into.
+fn team_of(record: &AttemptRecord) -> Option<String> {
+    crate::agent_dispatch::attempt_team_stamp(record)
+        .ok()
+        .flatten()
+        .map(|stamp| stamp.team_ref)
+}
+
+/// Writes each digest pair's `dup_of` label under its team (agent-mind §4.3:
+/// "the health recipe or an audit writes it"), citing the DIAGNOSTIC its
+/// finding emitted, else the second attempt's run record, which holds the
+/// equal action digest. A pair with no team has no label key.
+fn label_digest_pairs(
+    vault: &Vault,
+    pairs: &[duplicate::DigestPair],
+    findings: &[Finding],
+    emitted: &[EntityId],
+    attempts: &Attempts,
+) -> Result<()> {
+    let diagnostics: BTreeMap<[u8; 16], EntityId> = findings
+        .iter()
+        .zip(emitted)
+        .filter(|(finding, _)| matches!(finding.signal, AgentHealthSignal::DuplicateWork))
+        .filter_map(|(finding, diagnostic)| Some((*finding.attempt?.as_bytes(), *diagnostic)))
+        .collect();
+    let hex = |record: &AttemptRecord| crate::entity_id::bytes_to_hex_lower(record.id.as_bytes());
+    for pair in pairs {
+        let (Some(team), Some(first), Some(second)) = (
+            pair.team.as_deref(),
+            attempts.get(&pair.first),
+            attempts.get(&pair.second),
+        ) else {
+            continue;
+        };
+        // A work reference is the TASK the attempt did, or the attempt.
+        let work = |record: &AttemptRecord| record.task_ref.clone().unwrap_or_else(|| hex(record));
+        let (mut first_ref, mut second_ref) = (work(first), work(second));
+        if first_ref == second_ref {
+            (first_ref, second_ref) = (hex(first), hex(second));
+        }
+        label_duplicate_work(
+            vault,
+            team,
+            &DuplicateWork {
+                first: first_ref,
+                second: second_ref,
+                kind: pair.kind,
+                labelled_by: DuplicateLabeller::Health,
+                receipt: diagnostics
+                    .get(&pair.second)
+                    .map_or_else(|| hex(second), EntityId::to_hex),
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// One `duplicate_work` finding on the attempt that did the second piece of

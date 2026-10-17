@@ -29,6 +29,8 @@ mod agent_verbs;
 mod call_context;
 mod connector_call_doors;
 mod core_write_doors;
+mod courtesy_delete_doors;
+mod critic_review_doors;
 mod decision_ask_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
@@ -39,6 +41,7 @@ mod guest_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
 mod policy_doors;
+mod project_card_doors;
 mod reaction_doors;
 pub(super) mod role_picks;
 mod secret_lift_doors;
@@ -92,8 +95,8 @@ use oneiron::memory::{
     MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
 use oneiron::runtime_hooks::verb::{
-    InvocationClaim, InvocationEntry, InvocationOutcome, VerbAskCredential, VerbAskDoor,
-    VerbAskDrainPermit, VerbAskRefusal,
+    HOOK_RESULT_NOT_RETAINED, InvocationClaim, InvocationEntry, InvocationOutcome,
+    VerbAskCredential, VerbAskDoor, VerbAskDrainPermit, VerbAskRefusal,
 };
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbHookPre, VerbHookStop, hook_class};
 use oneiron::task_verb::verb_hook_boundary;
@@ -545,26 +548,6 @@ fn facade_invocation<'v>(
     })
 }
 
-/// The pre chain of row `verb` for `actor` over `args`, off the async
-/// runtime (ARCH-0080 §3): a hook may write, open an ask and run its
-/// sandbox. Every server door that runs a row itself, not through `invoke`,
-/// crosses it here. Its hooks read as `actor`; a door that holds its
-/// caller's key calls [`row_hooks_pre_with`].
-pub(crate) async fn row_hooks_pre(
-    server: &Arc<SyncServer>,
-    actor: EntityId,
-    class: EdgeActorClass,
-    invocation: Option<InvocationId>,
-    verb: &str,
-    args: serde_json::Value,
-) -> Result<VerbHookPre, MemoryError> {
-    let resume = RowHookResume::default();
-    row_hooks_pre_with(
-        server, None, None, actor, class, invocation, verb, args, resume,
-    )
-    .await
-}
-
 /// What a row's pre chain carries for settlement (ARCH-0080 §3 Ask): the
 /// credential a caller's call can run again on through its door, and the
 /// drain's permit when settlement runs it again. The default carries
@@ -575,15 +558,17 @@ pub(crate) struct RowHookResume {
     pub(crate) drain: Option<VerbAskDrainPermit>,
 }
 
-/// [`row_hooks_pre`] for a door that holds its caller's read key and its own
-/// admission of rewritten args. The hooks read under `reader`, capped by
-/// their grant, and as `actor` when it is `None`. A rewrite must pass the
-/// row's input check, then `check`, as if the caller sent it. An ask saves
-/// `resume`'s credential, and its drain permit marks the chain's thread as
-/// the drain's run of the call.
+/// The pre chain of row `verb` for `actor` over `args`, off the async
+/// runtime (ARCH-0080 §3): a hook may write, open an ask and run its
+/// sandbox. Every server door that runs a row itself, not through `invoke`,
+/// crosses it here. The hooks read under `reader`, capped by their grant,
+/// and as `actor` when it is `None`. A rewrite must pass the row's input
+/// check, then `check`, as if the caller sent it. An ask saves `resume`'s
+/// credential, and its drain permit marks the chain's thread as the drain's
+/// run of the call.
 #[expect(
     clippy::too_many_arguments,
-    reason = "row_hooks_pre's inputs plus the caller's key, rewrite admission and resume"
+    reason = "the row's call plus the caller's key, rewrite admission and resume"
 )]
 pub(crate) async fn row_hooks_pre_with(
     server: &Arc<SyncServer>,
@@ -698,7 +683,8 @@ async fn facade_hooks_pre(
     // credential's where its connection sits (an owner-grade credential that
     // calls as the host reads as the host, its owner), and the re-admission
     // of a rewritten ref. A key that does not build fails the call only when
-    // a hook may run.
+    // a hook may run; otherwise the call carries a key that reads nothing, so
+    // a binding installed meanwhile never reads as the host.
     let reader = match bound {
         Some(_) => VerbCall::reader_of(
             &credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
@@ -708,7 +694,11 @@ async fn facade_hooks_pre(
         None => match super::scoped_read_for_core_auth(&server.vault, auth) {
             Ok(read) => Some(read.actor_key().clone()),
             Err(error) if VerbCall::may_run(&server.vault, verb) => return Err(error.into()),
-            Err(_) => None,
+            Err(error) => Some(
+                ScopedReadActorKey::read_nothing(actor.to_hex(), class.gate_actor_class())
+                    .ok_or(error)?
+                    .at(auth.locality()),
+            ),
         },
     };
     let check = Some(facade_rewrite_admit(server, auth, &value));
@@ -814,6 +804,28 @@ pub(super) fn owner_authorship(
         .map_err(|_| refused())
 }
 
+/// The one verb whose direct request binds the requesting person's own
+/// proof rather than only the owner's (OF-417).
+const PERSON_PROOF_VERB: &str = "vault.workspace.work_companion.set";
+
+/// The proof a direct request (outside any room turn) binds onto its
+/// caller's surface for `verb`. `vault.workspace.work_companion.set` takes
+/// the person's own proof ([`shared_act_doors::person`]): the owner's, or a
+/// live person's on their own verified human credential, whose
+/// workspace-settings power the engine then checks; any other caller binds
+/// none and the engine refuses it. Every other verb binds the owner's own
+/// authorship ([`owner_authorship`]), or none.
+pub(super) fn direct_authorship(
+    auth: &CoreAuth,
+    server: &SyncServer,
+    verb: &str,
+) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
+    if verb == PERSON_PROOF_VERB {
+        return Ok(shared_act_doors::person(server, auth, verb).ok());
+    }
+    owner_authorship(auth, server)
+}
+
 /// Runs one SDK verb as the caller's credential reads, inside the named room
 /// turn when the call names one. Its reads list the rows they pick in
 /// `producers`.
@@ -843,8 +855,9 @@ fn facade_invoke(
             // The owner's own request on the owner's own full credential:
             // owner-authored writes carry their own confirmation. Any other
             // caller writes as itself; the owner's credential that no longer
-            // holds is refused.
-            let memory = match owner_authorship(auth, server)? {
+            // holds is refused. The work-companion setting takes the
+            // person's own proof instead (OF-417).
+            let memory = match direct_authorship(auth, server, verb)? {
                 Some(owner) => memory.with_owner_authorship(&owner),
                 None => memory,
             };
@@ -1290,11 +1303,17 @@ impl From<MemoryError> for FacadeApiError {
                 StatusCode::FORBIDDEN
             }
             code if VerbAskRefusal::from_code(code).is_some() => StatusCode::CONFLICT,
+            // OF-580: the call ran once its ask settled, and only its result
+            // was not kept. A conflict with the call's own record, not this
+            // server's failure, and no retry runs it again.
+            HOOK_RESULT_NOT_RETAINED => StatusCode::CONFLICT,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(code = %error.code, error = %error.message, "facade verb failed");
+        } else if error.code == HOOK_RESULT_NOT_RETAINED {
+            tracing::info!(code = %error.code, "facade verb ran; its result was not retained");
         }
         Self {
             status,

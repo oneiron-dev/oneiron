@@ -70,7 +70,8 @@ pub struct HostPin {
 }
 
 /// Each room's stored host, latest write wins. Key: id16 (room).
-const HOST_PINS: SideTable<EntityId, HostPin, Named> = SideTable::new(&side_table::ROOMS_HOST_PIN);
+pub(super) const HOST_PINS: SideTable<EntityId, HostPin, Named> =
+    SideTable::new(&side_table::ROOMS_HOST_PIN);
 
 /// Who holds a room's speaking duty now.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -118,8 +119,8 @@ pub struct RoomHostHand {
     pub session: Option<EntityId>,
 }
 
-fn refused() -> Error {
-    Error::Record(RecordError::ConversationDenied)
+fn refused(actor: EntityId) -> Error {
+    Error::Record(RecordError::RoomSpeakerIneligible { actor })
 }
 
 fn lacks(reason: &'static str) -> Error {
@@ -237,7 +238,7 @@ pub(crate) fn admit_room_host_in(
     actor: EntityId,
 ) -> Result<()> {
     if !may_host_in(vault, txn, room, actor)? {
-        return Err(refused());
+        return Err(refused(actor));
     }
     Ok(())
 }
@@ -253,7 +254,7 @@ pub(crate) fn admit_room_speech_in(
 ) -> Result<()> {
     room_speaking_role_in(vault, txn, room, actor, &RoomHosting::default())?
         .map(|_| ())
-        .ok_or_else(refused)
+        .ok_or_else(|| refused(actor))
 }
 
 /// The agents among `present` who may hold `room`'s duty by presence,
@@ -437,7 +438,7 @@ impl Memory<'_> {
         self.require_host_room(pin.room)?;
         let vault = self.vault();
         let caller = WriteActor::new(self.actor(), self.actor_class());
-        vault.try_with_write_txn_grouped(|txn| {
+        let standing = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
             if caller.actor_class() != EdgeActorClass::Human
                 || room_host_in_txn(vault, txn, pin.room, caller)?.is_none()
@@ -473,7 +474,11 @@ impl Memory<'_> {
                 caller.entity_ref(),
                 &[caller.entity_ref()],
             )?)
-        })
+        })?;
+        // FIX 1794: the pin, or its clear, reaches the room's live window.
+        #[cfg(feature = "sync")]
+        vault.refresh_room_cell_in_live_window(pin.room, None);
+        Ok(standing)
     }
 
     /// The room's current host hands the duty to `to`, another agent that
@@ -495,7 +500,7 @@ impl Memory<'_> {
         let live = self.live_participants(hand.session)?;
         let mut present = live.clone();
         present.push(caller.entity_ref());
-        vault.try_with_write_txn_grouped(|txn| {
+        let standing = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let hosting = room_host_in(vault, txn, hand.room, &present)?;
             if hosting.host != Some(caller.entity_ref())
@@ -525,6 +530,10 @@ impl Memory<'_> {
                 caller.entity_ref(),
                 &present,
             )?)
-        })
+        })?;
+        // FIX 1794: the handoff reaches the room's live window.
+        #[cfg(feature = "sync")]
+        vault.refresh_room_cell_in_live_window(hand.room, None);
+        Ok(standing)
     }
 }

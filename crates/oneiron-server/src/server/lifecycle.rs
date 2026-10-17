@@ -61,6 +61,7 @@ pub(super) enum LifecycleJobKind {
     Housekeeping,
     RepositoryMaintenance,
     MirrorPush,
+    AuthorityCheckpoint,
 }
 
 /// The lifecycle loop, and the housekeeping pass it last started. Dropping it
@@ -136,6 +137,9 @@ impl SyncServer {
                 // Each mirror target keeps its own cadence; the pass pushes
                 // only the due ones.
                 server.start_mirror_pushes(&admit).await;
+                // The authority checkpoint upkeep runs every tick; the engine
+                // decides whether a cutoff is due (OF-469).
+                server.start_authority_checkpoint(&admit).await;
             }
         });
         LifecycleScheduler {

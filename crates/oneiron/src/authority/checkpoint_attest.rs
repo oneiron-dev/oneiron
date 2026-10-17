@@ -381,6 +381,22 @@ struct StoredAttestation {
     attestation: AuthorityCheckpointAttestation,
 }
 
+/// The attestations stored for `image` that were made under the root policy
+/// whose digest is `policy`, as their roots made them.
+pub(super) fn checkpoint_attestations_under_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    image: &[u8; 32],
+    policy: &[u8; 32],
+) -> Result<Vec<AuthorityCheckpointAttestation>> {
+    Ok(ATTESTATIONS
+        .scan_from(store, txn, image)?
+        .into_iter()
+        .filter(|(_, stored)| stored.policy == *policy)
+        .map(|(_, stored)| stored.attestation)
+        .collect())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AttestedHead {
@@ -477,6 +493,34 @@ impl Vault {
         let pin = self.checkpoint_pin_for_in_txn(txn, context, image, [0; 32])?;
         let attestations = self.pinned_attestations_in_txn(txn, &pin)?;
         Ok(verify_authority_checkpoint_attestations(&pin, &image, &attestations).is_ok())
+    }
+
+    /// Whether `root` still owes kept image `image`, built under the root
+    /// policy whose digest is `built_under`, its attestation (OF-469 upkeep
+    /// retry): no attestation of it by `root` under that policy with `root`'s
+    /// stored binding is kept, that policy is still this vault's own, and
+    /// `root` is eligible under it. A policy the roster can no longer fix
+    /// owes nothing, and neither does an image built under an older policy:
+    /// the next image is built under the current one.
+    pub(super) fn checkpoint_attestation_owed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        root: &AuthorityKey,
+        image: [u8; 32],
+        built_under: &[u8; 32],
+    ) -> Result<bool> {
+        let key = root_row_key(root);
+        if let Some(stored) = ATTESTATIONS.get(&self.store, txn, &(image, key.clone()))?
+            && stored.policy == *built_under
+            && KEY_BINDINGS.get(&self.store, txn, &key)?.as_ref()
+                == Some(&stored.attestation.binding)
+        {
+            return Ok(false);
+        }
+        let Ok(context) = self.checkpoint_context_in_txn(txn) else {
+            return Ok(false);
+        };
+        Ok(context.eligible(root).is_ok() && context.policy.digest()? == *built_under)
     }
 
     /// Certifies this install's checkpoint SLH-DSA key for `root`, which must

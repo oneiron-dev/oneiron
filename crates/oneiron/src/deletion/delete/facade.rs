@@ -249,6 +249,8 @@ impl Vault {
                 .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor)
                 .privacy(reason == DeleteReason::GdprDelete);
             self.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)?;
+            // A pad is held by its world's holds too (OF-470).
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
             if reason.active_store_hard_purge_v1() {
                 self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
             }
@@ -367,16 +369,9 @@ impl Vault {
                 header.learned_at,
                 TopologyDeletePhase::Committed,
             )?;
-            // Deleting a world destroys its keys (fix 7); a cleanup archive
-            // stays undoable and destroys nothing.
-            if reason != DeleteReason::ArchivedByCleanup {
-                self.destroy_world_keys_for_delete_in_txn(
-                    &mut wtxn,
-                    *id,
-                    crate::world_keys::WorldKeyDestroyCause::LocalDelete,
-                    Some(tombstone.request_id),
-                )?;
-            }
+            // A deleted world keeps its keys, pads and sealed copies, so it
+            // restores from old bundles until they age out (DEC-0006); only
+            // an erase destroys them (the hard arm's purge).
             let (existed, had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
@@ -544,6 +539,7 @@ impl Vault {
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
             self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
             self.reject_held_redirect_shells_in_txn(&wtxn, id)?;
             if !authority_settled {
                 self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
@@ -662,6 +658,7 @@ impl Vault {
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
         self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+        crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         if !authority_settled {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
         }
@@ -746,8 +743,15 @@ impl Vault {
         scope
             .entity_ids
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
-        let (existed, citing) =
-            self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
+        // The erased world's pad tombstones publish once this commits
+        // (FIX 343); their windows are read before the purge erases the pads.
+        let pad_windows = self.world_pad_windows_in_txn(&wtxn, id)?;
+        let (existed, citing) = self.purge_entity_active_store_in_txn(
+            &mut wtxn,
+            id,
+            Some(&tombstone.request_id),
+            true,
+        )?;
         affected.extend(citing);
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
@@ -822,6 +826,7 @@ impl Vault {
         if crdt_persisted {
             self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }
+        self.publish_pad_tombstones_after_commit(&pad_windows);
         Ok(DeleteEntityOutcome {
             existed,
             receipt_id: Some(receipt_id),

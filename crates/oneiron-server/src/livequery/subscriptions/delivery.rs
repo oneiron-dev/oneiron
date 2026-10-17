@@ -25,8 +25,10 @@ impl LiveQueries {
             self.require_resync();
             return Err(error);
         }
-        // Local LMDB claim/SAVED_QUERY commits bypass Observer B. Poll only
-        // the owner feed on a bounded cadence through its normal cursor owner.
+        // Local LMDB claim/SAVED_QUERY and notification (type-42 put and
+        // mark) commits bypass Observer B. Poll only the owner feed and the
+        // notification views on a bounded cadence through their normal
+        // cursor owner.
         let poll = {
             let mut last = self
                 .last_owner_feed_poll
@@ -39,9 +41,9 @@ impl LiveQueries {
                 false
             }
         };
-        if poll
-            && let Err(error) = self.materialized(&[(
-                "owner-feed".to_owned(),
+        let local = |path: &str| {
+            (
+                path.to_owned(),
                 MaterializedDiffSummary {
                     containers: Vec::new(),
                     bytes: 0,
@@ -49,7 +51,10 @@ impl LiveQueries {
                 },
                 vec![OriginMark::default()],
                 false,
-            )])
+            )
+        };
+        if poll
+            && let Err(error) = self.materialized(&[local("owner-feed"), local(NOTIFICATIONS_PATH)])
         {
             self.require_resync();
             return Err(error);

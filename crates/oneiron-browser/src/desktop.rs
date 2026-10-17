@@ -22,19 +22,27 @@
 //! point still look as they did in that image; that read is compared and
 //! dropped, never held or receipted. A window with no tree says so
 //! (`no_tree`), and the program reads it by its pixels.
+//!
+//! A person can take the desktop over (CUA-001), asked by the agent's
+//! `handover` or not. While the agent waits on its ask, and while a person
+//! holds the desktop, every agent verb refuses `desktop_taken_over` and
+//! takes no screenshot; the person sees the whole display and drives it
+//! through the same driver. Handing it back ends the takeover with its
+//! record, which is its receipt.
 
 use crate::driver::{crop_region, encode_png, png_dimensions};
 use crate::mcp::{Mcp, ToolError, ToolReply};
 use crate::session::{effect_class, press_for, receipt_class};
 use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, DesktopWindow,
-    EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HotkeyInput,
-    ImageOutput, KeyInput, NoDecider, Observation, ObserveInput, OpenInput, PointInput, PressMode,
-    ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger,
-    ScrollInput, SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput,
-    WindowInput, WindowsInput, WindowsOutput, ZoomInput,
+    EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HandoverInput,
+    HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, Observation, ObserveInput,
+    OpenInput, PointInput, PressMode, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput,
+    ScreenshotOutput, ScreenshotTrigger, ScrollInput, SelectInput, SendPolicy, TypeInput,
+    ViewInput, WaitForInput, WaitForOutput, WindowInput, WindowsInput, WindowsOutput, ZoomInput,
 };
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -58,6 +66,8 @@ const MAX_ELEMENTS: u32 = 1000;
 const HISTORY: usize = 8;
 /// Screenshots the session holds for a later image read.
 const MEDIA: usize = 16;
+/// The longest reason a `handover` ask may give, in characters.
+const HANDOVER_REASON_CHARS: usize = 500;
 /// The square a click at a point checks, in screenshot pixels each way from
 /// the point: it must look as it did in the image the point was read from.
 const CLICK_CHECK_RADIUS: u32 = 16;
@@ -136,6 +146,11 @@ const SCOPES: &[&str] = &[
     "layered pane",
 ];
 
+/// The roles of rows that hold typed text, any of which may be secret.
+const TEXT_ROLES: &[&str] = &["textbox", "searchbox", "combobox", "spinbutton"];
+/// What a toolkit shows in place of a concealed field's text.
+const MASK_GLYPHS: &[char] = &['•', '●', '∙', '*'];
+
 /// Words that mark a text field secret beside a password role.
 const SECRET_PHRASES: &[&[&str]] = &[
     &["password"],
@@ -178,6 +193,73 @@ pub struct DesktopSession {
     history: VecDeque<(u64, WindowKey, HashMap<String, Row>)>,
     media: VecDeque<Held>,
     wait_cap: Duration,
+    /// Who has the desktop now.
+    takeover: Takeover,
+    /// The takeover that ended since the agent's last answer.
+    returned: Option<TakeoverRecord>,
+}
+
+/// Who has a desktop session (CUA-001): its agent, its agent waiting on the
+/// person it asked, or a person driving it. `by` is the person's id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Takeover {
+    Agent,
+    Waiting {
+        reason: String,
+        asked_at_ms: u64,
+    },
+    Held {
+        by: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        asked: Option<String>,
+        taken_at_ms: u64,
+        inputs: u64,
+    },
+}
+
+/// One takeover as its receipt keeps it: who held the desktop, what the
+/// agent had asked, when they took and returned it, and how many inputs
+/// they sent. No screenshot: none was taken for the agent meanwhile.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TakeoverRecord {
+    pub by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<String>,
+    pub taken_at_ms: u64,
+    pub returned_at_ms: u64,
+    pub inputs: u64,
+}
+
+/// One input from the person who holds the desktop, at the pixels of the
+/// whole-display screen they were last shown.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PersonInput {
+    Click {
+        x: u32,
+        y: u32,
+        #[serde(default)]
+        button: Option<String>,
+        #[serde(default)]
+        count: Option<u32>,
+    },
+    Type {
+        text: String,
+    },
+    Key {
+        key: String,
+    },
+    Hotkey {
+        keys: Vec<String>,
+    },
+    Scroll {
+        x: u32,
+        y: u32,
+        direction: String,
+        #[serde(default)]
+        amount: Option<u32>,
+    },
 }
 
 /// A window: its owner's pid and its X window id.
@@ -370,6 +452,8 @@ impl DesktopSession {
             history: VecDeque::new(),
             media: VecDeque::new(),
             wait_cap: config.wait_cap,
+            takeover: Takeover::Agent,
+            returned: None,
         })
     }
 
@@ -409,7 +493,154 @@ impl DesktopSession {
         self.guest.abandoned()
     }
 
+    /// Who has the desktop now.
+    #[must_use]
+    pub fn takeover(&self) -> &Takeover {
+        &self.takeover
+    }
+
+    /// Person `by` takes the desktop, asked or not. The caller holds the
+    /// session, so the agent's call in flight has ended; its next one
+    /// refuses until `by` hands the desktop back. Taking it again is a no-op.
+    pub fn take_over(&mut self, by: &str) -> Result<&Takeover, BrowserError> {
+        self.guest_up()?;
+        let asked = match &self.takeover {
+            Takeover::Agent => None,
+            Takeover::Waiting { reason, .. } => Some(reason.clone()),
+            Takeover::Held { by: holder, .. } if holder == by => return Ok(&self.takeover),
+            Takeover::Held { .. } => return Err(BrowserError::TakenOver("held".to_owned())),
+        };
+        self.takeover = Takeover::Held {
+            by: by.to_owned(),
+            asked,
+            taken_at_ms: now_ms(),
+            inputs: 0,
+        };
+        Ok(&self.takeover)
+    }
+
+    /// The whole display as a PNG for the person: unmasked, never held in
+    /// the session's images and never a receipt.
+    pub fn person_screen(&mut self) -> Result<Vec<u8>, BrowserError> {
+        self.guest_up()?;
+        self.tool("get_desktop_state", json!({}))?
+            .images
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                BrowserError::Protocol("get_desktop_state sent no screenshot".to_owned())
+            })
+    }
+
+    /// One input from `by`, who must hold the desktop, at the display's
+    /// pixels; it counts toward the takeover's record. No press gates it:
+    /// the person's own input is their press.
+    pub fn person_input(&mut self, by: &str, input: PersonInput) -> Result<u64, BrowserError> {
+        self.guest_up()?;
+        match &self.takeover {
+            Takeover::Held { by: holder, .. } if holder == by => {}
+            Takeover::Held { .. } => return Err(BrowserError::TakenOver("held".to_owned())),
+            Takeover::Agent | Takeover::Waiting { .. } => {
+                return Err(BrowserError::Input(
+                    "take the desktop over first".to_owned(),
+                ));
+            }
+        }
+        let desktop = json!({"kind": "desktop", "display_id": "primary"});
+        let (name, arguments) = match input {
+            PersonInput::Click {
+                x,
+                y,
+                button,
+                count,
+            } => {
+                let mut arguments = json!({"target": desktop, "x": x, "y": y});
+                if let Some(button) = button {
+                    arguments["button"] = Value::from(button);
+                }
+                if let Some(count) = count {
+                    arguments["count"] = Value::from(count);
+                }
+                ("click", arguments)
+            }
+            PersonInput::Type { text } => ("type_text", json!({"target": desktop, "text": text})),
+            PersonInput::Key { key } => ("press_key", json!({"target": desktop, "key": key})),
+            PersonInput::Hotkey { keys } => ("hotkey", json!({"target": desktop, "keys": keys})),
+            PersonInput::Scroll {
+                x,
+                y,
+                direction,
+                amount,
+            } => {
+                let mut arguments =
+                    json!({"target": desktop, "x": x, "y": y, "direction": direction});
+                if let Some(amount) = amount {
+                    arguments["amount"] = Value::from(amount);
+                }
+                ("scroll", arguments)
+            }
+        };
+        self.input(name, arguments)
+            .map_err(|error| refusal(error, None))?;
+        let Takeover::Held { inputs, .. } = &mut self.takeover else {
+            return Err(BrowserError::GuestLost);
+        };
+        *inputs += 1;
+        Ok(*inputs)
+    }
+
+    /// `by` hands the desktop back, from holding it or from the agent's ask
+    /// it never took: the agent's next call reads the window in front, and
+    /// its next answer carries this record once.
+    pub fn hand_back(&mut self, by: &str) -> Result<TakeoverRecord, BrowserError> {
+        let returned_at_ms = now_ms();
+        let record = match &self.takeover {
+            Takeover::Held {
+                by: holder,
+                asked,
+                taken_at_ms,
+                inputs,
+            } if holder == by => TakeoverRecord {
+                by: by.to_owned(),
+                asked: asked.clone(),
+                taken_at_ms: *taken_at_ms,
+                returned_at_ms,
+                inputs: *inputs,
+            },
+            Takeover::Held { .. } => return Err(BrowserError::TakenOver("held".to_owned())),
+            Takeover::Waiting { reason, .. } => TakeoverRecord {
+                by: by.to_owned(),
+                asked: Some(reason.clone()),
+                taken_at_ms: returned_at_ms,
+                returned_at_ms,
+                inputs: 0,
+            },
+            Takeover::Agent => {
+                return Err(BrowserError::Input("the agent has the desktop".to_owned()));
+            }
+        };
+        self.takeover = Takeover::Agent;
+        self.window = None;
+        self.returned = Some(record.clone());
+        Ok(record)
+    }
+
+    /// The takeover that ended since the agent's last answer, once.
+    pub fn take_returned(&mut self) -> Option<TakeoverRecord> {
+        self.returned.take()
+    }
+
+    /// An agent verb's entry: the agent has the desktop and the guest runs.
     fn live(&mut self) -> Result<(), BrowserError> {
+        match self.takeover {
+            Takeover::Agent => {}
+            Takeover::Waiting { .. } => return Err(BrowserError::TakenOver("asked".to_owned())),
+            Takeover::Held { .. } => return Err(BrowserError::TakenOver("held".to_owned())),
+        }
+        self.guest_up()
+    }
+
+    fn guest_up(&mut self) -> Result<(), BrowserError> {
         if self.guest.abandoned() {
             return Err(BrowserError::Abandoned);
         }
@@ -769,6 +1000,14 @@ fn print_of(snapshot: &Snapshot) -> Result<blake3::Hash, BrowserError> {
     Ok(hasher.finalize())
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
 fn no_window() -> BrowserError {
     BrowserError::Navigation("the desktop shows no window; open an app".to_owned())
 }
@@ -795,6 +1034,17 @@ fn is_return(key: &str) -> bool {
     ["return", "enter", "kp_enter"]
         .iter()
         .any(|name| key.eq_ignore_ascii_case(name))
+}
+
+/// Whether `key` activates the control it goes to, as a click would.
+fn is_activation(key: &str) -> bool {
+    is_return(key)
+        || key
+            .rsplit('+')
+            .next()
+            .unwrap_or(key)
+            .trim()
+            .eq_ignore_ascii_case("space")
 }
 
 /// A key press as the press refusal names it, when no row takes it.
@@ -829,6 +1079,31 @@ fn clip(text: &str) -> String {
         Some((end, _)) => format!("{}…", &text[..end]),
         None => text,
     }
+}
+
+/// Whether an element is a secret field: a password role, or a text field
+/// whose label or description names a secret, or whose text or label shows
+/// only mask glyphs (a toolkit concealing what was typed).
+fn secret_field(element: &Value, raw_role: &str, role: &str) -> bool {
+    if raw_role.contains("password") {
+        return true;
+    }
+    if !TEXT_ROLES.contains(&role) {
+        return false;
+    }
+    let text = |name: &str| element.get(name).and_then(Value::as_str).unwrap_or("");
+    let (label, description, value) = (text("label"), text("description"), text("value"));
+    [label, description].iter().any(|words| {
+        SECRET_PHRASES
+            .iter()
+            .any(|phrase| has_phrase(words, phrase))
+    }) || [label, value].iter().any(|shown| masked(shown))
+}
+
+/// Whether `text` is nothing but mask glyphs, as a concealed field shows it.
+fn masked(text: &str) -> bool {
+    let mut glyphs = text.chars().filter(|c| !c.is_whitespace()).peekable();
+    glyphs.peek().is_some() && glyphs.all(|c| MASK_GLYPHS.contains(&c))
 }
 
 /// Whether `name` holds the words of `phrase` in a row, ignoring case.
@@ -875,18 +1150,17 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
             .and_then(Value::as_str)
             .map(clip)
             .unwrap_or_default();
-        let password = raw.contains("password");
-        let secret =
-            password || (role == "textbox" && SECRET_PHRASES.iter().any(|p| has_phrase(&label, p)));
+        let secret = secret_field(element, &raw, &role);
         if secret {
             secrets.push(Secret {
                 screen: frame_of(element, "frame"),
                 shot: frame_of(element, "screenshot_frame"),
             });
         }
-        // A password field's own text can stand in for a missing name: it
-        // never leaves the session.
-        let name = if password { String::new() } else { label };
+        // A secret field's own text can stand in for a missing name (the
+        // driver names an unnamed field by its text): it never leaves the
+        // session.
+        let name = if secret { String::new() } else { label };
         let token = element
             .get("element_token")
             .and_then(Value::as_str)
@@ -1389,7 +1663,13 @@ impl BrowserDriver for DesktopSession {
             .as_deref()
             .map(|target| Self::token(&snapshot, target))
             .transpose()?;
-        let class = is_return(&input.key).then_some(EFFECT_SEND);
+        // An activation key aimed at an effect-named control does what a
+        // click on it does, and takes its class; any other Return sends.
+        let class = aimed
+            .as_ref()
+            .filter(|_| is_activation(&input.key))
+            .and_then(|(line, _)| effect_class(&line.row.name))
+            .or_else(|| is_return(&input.key).then_some(EFFECT_SEND));
         let row = aimed
             .as_ref()
             .map_or_else(|| key_row(&input.key), |(line, _)| line.row.clone());
@@ -1494,6 +1774,29 @@ impl BrowserDriver for DesktopSession {
         }
         self.window = Some(key);
         self.observation(None)
+    }
+
+    fn handover(&mut self, input: HandoverInput) -> Result<HandoverOutput, BrowserError> {
+        self.live()?;
+        let reason = input
+            .reason
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if reason.is_empty() || reason.chars().count() > HANDOVER_REASON_CHARS {
+            return Err(BrowserError::Input(format!(
+                "a handover gives its reason in 1 to {HANDOVER_REASON_CHARS} characters"
+            )));
+        }
+        let asked_at_ms = now_ms();
+        self.takeover = Takeover::Waiting {
+            reason: reason.clone(),
+            asked_at_ms,
+        };
+        Ok(HandoverOutput {
+            reason,
+            asked_at_ms,
+        })
     }
 
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {

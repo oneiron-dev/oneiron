@@ -41,6 +41,7 @@ mod harness;
 pub(crate) mod home_digests;
 pub(crate) mod identity;
 mod judge_swap;
+mod lens_callbacks;
 mod local_vision;
 mod policy;
 pub(crate) mod self_heal_detectors;
@@ -62,6 +63,7 @@ pub(crate) mod waves;
 mod weave_lens;
 mod workflows;
 
+pub(crate) use lens_callbacks::{LensCallback, queue_lens_callback};
 pub(crate) use local_vision::LocalVisionModel;
 pub(crate) use policy::route_dreamer_extraction;
 pub use status::{
@@ -82,6 +84,12 @@ const DREAMER_ROLE: ModelRole = ModelRole::DreamerCurrent;
 pub(crate) const CHAT_ROLE: ModelRole = ModelRole::GenerativeReasoner;
 /// How long shutdown lets running chat turns finish before stopping them.
 const TURN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+/// How the host words the house mind's project question (OF-501).
+const PROJECT_DETECTION_WORDING: &str = "Does this message start or describe a piece of work \
+with its own goal that will take more than one sitting, worth tracking as a project? \
+Answer no for a passing question, a chat or a single task.";
+/// What one project question may spend on the host's ladder.
+const PROJECT_DETECTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// What request handlers need: seats, status and the session-hint producer.
 /// Cheap to clone; inert when nothing is configured.
@@ -101,7 +109,8 @@ pub struct AiHandle {
     /// The running Dreamer has a summary instruction to write bodies with.
     summaries: bool,
     /// The server's decision host, set once the server staffs it: the
-    /// Dreamer's passes ask their typed questions through it.
+    /// Dreamer's passes ask their typed questions through it, and the
+    /// workflow pump rules on a wave cut's fan-out through it.
     decisions: Arc<OnceLock<DecisionHost>>,
 }
 
@@ -250,6 +259,16 @@ impl AiHandle {
         self.runtime
             .router()
             .and_then(|router| router.locality(model))
+    }
+
+    /// The catalog entry of every configured chat model served by its own
+    /// id.
+    #[must_use]
+    pub fn chat_catalog(&self) -> Vec<oneiron::LlmCatalogEntry> {
+        self.runtime
+            .router()
+            .map(|router| router.chat_catalog().cloned().collect())
+            .unwrap_or_default()
     }
 
     #[must_use]
@@ -421,13 +440,25 @@ impl AiHost {
         let server = server
             .with_ai(host.handle.clone())
             .with_decision_config(models);
-        // The Dreamer started before the server staffed its ladder; its next
-        // pass asks through it.
+        // The Dreamer and the workflow pump started before the server
+        // staffed its ladder; the Dreamer's next pass and the pump's next
+        // wave cut ask through it.
         let _ = host.handle.decisions.set(server.decision_host().clone());
-        // So did the workflow pump: from its next leaf on, a leaf that ran is
-        // judged on its execution context through the same ladder (OF-540).
+        // From the pump's next leaf on, a leaf that ran is judged on its
+        // execution context through the same ladder (OF-540).
         if let Some(pump) = &host.workflows {
             pump.with_attribution_ladder(server.decision_host().ladder().clone());
+            // And each queued project question runs on it from the next pass
+            // (OF-501), up to the big rung: the card it drafts is the
+            // person's ask, so the ladder queues none of its own.
+            let decisions = server.decision_host();
+            pump.with_project_detection(oneiron::agent_dispatch::ProjectDetection {
+                ladder: decisions.ladder().clone(),
+                dial: decisions.dial(oneiron::llm::decision::DecisionRung::Big),
+                bands: decisions.bands(),
+                wording: PROJECT_DETECTION_WORDING.to_owned(),
+                budget: PROJECT_DETECTION_BUDGET,
+            });
         }
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server =
@@ -491,6 +522,12 @@ impl AiHost {
         }
         runtime.take_up_kept_media_jobs();
         let runtime = Arc::new(runtime);
+        // Launch statements price in dollars at the generative seat's model.
+        if let Some(seat) = runtime.seat(CHAT_ROLE) {
+            vault.install_launch_usd_prices(Arc::new(
+                crate::models::launch_price::LaunchUsdQuote::new(seat.model.clone()),
+            ));
+        }
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {
             handle: handle.clone(),
@@ -521,7 +558,13 @@ impl AiHost {
             }
             Err(reason) => status.update(|status| status.dreamer = WorkStatus::idle(reason)),
         }
-        match start_workflows(&vault, &runtime, models, &status) {
+        match start_workflows(
+            &vault,
+            &runtime,
+            models,
+            &status,
+            Arc::clone(&handle.decisions),
+        ) {
             Ok(pump) => host.workflows = Some(pump),
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
         }
@@ -848,6 +891,7 @@ fn start_workflows(
     runtime: &Arc<ModelRuntime>,
     models: &ModelsConfig,
     status: &Arc<StatusCell>,
+    decisions: Arc<OnceLock<DecisionHost>>,
 ) -> Result<WorkflowPump, IdleReason> {
     if !models.workflows.enabled {
         return Err(IdleReason::Disabled);
@@ -864,6 +908,7 @@ fn start_workflows(
             spent: Default::default(),
         },
         Arc::clone(status),
+        decisions,
     )
     .map_err(|error| {
         tracing::error!(%error, "workflow pump failed to start");

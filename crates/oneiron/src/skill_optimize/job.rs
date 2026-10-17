@@ -606,3 +606,153 @@ fn optimize_version(desc: &str) -> String {
         &hex[..OPTIMIZE_VERSION_HASH_HEX]
     )
 }
+
+/// Lands one Coach-computed revision of `skill`'s whole package as a gated
+/// proposal, in one write transaction: `candidate` + `proposed`, the same
+/// optimizer birth as a repair draft, with the instructions unchanged and
+/// `files` replacing the package's files at their paths. The version names
+/// the changed files, so a revision that moves only a companion file (the
+/// team-shape skill's task-type tree) is one the gate can supersede with.
+/// `Ok(None)` while `skill` already has an open proposed revision: one
+/// question at a time, as a repair draft keeps.
+///
+/// # Errors
+///
+/// Storage and body errors, and [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody)
+/// for an unusable rationale, a target that is not an active, optimizable
+/// skill with recoverable source, or one that moved from `version` before
+/// the write.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the proposal's provenance names every input it rests on"
+)]
+pub(crate) fn propose_skill_package_revision(
+    vault: &Vault,
+    skill: &EntityId,
+    version: &str,
+    files: &[crate::skill_hub::HubFile],
+    rationale: &str,
+    receipts: &[String],
+    stamp: &SkillRepairStamp<'_>,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<Option<EntityId>> {
+    validate_text(
+        rationale,
+        SKILL_OPTIMIZE_RATIONALE_MAX_BYTES,
+        "a package revision's rationale must be a non-empty string at most 1024 bytes",
+    )?;
+    let target = vault
+        .get_skill_record(skill)?
+        .ok_or(invalid("a package revision targets a stored skill"))?;
+    let resident = crate::skill::resident_of(&target)?;
+    let mut after: Option<EntityId> = None;
+    loop {
+        let page = vault.entities_by_type_page(
+            crate::registry::ENTITY_TYPE_SKILL,
+            after.as_ref(),
+            super::dials::SKILL_SCAN_PAGE,
+        )?;
+        let exhausted = page.len() < super::dials::SKILL_SCAN_PAGE;
+        for id in &page {
+            if let Some(other) = vault.get_skill_record(id)?
+                && other.lifecycle_status == SkillLifecycle::Candidate
+                && other.approval_status == ClaimApprovalStatus::Proposed
+                && other.skill_id == target.skill_id
+                && crate::skill::resident_of(&other)? == resident
+            {
+                return Ok(None);
+            }
+        }
+        after = page.last().copied();
+        if exhausted {
+            break;
+        }
+    }
+    let proposal_id = vault.store.clock.entity_id()?;
+    vault.with_write_txn_grouped(|wtxn| {
+        if let Some(owner) = stamp.owner {
+            vault.verify_owner_write_actor_in_txn(wtxn, &owner)?;
+        }
+        let target = vault.read_skill_record_in_txn(&*wtxn, skill)?;
+        if target.lifecycle_status != SkillLifecycle::Active
+            || target.version != version
+            || crate::skill::resident_of(&target)? != stamp.resident
+        {
+            return Err(invalid(
+                "the package revision's target moved before the write",
+            ));
+        }
+        let mut record = proposal_record(
+            &target,
+            &target.desc,
+            rationale,
+            receipts,
+            &[],
+            skill,
+            stamp.attempt,
+            stamp.cycle,
+            tier_verdict_in_txn(vault, &*wtxn, skill, &target)?,
+        )?;
+        record.version = package_version(&target.version, files);
+        let Value::Map(provenance) = &mut record.provenance else {
+            return Err(invalid("invalid optimizer provenance"));
+        };
+        let goal_id = SkillGoalId::of(skill, &target)?;
+        provenance.push((
+            Value::from(GOAL_ID_KEY),
+            Value::from(goal_id.entity().to_hex()),
+        ));
+        provenance.extend([
+            (
+                Value::from("actor_entity_ref"),
+                Value::Binary(stamp.actor.entity_ref().as_bytes().to_vec()),
+            ),
+            (
+                Value::from("actor_class"),
+                Value::from(stamp.actor.actor_class() as u8),
+            ),
+            (Value::from("facet"), Value::from(stamp.facet)),
+        ]);
+        if let Some(owner) = stamp.owner {
+            provenance.push((
+                Value::from(PROVENANCE_OPTIMIZE_PRINCIPAL_KEY),
+                Value::from(owner.entity_ref().to_hex()),
+            ));
+        }
+        let mut package = vault
+            .fork_skill_package_in_txn(&*wtxn, skill, &target, &mut record)?
+            .ok_or(invalid(
+                "a package revision needs the target's recoverable source",
+            ))?;
+        package
+            .files
+            .retain(|file| files.iter().all(|changed| changed.path != file.path));
+        package.files.extend(files.iter().cloned());
+        record.content_hash = Some(package.content_hash()?);
+        package.record = record.clone();
+        let package =
+            crate::skill_hub::package_from_source(&record, package.files, package.format)?;
+        vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
+        vault.persist_hub_package_in_txn(wtxn, &proposal_id, &package)
+    })?;
+    Ok(Some(proposal_id))
+}
+
+/// A package revision's version: the target's, named by the files it
+/// changes, so one change to one revision is always the same version.
+fn package_version(base: &str, files: &[crate::skill_hub::HubFile]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(base.as_bytes());
+    for file in files {
+        hasher.update([0_u8]);
+        hasher.update(file.path.as_bytes());
+        hasher.update([0_u8]);
+        hasher.update(&file.content);
+    }
+    let hex = bytes_to_hex_lower(&hasher.finalize());
+    format!(
+        "{OPTIMIZE_VERSION_PREFIX}{}",
+        &hex[..OPTIMIZE_VERSION_HASH_HEX]
+    )
+}

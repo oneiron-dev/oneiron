@@ -440,6 +440,9 @@ struct Whoami {
     /// The authority vault id its slips carry; `null` until the vault is
     /// rooted (its first `serve` or `token bootstrap` with an issuer key).
     vault_id: Option<String>,
+    /// This install's sync node id: what another machine's
+    /// `[device_sync] home_node_id` names when this one is its home.
+    sync_node_id: u64,
 }
 
 /// Prints who owns the stopped vault: the principal facade credentials name
@@ -462,10 +465,14 @@ pub fn whoami(args: WhoamiArgs) -> anyhow::Result<()> {
         .authority_fold()?
         .vault_id
         .map(|id| id.iter().map(|byte| format!("{byte:02x}")).collect());
+    let sync_node_id = oneiron::DreamerRunnerStore::new(&vault)
+        .local_home_node_candidate(true, true, false)?
+        .node_id;
     emit(&Whoami {
         owner_principal: owner.to_hex(),
         actor_class: "human",
         vault_id,
+        sync_node_id,
     })
 }
 
@@ -560,15 +567,15 @@ pub fn secret_scan(args: SecretScanArgs) -> anyhow::Result<()> {
 const SECRET_VALUE_LIMIT: usize = 1 << 20;
 
 pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
-    let value = read_secret_value(raw_stdin()?)?;
+    // Only a door that takes a value reads stdin; revoke and reveal read
+    // nothing.
+    let value = || -> anyhow::Result<_> { read_secret_value(raw_stdin()?) };
     match command {
-        SecretsCommand::Register(args) => emit(&register_secret(*args, &value)?),
-        SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
-        // `run_cli` sends revoke and reveal straight to their doors, before
-        // the read.
+        SecretsCommand::Register(args) => emit(&register_secret(*args, &value()?)?),
+        SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value()?)?),
         SecretsCommand::Revoke(args) => revoke_secret(*args),
         SecretsCommand::Reveal(args) => reveal_secret(*args),
-        SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value)?),
+        SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value()?)?),
     }
 }
 
@@ -965,9 +972,10 @@ pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
 /// same at `/v1/owner/settings/learning`.
 pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow::Result<()> {
     use crate::cli::{LearningSettingModeArg, LearningSettingsCommand};
+    use oneiron::learning_setting_choice::SpawnChoice;
     use oneiron::learning_setting_doors::{
-        self as doors, LearningSettingClear, LearningSettingMode, LearningSettingPut,
-        LearningSettingsRequest,
+        self as doors, LearningChoiceValue, LearningSettingClear, LearningSettingMode,
+        LearningSettingPut, LearningSettingsRequest,
     };
     let mode = |mode: LearningSettingModeArg| match mode {
         LearningSettingModeArg::Seed => LearningSettingMode::Seed,
@@ -987,25 +995,58 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
             &owner,
             &LearningSettingsRequest { key: args.key },
         )?,
-        LearningSettingsCommand::Put(args) => doors::put_learning_setting_as_owner(
-            &vault,
-            &owner,
-            LearningSettingPut {
-                key: args.key,
-                mode: mode(args.mode),
-                value: args.value,
-                weight_runs: args.weight_runs,
-                why: args.why,
-                project: args.project,
-                task_type: args.task_type,
-            },
-        )?,
+        LearningSettingsCommand::Put(args) => {
+            let raw = args.value.trim();
+            let (value, choice) = match SpawnChoice::from_key(&args.key) {
+                Some(SpawnChoice::Model) => {
+                    (None, Some(LearningChoiceValue::Model(raw.to_owned())))
+                }
+                Some(SpawnChoice::Pattern) => {
+                    (None, Some(LearningChoiceValue::Pattern(raw.to_owned())))
+                }
+                Some(SpawnChoice::Width) => (
+                    None,
+                    Some(LearningChoiceValue::Width(raw.parse().map_err(|_| {
+                        anyhow::anyhow!("a width is a whole count of agents")
+                    })?)),
+                ),
+                Some(SpawnChoice::Budget) => (
+                    None,
+                    Some(LearningChoiceValue::Budget(raw.parse().map_err(|_| {
+                        anyhow::anyhow!("a budget is a whole count of lease units")
+                    })?)),
+                ),
+                None => (
+                    Some(
+                        raw.parse::<f64>()
+                            .map_err(|_| anyhow::anyhow!("a catalog knob's value is a number"))?,
+                    ),
+                    None,
+                ),
+            };
+            doors::put_learning_setting_as_owner(
+                &vault,
+                &owner,
+                LearningSettingPut {
+                    key: args.key,
+                    mode: mode(args.mode),
+                    value,
+                    choice,
+                    weight_runs: args.weight_runs,
+                    why: args.why,
+                    goal: args.goal,
+                    project: args.project,
+                    task_type: args.task_type,
+                },
+            )?
+        }
         LearningSettingsCommand::Clear(args) => doors::clear_learning_setting_as_owner(
             &vault,
             &owner,
             LearningSettingClear {
                 key: args.key,
                 mode: mode(args.mode),
+                goal: args.goal,
                 project: args.project,
                 task_type: args.task_type,
             },

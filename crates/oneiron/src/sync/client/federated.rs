@@ -10,7 +10,7 @@ use crate::sync::federation_burst::{
 };
 use crate::sync::ingest::watch_births;
 use crate::sync::selector::{
-    AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update,
+    AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update_as,
     encode_selector_vv_request, revalidate_admitted_facet_stamps,
     revalidate_admitted_federated_claims, staged_births,
 };
@@ -129,8 +129,10 @@ impl SyncClient {
     ///
     /// Full-window sync continues to call the ordinary `UPDATE` arm directly.
     /// Selector/federation callers that can identify member/guest bytes should
-    /// enter through this seam so claim entities are re-stamped and admitted
+    /// enter through this seam so claim entities are graded and admitted
     /// exactly once before the shared observed-doc import/materialization path.
+    /// Only a member's update, by the peer's own grant, keeps its claims
+    /// first-party; a peer with no standing is refused (FIX 360).
     pub fn import_federated_window_update(
         &mut self,
         window_key: &str,
@@ -149,12 +151,15 @@ impl SyncClient {
                 SyncProtocolValidation::FederationPeerUnbound,
             ))
         })?;
-        peer.revalidate(&self.vault)
+        // The grant is revalidated and the peer's standing read over it before
+        // admission: no standing refuses the update (FIX 360).
+        let standing = peer
+            .membership(&self.vault)
             .map_err(map_federated_admission_err)?;
         // Validate before retaining bytes. Malformed rows never become durable
         // deferred work, and they cannot reach an observed Loro document.
-        let sender = peer.principal();
-        let admitted = match admit_peer_window_update(&self.vault, &key, update, role, sender) {
+        let sender = (peer.principal(), standing);
+        let admitted = match admit_peer_window_update_as(&self.vault, &key, update, role, sender) {
             Ok(admitted) => admitted,
             Err(error) => {
                 let error = map_federated_admission_err(error);
@@ -386,6 +391,9 @@ impl SyncClient {
         let born = watch_births(&vault, admitted.births(), || {
             self.import_accepted_window_update(window_key, &window, admitted.bytes())
         })?;
+        admitted
+            .keep_born_with(&self.vault)
+            .map_err(map_federated_admission_err)?;
         let released = admitted
             .release(&self.vault, key, &born)
             .map_err(map_federated_admission_err)?;

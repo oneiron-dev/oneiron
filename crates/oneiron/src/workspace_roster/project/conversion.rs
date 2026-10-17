@@ -135,6 +135,7 @@ impl Vault {
             if !row.task_ids.contains(&task.to_hex()) {
                 row.task_ids.push(task.to_hex());
                 rooms::TURNS.put(&self.store, txn, &thread, &row)?;
+                rooms::index_task_bindings(&self.store, txn, &row)?;
             }
             // OF-529: an agent holding the task joins the thread now when a
             // Ready receipt stands there, else at its first passing claim.
@@ -381,9 +382,43 @@ impl Vault {
                 }
                 tasks.push(id.to_hex());
             }
-            let fallback = match policy.leader_fallback {
-                LeaderFallback::TaskHolderThenSourceLeader => holder,
-                LeaderFallback::SourceLeaderOnly => None,
+            // The room host is resolved among the source message's sitting:
+            // its present participants, or none when the turn recorded no
+            // sitting (a stored pin still holds). The host passes the same
+            // leader check below, and a refusal stands. With no host, the
+            // source leader stands in.
+            let fallback = if confirmed.or(leader).is_some() {
+                None
+            } else {
+                match policy.leader_fallback {
+                    LeaderFallback::SourceLeaderOnly => None,
+                    LeaderFallback::TaskHolderThenRoomHost => match holder {
+                        Some(holder) => Some(holder),
+                        None => {
+                            let source_turn = turns
+                                .iter()
+                                .find(|turn| turn.message_ids.contains(&source_message.to_hex()))
+                                .ok_or_else(invalid)?;
+                            let source_turn = EntityId::from_hex(&source_turn.turn_id)?;
+                            let session = crate::compaction::turn_session_membership_in_txn(
+                                &self.store,
+                                txn,
+                                &source_turn,
+                            )?;
+                            let present = match session {
+                                Some(session) => self
+                                    .conversation_presence
+                                    .lock()
+                                    .map_err(|_| invalid())?
+                                    .get(&session)
+                                    .cloned()
+                                    .unwrap_or_default(),
+                                None => Vec::new(),
+                            };
+                            rooms::room_host_in(self, txn, room, &present)?.host
+                        }
+                    },
+                }
             };
             let leader = match confirmed.or(leader).or(fallback) {
                 Some(leader) => leader,

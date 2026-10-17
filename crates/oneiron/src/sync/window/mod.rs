@@ -74,7 +74,7 @@ pub(in crate::sync) use self::reverse::reverse_rematerialize_with;
 pub(in crate::sync) use self::tombstones::apply_tombstone_to_indexed_window_doc;
 pub(crate) use self::tombstones::{
     CarrierRemoval, DeleteBearingUpdate, entity_carriers, export_tombstone_commit_delta,
-    mark_removed_carriers_first,
+    mark_removed_carriers_first, publish_pending_tombstones,
 };
 pub use self::tombstones::{
     apply_tombstone_to_window_doc, rebuild_window_from_updates, replay_pending_tombstones,
@@ -113,6 +113,8 @@ pub struct LoadedWindow {
     _observer_custody: Option<Subscription>,
     /// Observer B for the room turn map (OF-522), on a base window only.
     _observer_room_turns: Option<Subscription>,
+    /// Observer B for the room fact map (FIX 1794), on a base window only.
+    _observer_room_facts: Option<Subscription>,
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
@@ -182,6 +184,10 @@ impl LoadedWindow {
             .world()
             .is_none()
             .then(|| bridge::register_room_turns_observer(&doc, vault, materializer, key.as_str()));
+        let observer_room_facts = key
+            .world()
+            .is_none()
+            .then(|| bridge::register_room_facts_observer(&doc, vault, materializer, key.as_str()));
 
         Self {
             doc,
@@ -190,6 +196,7 @@ impl LoadedWindow {
             _observer_b: observer_b,
             _observer_custody: observer_custody,
             _observer_room_turns: observer_room_turns,
+            _observer_room_facts: observer_room_facts,
             observer_a_state,
         }
     }

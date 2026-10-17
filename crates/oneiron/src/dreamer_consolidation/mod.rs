@@ -51,6 +51,7 @@ mod provenance;
 pub(crate) mod redirty;
 mod resident_dream;
 pub(crate) mod resources;
+mod revert;
 pub(crate) mod reviewed;
 mod roles;
 pub mod routing;
@@ -77,8 +78,11 @@ pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub(crate) use persistence::conflict_close_candidate;
-pub(crate) use person_about::enqueue_person_about_on_wake;
+pub(crate) use persistence::on_axes_of;
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
+pub(crate) use person_about::{
+    enqueue_person_about_on_wake, erase_person_about_in_txn, mark_person_about_moved_in_txn,
+};
 pub use provenance::*;
 pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,
@@ -90,6 +94,10 @@ pub use resident_dream::{
 };
 pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resources::ScopedConsolidationWrite;
+pub use revert::{
+    DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange,
+};
+pub(crate) use revert::{dreamer_changes_in_txn, revert_dreamer_change_in_txn};
 pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
     RoleBackend, RoleBackends, RoleCall,
@@ -97,11 +105,13 @@ pub use roles::{
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
 pub use settle::{
-    CONFLICT_SETTLE_DIAL, ConflictReviewScope, ConflictSettleDecisions, ConflictSettleReceipt,
-    ConflictSettlement, OpenConflict, ParkedConflictPass, SettledConflict, settle_parked_conflicts,
+    CONFLICT_SETTLE_DIAL, ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions,
+    ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass,
+    RevertedSettlement, SettledAnswer, SettledConflict, settle_parked_conflicts,
 };
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
+    revert_settlement_in_txn, settled_answers_in_txn,
 };
 pub use support::*;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};

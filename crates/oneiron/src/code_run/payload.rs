@@ -182,6 +182,20 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("verb", Value::from("pattern")),
             ("skill", entity_id_value(*skill)),
         ]),
+        SelfCall::Leader(super::SelfLeaderCall::Split { leader, slice }) => request_map(vec![
+            ("verb", Value::from("split")),
+            ("leader", leader.map_or(Value::Nil, entity_id_value)),
+            (
+                "slice",
+                match slice {
+                    Some(slice) => Value::from(
+                        serde_json::to_string(slice)
+                            .map_err(|_| invalid_code_run_replay("split slice does not encode"))?,
+                    ),
+                    None => Value::Nil,
+                },
+            ),
+        ]),
     })
 }
 
@@ -236,7 +250,7 @@ fn canonical_replay_request_envelope() -> Result<WriteEnvelope> {
 
 pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Result<Value> {
     Ok(match outcome {
-        SelfDispatchOutcome::AgentSpawn(result) => super::coordination_codec::spawn_value(result),
+        SelfDispatchOutcome::AgentSpawn(result) => super::coordination_codec::spawn_value(result)?,
         SelfDispatchOutcome::AgentDefinitionPut(result) => request_map(vec![
             ("kind", Value::from("agent_definition_put")),
             ("id", entity_id_value(result.id)),
@@ -675,6 +689,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "tasks.wait_set" => Ok(SelfEffect::TasksWaitSet),
         "summarize" => Ok(SelfEffect::Summarize),
         "self.leader" => Ok(SelfEffect::Leader),
+        "self.leader.split" => Ok(SelfEffect::LeaderSplit),
         "self.team" => Ok(SelfEffect::Team),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }

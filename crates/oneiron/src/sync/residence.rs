@@ -12,7 +12,8 @@ mod prune;
 mod sealed;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
-    AUTHORITY_TAIL_PAGE_MAX, AuthorityPageImport, authority_append_for, authority_range_for,
+    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, AuthorityCheckpointPart,
+    AuthorityPageImport, authority_append_for, authority_checkpoint_part_for, authority_range_for,
     authority_tail_for, authority_wanted, held_authority_entries, import_authority_page,
 };
 pub use discover::discover_local_window_keys;
@@ -26,7 +27,7 @@ pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
 pub(crate) use sealed::drop_sealed_labels_in_txn;
 pub use sealed::{
     SEALED_PUT_PART_MAX, SEALED_READ_PART_MAX, SEALED_SHELF_PAGE_MAX, SealedShelfEntry,
-    sealed_shelf_after, sealed_shelf_packet, sealed_shelf_packet_part, shelve_sealed_window,
+    sealed_shelf_after, sealed_shelf_packet_part, shelve_sealed_window,
     shelve_staged_sealed_window, stage_sealed_part, want_sealed_replacement,
     wanted_sealed_replacements,
 };
@@ -470,9 +471,10 @@ pub fn promotion_covers_full_window(
 /// [`promotion_covers_full_window`] for the machine `destination` names. A
 /// machine of this vault's that proved itself also covers the window's
 /// custody transitions (OF-422), each sealed to the owner's machines, its
-/// room turn rows (OF-522) and this vault's embedding setup rows (OF-370);
-/// the selector copies none of them. Any other destination does not, so a
-/// window that carries one is not promoted to it.
+/// room turn rows (OF-522), its room side rows (FIX 1794), this vault's
+/// embedding setup rows (OF-370) and its withdrawn cutoffs (OF-013); the
+/// selector copies none of them. Any other destination does not, so a window
+/// that carries one is not promoted to it.
 pub fn promotion_covers_full_window_for(
     vault: &Vault,
     source: &LoroDoc,
@@ -492,6 +494,8 @@ pub fn promotion_covers_full_window_for(
         for name in [
             super::custody::CUSTODY_MAP,
             super::room_turns::ROOM_TURNS_MAP,
+            super::room_facts::ROOM_FACTS_MAP,
+            super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
         ] {
             super::loro_support::copy_binary_root_map(source, &selected, name)?;
         }

@@ -7,10 +7,17 @@ pub(in crate::workspace_roster) const PAGE_LIMIT: usize = 256;
 /// One HISTORY row: its `(room, at, turn)` key and the turn id.
 type HistoryRow = Result<((EntityId, u64, EntityId), EntityId)>;
 
+/// Inverse of each room turn's TASK bindings, so a TASK read finds the
+/// threads it is bound into without walking any room (FIX 3124). Key: id16
+/// (task) + id16 (binding turn).
+const TASK_TURN: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
+    SideTable::new(&side_table::ROOMS_TASK_TURN);
+
 pub(super) fn index_turn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &RoomTurn) -> Result<()> {
     let room = EntityId::from_hex(&turn.room_id)?;
     let id = EntityId::from_hex(&turn.turn_id)?;
     HISTORY.put(store, txn, &(room, turn.at, id), &id)?;
+    index_task_bindings(store, txn, turn)?;
     if let Some(parent) = &turn.thread_of {
         let parent = EntityId::from_hex(parent)?;
         THREAD_CHILDREN.put(store, txn, &(room, parent, id), &id)?;
@@ -19,6 +26,63 @@ pub(super) fn index_turn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &RoomTu
     }
     Ok(())
 }
+/// Files the inverse row for every TASK `row` binds. Rows only accrue: a
+/// binding turn's TASK set never shrinks.
+pub(in crate::workspace_roster) fn index_task_bindings(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    row: &RoomTurn,
+) -> Result<()> {
+    let turn = EntityId::from_hex(&row.turn_id)?;
+    for task in &row.task_ids {
+        TASK_TURN.put(store, txn, &(EntityId::from_hex(task)?, turn), &[1])?;
+    }
+    Ok(())
+}
+
+/// The thread turns `task` is bound to, read from its own inverse rows. A
+/// row whose turn is gone is `EntityNotFound`, which the reader takes as a
+/// denial: a TASK bound into a thread that left never reads as public.
+pub(crate) fn task_binding_turns_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut turns = Vec::new();
+    for entry in TASK_TURN.iter_from(&vault.store, txn, task.as_bytes())? {
+        let ((_, turn), _) = entry?;
+        let row = TURNS
+            .get(&vault.store, txn, &turn)?
+            .ok_or(Error::EntityNotFound)?;
+        if !row.task_ids.contains(&task.to_hex()) {
+            return Err(Error::CorruptedIndex("thread task binding"));
+        }
+        if row.thread_of.is_some() {
+            turns.push(turn);
+        }
+    }
+    Ok(turns)
+}
+
+/// Deletes the inverse binding rows of an erased TASK. An erased room or
+/// turn leaves them standing, so the surviving TASK keeps denying.
+fn delete_task_bindings(store: &Store, txn: &mut heed::RwTxn<'_>, task: EntityId) -> Result<()> {
+    loop {
+        let keys: Vec<(EntityId, EntityId)> = TASK_TURN
+            .iter_from(store, txn, task.as_bytes())?
+            .take(PAGE_LIMIT)
+            .map(|row| row.map(|(key, _)| key))
+            .collect::<Result<Vec<_>>>()?;
+        if keys.is_empty() {
+            break;
+        }
+        for key in &keys {
+            TASK_TURN.delete(store, txn, key)?;
+        }
+    }
+    Ok(())
+}
+
 /// The complete selected thread in the conversion's own transaction. The
 /// caller names its root, while a card may sit on any reply inside it.
 pub(in crate::workspace_roster) fn thread_turns_in(
@@ -129,8 +193,9 @@ pub(in crate::workspace_roster) fn delete_thread_metadata(
 /// [`delete_room_metadata`] for a CONVERSATION whose record leaves, run by
 /// the shared erase doors (`deletion/derived_rows.rs`) before its body goes;
 /// [`delete_thread_metadata`] for a TURN that roots a thread, a project
-/// room's by its stored turn and an ordinary room's by its DAG topology; a
-/// no-op for any other entity. A project's home room reaches it from
+/// room's by its stored turn and an ordinary room's by its DAG topology;
+/// a TASK's inverse thread bindings for a TASK; a no-op for any other
+/// entity. A project's home room reaches it from
 /// `deindex_project_room` as well; the sweep is idempotent.
 pub(crate) fn erase_room_side_rows(
     store: &Store,
@@ -153,6 +218,7 @@ pub(crate) fn erase_room_side_rows(
                 delete_thread_metadata(store, txn, room, *id)?;
             }
         }
+        Some(crate::registry::ENTITY_TYPE_TASK) => delete_task_bindings(store, txn, *id)?,
         _ => {}
     }
     Ok(())
@@ -168,13 +234,57 @@ impl Memory<'_> {
         self.admitted_turns_at(turns, None)
     }
 
+    /// [`Self::admitted_turn_group_at`] over a room's turns: each private
+    /// thread's (FIX 2951) under that thread's own gate and lane, never the
+    /// room's, so a reader in its audience reads it there and any other
+    /// reads none of it, neither its turns nor what they name. Every other
+    /// turn reads as the room's, in the order given. With `thread`, all of
+    /// them read under that thread.
+    fn admitted_turns_at(
+        &self,
+        turns: Vec<RoomTurn>,
+        thread: Option<EntityId>,
+    ) -> MemoryResult<Vec<RoomTurn>> {
+        if turns.is_empty() || thread.is_some() {
+            return self.admitted_turn_group_at(turns, thread);
+        }
+        let room = EntityId::from_hex(&turns[0].room_id)?;
+        if turns.iter().any(|turn| turn.room_id != turns[0].room_id) {
+            return Err(invalid().into());
+        }
+        let order: std::collections::BTreeMap<String, usize> = turns
+            .iter()
+            .enumerate()
+            .map(|(at, turn)| (turn.turn_id.clone(), at))
+            .collect();
+        let mut groups = std::collections::BTreeMap::<Option<EntityId>, Vec<RoomTurn>>::new();
+        {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            for turn in turns {
+                let place = self.thread_place_in(&txn, room, EntityId::from_hex(&turn.turn_id)?)?;
+                let group = match place {
+                    ThreadPlace::Room => None,
+                    ThreadPlace::Private(root) => Some(root),
+                    ThreadPlace::Withheld => continue,
+                };
+                groups.entry(group).or_default().push(turn);
+            }
+        }
+        let mut admitted = Vec::new();
+        for (root, group) in groups {
+            admitted.extend(self.admitted_turn_group_at(group, root)?);
+        }
+        admitted.sort_by_key(|turn| order.get(&turn.turn_id).copied());
+        Ok(admitted)
+    }
+
     /// [`Self::admitted_turns`] for the room's reader, or, with `thread`,
     /// for a reader of that one thread (OF-529): its own gate and a lane
     /// bound to that thread, never the room's. A trunk turn's quote (OF-460)
     /// is kept only when the lane admits its target TURN and MESSAGE, or the
     /// one it does not is no longer live: an erased target reads as redacted,
     /// never as a hidden live row.
-    fn admitted_turns_at(
+    fn admitted_turn_group_at(
         &self,
         mut turns: Vec<RoomTurn>,
         thread: Option<EntityId>,
@@ -789,7 +899,10 @@ impl Memory<'_> {
     /// Scoped get handle; reaches a thread even when every list omits it.
     /// An agent with no standing in the room itself reads the thread on that
     /// thread's own Ready receipt (OF-529), through a snapshot and a lane
-    /// bound to that thread alone; every other reader reads the room.
+    /// bound to that thread alone, and so does a reader in a private
+    /// thread's audience (FIX 2951); every other reader reads the room. The
+    /// room's snapshot withholds a private thread from anyone off its
+    /// audience, so it answers them as it answers a missing one.
     pub fn rooms_get_thread(
         &self,
         room: EntityId,
@@ -797,7 +910,13 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<super::RoomThread>> {
         let thread = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?.then_some(handle)
+            let private = matches!(
+                super::audience::thread_audience_in(self.vault(), &txn, room, handle),
+                Ok(Some(_))
+            );
+            ((private && self.reads_thread_audience_in(&txn, room, handle)?)
+                || agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?)
+            .then_some(handle)
         };
         let turns = match thread {
             None => self.room_turn_snapshot(room)?,

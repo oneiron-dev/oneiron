@@ -1,11 +1,13 @@
 //! Eval-schedule observations over actual immutable config artifact versions.
 //! The host records the Dreamer's tuning config as a versioned artifact; each
 //! night the self-audit evaluates its head and flags the surfaces a backbone
-//! change or a score regression implicates. A retune is a proposal, never a
+//! change or a score regression implicates. The retune finding applies at once
+//! (OF-023) with a receipt the owner reverts; it is a diagnosis, never a
 //! deployed change.
 use super::super::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
+use super::applied::MaintenanceInverse;
 use super::{HARNESS_FACET, MAINTENANCE_QUEUE_KIND, invalid, load_row, proposals};
 use crate::attempt_queue::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -307,44 +309,48 @@ pub(super) fn run(
         load_row(vault, THRESHOLDS, include_str!("retune_defaults.json"))?;
     thresholds.validate()?;
     // Resolve the bound envelope before taking the writer. Baseline comparison,
-    // proposal, receipt and new baseline then commit as one serializable decision.
-    let envelope = proposals::run_tray_envelope(vault, HARNESS_FACET, attempt.status.attempt.id)?;
-    vault.with_write_txn_grouped(|txn| {
-        let prior = BASELINE.get(&vault.store, &*txn, &evaluation.artifact)?;
-        if prior.as_ref().is_some_and(|p| p.version > evaluation.version || p.observed_at > now) {
-            return Ok(None);
-        }
-        let proposal = if let Some(prior) = prior {
-            let backbone_changed = prior.config.backbone != current.backbone;
-            let score_drop = prior.score - evaluation.score;
-            let surfaces = [
-                ("prompts", score_drop > thresholds.prompts_score_regression,
-                    prior.config.prompts != current.prompts),
-                ("weights", score_drop > thresholds.weights_score_regression,
-                    prior.config.weights != current.weights),
-                ("manifest_thresholds", score_drop > thresholds.manifest_thresholds_score_regression,
-                    prior.config.manifest_thresholds != current.manifest_thresholds),
-            ];
-            // Attribute a changed configuration only to the surfaces that
-            // changed. An unchanged configuration needs score-only diagnosis.
-            let unchanged = surfaces.iter().all(|(_, _, changed)| !changed);
-            let targets: Vec<_> = surfaces.into_iter()
-                .filter_map(|(name, regressed, changed)|
-                    (backbone_changed || (regressed && (unchanged || changed))).then_some(name))
-                .collect();
-            if !targets.is_empty() {
-                let score_regressed = score_drop > thresholds.prompts_score_regression
-                    || score_drop > thresholds.weights_score_regression
-                    || score_drop > thresholds.manifest_thresholds_score_regression;
-                let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":score_regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score,"thresholds":thresholds});
-                Some(proposals::emit_in_txn(vault, txn, evaluation.artifact,
-                    "dreamer.harness.retune_proposal", &value, &[evaluation.artifact], &envelope, now)?)
-            } else { None }
-        } else { None };
-        let baseline = Baseline { version: evaluation.version, score: evaluation.score,
-            config: current, observed_at: now };
-        BASELINE.put(&vault.store, txn, &evaluation.artifact, &baseline)?;
+    // finding, receipt and new baseline then commit as one serializable decision.
+    // The finding is a diagnosis: it applies at once (OF-023) and deploys nothing.
+    proposals::land(vault, HARNESS_FACET, attempt.status.attempt.id, |landing| {
+        vault.with_write_txn_grouped(|txn| {
+            let prior = BASELINE.get(&vault.store, &*txn, &evaluation.artifact)?;
+            if prior.as_ref().is_some_and(|p| p.version > evaluation.version || p.observed_at > now) {
+                return Ok(None);
+            }
+            let proposal = if let Some(prior) = prior {
+                let backbone_changed = prior.config.backbone != current.backbone;
+                let score_drop = prior.score - evaluation.score;
+                let surfaces = [
+                    ("prompts", score_drop > thresholds.prompts_score_regression,
+                        prior.config.prompts != current.prompts),
+                    ("weights", score_drop > thresholds.weights_score_regression,
+                        prior.config.weights != current.weights),
+                    ("manifest_thresholds", score_drop > thresholds.manifest_thresholds_score_regression,
+                        prior.config.manifest_thresholds != current.manifest_thresholds),
+                ];
+                // Attribute a changed configuration only to the surfaces that
+                // changed. An unchanged configuration needs score-only diagnosis.
+                let unchanged = surfaces.iter().all(|(_, _, changed)| !changed);
+                let targets: Vec<_> = surfaces.into_iter()
+                    .filter_map(|(name, regressed, changed)|
+                        (backbone_changed || (regressed && (unchanged || changed))).then_some(name))
+                    .collect();
+                if !targets.is_empty() {
+                    let score_regressed = score_drop > thresholds.prompts_score_regression
+                        || score_drop > thresholds.weights_score_regression
+                        || score_drop > thresholds.manifest_thresholds_score_regression;
+                    let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":score_regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score,"thresholds":thresholds});
+                    Some(landing.land_in_txn(vault, txn, &proposals::Finding {
+                        subject: evaluation.artifact, predicate: "dreamer.harness.retune_proposal",
+                        value: &value, evidence: &[evaluation.artifact] },
+                        now, |_| Ok(MaintenanceInverse::Finding))?)
+                } else { None }
+            } else { None };
+            let baseline = Baseline { version: evaluation.version, score: evaluation.score,
+                config: current.clone(), observed_at: now };
+            BASELINE.put(&vault.store, txn, &evaluation.artifact, &baseline)?;
 
-        Ok(proposal)
+            Ok(proposal)
+        })
     })
 }

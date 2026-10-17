@@ -5,6 +5,10 @@ side_tables! {
     /// One typed-decision ask the ladder queued for the vault owner role, and its answer once
     /// given. Key: u64be(sequence).
     DECISION_ASK: VaultMeta b"decision:ask:v1:" Named;
+    /// One revision of a host rule row: the owner's reason on an answered decision ask, the
+    /// answer it gives that question about that evidence, and whether it was revoked. Key:
+    /// id16 (rule) + u64be(revision).
+    DECISION_HOST_RULE: VaultMeta b"decision:host_rule:v1:" Named;
     /// The creation record of one deck made from a kept outline: born-from, template, slides,
     /// write set and fit. Key: id16 (artifact).
     DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;
@@ -113,6 +117,10 @@ side_tables! {
     /// A settled identity's context hint: a name, the words around it and the entity it named.
     /// Key: u8(kind) + hash32(name) + id16(entity).
     DREAMER_IDENTITY_HINT: VaultMeta b"dreamer:identity:v1:hint:" Named;
+    /// OF-023: one Dreamer maintenance write applied at once: its kind, attempt, the finding's
+    /// revision, the before-state its effect changed, its receipt and, once the owner reverts
+    /// it, the revert. Key: id16 (finding).
+    DREAMER_MAINTENANCE_APPLIED: VaultMeta b"dreamer:maintenance:applied:v1:" Named;
     /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
     /// lists the same ones. Ids only, never their text. Key: id16.
     DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
@@ -123,7 +131,8 @@ side_tables! {
     /// The NOTE review's page cursor: the last NOTE id a review finished. Key: ().
     DREAMER_NOTE_REVIEW_CURSOR: VaultMeta b"dreamer:note-review:cursor:v1" Named;
     /// What a NOTE review last read and decided for one NOTE: the BLAKE3 of the markdown, so an
-    /// unchanged NOTE is not read again, and its verdict and importance. Key: id16.
+    /// unchanged NOTE is not read again, its verdict and importance, and a sealed pad's missed
+    /// keep lines with the re-asks spent on them (FIX 2240). Key: id16.
     DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored;
@@ -655,6 +664,10 @@ side_tables! {
     LEARNING_CELL: VaultMeta b"learning:cell:v1:" Named;
     /// Subject index over `learning.*` cells (value: the member). Key: subject id16 + cell digest.
     LEARNING_CELL_SUBJECT: VaultMeta b"learning:cell_subject:v1:" Named;
+    /// Owner seed or pin over one spawn choice (model, width, pattern or budget) at a goal, a
+    /// project, a task type or the vault (value, weight in runs, setter, why). Key: string (choice
+    /// "\0" mode, then the scope).
+    LEARNING_CHOICE: VaultMeta b"learning:choice:v1:" Raw;
     /// A team's derived coordination cost (wait by reason, reuse delay, duplicate work): a
     /// diagnostic, never a score. Key: string (team reference).
     LEARNING_COORDINATION: VaultMeta b"learning:coordination:v1:" Named;

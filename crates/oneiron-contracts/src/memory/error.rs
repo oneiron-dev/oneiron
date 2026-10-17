@@ -377,6 +377,20 @@ impl From<Error> for MemoryError {
                 )
             };
         }
+        // The hold is a valid write parked on the parties it names, not a
+        // bad request: INVALID_STATE, filed by the join it names.
+        if matches!(
+            err,
+            Error::Record(crate::error::RecordError::RoomJoinHeld(_))
+        ) {
+            return Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "File the join with vault.rooms.join and the intent_key named here; the write goes through once those parties consent.",
+                ],
+            );
+        }
         if matches!(
             err,
             Error::Record(crate::error::RecordError::InvalidTaskBody(
@@ -437,6 +451,13 @@ impl From<Error> for MemoryError {
             ),
             // Only the vault's owner records a guest's consent; no change to
             // the request makes this ask admissible.
+            // A policy refusal, not a bad request: the member's choice is
+            // what has to change.
+            ErrorKind::WorkCompanionRequired => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Start a work companion in this workspace; its policy refuses a brought one."],
+            ),
             ErrorKind::ConsentGuestNotRecorded => Self::new(
                 MEMORY_CODE_FORBIDDEN,
                 message,
@@ -547,6 +568,15 @@ impl From<Error> for MemoryError {
                 MEMORY_CODE_INVALID_STATE,
                 message,
                 &["Refresh the resource, merge local changes, then retry."],
+            ),
+            // The vault holds too little authority history to fold (OF-469):
+            // an import of what it names closes the gap; no request changes.
+            ErrorKind::AuthorityHistoryRequired => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Fetch the authority history this vault names (its history request), import it, then retry.",
+                ],
             ),
             // The vault no longer holds the bytes a restore needs; the
             // request itself was sound.

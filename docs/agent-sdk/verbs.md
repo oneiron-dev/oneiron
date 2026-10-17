@@ -8,6 +8,8 @@ both bindings and their export-census tests in one change.
 
 - `report`
 - `self.focus.scratchpad.recall`
+- `self.focus.scratchpad.append`
+- `self.focus.scratchpad.seal`
 - `self.memory.diary`
 - `self.memory.diary.reads`
 - `self.memory.diary.review`
@@ -36,6 +38,7 @@ both bindings and their export-census tests in one change.
 - `vault.fanout.resume_as`
 - `vault.fanout.ack`
 - `tasks.update`
+- `tasks.accept`
 - `vault.witness`
 - `vault.claims.upsert`
 - `vault.recall`
@@ -43,6 +46,8 @@ both bindings and their export-census tests in one change.
 - `vault.receipts`
 - `vault.images.view`
 - `vault.receipts.get`
+- `vault.explain.memory`
+- `vault.explain.gate`
 - `vault.kv.get`
 - `vault.kv.put`
 - `vault.kv.delete`
@@ -60,11 +65,16 @@ both bindings and their export-census tests in one change.
 - `vault.weave.item.wrong`
 - `vault.weave.owner.item.wrong`
 - `vault.packs.put`
+- `vault.packs.remove`
+- `vault.connectors.subscriptions.put`
+- `vault.connectors.subscriptions.list`
+- `vault.connectors.subscriptions.revoke`
 - `vault.packs.setup.prepare`
 - `vault.packs.setup.get`
 - `vault.packs.setup.answer`
 - `vault.packs.setup.verify`
 - `vault.authority.audit`
+- `vault.mesh.path_receipts`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
 - `vault.shared.propose_transfer`
@@ -93,6 +103,21 @@ both bindings and their export-census tests in one change.
 - `vault.guests.mint_slip`
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
+- `vault.research.bind`
+- `vault.research.fork`
+- `vault.research.weave`
+- `vault.research.measure_search`
+- `vault.research.measure_held_out`
+- `vault.research.mark_invalid`
+- `vault.research.prune`
+- `vault.research.select`
+- `vault.research.promotion_basis`
+- `vault.research.reserve_confirmation`
+- `vault.research.promote`
+- `vault.research.reserve_work`
+- `vault.research.settle_work`
+- `vault.research.refund_work`
+- `vault.research.record_benchmark`
 - `vault.authority.handoff_alarms`
 - `vault.authority.handoff_alarms.acknowledge`
 - `vault.legal_holds.place`
@@ -100,6 +125,10 @@ both bindings and their export-census tests in one change.
 - `vault.legal_holds.list`
 - `vault.legal_holds.log`
 - `vault.legal_holds.lift_and_erase`
+- `vault.courtesy_delete.send`
+- `vault.courtesy_delete.sent`
+- `vault.courtesy_delete.incoming`
+- `vault.courtesy_delete.answer`
 - `vault.embedding_spaces.list`
 - `vault.embedding_spaces.declare`
 - `vault.embedding_spaces.bind`
@@ -148,6 +177,8 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.waits`
 - `vault.artifacts.release_wait`
 - `vault.artifacts.review_slides`
+- `vault.artifacts.ask`
+- `vault.critic.review`
 - `vault.artifacts.propose_deck`
 - `vault.artifacts.propose_output`
 - `vault.artifacts.keep`
@@ -215,6 +246,7 @@ both bindings and their export-census tests in one change.
 - `vault.questions.backfill`
 - `vault.questions.read`
 - `vault.questions.answers`
+- `vault.questions.refresh`
 - `vault.decisions.asks.answer`
 - `vault.decisions.asks.climb`
 - `self.decisions.asks`

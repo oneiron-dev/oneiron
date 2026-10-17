@@ -7,6 +7,10 @@
 //! credential binds the actor, the principal's read key and the owner proof;
 //! the body names only the arguments and the idempotency key.
 //!
+//! MCP's `invoke_action` tool runs an action through the same
+//! [`invoke_action`], under the credential its connector header selected,
+//! at its connection.
+//!
 //! A verb-table action runs through [`FacadeRowDoor`]: its row's generated
 //! facade route, in process, under this request's own headers and connection.
 //! It meets the scope, admission, room turn, gate and call receipt that a
@@ -71,12 +75,12 @@ pub(crate) fn routes() -> Router<Arc<SyncServer>> {
 /// credential's.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct ActionRequest {
-    args: Vec<ActionArgument>,
-    idempotency_key: String,
+pub(crate) struct ActionRequest {
+    pub(crate) args: Vec<ActionArgument>,
+    pub(crate) idempotency_key: String,
     /// The live run the action acts for (OF-181), as its attach answered.
     #[serde(default)]
-    live_run: Option<String>,
+    pub(crate) live_run: Option<String>,
 }
 
 async fn list(auth: CoreAuth) -> Result<Json<serde_json::Value>, FacadeApiError> {
@@ -93,8 +97,27 @@ async fn invoke(
     extensions: Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
-    require_action_scope(&auth, &verb)?;
     let request: ActionRequest = facade_input(facade_json(payload)?)?;
+    invoke_action(&server, &auth, headers, extensions, verb, request)
+        .await
+        .map(Json)
+}
+
+/// Runs action `verb` of the app's table under `auth`, as `request` names
+/// it, and answers its outcome and read receipt. Its verb-table rows run
+/// through their own routes under `headers` and `extensions`, the caller's
+/// own request and connection. `POST /v1/core/actions/{verb}` and MCP's
+/// `invoke_action` tool both run an action here: one scope check, one
+/// binding, one live-run resolution and key, one held run.
+pub(crate) async fn invoke_action(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
+    verb: String,
+    request: ActionRequest,
+) -> Result<serde_json::Value, FacadeApiError> {
+    require_action_scope(auth, &verb)?;
     let verb_id = SelfUiActionId::new(verb).map_err(|_| {
         FacadeApiError::new(
             StatusCode::NOT_FOUND,
@@ -104,8 +127,8 @@ async fn invoke(
         )
     })?;
     // A credential that names no principal meets the facade's own refusal.
-    facade_actor(&auth)?;
-    let mut bound = action_bound(&server, &auth)?.ok_or_else(|| {
+    facade_actor(auth)?;
+    let mut bound = action_bound(server, auth)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
             ["Present a verified slip paired to this principal."],
@@ -118,7 +141,7 @@ async fn invoke(
         Some(handle) => {
             let run = server
                 .live_runs
-                .resolve(&handle, live_run_caller(&bound, &auth))
+                .resolve(&handle, live_run_caller(&bound, auth))
                 .map_err(refused)?;
             let key = run.action_key(&request.idempotency_key).map_err(engine)?;
             bound.live_run = Some(run);
@@ -134,11 +157,11 @@ async fn invoke(
         args: request.args,
         idempotency_key,
     };
-    let dispatch = execute(&server, headers, extensions, bound, call).await?;
-    Ok(Json(serde_json::json!({
+    let dispatch = execute(server, headers, extensions, bound, call).await?;
+    Ok(serde_json::json!({
         "outcome": dispatch.outcome_value().map_err(engine)?,
         "readReceipt": dispatch.read_receipt,
-    })))
+    }))
 }
 
 /// The scope and record admission an action of `verb` meets, wherever its
@@ -330,11 +353,13 @@ where
     let door: Arc<dyn AgentVerbDoor> =
         Arc::new(FacadeRowDoor::new(server, headers, extensions, key));
     let executor = app()?;
-    // OF-181: the live run's guard, taken before the action and held through
-    // it, with the run's lease read again under it.
+    // OF-181: the live run's guard, waited for briefly while an entry or
+    // another action holds it, taken before the action and held through it,
+    // with the run's lease read again under it.
     let held = match &live_run {
         Some(run) => Some(
             run.hold(&server.live_runs, &server.vault)
+                .await
                 .map_err(engine)?
                 .map_err(refused)?,
         ),
@@ -387,9 +412,16 @@ async fn attach_live_run(
     })?;
     let run = EntityId::from_hex(&run).map_err(|_| refused(LiveRunRefusal::Invalid))?;
     let caller = live_run_caller(&bound, &auth);
+    // OF-181: the run's guard, waited for briefly while an entry or an
+    // action holds it, then held through the attach.
+    let attaching = server
+        .live_runs
+        .attaching(run, caller)
+        .await
+        .map_err(refused)?;
     let runs = Arc::clone(&server.live_runs);
     let vault = Arc::clone(&server.vault);
-    let handle = tokio::task::spawn_blocking(move || runs.attach(&vault, run, caller))
+    let handle = tokio::task::spawn_blocking(move || runs.attach(&vault, attaching))
         .await
         .map_err(|_| internal())?
         .map_err(engine)?

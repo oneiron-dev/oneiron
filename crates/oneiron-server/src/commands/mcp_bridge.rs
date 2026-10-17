@@ -49,10 +49,6 @@ use crate::cli::{McpArgs, McpSurface};
 
 mod link;
 
-/// The one-string form a paired client stores: `v2.cred.{slip}.{seed}`, as
-/// `token agent` and `token read` print it and the SDK's `pair` returns it.
-const CREDENTIAL_PREFIX: &str = "v2.cred.";
-
 /// How many requests may be in flight at once. A client that sends more
 /// waits for the oldest to finish rather than spawning without bound; each
 /// finishes within its deadline.
@@ -395,7 +391,10 @@ impl Bridge {
     fn new(args: &McpArgs) -> anyhow::Result<Self> {
         let base = api::normalized_base(&args.url)?;
         let (token, seed) = match &args.credential_file {
-            Some(path) => read_credential_file(path)?,
+            Some(path) => {
+                let held = super::credential_file::PairedCredentialFile::read(path)?;
+                (held.token, held.seed)
+            }
             None => (
                 credential_env(&args.secret_env)?,
                 credential_env(&args.binding_key_env)?,
@@ -819,31 +818,4 @@ fn credential_env(name: &str) -> anyhow::Result<String> {
         // The error's own Display would quote the value.
         Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} is not valid UTF-8"),
     }
-}
-
-/// The credential file holds the one-string form and nothing else, and only
-/// its owner may read it, by its mode and by any ACL: a file the agent's
-/// other users can read is a credential they hold too.
-fn read_credential_file(path: &Path) -> anyhow::Result<(String, String)> {
-    let mut file = std::fs::File::open(path).map_err(|error| {
-        anyhow::anyhow!(
-            "open {}: {error}; pass the file written by `oneiron token agent --name \
-                 <name> --out <new-file> --config <vault-config>` (with the vault stopped)",
-            path.display()
-        )
-    })?;
-    super::credential_file::admit(path, &file)?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)
-        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    text.trim()
-        .strip_prefix(CREDENTIAL_PREFIX)
-        .and_then(|rest| rest.rsplit_once('.'))
-        .map(|(slip, seed)| (format!("v2.slip.{slip}"), seed.to_owned()))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "{} does not hold a paired credential ({CREDENTIAL_PREFIX}…)",
-                path.display()
-            )
-        })
 }

@@ -86,6 +86,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_OUTCOME, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_RECEIPT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_RECORD, SHARED_VAULT_MEMBERSHIP),
+    // An archive delivered to a removed Owner has left the vault: a restore
+    // neither revives a purged one nor drops one still within its term.
+    (&t::SHARED_ACT_REMOVAL_EXPORT, LIVE),
     (&t::SHARED_VAULT_CREATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_INVITATION, SHARED_VAULT_MEMBERSHIP),
@@ -104,6 +107,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_RESIDENT_OWNER, CONTENT),
     (&t::SKILL_RESIDENT_RECEIPT, CONTENT),
     (&t::SKILL_ATTRIBUTION_AUDIT, CONTENT),
+    (&t::SKILL_ATTRIBUTION_CONTRIBUTION_CHECK, CONTENT),
     (&t::SKILL_ATTRIBUTION_CURSOR, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_JUDGE, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_REVISION, CONTENT),
@@ -170,6 +174,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_OPTIMIZE_OFFER, CONTENT),
     (&t::SKILL_OPTIMIZE_OFFER_ANSWER, LIVE),
     (&t::SKILL_OPTIMIZE_OFFER_CHECK, CONTENT),
+    (&t::SKILL_OPTIMIZE_RESPONSE_PAIR, CONTENT),
     (&t::SKILL_RELIABILITY_AMENDED, CONTENT),
     (&t::SKILL_RELIABILITY_CALL_INVOCATION, CONTENT),
     (&t::SKILL_RELIABILITY_DISPLACED_JUDGE, CONTENT),
@@ -181,6 +186,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::AFFECT_STATE_COMPOSITE_PRODUCER, CONTENT),
     (&t::STORAGE_ABI_VERSION, CONTENT),
     (&t::MESSAGE_STREAM_RECEIPT_BY_REF, CONTENT),
+    (&t::SYNC_BORN_WITH_CARRIED, CONTENT),
+    (&t::SYNC_BORN_WITH_GRANT, LIVE),
     (&t::TAGGING_MENTION_REF, CONTENT),
     (&t::TAGGING_PROVISIONAL, CONTENT),
     (&t::TAGGING_PROVISIONAL_HINT, CONTENT),
@@ -202,6 +209,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_CREATE_ORIGIN, CONTENT),
     (&t::TASK_FACT_SUPPRESSED, LIVE),
     (&t::TASK_FOLLOW_UP_MARKER, CONTENT),
+    // Narrative of what each highway call did, like the report journal: not authority.
+    (&t::TASK_LIFECYCLE_RECEIPT, CONTENT),
     (&t::TASK_OWNER_FACT_REVERSE, CONTENT),
     (&t::TASK_PEER_HANDLE, CONTENT),
     (&t::TASK_PROJECT_TRADEOFF_ASK, CONTENT),

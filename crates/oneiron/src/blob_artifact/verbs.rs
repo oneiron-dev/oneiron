@@ -12,8 +12,8 @@ use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
-    REVIEW_IMAGE, SlideReviewError, SlideReviewImage, SlideReviewLabels, SlideReviewRequest,
-    SlideReviewUnit,
+    REVIEW_IMAGE, SlideRenderer, SlideReviewError, SlideReviewImage, SlideReviewLabels,
+    SlideReviewRequest, SlideReviewUnit,
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, DeckEditContext, EditOutcome, FolderAsk, FolderItem, ParagraphAsk, RangeRef,
@@ -32,6 +32,7 @@ use crate::memory::{
 };
 use crate::provenance::made_by::{MadeBy, MadeByTrigger};
 use crate::receipt::ReceiptRecord;
+use crate::secret_custody::SecretSight;
 use crate::share_travel::{BornWith, TravelChoice, TravelKind};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -185,10 +186,12 @@ pub struct SlideReviewSubmit {
 }
 
 /// One unit to judge: a slide or a shape (`PptxCommentTarget`, as JSON),
-/// its rendered image and the renderer that made it. The image is one of
-/// `review_image`, the PNG or JPEG bytes in base64, or `review_image_ref`, a
-/// stored image's view handle (`<asset>@<hash>`) read through the caller's
-/// own lane.
+/// its rendered image and the renderer that made it. The image is at most
+/// one of `review_image`, the PNG or JPEG bytes in base64, or
+/// `review_image_ref`, a stored image's view handle (`<asset>@<hash>`) read
+/// through the caller's own lane. With neither, a host that has a slide
+/// renderer renders the slide from the head itself, under its own renderer
+/// name; without one, the unit is read for its structure only and abstains.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlideReviewUnitInput {
@@ -410,8 +413,17 @@ impl Memory<'_> {
         else {
             return Ok(None);
         };
-        let born_with = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact)
-            .project(vault.born_with_text(&file.artifact_id, Some(&file.made_by))?);
+        // The owner's export comes back to the owner, a download or a save to
+        // their own machine: the owner's own read (OF-222). Any other
+        // caller's leaves for another party, and reads nothing of a world
+        // kept off an unknown machine.
+        let text = if self.secret_sight()? == SecretSight::Owner {
+            vault.born_with_text(&file.artifact_id, Some(&file.made_by))?
+        } else {
+            vault.born_with_text_for_another(&file.artifact_id, Some(&file.made_by))?
+        };
+        let born_with =
+            TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact).project(text);
         let content_hash = super::hash_hex(&file.content_hash);
         vault.record_export_travel(
             file.artifact_id.to_hex(),
@@ -481,6 +493,44 @@ impl Memory<'_> {
             .pending_proposals(&entity(&input.artifact_ref)?)?)
     }
 
+    /// `slides` of the artifact's head as `renderer` draws them, each with the
+    /// renderer's name, in order. `None` when the head cannot be read or the
+    /// render fails or comes back short: those units are read for their
+    /// structure only.
+    fn render_head_slides(
+        &self,
+        artifact: &EntityId,
+        renderer: &dyn SlideRenderer,
+        slides: &[u64],
+    ) -> Option<Vec<(Vec<u8>, String)>> {
+        let rendered = self
+            .vault()
+            .blob_artifact_head(artifact)
+            .and_then(|head| {
+                let head = head.ok_or(Error::EntityNotFound)?;
+                self.vault()
+                    .read_blob_artifact_version(artifact, head.version)?
+                    .ok_or(Error::EntityNotFound)
+            })
+            .and_then(|deck| renderer.render(&deck, slides));
+        match rendered {
+            Ok(images) if images.len() == slides.len() => Some(
+                images
+                    .into_iter()
+                    .map(|image| (image, renderer.name().to_owned()))
+                    .collect(),
+            ),
+            Ok(_) => {
+                tracing::warn!("the slide renderer returned the wrong number of images");
+                None
+            }
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "slide review render failed");
+                None
+            }
+        }
+    }
+
     /// `vault.artifacts.review_slides` on an embedded handle, which holds no
     /// decision ladder: a server's host door answers it.
     pub fn artifacts_review_slides(
@@ -496,13 +546,17 @@ impl Memory<'_> {
 
     /// `vault.artifacts.review_slides` through a host's decide() ladder:
     /// reviews the artifact's head as the bound actor and holds the
-    /// proposal for Keep or Discard (`vault.artifacts.keep`/`discard`).
+    /// proposal for Keep or Discard (`vault.artifacts.keep`/`discard`). A
+    /// unit that names no image is rendered from the head by `renderer`,
+    /// the host's own (local CPU, unmetered); with none, or when the render
+    /// fails, it is read for its structure only and abstains, never refused.
     pub fn artifacts_review_slides_through(
         &self,
         input: &SlideReviewSubmit,
         decider: &dyn UnitDecider,
         dial: DecisionDial,
         policy: &DecisionBandPolicy,
+        renderer: Option<&dyn SlideRenderer>,
     ) -> MemoryResult<SlideReviewOutcome> {
         let artifact = entity(&input.artifact_ref)?;
         let required =
@@ -539,29 +593,58 @@ impl Memory<'_> {
                 let target: PptxCommentTarget = json_field(Some(unit.target.clone()), "target")?
                     .ok_or_else(|| invalid("a slide review unit names its target"))?;
                 let image = match (&unit.review_image, &unit.review_image_ref, &lane) {
-                    (Some(encoded), None, _) => SlideReviewImage::Rendered(
+                    (Some(encoded), None, _) => Some(SlideReviewImage::Rendered(
                         base64::engine::general_purpose::STANDARD
                             .decode(encoded)
                             .map_err(|_| invalid("a unit's review image is not base64"))?,
-                    ),
-                    (None, Some(handle), Some(lane)) => SlideReviewImage::Stored(
+                    )),
+                    (None, Some(handle), Some(lane)) => Some(SlideReviewImage::Stored(
                         resolve_image_ref(lane, REVIEW_IMAGE, handle, None)?.value,
-                    ),
+                    )),
+                    (None, None, _) => None,
                     _ => {
                         return Err(invalid(
-                            "a slide review unit names one image: review_image or review_image_ref",
+                            "a slide review unit names at most one image: review_image or review_image_ref",
                         )
                         .into());
                     }
                 };
-                Ok(SlideReviewUnit {
-                    target,
-                    image,
-                    renderer: unit.renderer.clone(),
-                })
+                Ok((target, image, unit.renderer.clone()))
             })
             .collect::<MemoryResult<Vec<_>>>()?;
         drop(lane);
+        let unrendered: Vec<u64> = units
+            .iter()
+            .filter(|(_, image, _)| image.is_none())
+            .map(|(target, _, _)| target.slide)
+            .collect();
+        let mut renders = match renderer {
+            Some(renderer) if !unrendered.is_empty() => {
+                self.render_head_slides(&artifact, renderer, &unrendered)
+            }
+            _ => None,
+        }
+        .into_iter()
+        .flatten();
+        let units: Vec<SlideReviewUnit> = units
+            .into_iter()
+            .map(|(target, image, renderer)| match image {
+                Some(image) => SlideReviewUnit {
+                    target,
+                    image,
+                    renderer,
+                },
+                // An empty image abstains after the unit's structure is read.
+                None => {
+                    let (image, renderer) = renders.next().unwrap_or_default();
+                    SlideReviewUnit {
+                        target,
+                        image: SlideReviewImage::Rendered(image),
+                        renderer,
+                    }
+                }
+            })
+            .collect();
         let evidence = input
             .evidence_refs
             .iter()

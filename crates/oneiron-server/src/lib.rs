@@ -44,6 +44,7 @@ mod decision_graph;
 pub mod decision_host;
 mod decision_verdict;
 mod device_local;
+mod device_sync;
 pub mod embedded;
 mod embedder;
 pub mod error;
@@ -125,6 +126,7 @@ pub fn build_app_for_position(
 ) -> Router {
     // The owner's Responses `store` switch (OF-602); unreadable leaves it off.
     models::set_responses_store(server.vault().responses_store().unwrap_or(false));
+    models::set_responses_chain_vault(server.vault());
     let mode = if server.managed_issuer.is_some() {
         oneiron::HostingPrivacyPosture::Hosted
     } else {

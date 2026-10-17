@@ -71,6 +71,7 @@ impl NoteKind {
     }
 }
 
+mod archive_read;
 pub(crate) mod documents;
 pub(crate) mod erase;
 mod kinds;
@@ -79,6 +80,7 @@ pub(crate) mod recovery;
 pub(crate) mod storage;
 pub(crate) use kinds::validate_registered_kind;
 mod proposals;
+mod tombstone_review;
 mod verbs;
 mod write_gate;
 pub use documents::{
@@ -92,6 +94,11 @@ pub use kinds::{
 pub use lifecycle::{NoteLifecycleStatus, NoteLifecycleView, NoteRefRequest, NoteSeal};
 pub(crate) use lifecycle::{note_sealed_in_txn, seal_note_in_txn};
 pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};
+pub use tombstone_review::NoteTombstoneProposal;
+pub(crate) use tombstone_review::{
+    decline_tombstone, open_tombstone_proposals_in_txn, review_note_tombstones, tombstone_accepted,
+    tombstone_still_proposed_in_txn,
+};
 pub(crate) use write_gate::check_doc_plane_note_commit_in_txn;
 const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 
@@ -325,9 +332,26 @@ pub(crate) fn note_body_readable(
     };
     let context = kinds::context_in_txn(store, txn, body.kind.as_str().as_ref())?;
     Ok(match context {
-        ContextDefault::OwnerOnly | ContextDefault::ExplicitOnly => actor == Some(&body.author_ref),
+        ContextDefault::OwnerOnly | ContextDefault::ExplicitOnly => match actor {
+            Some(actor) => {
+                *actor == body.author_ref || reader_imported_note(store, txn, &body, *actor)?
+            }
+            None => false,
+        },
         ContextDefault::RelationshipScoped | ContextDefault::VaultReadable => true,
     })
+}
+
+/// Whether `body` came in through an import for `reader`: its author is a
+/// folder's import MACHINE that imports for that reader. Such a note reads
+/// as its importer's own, though the importer did not write it (OF-554).
+pub(crate) fn reader_imported_note(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    body: &NoteBody,
+    reader: EntityId,
+) -> Result<bool> {
+    Ok(import::note_importer_in_txn(store, txn, &body.author_ref)? == Some(reader))
 }
 
 /// Whether `body`'s kind is explicit-only: out of default context, and

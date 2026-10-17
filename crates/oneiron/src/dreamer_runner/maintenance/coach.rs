@@ -83,16 +83,27 @@ pub const COACH_JUDGE_SWAP_FACET: &str = "coach.judge_swap";
 /// and drawn random audit, checked on the host by a judge other than the
 /// model that produced the result (see [`super::seal_checks`]).
 pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
+/// Type-tree upkeep (ARCH-0079 #task-type, OF-541): the vault tree recounted
+/// from its receipts, split and merged on anchored decisions, its new types
+/// named on the host, and a changed tree put in force (see
+/// [`super::type_tree_upkeep`]).
+pub const COACH_TYPE_TREE_UPKEEP_FACET: &str = "coach.type_tree_upkeep";
+/// Room upkeep (ARCH-0067 §8, OF-417): each room the Coach reads gets its
+/// summary declared when its turns moved, and each quiet thread with open
+/// TASKs a Proposed nudge for the room's host. A closed-form job.
+pub const COACH_ROOM_UPKEEP_FACET: &str = "coach.room_upkeep";
 /// Tradeoff routing (FIX-LIST 817): each pending project-bound skill tradeoff
 /// ask is handed to the leader of every project board it reached, to ask on
 /// one of that project's TASKs.
 pub const COACH_TRADEOFF_ROUTE_FACET: &str = "coach.tradeoff_route";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
+/// Predicate of the Coach's Proposed room nudge, its subject the room's host.
+pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 7] = [
+const HOST_FACETS: [&str; 8] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -100,9 +111,10 @@ const HOST_FACETS: [&str; 7] = [
     COACH_JUDGE_SWAP_FACET,
     COACH_TRADEOFF_ROUTE_FACET,
     COACH_SEAL_CHECKS_FACET,
+    COACH_TYPE_TREE_UPKEEP_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 8] = [
+const MAINTENANCE_FACETS: [&str; 9] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -111,6 +123,7 @@ const MAINTENANCE_FACETS: [&str; 8] = [
     COACH_LEARNING_SWEEP_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
     super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
+    COACH_ROOM_UPKEEP_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 const READ_HARDENING_RUNS: usize = 256;

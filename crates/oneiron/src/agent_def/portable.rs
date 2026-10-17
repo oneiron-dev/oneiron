@@ -6,8 +6,12 @@ use crate::claim::{ClaimSubject, decode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::serialize::ExportBody;
+use crate::share_travel::{
+    AgentPackKnowledge, AgentPackSkill, AgentPackTravelProjection, BornWith, TravelChoice,
+};
 use crate::skill::{SkillRecord, canonical_skill_tree_hash};
-use crate::skill_hub::HubFile;
+use crate::skill_hub::{HubFile, HubPackage};
+use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -150,6 +154,112 @@ pub(crate) fn agent_pack_files_in(
             .map(|f| (f.path.as_str(), f.content.as_slice())),
     )?;
     Ok(files)
+}
+
+/// A selected knowledge claim a travelling AgentPack leaves out, for the
+/// export receipt: only plain text travels, and nothing drops silently.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OmittedClaim {
+    pub(crate) claim: EntityId,
+    pub(crate) reason: OmittedClaimReason,
+}
+
+/// Why a knowledge claim stays home.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OmittedClaimReason {
+    /// Its value names an entity or an edge.
+    RefValue,
+    /// Its value is not text, and names no entity or edge.
+    TypedValue,
+}
+
+/// The facets a sharer sends another party (OF-491): the reference-free
+/// AgentPack projection, not the native facets above. Each skill dependency
+/// travels with the body of the package its reference pins; a missing or
+/// mismatched package refuses the pack. Knowledge travels only as plain text:
+/// a typed or ref-bearing claim is left out, never stringified, and returned
+/// as an [`OmittedClaim`] in the order the selection is walked (by claim id).
+/// Also returns the born-with text that travelled under `choice`. Both lists
+/// are for the export receipt.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the sharing door's admitted snapshot parts and the sharer's choice meet here"
+)]
+pub(crate) fn agent_pack_files_travelling(
+    id: &EntityId,
+    def: &AgentDefinition,
+    refs: &[AgentSkillReference],
+    packages: &BTreeMap<EntityId, HubPackage>,
+    claims: &[ExportEntity],
+    world_name: Option<&str>,
+    born_with_text: BornWith,
+    choice: &TravelChoice,
+) -> Result<(Vec<HubFile>, BornWith, Vec<OmittedClaim>)> {
+    let refused =
+        || Error::InvalidConfig("agent pack travel: unresolved or mismatched skill".into());
+    if refs.len() != def.skills.len() {
+        return Err(refused());
+    }
+    let mut skills = Vec::with_capacity(refs.len());
+    for (dependency, reference) in def.skills.iter().zip(refs) {
+        let package = packages
+            .get(&EntityId::from_hex(&reference.entity_id)?)
+            .ok_or_else(refused)?;
+        if package.record.skill_id != reference.skill_id
+            || package.record.version != reference.version
+            || package.content_hash()?.to_hex() != reference.content_hash
+        {
+            return Err(refused());
+        }
+        skills.push(AgentPackSkill::from_package(dependency, package)?);
+    }
+    let mut selected = select_agent_knowledge(id, claims);
+    selected.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut knowledge = Vec::with_capacity(selected.len());
+    let mut omitted = Vec::new();
+    for row in selected {
+        let claim = decode_claim_body(&row.body.to_bytes()?, false)?;
+        if let Some(text) = claim.value.as_str() {
+            knowledge.push(AgentPackKnowledge {
+                text: text.to_owned(),
+                predicate: claim.predicate,
+            });
+        } else {
+            omitted.push(OmittedClaim {
+                claim: EntityId::from_hex(&row.id)?,
+                reason: if names_a_ref(&claim.value) {
+                    OmittedClaimReason::RefValue
+                } else {
+                    OmittedClaimReason::TypedValue
+                },
+            });
+        }
+    }
+    let born_with = choice.project(born_with_text);
+    let files = AgentPackTravelProjection::from_definition(
+        def,
+        world_name,
+        skills,
+        knowledge,
+        born_with.clone(),
+    )?
+    .files()?;
+    Ok((files, born_with, omitted))
+}
+
+/// Whether a claim value holds, at any depth, binary that reads as an entity
+/// id or an edge ref.
+fn names_a_ref(value: &Value) -> bool {
+    match value {
+        Value::Binary(bytes) => ClaimSubject::decode(bytes).is_ok(),
+        Value::Array(items) => items.iter().any(names_a_ref),
+        Value::Map(entries) => entries
+            .iter()
+            .any(|(key, value)| names_a_ref(key) || names_a_ref(value)),
+        _ => false,
+    }
 }
 
 fn invalid() -> Error {

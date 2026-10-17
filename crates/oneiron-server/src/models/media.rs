@@ -7,14 +7,16 @@
 //! a job: its permit is held while the provider renders and settled when
 //! the job ends.
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use oneiron::llm::media::{
-    AiMediaDoor, AiOperation, MediaBackend, MediaCaps, MediaFuture, MediaJobState, MediaRequest,
-    MediaResponse, Modality,
+    AiOperation, MediaBackend, MediaCaps, MediaJobState, MediaRequest, MediaResponse, MediaVoice,
+    Modality,
 };
 use oneiron::llm::run_admission::{HostAccount, MediaGate, RunPermit, RunReceiptSink};
 use oneiron::llm::{SingleRouteBackend, SingleSend, VoiceBackendBinding};
+use oneiron::voice_cascade::media::BankVoiceBinding;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCatalogEntry,
     LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStreamResult, ModelId, ModelLocality,
@@ -39,7 +41,7 @@ use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
 use super::offer::{ServedOffer, media_offer};
 use super::rerank::transport;
 use super::soniox::{self, SonioxRung};
-use super::status::{RungStatus, SeatState, SeatStatus};
+use super::status::{RungHealth, RungStatus, SeatState, SeatStatus};
 use super::voxcpm2_speech::VoxCpm2Speech;
 use super::walk::provider_down;
 use super::{LoggedReceipts, ladder_locality, undeclared_run};
@@ -234,6 +236,83 @@ struct MediaSeat {
     tiers: BTreeMap<ModelTierRef, ModelId>,
 }
 
+/// A banked voice's live bindings for one speech call (FIX 1746): each rung
+/// the call may reach whose target held a current clone or reference of the
+/// voice when the call was admitted, in ladder order. Host-only. The call
+/// goes out on a rung in that rung's own binding, never in another's, and a
+/// rung absent here never takes it, so an outage moves the call only to a
+/// target that already holds the voice. Nothing here clones a voice or asks
+/// for consent.
+pub(crate) struct RungVoices {
+    vault: Arc<Vault>,
+    bound: Vec<(ModelId, BankVoiceBinding)>,
+    /// Where in `bound` the binding the call last went out in sits.
+    sent: AtomicUsize,
+}
+
+impl RungVoices {
+    /// The bindings `bound` takes, or `None` when no rung holds the voice.
+    pub(crate) fn new(vault: Arc<Vault>, bound: Vec<(ModelId, BankVoiceBinding)>) -> Option<Self> {
+        (!bound.is_empty()).then(|| Self {
+            vault,
+            bound,
+            sent: AtomicUsize::new(usize::MAX),
+        })
+    }
+
+    /// The one rung that holds the voice, when only one does: the call is
+    /// that rung's alone.
+    pub(crate) fn only_rung(&self) -> Option<&ModelId> {
+        match self.bound.as_slice() {
+            [(rung, _)] => Some(rung),
+            _ => None,
+        }
+    }
+
+    /// The voice as the first rung that holds it renders it.
+    pub(crate) fn first_voice(&self) -> Option<MediaVoice> {
+        self.bound.first().map(|(_, binding)| binding.voice())
+    }
+
+    /// Whether `rung` held the voice when the call was admitted.
+    pub(super) fn holds(&self, rung: &ModelId) -> bool {
+        self.bound.iter().any(|(model, _)| model == rung)
+    }
+
+    /// The voice the call goes out in on `rung`: that rung's own binding,
+    /// while it is still current. `None` when the rung holds none, or the
+    /// voice was withdrawn or re-recorded since.
+    pub(super) fn send_on(&self, rung: &ModelId) -> Option<MediaVoice> {
+        let (at, (_, binding)) = self
+            .bound
+            .iter()
+            .enumerate()
+            .find(|(_, (model, _))| model == rung)?;
+        if !binding.is_current(&self.vault) {
+            return None;
+        }
+        self.sent.store(at, Ordering::Relaxed);
+        Some(binding.voice())
+    }
+
+    /// Whether the binding the call last went out in is still current: an
+    /// answer rendered in a voice withdrawn or re-recorded meanwhile is not
+    /// handed back.
+    pub(crate) fn answered_current(&self) -> bool {
+        self.bound
+            .get(self.sent.load(Ordering::Relaxed))
+            .is_some_and(|(_, binding)| binding.is_current(&self.vault))
+    }
+
+    /// Whether no binding is current any more: the voice was withdrawn or
+    /// re-recorded everywhere while the call waited.
+    pub(crate) fn withdrawn(&self) -> bool {
+        self.bound
+            .iter()
+            .all(|(_, binding)| !binding.is_current(&self.vault))
+    }
+}
+
 /// One row `GET /v1/ai/options` lists: a model that serves an operation,
 /// where it runs and what it takes.
 #[derive(Clone, Debug, Serialize)]
@@ -260,9 +339,14 @@ pub struct MediaTicket {
     pub operation: AiOperation,
 }
 
-/// A job a poll or a cancel reaches: held here, or ended and kept.
+/// A job a poll or a cancel reaches: held here running, held here ended
+/// with an end the vault has not kept yet, or ended and kept.
+#[derive(Clone)]
 enum Held {
     Running(Arc<tokio::sync::Mutex<HeldJob>>),
+    /// Its end, answered from here while each poll writes it again: its
+    /// permit is spent, so it is never polled or paid for again.
+    Unkept(MediaJobState),
     Ended(MediaJobState),
 }
 
@@ -272,7 +356,8 @@ pub struct MediaRuntime {
     meter: Option<BudgetGuard>,
     receipts: Arc<dyn RunReceiptSink>,
     host: Option<Arc<HostAccount>>,
-    jobs: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>>,
+    /// The jobs held here: running, or ended and not kept yet.
+    jobs: Mutex<BTreeMap<String, Held>>,
     /// Where the jobs are kept, so a restart loses none (FIX-LIST 465).
     store: Option<JobStore>,
     /// Each job seat's rungs, by engine id: the rung a kept job is taken up
@@ -300,6 +385,9 @@ impl Drop for MediaRuntime {
             return;
         }
         for job in self.lock_jobs().values() {
+            let Held::Running(job) = job else {
+                continue;
+            };
             let Ok(mut job) = job.try_lock() else {
                 continue;
             };
@@ -495,6 +583,18 @@ impl MediaRuntime {
             .collect()
     }
 
+    /// Whether the rung `model` of `operation`'s seat can take a call now
+    /// (FIX 2942): it was built, and its offer is live ([`RungHealth::live_now`]).
+    pub(super) fn rung_live(&self, operation: AiOperation, model: &str) -> bool {
+        let Some(seat) = self.seats.get(&operation) else {
+            return false;
+        };
+        ModelId::new(model.to_owned())
+            .ok()
+            .and_then(|id| seat.rungs.get(&id))
+            .is_some_and(|alone| alone.health().iter().all(|(_, health)| health.live_now()))
+    }
+
     /// What the media meter has left to spend, in token units.
     #[must_use]
     pub fn units_left(&self) -> Option<u64> {
@@ -604,10 +704,11 @@ impl MediaRuntime {
             .ok_or_else(|| FatalLlmError::InvalidRequest.into())
     }
 
-    fn walk(
-        &self,
+    fn walk<'a>(
+        &'a self,
         request: MediaRequest,
-    ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + '_> {
+        voices: Option<&'a RungVoices>,
+    ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + 'a> {
         let ladder = self.ladder(&request)?;
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
         let run = undeclared_run(
@@ -616,15 +717,34 @@ impl MediaRuntime {
             self.host.clone(),
             Arc::clone(&self.receipts),
         );
-        Ok(async move { ladder.media(&run, request, None).await })
+        Ok(async move { ladder.media(&run, request, None, voices).await })
     }
 
     /// One call to its answer, on a run of its own on the media meter.
     pub async fn run(&self, request: MediaRequest) -> LlmResult<MediaResponse> {
+        self.run_in(request, None).await
+    }
+
+    /// [`Self::run`] for a speech call in a banked voice (FIX 1746): it goes
+    /// only to the rungs of its ladder that hold the voice, each in its own
+    /// binding of it.
+    pub(crate) async fn run_voiced(
+        &self,
+        request: MediaRequest,
+        voices: &RungVoices,
+    ) -> LlmResult<MediaResponse> {
+        self.run_in(request, Some(voices)).await
+    }
+
+    async fn run_in(
+        &self,
+        request: MediaRequest,
+        voices: Option<&RungVoices>,
+    ) -> LlmResult<MediaResponse> {
         if request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        match self.walk(request)?.await? {
+        match self.walk(request, voices)?.await? {
             MediaAnswer::Done(response) => Ok(response),
             // Only a job operation is submitted.
             MediaAnswer::Job(mut job) => {
@@ -642,7 +762,7 @@ impl MediaRuntime {
         }
         let operation = request.operation;
         let sent = self.store.as_ref().map(|_| request.clone());
-        let MediaAnswer::Job(job) = self.walk(request)?.await? else {
+        let MediaAnswer::Job(job) = self.walk(request, None)?.await? else {
             return Err(FatalLlmError::EmptyResponse.into());
         };
         let id = job_ticket(&job.provider_job);
@@ -651,8 +771,8 @@ impl MediaRuntime {
             model: job.model.to_string(),
             operation,
         };
-        if let (Some(store), Some(request)) = (&self.store, sent) {
-            store.put(
+        if let (Some(store), Some(request)) = (&self.store, sent)
+            && let Err(error) = store.put(
                 &id,
                 JobRow {
                     model: job.model.clone(),
@@ -662,20 +782,28 @@ impl MediaRuntime {
                     ended: None,
                     receipt: job.receipt.clone(),
                 },
-            );
+            )
+        {
+            tracing::error!(%error, ticket = %id, "a media job was not kept: it runs held here");
         }
         self.lock_jobs()
-            .insert(id, Arc::new(tokio::sync::Mutex::new(job)));
+            .insert(id, Held::Running(Arc::new(tokio::sync::Mutex::new(job))));
         Ok(ticket)
     }
 
     /// Where job `id` stands. A job that ended keeps its end, and every poll
     /// answers it until its caller deletes the job; without a vault it is
-    /// answered once. A job a restart left running is taken up again on a
+    /// answered once. An end the vault refuses is held here and answered
+    /// from here, and each poll writes it again; the job is never polled or
+    /// paid for again. A job a restart left running is taken up again on a
     /// fresh permit, and nothing is sent again.
     pub async fn poll(&self, id: &str) -> LlmResult<MediaJobState> {
         let job = match self.held(id)? {
             Held::Running(job) => job,
+            Held::Unkept(state) => {
+                self.keep_end(id, &state);
+                return Ok(state);
+            }
             Held::Ended(state) => return Ok(state),
         };
         let mut held = job.lock().await;
@@ -688,15 +816,41 @@ impl MediaRuntime {
         if let Ok(state) = &state
             && state.ended()
         {
-            if let Some(store) = &self.store
-                && let Some(mut row) = store.get(id)
-            {
-                row.ended = Some(state.clone());
-                store.put(id, row);
-            }
-            self.lock_jobs().remove(id);
+            self.keep_end(id, state);
         }
         state
+    }
+
+    /// Keeps job `id`'s end `state` in its row, the row and its clips in one
+    /// write, and lets the job go from here. An end the vault refuses, or a
+    /// job whose row was never kept, stays held here with its end, for the
+    /// next poll to answer and write again. A job dropped meanwhile stays
+    /// dropped.
+    fn keep_end(&self, id: &str, state: &MediaJobState) {
+        let kept = self
+            .store
+            .as_ref()
+            .map_or(Ok(()), |store| -> Result<(), String> {
+                let mut row = store
+                    .get(id)
+                    .ok_or_else(|| "its row is not kept".to_owned())?;
+                row.ended = Some(state.clone());
+                store.put(id, row)
+            });
+        let mut jobs = self.lock_jobs();
+        match kept {
+            Ok(()) => {
+                jobs.remove(id);
+            }
+            Err(error) => {
+                tracing::error!(%error, ticket = id, "a media job's end is held, not kept");
+                if let Some(held) = jobs.get_mut(id)
+                    && matches!(held, Held::Running(_))
+                {
+                    *held = Held::Unkept(state.clone());
+                }
+            }
+        }
     }
 
     /// Stops job `id` at its provider and drops it, its kept row with it.
@@ -709,7 +863,7 @@ impl MediaRuntime {
         }
         let job = match held? {
             Held::Running(job) => job,
-            Held::Ended(_) => return Ok(()),
+            Held::Unkept(_) | Held::Ended(_) => return Ok(()),
         };
         let stopped = job.lock().await.cancel().await;
         stopped
@@ -719,8 +873,8 @@ impl MediaRuntime {
     /// ended is taken up again here, once: a poll racing this one finds it
     /// held.
     fn held(&self, id: &str) -> LlmResult<Held> {
-        if let Some(job) = self.lock_jobs().get(id) {
-            return Ok(Held::Running(Arc::clone(job)));
+        if let Some(held) = self.lock_jobs().get(id) {
+            return Ok(held.clone());
         }
         let row = self
             .store
@@ -731,12 +885,12 @@ impl MediaRuntime {
             return Ok(Held::Ended(state));
         }
         let mut jobs = self.lock_jobs();
-        if let Some(job) = jobs.get(id) {
-            return Ok(Held::Running(Arc::clone(job)));
+        if let Some(held) = jobs.get(id) {
+            return Ok(held.clone());
         }
-        let job = Arc::new(tokio::sync::Mutex::new(self.take_up(&row)?));
-        jobs.insert(id.to_owned(), Arc::clone(&job));
-        Ok(Held::Running(job))
+        let job = Held::Running(Arc::new(tokio::sync::Mutex::new(self.take_up(&row)?)));
+        jobs.insert(id.to_owned(), job.clone());
+        Ok(job)
     }
 
     /// Takes up every kept job a restart left running, so each one's
@@ -753,8 +907,11 @@ impl MediaRuntime {
         }
     }
 
-    /// The end job `id`'s row keeps.
+    /// The end job `id` holds here, or its row keeps.
     fn ended(&self, id: &str) -> LlmResult<MediaJobState> {
+        if let Some(Held::Unkept(state)) = self.lock_jobs().get(id) {
+            return Ok(state.clone());
+        }
         self.store
             .as_ref()
             .and_then(|store| store.get(id))
@@ -807,9 +964,7 @@ impl MediaRuntime {
         })
     }
 
-    fn lock_jobs(
-        &self,
-    ) -> std::sync::MutexGuard<'_, BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>> {
+    fn lock_jobs(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Held>> {
         self.jobs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -819,7 +974,9 @@ impl MediaRuntime {
 impl super::ModelRuntime {
     /// Every row of the `ai.*` family that serves `operation` (every one
     /// when `None`) over `inputs`: each available rung of each text seat,
-    /// then each media row.
+    /// then each media row. Only a rung that can take a call now is listed
+    /// (FIX 2942): one whose provider is down, whose one probation request
+    /// is out, or that a limit holds is left out until it is back.
     #[must_use]
     pub fn ai_options(
         &self,
@@ -853,8 +1010,18 @@ impl super::ModelRuntime {
                     .seats
                     .iter()
                     .find(|status| status.seat_model.as_deref() == Some(seat.model.as_str()));
-                for rung in status.into_iter().flat_map(|status| &status.rungs) {
-                    let Some(model) = rung.engine_model.clone().filter(|_| rung.available) else {
+                let health: BTreeMap<usize, RungHealth> =
+                    seat.ladder.health().into_iter().collect();
+                let rungs = status
+                    .into_iter()
+                    .flat_map(|status| status.rungs.iter().enumerate());
+                for (position, rung) in rungs {
+                    let live = health.get(&position).is_none_or(RungHealth::live_now);
+                    let Some(model) = rung
+                        .engine_model
+                        .clone()
+                        .filter(|_| rung.available && live)
+                    else {
                         continue;
                     };
                     rows.push(MediaRow {
@@ -872,16 +1039,13 @@ impl super::ModelRuntime {
                 }
             }
         }
-        rows.extend(self.media.options(operation, inputs));
+        rows.extend(
+            self.media
+                .options(operation, inputs)
+                .into_iter()
+                .filter(|row| self.media.rung_live(row.operation, &row.model)),
+        );
         rows
-    }
-}
-
-/// Engine code's media door (an image asset's generation): each call is a
-/// run of its own on the media meter, rung by rung through the media gate.
-impl AiMediaDoor for MediaRuntime {
-    fn call<'a>(&'a self, request: MediaRequest) -> MediaFuture<'a, MediaResponse> {
-        Box::pin(self.run(request))
     }
 }
 

@@ -31,6 +31,8 @@ export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
+selfFocusScratchpadAppend(input: unknown): unknown
+selfFocusScratchpadSeal(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
@@ -59,6 +61,7 @@ vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
+tasksAccept(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
@@ -66,6 +69,8 @@ vaultExport(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
 vaultReceiptsGet(input: unknown): unknown
+vaultExplainMemory(input: unknown): unknown
+vaultExplainGate(input: unknown): unknown
 vaultKvGet(requestJson: string): string
 vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
@@ -83,11 +88,16 @@ vaultWeaveOwnerLinkWrong(input: unknown): unknown
 vaultWeaveItemWrong(input: unknown): unknown
 vaultWeaveOwnerItemWrong(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
+vaultPacksRemove(input: unknown): unknown
+vaultConnectorsSubscriptionsPut(input: unknown): unknown
+vaultConnectorsSubscriptionsList(input: unknown): unknown
+vaultConnectorsSubscriptionsRevoke(input: unknown): unknown
 vaultPacksSetupPrepare(input: unknown): unknown
 vaultPacksSetupGet(input: unknown): unknown
 vaultPacksSetupAnswer(input: unknown): unknown
 vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
+vaultMeshPathReceipts(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
@@ -116,6 +126,21 @@ vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
+vaultResearchBind(input: unknown): unknown
+vaultResearchFork(input: unknown): unknown
+vaultResearchWeave(input: unknown): unknown
+vaultResearchMeasureSearch(input: unknown): unknown
+vaultResearchMeasureHeldOut(input: unknown): unknown
+vaultResearchMarkInvalid(input: unknown): unknown
+vaultResearchPrune(input: unknown): unknown
+vaultResearchSelect(input: unknown): unknown
+vaultResearchPromotionBasis(input: unknown): unknown
+vaultResearchReserveConfirmation(input: unknown): unknown
+vaultResearchPromote(input: unknown): unknown
+vaultResearchReserveWork(input: unknown): unknown
+vaultResearchSettleWork(input: unknown): unknown
+vaultResearchRefundWork(input: unknown): unknown
+vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
@@ -123,6 +148,10 @@ vaultLegalHoldsWiden(input: unknown): unknown
 vaultLegalHoldsList(input: unknown): unknown
 vaultLegalHoldsLog(input: unknown): unknown
 vaultLegalHoldsLiftAndErase(input: unknown): unknown
+vaultCourtesyDeleteSend(input: unknown): unknown
+vaultCourtesyDeleteSent(input: unknown): unknown
+vaultCourtesyDeleteIncoming(input: unknown): unknown
+vaultCourtesyDeleteAnswer(input: unknown): unknown
 vaultEmbeddingSpacesList(input: unknown): unknown
 vaultEmbeddingSpacesDeclare(input: unknown): unknown
 vaultEmbeddingSpacesBind(input: unknown): unknown
@@ -171,6 +200,8 @@ vaultArtifactsProposals(requestJson: string): string
 vaultArtifactsWaits(requestJson: string): string
 vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsReviewSlides(requestJson: string): string
+vaultArtifactsAsk(input: unknown): unknown
+vaultCriticReview(input: unknown): unknown
 vaultArtifactsProposeDeck(requestJson: string): string
 vaultArtifactsProposeOutput(requestJson: string): string
 vaultArtifactsKeep(requestJson: string): string
@@ -238,6 +269,7 @@ vaultQuestionsPause(input: unknown): unknown
 vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
+vaultQuestionsRefresh(input: unknown): unknown
 vaultDecisionsAsksAnswer(input: unknown): unknown
 vaultDecisionsAsksClimb(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown

@@ -11,7 +11,17 @@
 //! machine's rows still name and it lacks (`Vault::authority_history_request`)
 //! and fetching exactly that from the home (`residence.authority.range`), each
 //! missing entry with its ancestors, through the repair door: the rows wait in
-//! the stage until together they close the history, then land at once.
+//! the stage until together they close the history, then land at once. When
+//! the fold asks for the whole coverage of the image this machine adopted,
+//! that coverage pages by the image itself, with no hash list
+//! ([`Vault::authority_history_fetch`]); isolated gaps keep exact hashes.
+//!
+//! A machine whose owner-authorized pairing returned a checkpoint pin adopts
+//! that image first, while this vault has adopted none: it reads the image
+//! the pin names from the home a part at a time
+//! (`residence.authority.checkpoint`), keeps the attestations made with the
+//! pin's own key bindings, and hands both to the adoption door, which
+//! verifies them against the pin and refuses what this vault cannot take.
 
 use base64::Engine;
 use serde::Deserialize;
@@ -22,12 +32,15 @@ use std::collections::BTreeSet;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
-    AUTHORITY_HISTORY_PAGE_MAX, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
-    AuthorityRepairOutcome, authority_entry_hash, decode_authority_log_entry_body,
+    AUTHORITY_CHECKPOINT_V2_MAX_BYTES, AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation,
+    AuthorityCheckpointPin, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
+    AuthorityHistorySelection, AuthorityRepairOutcome, authority_entry_hash,
+    decode_authority_log_entry_body,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
-    AUTHORITY_TAIL_PAGE_MAX, held_authority_entries, import_authority_page,
+    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, held_authority_entries,
+    import_authority_page,
 };
 use crate::sync::transport::TransportError;
 
@@ -48,13 +61,25 @@ struct AuthorityTailReply {
     wanted: String,
 }
 
-/// One page of an exact-hash fetch. The home's vault, checkpoint and unheld
-/// claims count for nothing here, so they are not read.
+/// One page of a range fetch, naming the selection it serves. The home's
+/// vault, checkpoint and unheld claims count for nothing here, so they are
+/// not read.
 #[derive(Deserialize)]
 struct AuthorityRangeReply {
+    selection: String,
     rows: Vec<String>,
     #[serde(default)]
     next: Option<String>,
+}
+
+/// One part of a kept checkpoint image.
+#[derive(Deserialize)]
+struct AuthorityCheckpointReply {
+    total: u64,
+    part: String,
+    /// On the part at offset zero: the attestations the home keeps for it.
+    #[serde(default)]
+    attestations: Vec<AuthorityCheckpointAttestation>,
 }
 
 fn storage(error: crate::Error) -> TransportError {
@@ -63,11 +88,29 @@ fn storage(error: crate::Error) -> TransportError {
 
 impl SyncClient {
     /// Takes in the signed authority entries the home holds and this machine
-    /// lacks, a page at a time, then appends those the home lacks. Returns
-    /// how many it imported.
+    /// lacks, a page at a time, then appends those the home lacks. A machine
+    /// whose pairing pinned a checkpoint adopts its image first, while this
+    /// vault has adopted none. Returns how many entries it imported.
     pub async fn catch_up_authority(&self) -> Result<usize, TransportError> {
         catch_up_authority(&self.vault, &self.config).await
     }
+}
+
+/// Whether this vault holds an adopted checkpoint, read without verifying
+/// it.
+fn checkpoint_adopted(vault: &Vault) -> crate::Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .authority_checkpoint_expectation_in_txn(&txn)?
+        .adopted_pin_digest
+        .is_some())
+}
+
+/// Whether `config` names a checkpoint pin this vault has yet to adopt an
+/// image under: its first authority catch-up adopts one.
+pub(crate) fn pinned_checkpoint_pending(vault: &Vault, config: &SyncClientConfig) -> bool {
+    config.authority_checkpoint_pin.is_some()
+        && checkpoint_adopted(vault).is_ok_and(|adopted| !adopted)
 }
 
 /// [`SyncClient::catch_up_authority`] on a vault and a client config alone,
@@ -80,6 +123,13 @@ pub(crate) async fn catch_up_authority(
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
         return Err(TransportError::Storage("home node offline".into()));
     };
+    // A checkpoint that cannot be read this round holds back no tail.
+    if let Some(pin) = &config.authority_checkpoint_pin
+        && !checkpoint_adopted(vault).map_err(storage)?
+        && let Err(error) = adopt_pinned_checkpoint(vault, &mut rpc, pin).await
+    {
+        tracing::warn!(%error, "pinned authority checkpoint not read");
+    }
     let mut taken = 0;
     let mut wanted = None;
     // Entries refused this round: named as held, so the home pages past them.
@@ -135,6 +185,82 @@ pub(crate) async fn catch_up_authority(
         );
     }
     Ok(taken)
+}
+
+/// Adopts the checkpoint image `pin` names (OF-469): read from the home, its
+/// attestations kept to those made with the pin's own key bindings, then
+/// verified against the pin and adopted in one write. The adoption door
+/// decides what this vault takes: a refusal is logged, and the tail folds
+/// as it would have.
+async fn adopt_pinned_checkpoint(
+    vault: &Vault,
+    rpc: &mut ResidenceRpc,
+    pin: &AuthorityCheckpointPin,
+) -> Result<(), TransportError> {
+    let Some((image, mut attestations)) = fetch_authority_checkpoint(rpc, &pin.checkpoint).await?
+    else {
+        tracing::warn!("the home serves no image of the pinned authority checkpoint");
+        return Ok(());
+    };
+    attestations
+        .retain(|attestation| pin.binding(&attestation.binding.root) == Some(&attestation.binding));
+    match vault.adopt_authority_checkpoint(pin, &image, &attestations) {
+        Ok(_) => tracing::info!("pinned authority checkpoint adopted"),
+        Err(error) => tracing::warn!(%error, "pinned authority checkpoint refused"),
+    }
+    Ok(())
+}
+
+/// The checkpoint image the home keeps at `checkpoint` and the attestations
+/// it keeps for it, read a part at a time. `None` when the home refuses the
+/// read or keeps no such image.
+async fn fetch_authority_checkpoint(
+    rpc: &mut ResidenceRpc,
+    checkpoint: &[u8; 32],
+) -> Result<Option<(Vec<u8>, Vec<AuthorityCheckpointAttestation>)>, TransportError> {
+    let mut image = Vec::new();
+    let mut attestations = Vec::new();
+    let mut total = None;
+    loop {
+        let reply = match rpc
+            .request(
+                "residence.authority.checkpoint",
+                json!({
+                    "checkpoint": base64::engine::general_purpose::STANDARD.encode(checkpoint),
+                    "offset": image.len(),
+                }),
+            )
+            .await
+        {
+            Ok(reply) => reply,
+            Err(TransportError::InvalidPayload(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let reply: AuthorityCheckpointReply =
+            serde_json::from_value(reply).map_err(|_| refused())?;
+        if *total.get_or_insert(reply.total) != reply.total
+            || reply.total > AUTHORITY_CHECKPOINT_V2_MAX_BYTES as u64
+            || (!image.is_empty() && !reply.attestations.is_empty())
+        {
+            return Err(refused());
+        }
+        let part = base64::engine::general_purpose::STANDARD
+            .decode(reply.part)
+            .map_err(|_| refused())?;
+        if part.is_empty()
+            || part.len() > AUTHORITY_CHECKPOINT_PART_MAX
+            || (image.len() + part.len()) as u64 > reply.total
+        {
+            return Err(refused());
+        }
+        if image.is_empty() {
+            attestations = reply.attestations;
+        }
+        image.extend_from_slice(&part);
+        if image.len() as u64 == reply.total {
+            return Ok(Some((image, attestations)));
+        }
+    }
 }
 
 /// Appends to the home the signed entries it named as lacking, parents
@@ -199,8 +325,11 @@ async fn append_authority(
 /// asks again after each page, since a fetched entry may name further
 /// ancestors, and stops once nothing is missing, the home serves none of it,
 /// or the door refuses a page. `refused` are entries refused this round:
-/// named as held, so no page carries them again. Returns how many rows landed
-/// and what is still missing.
+/// named as held, so no page carries them again. Once a round, a request for
+/// the whole adopted coverage pages it by the image instead, under one fixed
+/// selection and held set, the cursor walking it; its end is no proof of
+/// completeness, so the round asks again after it and fetches what remains
+/// by exact hash. Returns how many rows landed and what is still missing.
 async fn repair_authority_history(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
@@ -212,21 +341,52 @@ async fn repair_authority_history(
     let mut request = vault
         .authority_history_request(&BTreeSet::new())
         .map_err(storage)?;
+    // The covered pass in flight, and whether this round has run one.
+    let mut pass: Option<AuthorityHistoryFetch> = None;
+    let mut passed = false;
     for _ in 0..MAX_PAGES {
         if request.is_complete() {
             break;
         }
-        let mut held = held_authority_entries(vault).map_err(storage)?;
-        held.extend(vault.authority_staged_history().map_err(storage)?);
-        held.extend(refused.iter().copied());
-        let fetch = AuthorityHistoryFetch {
-            cursor,
-            ..AuthorityHistoryFetch::closing(&request, held)
+        let fetch = match pass.take() {
+            Some(pass) => AuthorityHistoryFetch { cursor, ..pass },
+            None => {
+                let mut held = held_authority_entries(vault).map_err(storage)?;
+                held.extend(vault.authority_staged_history().map_err(storage)?);
+                held.extend(refused.iter().copied());
+                match vault
+                    .authority_history_fetch(&request, held.clone())
+                    .map_err(storage)?
+                {
+                    covered @ AuthorityHistoryFetch {
+                        selection: AuthorityHistorySelection::Covered { .. },
+                        ..
+                    } if !passed => {
+                        passed = true;
+                        covered
+                    }
+                    _ => AuthorityHistoryFetch {
+                        cursor,
+                        ..AuthorityHistoryFetch::closing(&request, held)
+                    },
+                }
+            }
         };
+        let covered = matches!(fetch.selection, AuthorityHistorySelection::Covered { .. });
         let Some((rows, next)) = fetch_authority_range(rpc, &fetch).await? else {
+            // A home that keeps no such image refuses the covered pass: the
+            // round goes on by exact hash.
+            if covered {
+                cursor = None;
+                continue;
+            }
             break;
         };
         if rows.is_empty() {
+            if covered {
+                cursor = None;
+                continue;
+            }
             break;
         }
         let outcome = match vault.import_signed_authority_repair_page(&rows) {
@@ -256,14 +416,23 @@ async fn repair_authority_history(
             }
         };
         // Rows this page carried are held or staged now, so a home that
-        // finds its cursor among them starts the selection again.
+        // finds its cursor among them starts the selection again. A covered
+        // pass keeps its selection and held set, so its cursor walks on.
         cursor = next;
+        if covered {
+            if next.is_some() {
+                pass = Some(fetch);
+            } else {
+                cursor = None;
+            }
+        }
     }
     Ok((written, request))
 }
 
 /// One page of `fetch` from the home: its signed rows, parents first, and the
-/// cursor of the next page. `None` when the home refuses the fetch.
+/// cursor of the next page. `None` when the home refuses the fetch; a page
+/// naming another selection than `fetch`'s is refused here.
 async fn fetch_authority_range(
     rpc: &mut ResidenceRpc,
     fetch: &AuthorityHistoryFetch,
@@ -272,12 +441,27 @@ async fn fetch_authority_range(
         base64::engine::general_purpose::STANDARD
             .encode(hashes.iter().flatten().copied().collect::<Vec<u8>>())
     };
+    let one = |hash: &[u8; 32]| base64::engine::general_purpose::STANDARD.encode(hash);
+    let selection = match &fetch.selection {
+        AuthorityHistorySelection::Hashes(hashes) => json!({ "hashes": packed(hashes) }),
+        AuthorityHistorySelection::Covered {
+            checkpoint,
+            archive,
+            lower_exclusive,
+            upper_inclusive,
+        } => json!({ "covered": {
+            "checkpoint": one(checkpoint),
+            "archive": archive.as_ref().map(one),
+            "lower_exclusive": lower_exclusive.as_ref().map(one),
+            "upper_inclusive": upper_inclusive.as_ref().map(one),
+        }}),
+    };
     let reply = match rpc
         .request(
             "residence.authority.range",
             json!({
                 "vault_id": fetch.vault_id.map(|id| base64::engine::general_purpose::STANDARD.encode(id)),
-                "hashes": packed(&fetch.hashes),
+                "selection": selection,
                 "parent_closure": fetch.parent_closure,
                 "held": packed(&fetch.held),
                 "cursor": fetch.cursor.map(|cursor| base64::engine::general_purpose::STANDARD.encode(cursor)),
@@ -291,7 +475,13 @@ async fn fetch_authority_range(
         Err(error) => return Err(error),
     };
     let reply: AuthorityRangeReply = serde_json::from_value(reply).map_err(|_| refused())?;
-    if reply.rows.len() > AUTHORITY_HISTORY_PAGE_MAX {
+    if reply.rows.len() > AUTHORITY_HISTORY_PAGE_MAX
+        || base64::engine::general_purpose::STANDARD
+            .decode(&reply.selection)
+            .ok()
+            .and_then(|raw| <[u8; 32]>::try_from(raw).ok())
+            != Some(fetch.selection.id())
+    {
         return Err(refused());
     }
     let rows = reply

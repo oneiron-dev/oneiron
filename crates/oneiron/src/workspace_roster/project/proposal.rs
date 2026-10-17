@@ -210,7 +210,12 @@ pub(crate) fn stage_project_detection_in_txn(
     };
     let thread = if ROOM_PROJECT.contains(&vault.store, txn, &conversation)? {
         match rooms::TURNS.get(&vault.store, txn, &turn)? {
-            Some(row) if row.thread_of.is_some() && row.converted_project.is_none() => Some(turn),
+            // A reply's card converts its whole thread: record the root.
+            Some(row) if row.thread_of.is_some() && row.converted_project.is_none() => Some(
+                rooms::room_thread_turns_in_txn(vault, txn, conversation, turn)?
+                    .and_then(|selection| selection.root)
+                    .ok_or_else(invalid)?,
+            ),
             _ => return Ok(()),
         }
     } else {
@@ -378,6 +383,13 @@ impl Vault {
         card_id: &str,
     ) -> Result<Option<ProjectCardRecord>> {
         CARDS.get(&self.store, txn, &card_key(card_id))
+    }
+
+    /// One host-held card by its id, if any, in a read of its own: the card
+    /// a host's confirm door lists as the source of its answer.
+    pub fn project_card(&self, card_id: &str) -> Result<Option<ProjectCardRecord>> {
+        let txn = self.store.env.read_txn()?;
+        self.project_card_record_in_txn(&txn, card_id)
     }
 
     /// One authorised tap mints a host-held card's project; the tap is the

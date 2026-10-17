@@ -56,7 +56,8 @@ pub struct PersonRow {
     pub handle: String,
     pub name: String,
     pub kind: PersonKind,
-    /// `member` or `contact` for a human; `preset` or `custom` for an agent.
+    /// `owner`, `member` or `contact` for a human; `preset` or `custom` for
+    /// an agent.
     pub role: String,
     /// One line for the reader's sensitivity band, when the about job has
     /// written one.
@@ -114,6 +115,25 @@ impl People {
             .map(|binding| binding.actor_ref)
             .collect();
         let rtxn = vault.store.env.read_txn()?;
+        // The vault owner's row reads `owner`: the embedded owner, or a human
+        // whose owner binding verifies. An unverifiable binding stays `member`.
+        let mut owners = BTreeSet::new();
+        for actor in members
+            .iter()
+            .copied()
+            .chain([crate::vault::embedded_owner_actor_id()?])
+        {
+            if crate::memory::actor_is_vault_owner_in_txn(
+                vault,
+                &rtxn,
+                actor,
+                EdgeActorClass::Human,
+            )
+            .unwrap_or(false)
+            {
+                owners.insert(actor);
+            }
+        }
         let mut agent_of: BTreeMap<EntityId, (EntityId, crate::agent_def::AgentDefinition)> =
             BTreeMap::new();
         let mut hidden = BTreeSet::new();
@@ -199,6 +219,8 @@ impl People {
                         },
                         role: if model {
                             "custom"
+                        } else if owners.contains(&person) {
+                            "owner"
                         } else if members.contains(&person) {
                             "member"
                         } else {
@@ -392,12 +414,28 @@ pub(crate) fn ensure_agent_person(
     if crate::dreamer_runner::authority::is_base_agent_actor(&agent)? {
         return Ok(());
     }
-    let person = EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])?;
     let mut txn = vault.store.env.write_txn()?;
-    if crate::subject_model::actor_subject_anchor_in_txn(vault, &txn, &agent, at)?.is_some() {
+    ensure_agent_person_in_txn(vault, &mut txn, agent, name, at)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// [`ensure_agent_person`] in the caller's writer, which owns commit.
+pub(crate) fn ensure_agent_person_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    agent: EntityId,
+    name: &str,
+    at: u64,
+) -> Result<()> {
+    if crate::dreamer_runner::authority::is_base_agent_actor(&agent)? {
         return Ok(());
     }
-    if vault.store.port_entity_record(&txn, &person)?.is_none() {
+    let person = EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])?;
+    if crate::subject_model::actor_subject_anchor_in_txn(vault, &*txn, &agent, at)?.is_some() {
+        return Ok(());
+    }
+    if vault.store.port_entity_record(&*txn, &person)?.is_none() {
         let mut body = Vec::new();
         rmpv::encode::write_value(
             &mut body,
@@ -416,12 +454,11 @@ pub(crate) fn ensure_agent_person(
                 at,
                 &body,
             )
-            .apply(&mut txn)?;
+            .apply(txn)?;
     }
     let writer = WriteActor::new(agent, EdgeActorClass::Agent);
-    crate::subject_model::ensure_model_person_in_txn(vault, &mut txn, person, writer, at)?;
-    crate::subject_model::ensure_actor_subject_in_txn(vault, &mut txn, agent, person, writer, at)?;
-    txn.commit()?;
+    crate::subject_model::ensure_model_person_in_txn(vault, txn, person, writer, at)?;
+    crate::subject_model::ensure_actor_subject_in_txn(vault, txn, agent, person, writer, at)?;
     Ok(())
 }
 

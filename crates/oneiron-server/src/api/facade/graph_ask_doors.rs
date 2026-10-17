@@ -13,16 +13,17 @@
 use std::sync::Arc;
 
 use oneiron::llm::decision::questions::{
-    QuestionRecord, ScheduledBackfill, answer_records, artifact_ask_records, create_question,
-    edit_question, pause_question, question_call_budget, read_question, run_graph_ask_receipted,
-    schedule_backfill, select_graph_units_by_type,
+    AnswerRecord, QuestionRecord, ScheduledBackfill, answer_records, artifact_ask_records,
+    create_question, edit_question, pause_question, question_call_budget, read_question,
+    refresh_question_with, run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
+    standing_ask_route,
 };
 use oneiron::llm::decision::{DecisionDial, DecisionRung};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
     GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionAnswersRequest,
     QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest,
-    QuestionPaused, QuestionReadRequest,
+    QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -218,6 +219,48 @@ pub(crate) async fn vault_questions_answers(
         let graph = answer_records(server.vault(), principal, input.id)?;
         let asks = artifact_ask_records(server.vault(), principal, input.id)?;
         Ok(QuestionAnswer::union(graph, asks))
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.refresh`: refreshes the caller's standing question by
+/// hand, now, over every unit its current version covers. The answerer is
+/// the resident pump's: the host's ladder under the question's own dial,
+/// criteria, posture and call clock, a person ask routed to the question's
+/// principal and climbing to the vault's owners. The caller writes the
+/// answers as the question's principal; another principal's question is not
+/// found, and a paused one answers nothing. The ladder runs on a blocking
+/// thread.
+pub(crate) async fn vault_questions_refresh(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionRefreshRequest,
+) -> MemoryResult<Vec<AnswerRecord>> {
+    const VERB: &str = "vault.questions.refresh";
+    let asker = asker(auth, server, VERB)?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<AnswerRecord>> {
+        let vault = server.vault();
+        Ok(refresh_question_with(
+            vault,
+            asker,
+            asker.entity_ref(),
+            input.id,
+            oneiron_vault_contract::now_ts(),
+            |record| {
+                Ok(LadderGraphAnswerer::routed(
+                    &server,
+                    record.principal,
+                    asker,
+                    standing_ask_route(record.principal),
+                    record.definition.dial,
+                    record.definition.deadline(vault)?,
+                )
+                .with_criteria(record.definition.criteria.clone())
+                .with_posture(record.definition.posture))
+            },
+        )?)
     })
     .await
     .map_err(|_| internal(VERB))?

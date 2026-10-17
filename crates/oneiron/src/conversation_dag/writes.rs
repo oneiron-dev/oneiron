@@ -61,6 +61,7 @@ fn stamp_body(
                 | "dag_session_ref"
                 | "dag_kind"
                 | "scope_project_id"
+                | crate::workspace_roster::ROOM_THREAD_KEY
         ) {
             return Err(invalid("record body contains door-owned fields"));
         }
@@ -93,6 +94,19 @@ fn stamp_body(
     rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
         .map_err(|_| invalid("record encode failed"))?;
     Ok(bytes)
+}
+
+/// Whether the stored record `id` is bound to a thread (FIX 2951): a room
+/// thread's opaque reply is, though its body names no DAG kind.
+fn bound_to_thread(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(
+        match crate::vault::live_entity_row_in_txn(&vault.store, txn, id)? {
+            crate::vault::LiveEntityRow::Live { body, .. } => {
+                crate::workspace_roster::thread_binding(&body)?.is_some()
+            }
+            _ => false,
+        },
+    )
 }
 
 /// The summary association is stamped only by the summary door. Reply
@@ -158,7 +172,10 @@ pub(crate) fn append_in_txn(
     if let Some(parent) = input.parent {
         let path = chain(&vault.store, txn, &input.conversation, parent)?;
         for ancestor in &path {
-            if !thread && graph::is_thread_record(&vault.store, txn, ancestor)? {
+            if !thread
+                && (graph::is_thread_record(&vault.store, txn, ancestor)?
+                    || bound_to_thread(vault, txn, ancestor)?)
+            {
                 return Err(invalid("thread continuations must use reply_in_thread"));
             }
         }
@@ -294,6 +311,57 @@ pub(crate) fn append_in_txn(
     body.clear();
     rmpv::encode::write_value(&mut body, &Value::Map(entries))
         .map_err(|_| invalid("record encode failed"))?;
+    // FIX 2951: a thread record is born bound to its thread's root. The one
+    // that opens a thread names its audience there, once; a later one names
+    // that root, and writes there only from its audience. A private thread
+    // addresses its audience alone.
+    let root =
+        super::participation::thread_root_in_txn(&vault.store, txn, input.parent, id, thread)?;
+    match root {
+        None if input.thread_audience.is_some() => {
+            return Err(invalid("only a thread's first record names its audience"));
+        }
+        None => {}
+        Some(root) => {
+            let writer = input.actor.entity_ref();
+            let audience = if root == id {
+                if let Some(audience) = &input.thread_audience {
+                    crate::workspace_roster::validate_private_audience_in(
+                        vault,
+                        txn,
+                        input.conversation,
+                        writer,
+                        audience,
+                    )?;
+                }
+                input.thread_audience.clone()
+            } else if input.thread_audience.is_some() {
+                return Err(invalid("only a thread's first record names its audience"));
+            } else {
+                crate::workspace_roster::require_thread_audience_in(
+                    vault,
+                    txn,
+                    input.conversation,
+                    root,
+                    writer,
+                )?;
+                crate::workspace_roster::thread_audience_in(vault, txn, input.conversation, root)?
+            };
+            if let Some(audience) = &audience
+                && input
+                    .recipients
+                    .iter()
+                    .any(|recipient| !audience.contains(recipient))
+            {
+                return Err(invalid("a private thread addresses its audience alone"));
+            }
+            let binding = crate::workspace_roster::ThreadBinding {
+                root,
+                audience: input.thread_audience.clone().filter(|_| root == id),
+            };
+            body = crate::workspace_roster::stamp_thread(&body, &binding)?;
+        }
+    }
     super::policy::check_append_policy(vault, txn, &id, input, &body)?;
     if let Some(quote) = &quote {
         super::quote::pin_in_txn(vault, txn, quote, input.actor)?;
@@ -430,7 +498,7 @@ impl Vault {
             policy::require_append_references_in_txn(self, &lane, txn, input, &refs)?;
             Ok(append_in_txn(self, txn, input, None, false)?)
         });
-        policy::settle_append(writer, policy::APPEND_ROW, appended)
+        policy::settle_append(writer, policy::APPEND_ROW, input, appended)
     }
 
     /// Explicit fork selection. Rewrites canonical marks on both old and new paths.

@@ -81,6 +81,8 @@ pub struct PairingRedeemed {
     pub slip: CapabilitySlip,
     pub machine: Option<FoldedMachine>,
     pub pin: Option<AuthorityCheckpointPin>,
+    /// The owner who made the link, as the link recorded it.
+    pub(crate) link_owner: Option<crate::EntityId>,
 }
 /// Owner-approved identity constraints. Redemption can choose a connection key,
 /// but cannot replace these claims or add organization authority.
@@ -112,6 +114,10 @@ struct PairingPending {
     /// The checkpoint pin the link hands the joining device (OF-469).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pin: Option<AuthorityCheckpointPin>,
+    /// The owner who made the link, revalidated when it was made. Its
+    /// holder's OpenAI proxy is admitted under that owner (ARCH-0028).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner: Option<crate::EntityId>,
 }
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -302,7 +308,26 @@ impl Vault {
         slip_lifetime_secs: u64,
         principal: PairingPrincipal,
     ) -> Result<PairingLink> {
-        self.issue_pairing_link_in(issuer, scope, slip_lifetime_secs, principal, None)
+        self.issue_pairing_link_in(issuer, scope, slip_lifetime_secs, principal, None, None)
+    }
+    /// [`Self::issue_pairing_link_for_principal`] made by the authenticated
+    /// owner. The link records that owner, revalidated as it is stored.
+    pub fn issue_owner_pairing_link(
+        &self,
+        issuer: &HostSlipIssuer,
+        owner: &crate::consent::AuthenticatedOwner,
+        scope: Scope,
+        slip_lifetime_secs: u64,
+        principal: PairingPrincipal,
+    ) -> Result<PairingLink> {
+        self.issue_pairing_link_in(
+            issuer,
+            scope,
+            slip_lifetime_secs,
+            principal,
+            Some(owner),
+            None,
+        )
     }
     /// The owner adds a machine: the link carries the owner's answer (yours,
     /// work/school or rented), and redeeming it enrols the machine under that
@@ -321,6 +346,7 @@ impl Vault {
             scope,
             slip_lifetime_secs,
             principal,
+            Some(owner),
             Some((owner, ownership)),
         )
     }
@@ -330,12 +356,16 @@ impl Vault {
         scope: Scope,
         slip_lifetime_secs: u64,
         principal: PairingPrincipal,
+        link_owner: Option<&crate::consent::AuthenticatedOwner>,
         answer: Option<(&crate::consent::AuthenticatedOwner, MachineOwnership)>,
     ) -> Result<PairingLink> {
         if slip_lifetime_secs == 0 {
             return Err(invalid_authority());
         }
         let mut txn = self.store.env.write_txn()?;
+        let owner = link_owner
+            .map(|owner| owner.revalidate_as_vault_owner_in_txn(self, &txn))
+            .transpose()?;
         // The owner answers for a machine only while their credential is
         // live, judged in the transaction that stores the answer.
         let machine = match answer {
@@ -386,6 +416,7 @@ impl Vault {
             principal,
             machine,
             pin,
+            owner,
         };
         PAIRING_PENDING.put(&self.store, &mut txn, &row_key, &pending)?;
         txn.commit()?;
@@ -507,6 +538,14 @@ impl Vault {
         // after link issuance while the one-hour link was still outstanding.
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
+        // A live owner's own device gets their residence grant, named in the
+        // slip so the device's selector can name it (FIX 3134).
+        let grant_ref = self.own_device_grant_for_holder_in_txn(
+            &mut txn,
+            holder_ref,
+            pending.principal.actor_class.as_deref(),
+            now,
+        )?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let claims = SlipClaims {
@@ -524,7 +563,7 @@ impl Vault {
             channels: Default::default(),
             actor_class: pending.principal.actor_class,
             org_ref: pending.principal.org_ref,
-            grant_ref: None,
+            grant_ref: grant_ref.map(|id| id.to_hex()),
             invitation_ref: None,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
@@ -558,6 +597,7 @@ impl Vault {
             slip,
             machine,
             pin: pending.pin,
+            link_owner: pending.owner,
         })
     }
     /// The facet a credential redeemed from a link writes in, as the owner

@@ -8,6 +8,8 @@
 //! band whose facts differ from the band below it, reads the facts again, and
 //! lands every line in one write. The board reads the stored line of the
 //! highest band at or below the reader's ceiling; no model runs at render.
+//! A CLAIM write about a person hides its lines at once, in the write's own
+//! transaction, until the next pass reads the facts again.
 
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
@@ -63,6 +65,20 @@ struct PersonAbout {
     /// not `asked` stand on facts that moved, and the board shows none.
     written: [u8; 32],
     /// One line per band that has facts, lowest band first.
+    lines: Vec<AboutLine>,
+    at: u64,
+    /// The lines the Dreamer's newest landing replaced, kept so the owner
+    /// can revert it (owner ruling 10-18: each Dreamer change revertible).
+    previous: Option<PriorAbout>,
+    /// A CLAIM write about the person landed since a wake pass last read its
+    /// facts: the board shows no line until one reads them again.
+    moved: bool,
+}
+
+/// One landing's before-image: the lines and the facts they stood on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PriorAbout {
+    written: [u8; 32],
     lines: Vec<AboutLine>,
     at: u64,
 }
@@ -184,7 +200,7 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
             let digest = facts_digest(&facts, TOP_BAND);
             let row = PERSON_ABOUT.get(&vault.store, &txn, &person)?;
             match &row {
-                Some(row) if row.asked == digest => continue,
+                Some(row) if row.asked == digest && !row.moved => continue,
                 None if facts.is_empty() => continue,
                 _ => due.push((person, digest, facts.is_empty())),
             }
@@ -198,12 +214,19 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
             let mut row = PERSON_ABOUT
                 .get(&vault.store, txn, person)?
                 .unwrap_or_default();
+            // A CLAIM write that moved no fact leaves the row as it stood,
+            // an owner's revert included. Facts back where the lines were
+            // written from show those lines again, with no model call.
+            let moved = row.asked != *digest;
+            let current = row.written == *digest;
             row.asked = *digest;
-            if *empty {
+            row.moved = false;
+            if moved && *empty {
                 row.written = *digest;
                 row.lines.clear();
                 row.at = now;
-            } else {
+                row.previous = None;
+            } else if moved && !current {
                 DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
                     txn,
                     DreamerConsolidationScope::Micro.attempt_kind(),
@@ -229,6 +252,119 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
     Ok(())
 }
 
+/// Hides the `about` lines of the PERSON a CLAIM is about, and of the one its
+/// stored body was about, until a wake pass reads their facts again. Runs in
+/// the CLAIM put's transaction, before the new body replaces the stored one.
+pub(crate) fn mark_person_about_moved_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    claim: EntityId,
+    body: &crate::claim::ClaimBody,
+) -> Result<()> {
+    let stored = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &claim)?
+        .filter(|raw| {
+            crate::batch::EntityMetadataHeader::parse(raw)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+        })
+        .and_then(|raw| {
+            crate::claim::decode_claim_body(
+                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)?,
+                true,
+            )
+            .ok()
+        })
+        .map(|stored| stored.subject);
+    for subject in std::iter::once(body.subject).chain(stored) {
+        let ClaimSubject::Entity(person) = subject else {
+            continue;
+        };
+        let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
+            continue;
+        };
+        if !row.moved {
+            row.moved = true;
+            PERSON_ABOUT.put(store, txn, &person, &row)?;
+        }
+    }
+    Ok(())
+}
+
+/// The erase hook's PEOPLE half (FIX 3155): an erased fact takes the
+/// `about` lines of the PERSON it was about, and their kept before-image,
+/// with it, so no stored line still says what the fact said; the next wake
+/// pass writes new lines from the facts left. An erased PERSON takes its
+/// whole row. Runs in the erasing transaction, before the tear.
+pub(crate) fn erase_person_about_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if PERSON_ABOUT.get(store, txn, id)?.is_some() {
+        PERSON_ABOUT.delete(store, txn, id)?;
+        return Ok(());
+    }
+    let subject = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
+        .filter(|raw| {
+            crate::batch::EntityMetadataHeader::parse(raw)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+        })
+        .and_then(|raw| {
+            crate::claim::decode_claim_body(
+                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)?,
+                true,
+            )
+            .ok()
+        })
+        .map(|body| body.subject);
+    let Some(ClaimSubject::Entity(person)) = subject else {
+        return Ok(());
+    };
+    let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
+        return Ok(());
+    };
+    row.moved = true;
+    row.lines.clear();
+    row.previous = None;
+    PERSON_ABOUT.put(store, txn, &person, &row)
+}
+
+/// The owner's revert of the Dreamer's newest `about` landing for `person`:
+/// the lines it replaced stand again on the facts they were written from,
+/// so the board shows them only while those facts hold, and the Dreamer
+/// writes again once the facts move. `false` when no landing is kept to
+/// revert.
+pub(super) fn revert_person_about_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    person: EntityId,
+) -> Result<bool> {
+    let Some(mut row) = PERSON_ABOUT.get(&vault.store, txn, &person)? else {
+        return Ok(false);
+    };
+    let Some(prior) = row.previous.take() else {
+        return Ok(false);
+    };
+    row.written = prior.written;
+    row.lines = prior.lines;
+    row.at = prior.at;
+    PERSON_ABOUT.put(&vault.store, txn, &person, &row)?;
+    Ok(true)
+}
+
+/// Each person whose newest `about` landing the owner may revert, with when
+/// it landed.
+pub(super) fn revertible_person_abouts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, u64)>> {
+    Ok(PERSON_ABOUT
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .filter(|(_, row)| row.previous.is_some())
+        .map(|(person, row)| (person, row.at))
+        .collect())
+}
+
 impl Vault {
     /// `person`'s `about` line for a reader whose sensitivity ceiling is
     /// `ceiling`: the line of the highest band at or below it. `None` reads
@@ -242,7 +378,7 @@ impl Vault {
         let Some(row) = PERSON_ABOUT.get(&self.store, &txn, &person)? else {
             return Ok(None);
         };
-        if row.asked != row.written {
+        if row.moved || row.asked != row.written {
             return Ok(None);
         }
         Ok(row
@@ -489,8 +625,12 @@ impl<E> PersonAboutExecutor<'_, E> {
             let mut row = PERSON_ABOUT
                 .get(&ctx.vault.store, txn, &person)?
                 .unwrap_or_default();
+            row.previous = Some(PriorAbout {
+                written: row.written,
+                lines: std::mem::replace(&mut row.lines, lines),
+                at: row.at,
+            });
             row.written = digest;
-            row.lines = lines;
             row.at = at;
             PERSON_ABOUT.put(&ctx.vault.store, txn, &person, &row)
         })?;

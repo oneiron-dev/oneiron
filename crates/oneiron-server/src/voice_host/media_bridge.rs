@@ -1,14 +1,14 @@
 //! The host's own speech and hearing on the media seats (OF-410). The
 //! owner's microphone audio is heard on the vault's live ASR route and the
 //! brain's sentences are spoken on its live TTS route, both picked by
-//! [`ModelRuntime::voice_route`] and sent through the runtime as the media
-//! door (`Arc::clone(server.ai.models())`), so each call is admitted on its
-//! own permit and settled on the media meter.
+//! [`MediaDoor::voice_route`] and sent through the vault-bound media door
+//! (`server.media_door()`), so each call is admitted by the vault's
+//! inference policy and on its own permit, and settled on the media meter.
 //!
 //! A heard utterance enters the session as an ASR final: it is enriched
 //! outside the session lock and applied through `handle_asr`, as a final
 //! from the wire is. On a rung that hears live (a soniox rung,
-//! [`ModelRuntime::open_voice_asr`]) the owner's words reach the session as
+//! [`MediaDoor::open_voice_asr`]) the owner's words reach the session as
 //! they are spoken: each hypothesis is a partial at the next revision of
 //! one utterance, and the owner's cut, once Soniox finalized it, is that
 //! utterance's one final. A live hearing that fails ends the call
@@ -45,8 +45,8 @@ use tokio::sync::mpsc;
 
 use super::speech::{self, CHUNK_TICK, Speech, Verdict, Verdicts, VoiceBrainOut, VoicePlayout};
 use super::{EnrichmentWork, HostError, VoiceHost, VoiceOutputs};
-use crate::models::ModelRuntime;
 use crate::models::soniox::SonioxLive;
+use crate::server::MediaDoor;
 
 /// The revision a buffered utterance's final carries: each cut is an
 /// utterance of its own, heard once.
@@ -93,8 +93,8 @@ pub enum VoiceMediaIn {
 
 /// The media side of one served voice connection.
 pub struct VoiceMediaBindings {
-    /// The media door: `Arc::clone(server.ai.models())`.
-    pub door: Arc<ModelRuntime>,
+    /// The vault-bound media door: `server.media_door()`.
+    pub door: Arc<MediaDoor>,
     /// The vault the host serves; its live voice rows pick both routes.
     pub vault: Arc<Vault>,
     /// The voice the assistant speaks in.
@@ -125,12 +125,8 @@ impl VoiceMediaBindings {
         if speech::chunker(&self.chunking).is_none() {
             return Err(invalid("voice chunk policy"));
         }
-        let asr_route = self
-            .door
-            .voice_route(&self.vault, VoiceLane::AsrLive, None)?;
-        let tts_route = self
-            .door
-            .voice_route(&self.vault, VoiceLane::TtsLive, None)?;
+        let asr_route = self.door.voice_route(VoiceLane::AsrLive)?;
+        let tts_route = self.door.voice_route(VoiceLane::TtsLive)?;
         let (queue, worker) = voice_media_channel(self.queue_capacity);
         let tts = MediaTts::new(
             Arc::clone(&self.vault),
@@ -440,15 +436,10 @@ impl MediaBridge {
     }
 
     /// Hears the owner's audio. A buffered utterance at one call's limit
-    /// is cut, and the audio starts the next.
+    /// is cut there by the adapter, and the rest starts the next.
     fn hear(&mut self, pcm: &[u8]) -> oneiron::Result<()> {
         match &mut self.hearing {
-            Hearing::Buffered(asr) => {
-                if asr.accept_audio(pcm).is_err() {
-                    asr.cut()?;
-                    asr.accept_audio(pcm)?;
-                }
-            }
+            Hearing::Buffered(asr) => asr.accept_audio(pcm)?,
             Hearing::Live(live) => live.feed(|stream| stream.accept_audio(pcm)),
         }
         Ok(())
@@ -539,7 +530,7 @@ async fn recv<T>(receiver: &mut Option<mpsc::Receiver<T>>) -> Option<T> {
 /// the session lock.
 pub(super) struct MediaWorker {
     worker: VoiceMediaWorker,
-    door: Arc<ModelRuntime>,
+    door: Arc<MediaDoor>,
     vault: Arc<Vault>,
     deliver: mpsc::UnboundedSender<VoiceMediaOutput>,
 }

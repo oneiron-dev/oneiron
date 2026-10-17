@@ -55,11 +55,13 @@ export interface LensFrameEventRequest {
 /**
  * What a lens-card event answers. There is no discriminator: a local action
  * answers the card's new `$state`, a deterministic tool its outcome and the
- * scoped read of its entity arguments.
+ * scoped read of its entity arguments, and a model round trip the callback
+ * queued for the agent that emitted the card.
  */
 export type LensFrameEventReply =
   | { readonly $state: Facade.GeneratedUiStateSnapshot }
   | { readonly outcome: unknown; readonly readReceipt: Facade.ScopedReadReceipt }
+  | { readonly queued: boolean; readonly callbackId: string }
 
 /** What a lens-card close answers: whether the server held its frame. */
 export interface CloseLensFrameReply {
@@ -216,6 +218,10 @@ export class Oneiron {
       scratchpad: {
         /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
         recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
+        /** Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused. */
+        append: (input: Facade.ScratchpadAppendRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadAppend(input) as Facade.ScratchpadWriteReply),
+        /** Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad. */
+        seal: (input: Facade.ScratchpadSealRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadSeal(input) as Facade.ScratchpadWriteReply),
       },
     },
     memory: {
@@ -338,6 +344,12 @@ export class Oneiron {
       /** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */
       view: (request: Facade.ImageViewRequest): Facade.PulledImage => this.#call(() => {  const result = JSON.parse(this.#client.vaultImagesView(keyedJson(request))) as Facade.PulledImage; return result }),
     },
+    explain: {
+      /** Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it. */
+      memory: (input: Facade.ExplainMemoryRequest): Facade.ExplainMemoryReply | null => this.#call(() => this.#client.vaultExplainMemory(input) as Facade.ExplainMemoryReply | null),
+      /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */
+      gate: (input: Facade.ExplainGateRequest): Facade.ExplainGateReply | null => this.#call(() => this.#client.vaultExplainGate(input) as Facade.ExplainGateReply | null),
+    },
     kv: {
       /** Exact actor-owned worldless key lookup, never recall. */
       get: (request: KeyValueAddress): KeyValueItem | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultKvGet(keyedJson(request))) as WireItem | null; return result === null ? null : itemFromWire(result) }),
@@ -391,6 +403,8 @@ export class Oneiron {
     packs: {
       /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
+      /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
+      remove: (input: Facade.PackRemoveRequest): Facade.PackInstallReceipt => this.#call(() => this.#client.vaultPacksRemove(input) as Facade.PackInstallReceipt),
       setup: {
         /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
         prepare: (input: Facade.PackSetupRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupPrepare(input) as Facade.PackSetupReceipt),
@@ -402,6 +416,16 @@ export class Oneiron {
         verify: (input: Facade.PackSetupVerifyRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupVerify(input) as Facade.PackSetupReceipt),
       },
     },
+    connectors: {
+      subscriptions: {
+        /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
+        put: (input: Facade.ChannelSubscriptionRequest): Facade.ChannelMessageSubscription => this.#call(() => this.#client.vaultConnectorsSubscriptionsPut(input) as Facade.ChannelMessageSubscription),
+        /** An agent's connector event subscriptions, standing and revoked, for the owner. */
+        list: (input: Facade.ChannelSubscriptionsRequest): Facade.ChannelSubscriptions => this.#call(() => this.#client.vaultConnectorsSubscriptionsList(input) as Facade.ChannelSubscriptions),
+        /** The owner stops one connector event subscription; the agent's key for the channel stays. */
+        revoke: (input: Facade.ChannelSubscriptionRevokeRequest): Facade.ChannelSubscriptionRevoked => this.#call(() => this.#client.vaultConnectorsSubscriptionsRevoke(input) as Facade.ChannelSubscriptionRevoked),
+      },
+    },
     authority: {
       /** One page of the dated authority log audit: grants, revokes and confirms, for the owner. */
       audit: (input: Facade.AuthorityAuditQuery): Facade.AuthorityAuditPage => this.#call(() => this.#client.vaultAuthorityAudit(input) as Facade.AuthorityAuditPage),
@@ -410,6 +434,10 @@ export class Oneiron {
         /** The owner acknowledges one saved handoff fork alarm. */
         acknowledge: (input: Facade.HandoffAlarmRequest): Facade.AuthorityHandoffAlarm => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as Facade.AuthorityHandoffAlarm),
       }),
+    },
+    mesh: {
+      /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
+      path_receipts: (input: Facade.MeshPathReceiptsRequest): Facade.MeshPathReceipt[] => this.#call(() => this.#client.vaultMeshPathReceipts(input) as Facade.MeshPathReceipt[]),
     },
     inspection: {
       /** Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item. */
@@ -476,6 +504,38 @@ export class Oneiron {
       /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
       erase_confirm: (input: Facade.RecordEraseConfirmRequest): Facade.RecordEraseOutcome => this.#call(() => this.#client.vaultRecordsEraseConfirm(input) as Facade.RecordEraseOutcome),
     },
+    research: {
+      /** Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it. */
+      bind: (input: Facade.ResearchBindWire): Facade.ResearchBinding => this.#call(() => this.#client.vaultResearchBind(input) as Facade.ResearchBinding),
+      /** Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent. */
+      fork: (input: Facade.ResearchForkWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchFork(input) as Facade.ExperimentNode),
+      /** Records a crossover child of several parents whose candidate landed as a claim through the gate, once a held-out win turned merge crossover on. */
+      weave: (input: Facade.ResearchWeaveWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchWeave(input) as Facade.ExperimentNode),
+      /** Records a node's search-split evidence, its selection signal, once. */
+      measure_search: (input: Facade.ResearchSearchWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchMeasureSearch(input) as Facade.ExperimentNode),
+      /** Records a node's held-out evidence, once; only the promotion basis reads it. */
+      measure_held_out: (input: Facade.ResearchHeldOutWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchMeasureHeldOut(input) as Facade.ExperimentNode),
+      /** Marks a node buggy: it stays as evidence and takes debug children. */
+      mark_invalid: (input: Facade.ResearchInvalidWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchMarkInvalid(input) as Facade.ExperimentNode),
+      /** Stops exploring a branch for a stated cause; its attempts, claims and outputs stay. A stop names the caller. */
+      prune: (input: Facade.ResearchPruneWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchPrune(input) as Facade.ExperimentNode),
+      /** Runs one selection round through the trusted selection floor and records it; only the owner can say the goal is met. */
+      select: (input: Facade.ResearchSelectWire): Facade.SelectionReceipt => this.#call(() => this.#client.vaultResearchSelect(input) as Facade.SelectionReceipt),
+      /** Decides a candidate's held-out promotion basis against the incumbent, once. */
+      promotion_basis: (input: Facade.ResearchBasisWire): Facade.PromotionBasis => this.#call(() => this.#client.vaultResearchPromotionBasis(input) as Facade.PromotionBasis),
+      /** Spends a Promote candidate's one sealed confirmation and releases the campaign's sealed cohort to the controller's referee, counted as a serving. */
+      reserve_confirmation: (input: Facade.ResearchCandidateWire): Facade.EvalRelease => this.#call(() => this.#client.vaultResearchReserveConfirmation(input) as Facade.EvalRelease),
+      /** Settles a candidate on the sealed referee's scores of it and the incumbent: a strict win, a not-worse sufficiency card and, for a skill, the gate's accepted verdict make it the incumbent. */
+      promote: (input: Facade.ResearchPromoteWire): Facade.CampaignPromotionReceipt => this.#call(() => this.#client.vaultResearchPromote(input) as Facade.CampaignPromotionReceipt),
+      /** Reserves token work for the campaign on the RSI line under its share, and returns the reservation's id. */
+      reserve_work: (input: Facade.ResearchWorkWire): Facade.EntityId => this.#call(() => this.#client.vaultResearchReserveWork(input) as Facade.EntityId),
+      /** Settles a work reservation at its actual spend. */
+      settle_work: (input: Facade.ResearchSettleWire): Facade.ResearchReservation => this.#call(() => this.#client.vaultResearchSettleWork(input) as Facade.ResearchReservation),
+      /** Refunds a work reservation nothing was spent on. */
+      refund_work: (input: Facade.ResearchRefundWire): Facade.ResearchReservation => this.#call(() => this.#client.vaultResearchRefundWork(input) as Facade.ResearchReservation),
+      /** Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents. */
+      record_benchmark: (input: Facade.ResearchBenchmarkWire): Facade.SelectionBenchmark => this.#call(() => this.#client.vaultResearchRecordBenchmark(input) as Facade.SelectionBenchmark),
+    },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
       place: (input: Facade.LegalHoldPlaceRequest): Facade.LegalHold => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as Facade.LegalHold),
@@ -487,6 +547,16 @@ export class Oneiron {
       log: (input: Facade.EmptyRequest = {}): Facade.LegalHoldEvent[] => this.#call(() => this.#client.vaultLegalHoldsLog(input) as Facade.LegalHoldEvent[]),
       /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
+    },
+    courtesy_delete: {
+      /** The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery. */
+      send: (input: Facade.CourtesyDeleteSendRequest): Facade.CourtesyDeleteSent => this.#call(() => this.#client.vaultCourtesyDeleteSend(input) as Facade.CourtesyDeleteSent),
+      /** Every courtesy delete ask this vault sent, with its delivery status, for the owner. */
+      sent: (input: Facade.EmptyRequest = {}): Facade.CourtesyDeleteSent[] => this.#call(() => this.#client.vaultCourtesyDeleteSent(input) as Facade.CourtesyDeleteSent[]),
+      /** Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer. */
+      incoming: (input: Facade.EmptyRequest = {}): Facade.CourtesyDeleteIncoming[] => this.#call(() => this.#client.vaultCourtesyDeleteIncoming(input) as Facade.CourtesyDeleteIncoming[]),
+      /** The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where. */
+      answer: (input: Facade.CourtesyDeleteAnswerRequest): Facade.CourtesyDeleteIncoming => this.#call(() => this.#client.vaultCourtesyDeleteAnswer(input) as Facade.CourtesyDeleteIncoming),
     },
     embedding_spaces: {
       /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
@@ -588,6 +658,8 @@ export class Oneiron {
       release_wait: (request: Facade.ProposalSettleRequest): Facade.ReleasedWait => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseWait(keyedJson(request))) as Facade.ReleasedWait; return result }),
       /** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */
       review_slides: (request: Facade.SlideReviewSubmit): Facade.SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as Facade.SlideReviewOutcome; return result }),
+      /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
+      ask: (input: Facade.ArtifactAskSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAsk(input) as Facade.ArtifactAskOutcome),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
       propose_deck: (request: Facade.DeckProposeRequest): Facade.DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as Facade.DeckProposeOutcome; return result }),
       /** Offers one native organ result as the artifact's next version, held for Keep. */
@@ -665,6 +737,10 @@ export class Oneiron {
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
     },
+    critic: {
+      /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
+      review: (input: Facade.CriticReviewSubmit): Facade.CriticReviewOutcome => this.#call(() => this.#client.vaultCriticReview(input) as Facade.CriticReviewOutcome),
+    },
     rooms: {
       /** The caller's rooms its own grants admit; inside a room turn, only that room. */
       list: (): Facade.RoomEntry[] => this.#call(() => this.#client.vaultRoomsList({}) as Facade.RoomEntry[]),
@@ -684,7 +760,7 @@ export class Oneiron {
       reply_strips: (input: Facade.ReplyStripsRequest): Facade.ReplyStripsPage => this.#call(() => this.#client.vaultRoomsReplyStrips(input) as Facade.ReplyStripsPage),
       /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
       claim: (roomRef: string, turnRef: string): Facade.RoomClaimOutcome => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as Facade.RoomClaimOutcome),
-      /** Speaks one turn into the current room turn's room, through the normal witness gate. */
+      /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later. */
       speak: (input: Facade.WitnessTurn): Facade.WitnessReceipt => this.#call(() => this.#client.vaultRoomsSpeak(input) as Facade.WitnessReceipt),
       /** Files and decides a request to take part in a room or one of its threads. */
       join: (input: Facade.JoinRequest): Facade.JoinOutcome => this.#call(() => this.#client.vaultRoomsJoin(input) as Facade.JoinOutcome),
@@ -769,7 +845,7 @@ export class Oneiron {
       work_companion: {
         /** A workspace's work_companion policy, readable by every member it governs. */
         get: (input: Facade.WorkspaceRefRequest): Facade.WorkCompanionPolicy => this.#call(() => this.#client.vaultWorkspaceWorkCompanionGet(input) as Facade.WorkCompanionPolicy),
-        /** The owner sets a workspace's work_companion policy in person. */
+        /** The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person. */
         set: (input: Facade.WorkCompanionSetRequest): Facade.WorkCompanionPolicy => this.#call(() => this.#client.vaultWorkspaceWorkCompanionSet(input) as Facade.WorkCompanionPolicy),
       },
     },
@@ -783,6 +859,8 @@ export class Oneiron {
       backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
+      /** Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it. */
+      refresh: (input: Facade.QuestionRefreshRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsRefresh(input) as Facade.AnswerRecord[]),
     },
     decisions: {
       asks: {
@@ -809,7 +887,7 @@ export class Oneiron {
     refs: {
       /** The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same. */
       resolve: (input: Facade.ResolveRecordRefRequest): Facade.ScopedReadResult<Facade.RecordRefPreview> => this.#call(() => this.#client.vaultRefsResolve(input) as Facade.ScopedReadResult<Facade.RecordRefPreview>),
-      /** A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
+      /** A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
       links: (input: Facade.RecordLinksRequest): Facade.RecordLinks => this.#call(() => this.#client.vaultRefsLinks(input) as Facade.RecordLinks),
     },
     search: {
@@ -854,12 +932,14 @@ export class Oneiron {
   /** Describes one task's card, or the whole TASKS section when no task is named. */
   describe(taskRef?: string): TaskDescription { return this.#call(() => this.#client.describe({task_ref: taskRef}) as TaskDescription) }
   readonly tasks = {
-    /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal. */
+    /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway. */
     create: (input: Facade.TaskCreateRequest): Facade.TaskCreateReceipt => this.#call(() => this.#client.tasksCreate(input) as Facade.TaskCreateReceipt),
     /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
     wave: (input: Facade.TaskWaveRequest): Facade.TaskWaveReceipt => this.#call(() => this.#client.tasksWave(input) as Facade.TaskWaveReceipt),
     /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. */
     update: (input: Facade.TaskUpdateRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
+    /** Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports. */
+    accept: (input: Facade.TaskAccept): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksAccept(input) as Facade.TaskCallReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
     answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
@@ -881,7 +961,7 @@ export class Oneiron {
   /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly ai = {
-    /** The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left. */
+    /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
     options: (input: Facade.AiOptionsRequest): Facade.AiOptions => this.#call(() => this.#client.aiOptions(input) as Facade.AiOptions),
     /** One image out of the host's image model; reference images make it an edit. */
     image: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiImage(input) as Facade.AiAnswer),
@@ -898,7 +978,7 @@ export class Oneiron {
       /** Stops a video job at its provider. */
       cancel: (input: Facade.AiVideoJobRequest): Facade.AiVideoCancelled => this.#call(() => this.#client.aiVideoCancel(input) as Facade.AiVideoCancelled),
     }),
-    /** The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt. */
+    /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
     verdict: (input: Facade.AiVerdictRequest): Facade.AiVerdict => this.#call(() => this.#client.aiVerdict(input) as Facade.AiVerdict),
   }
   readonly connector = {

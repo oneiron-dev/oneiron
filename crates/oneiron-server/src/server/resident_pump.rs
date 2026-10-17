@@ -448,6 +448,20 @@ fn run_bound(
         .map_err(text)?;
     // Its compaction passes spend under the attempt's scope too.
     let mut compaction = provider.compaction(actor, key, metered.as_ref());
+    // The host's root key signs a leader's subproject spawn (OF-389): the
+    // managed issuer, else the one the configured host secret derives.
+    let derived = match server.managed_issuer {
+        Some(_) => None,
+        None => server
+            .config
+            .auth_secret
+            .as_deref()
+            .filter(|secret| !secret.is_empty())
+            .map(|secret| oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()))
+            .transpose()
+            .map_err(text)?,
+    };
+    let issuer = server.managed_issuer.as_ref().or(derived.as_ref());
     let mut full = 0;
     loop {
         let outcome = enter_run(
@@ -463,6 +477,7 @@ fn run_bound(
             compaction.as_mut(),
             &reactor,
             server.decision_host(),
+            issuer,
             &server.live_runs,
         )?;
         match outcome.status {
@@ -485,7 +500,8 @@ fn run_bound(
 /// its model calls spend under `spend`, and `seat`, which its reader
 /// children spawn under. It runs on `model_seat`, the one `run_bound` bore
 /// it on. With the host's `[models.planner]` seats, its spawns are planned
-/// on `decisions`' ladder and its leader calls answer.
+/// on `decisions`' ladder and its leader calls answer; `issuer` signs its
+/// leader's subproject spawn.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -503,6 +519,7 @@ fn enter_run(
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
     decisions: &DecisionHost,
+    issuer: Option<&oneiron::authority::HostSlipIssuer>,
     live_runs: &super::LiveRuns,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
@@ -514,6 +531,9 @@ fn enter_run(
     let planner = decisions.host_planner_decisions(actor.entity_ref());
     if let Some(planner) = planner_binding(vault, provider, config, planner)? {
         bound = bound.with_planner(planner);
+    }
+    if let Some(issuer) = issuer {
+        bound = bound.with_slip_issuer(issuer);
     }
     // OF-181: the run's lease proof, registered for the handle a harness
     // attaches, and its guard, held through the whole entry: an action
@@ -837,12 +857,19 @@ fn complete(
         })?;
     } else {
         // The run's durable result: the TASK's Done names it.
-        AgentDispatcher::new(vault).attach_resident_run_result(
+        let output = AgentDispatcher::new(vault).attach_resident_run_result(
             attempt,
             LEASE_OWNER,
             &outcome.replay_record,
             now,
         )?;
+        // OF-540: the result derives from what the run derived, witnessed
+        // while the lease holds; a run that cannot witness closes as bound.
+        if let Err(error) =
+            oneiron::skill_attribution::witness_agent_run_close(vault, attempt, LEASE_OWNER, output)
+        {
+            tracing::warn!(%error, attempt = ?attempt.id, "an agent run's close was not witnessed");
+        }
     }
     let judged = oneiron::task_verb::runner_done_question(vault, attempt.id)?.and_then(
         |question| match decisions.task_decisions() {

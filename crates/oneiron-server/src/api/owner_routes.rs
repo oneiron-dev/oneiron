@@ -33,8 +33,8 @@ use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::schedule::OwnerHost;
 use crate::owner::{
-    OwnerError, backup, cleanup, feedback, graph_fs, healer, imports, location, off_record,
-    pack_drift, persona, runs, secrets,
+    OwnerError, backup, cleanup, feedback, graph_fs, healer, imports, location, note_tombstones,
+    off_record, pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
 mod budget_hold_routes;
@@ -44,14 +44,19 @@ mod conflict_routes;
 mod connector_admission_routes;
 mod connector_consent_routes;
 mod connector_subscription_routes;
-mod cooperative_deletion_routes;
+pub(super) mod cooperative_deletion_routes;
 mod decision_ask_routes;
+mod desktop_takeover_routes;
 mod diary_routes;
 mod disclosure_routes;
+mod dreamer_maintenance_routes;
+mod dreamer_routes;
 mod embedding_space_routes;
+mod federation_connect_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
 mod history_routes;
+mod house_routes;
 mod inbox_routes;
 mod learning_setting_routes;
 mod legal_hold_routes;
@@ -98,6 +103,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/cleanup/accept", post(accept_cleanup))
         .route("/cleanup/reject", post(reject_cleanup))
         .route("/cleanup/restore", post(restore_archived))
+        .route("/notes/tombstones", get(note_tombstone_review))
+        .route("/notes/tombstones/accept", post(accept_note_tombstone))
+        .route("/notes/tombstones/decline", post(decline_note_tombstone))
         .route("/persona", get(preview_persona))
         .route("/persona/export", post(export_persona))
         .route("/graph-fs", get(read_graph_fs))
@@ -115,8 +123,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(connector_subscription_routes::routes())
         .merge(diary_routes::routes())
         .merge(disclosure_routes::routes())
+        .merge(dreamer_maintenance_routes::routes())
+        .merge(dreamer_routes::routes())
         .merge(embedding_space_routes::routes())
         .merge(history_routes::routes())
+        .merge(house_routes::routes())
         .merge(inbox_routes::routes())
         .merge(concern_routes::routes())
         .merge(learning_setting_routes::routes())
@@ -129,7 +140,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(weave_routes::routes())
         .merge(pack_routes::routes())
         .merge(cooperative_deletion_routes::routes())
+        .merge(federation_connect_routes::routes())
         .merge(decision_ask_routes::routes())
+        .merge(desktop_takeover_routes::routes())
         .merge(peer_confidence_routes::routes())
         .merge(skill_judge_routes::routes())
         .merge(wire_health_routes::routes())
@@ -704,6 +717,39 @@ async fn reject_cleanup(
     Ok(Json(review))
 }
 
+async fn note_tombstone_review(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<note_tombstones::TombstoneReview> {
+    let owner = owner(&auth, &server)?;
+    let review = blocking(move || note_tombstones::review(server.vault(), &owner)).await?;
+    Ok(Json(review))
+}
+
+async fn accept_note_tombstone(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<note_tombstones::Decide>, JsonRejection>,
+) -> OwnerReply<note_tombstones::Tombstoned> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let tombstoned =
+        blocking(move || note_tombstones::accept(server.vault(), &owner, &request)).await?;
+    Ok(Json(tombstoned))
+}
+
+async fn decline_note_tombstone(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<note_tombstones::Decide>, JsonRejection>,
+) -> OwnerReply<note_tombstones::TombstoneReview> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let review =
+        blocking(move || note_tombstones::decline(server.vault(), &owner, &request)).await?;
+    Ok(Json(review))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RestoreArchived {
@@ -970,6 +1016,7 @@ async fn sync_model_catalog(
 ) -> OwnerReply<ModelCatalogSynced> {
     use oneiron::skill_hub::pack_catalog::PackInstallDisposition;
     let owner = owner(&auth, &server)?;
+    let host = Arc::clone(&server);
     let synced = blocking(move || {
         let vault = server.vault();
         let (outcome, reason) = match vault.sync_model_catalog(&owner)? {
@@ -984,5 +1031,17 @@ async fn sync_model_catalog(
         })
     })
     .await?;
+    // Each row the catalog brought in or changed is counted on the fixed
+    // passage, in the background (OF-577).
+    if synced.outcome == "installed"
+        && let Some(ratios) = host.ai.model_runtime().token_ratios()
+    {
+        let vault = Arc::clone(host.vault());
+        tokio::task::spawn_blocking(move || {
+            if let Err(error) = ratios.measure_missing_blocking(&vault) {
+                tracing::warn!(%error, "catalog token ratios were not measured");
+            }
+        });
+    }
     Ok(Json(synced))
 }

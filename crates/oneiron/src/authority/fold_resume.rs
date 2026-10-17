@@ -272,34 +272,47 @@ impl Once {
     /// Whether `entry` is an op that leaves every earlier row's fate as it
     /// was, given the confirms already in the log (which it joins).
     fn admits(&self, entry: &AuthorityLogEntry, confirms: &mut ConfirmKeys) -> bool {
-        let merged = &self.merged;
-        let fresh_key = |key: &AuthorityKey| !matches!(key, AuthorityKey::Ed25519(bytes) if merged.machine_keys.contains_key(bytes));
-        match &entry.op {
-            AuthorityOp::EnrollDevice { device } => {
-                device.roles == ROLE_AGENT
-                    && !merged.roster.contains_key(&device.key)
-                    && fresh_key(&device.key)
-            }
-            AuthorityOp::BindActor {
-                authority_key,
-                actor_ref,
-                ..
-            } => {
-                !merged.actor_bindings.contains_key(authority_key)
-                    && !merged.actor_binding_revocations.contains_key(authority_key)
-                    && !merged.actor_revocation_hashes.contains_key(authority_key)
-                    && !merged.actor_rows.contains(actor_ref)
-                    && !merged.machines.contains_key(actor_ref)
-                    && fresh_key(authority_key)
-            }
-            AuthorityOp::SlipMint(_)
-            | AuthorityOp::SlipConsume { .. }
-            | AuthorityOp::CriticalWriteConfirm(_) => true,
-            AuthorityOp::FederationConfirm(action) => {
-                confirms.0.insert(action.confirm_id) && confirms.1.insert(action.nonce)
-            }
-            _ => false,
+        admits_past(&self.merged, entry, confirms)
+    }
+}
+
+/// Whether `entry` is an op that leaves the fate of every row folded into
+/// `merged` (the merge of every surviving state) as it was, given the confirms
+/// already in the log (which it joins): an agent enrollment, a fresh binding,
+/// a slip mint or consume, a critical-write confirm, a fresh federation
+/// confirm. A resumed fold and a fold past an adopted checkpoint take only
+/// these.
+pub(super) fn admits_past(
+    merged: &FoldState,
+    entry: &AuthorityLogEntry,
+    confirms: &mut ConfirmKeys,
+) -> bool {
+    let fresh_key = |key: &AuthorityKey| !matches!(key, AuthorityKey::Ed25519(bytes) if merged.machine_keys.contains_key(bytes));
+    match &entry.op {
+        AuthorityOp::EnrollDevice { device } => {
+            device.roles == ROLE_AGENT
+                && !merged.roster.contains_key(&device.key)
+                && fresh_key(&device.key)
         }
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_ref,
+            ..
+        } => {
+            !merged.actor_bindings.contains_key(authority_key)
+                && !merged.actor_binding_revocations.contains_key(authority_key)
+                && !merged.actor_revocation_hashes.contains_key(authority_key)
+                && !merged.actor_rows.contains(actor_ref)
+                && !merged.machines.contains_key(actor_ref)
+                && fresh_key(authority_key)
+        }
+        AuthorityOp::SlipMint(_)
+        | AuthorityOp::SlipConsume { .. }
+        | AuthorityOp::CriticalWriteConfirm(_) => true,
+        AuthorityOp::FederationConfirm(action) => {
+            confirms.0.insert(action.confirm_id) && confirms.1.insert(action.nonce)
+        }
+        _ => false,
     }
 }
 
@@ -424,9 +437,9 @@ impl ImageFold {
     }
 }
 
-type ConfirmKeys = (BTreeSet<[u8; 32]>, BTreeSet<[u8; 16]>);
+pub(super) type ConfirmKeys = (BTreeSet<[u8; 32]>, BTreeSet<[u8; 16]>);
 
-fn add_writers(
+pub(super) fn add_writers(
     writers: &mut BTreeMap<AuthorityKey, BTreeSet<(EntityId, String)>>,
     state: &FoldState,
 ) {
@@ -438,7 +451,7 @@ fn add_writers(
     }
 }
 
-fn add_bound_keys(bound_keys: &mut BTreeSet<AuthorityKey>, state: &FoldState) {
+pub(super) fn add_bound_keys(bound_keys: &mut BTreeSet<AuthorityKey>, state: &FoldState) {
     bound_keys.extend(
         state
             .actor_bindings
@@ -894,7 +907,10 @@ impl FoldBase {
         let mut valid_entries = once.fold.valid_entries.clone();
         valid_entries.extend(chain.iter().copied());
         let rows = Resumed {
-            once,
+            marks: &settlement.marks,
+            fold: &once.fold,
+            revocations: &once.revocations,
+            bound_keys: &once.bound_keys,
             chain: chain.iter().map(|hash| (*hash, &states[hash])).collect(),
             writers: &writers,
             missed: Cell::new(false),
@@ -985,14 +1001,25 @@ impl FoldBase {
     }
 }
 
-/// The base's per-row reads, carried over the chain's states.
-struct Resumed<'a> {
-    once: &'a Once,
-    chain: Vec<(AuthorityEntryHash, &'a FoldState)>,
-    writers: &'a BTreeMap<AuthorityKey, BTreeSet<(EntityId, String)>>,
+/// The base's per-row reads, carried over the chain's states: a resumed
+/// fold's base, or an adopted checkpoint image's settled fold (OF-469).
+pub(super) struct Resumed<'a> {
+    /// The valid machine profiles heading their own roster chain under an
+    /// owner-held key, with that key: the marks before custody is judged.
+    pub(super) marks: &'a [(AuthorityEntryHash, AuthorityKey)],
+    /// The base's projected fold.
+    pub(super) fold: &'a AuthorityFold,
+    /// The base's final merge's revocations, by key.
+    pub(super) revocations: &'a BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
+    /// The keys some main state of the base holds a live binding for.
+    pub(super) bound_keys: &'a BTreeSet<AuthorityKey>,
+    /// The new rows' states.
+    pub(super) chain: Vec<(AuthorityEntryHash, &'a FoldState)>,
+    /// Every binding any state holds, by key, the new rows' included.
+    pub(super) writers: &'a BTreeMap<AuthorityKey, BTreeSet<(EntityId, String)>>,
     /// A frontier the base cannot answer: an earlier row may hold a binding
     /// the final one now judges differently.
-    missed: Cell<bool>,
+    pub(super) missed: Cell<bool>,
 }
 
 impl RowStates for Resumed<'_> {
@@ -1002,9 +1029,7 @@ impl RowStates for Resumed<'_> {
         _valid: &BTreeSet<AuthorityEntryHash>,
     ) -> BTreeSet<AuthorityEntryHash> {
         // No chain row is a machine profile.
-        self.once
-            .settlement
-            .marks
+        self.marks
             .iter()
             .filter(|(_, signer)| {
                 !(merged.hosted && super::machine_profile::in_host_custody(merged, signer))
@@ -1038,21 +1063,20 @@ impl RowStates for Resumed<'_> {
                 .get(key)
                 .cloned()
                 .unwrap_or_default();
-            let unchanged = self.once.fold.actor_bindings.get(key).is_some_and(|old| {
+            let unchanged = self.fold.actor_bindings.get(key).is_some_and(|old| {
                 old.status == ActorBindingStatus::Active
                     && old.actor_ref == binding.actor_ref
                     && old.actor_class == binding.actor_class
-                    && self.once.revocations.get(key).cloned().unwrap_or_default() == required
+                    && self.revocations.get(key).cloned().unwrap_or_default() == required
             });
             let mut frontiers = if unchanged {
-                self.once
-                    .fold
+                self.fold
                     .actor_write_frontiers
                     .get(key)
                     .cloned()
                     .unwrap_or_default()
             } else {
-                if self.once.bound_keys.contains(key) {
+                if self.bound_keys.contains(key) {
                     self.missed.set(true);
                 }
                 BTreeSet::new()

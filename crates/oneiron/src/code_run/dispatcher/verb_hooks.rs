@@ -370,7 +370,9 @@ fn hook_domain(call: &SelfCall) -> VerbDomain {
         | SelfCall::InferenceDefaultsRead
         | SelfCall::Context(_)
         // Advice and a pattern load start no work and write no memory.
-        | SelfCall::Leader(_) => VerbDomain::Read,
+        | SelfCall::Leader(SelfLeaderCall::Advice { .. } | SelfLeaderCall::Pattern { .. }) => {
+            VerbDomain::Read
+        }
         SelfCall::Fold(fold) if !fold.writes() => VerbDomain::Read,
         SelfCall::AgentVerb(verb) if !verb.verb.writes() => VerbDomain::Read,
         _ => VerbDomain::Write,
@@ -551,6 +553,10 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         }),
         SelfCall::Leader(SelfLeaderCall::Advice { top }) => json!({"top": top}),
         SelfCall::Leader(SelfLeaderCall::Pattern { skill }) => json!({"skill": skill.to_hex()}),
+        SelfCall::Leader(SelfLeaderCall::Split { leader, slice }) => json!({
+            "leader": leader.as_ref().map(EntityId::to_hex),
+            "slice": slice.as_ref().map(to_json).transpose()?,
+        }),
         SelfCall::Team(team) => to_json(team)?,
         SelfCall::TeamSubmit(submit) => to_json(submit)?,
     })

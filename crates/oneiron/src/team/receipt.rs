@@ -26,9 +26,6 @@ const TEAM_RECEIPT: SideTable<String, TeamReceipt, Named> =
 /// Longest reference or model id kept.
 const MAX_REF_BYTES: usize = 256;
 
-/// Most model ids or roles one receipt names.
-const MAX_LIST: usize = 256;
-
 /// The pattern skill revision a team ran.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatternSkillRef {
@@ -154,18 +151,18 @@ impl TeamReceipt {
             "a team reference is 1..=256 bytes without NUL",
         )?;
         self.type_ref.validate()?;
-        if self.models.is_empty() || self.models.len() > MAX_LIST {
+        // No count cap on models or roles (ARCH-0079: width has no count
+        // cap), so a very wide team still records its receipt.
+        if self.models.is_empty() {
             return Err(Error::InvalidClaimBody(
-                "a team receipt names 1..=256 model ids",
+                "a team receipt names at least one model id",
             ));
         }
         for model in &self.models {
             bounded(model, "a model id is 1..=256 bytes without NUL")?;
         }
-        if self.shape.width == 0 || self.shape.roles.len() > MAX_LIST {
-            return Err(Error::InvalidClaimBody(
-                "a team has at least one agent and at most 256 roles",
-            ));
+        if self.shape.width == 0 {
+            return Err(Error::InvalidClaimBody("a team has at least one agent"));
         }
         if self.decided_by.kind() != self.pattern.decider_kind() {
             return Err(Error::InvalidClaimBody(
@@ -277,6 +274,10 @@ fn feed_pattern_payoff_in_txn(
     outcome: &TeamOutcome,
 ) -> Result<()> {
     let cell = pattern_cell(skill, &receipt.executor_mix(), &receipt.type_ref);
+    // The planner card read this cell with parent/carried backoff; its first
+    // own result keeps that borrowed prior (ARCH-0053 `#executor-swaps`).
+    let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, wtxn, receipt.project)?;
+    let parents = crate::task_type::TypeTree::from(tree).ancestors(&receipt.type_ref);
     let evidence = LearningEvidence {
         receipt: outcome.receipt.clone(),
         at: outcome.at,
@@ -288,6 +289,13 @@ fn feed_pattern_payoff_in_txn(
         outcome_label: None,
         pack_attribution: None,
     };
+    crate::learning::prior::capture_borrowed_prior_in_txn(
+        vault,
+        wtxn,
+        &cell,
+        &parents,
+        evidence.observation.form(),
+    )?;
     crate::learning::record_evidence_in_txn(vault, wtxn, &cell, &evidence, outcome.at)?;
     Ok(())
 }

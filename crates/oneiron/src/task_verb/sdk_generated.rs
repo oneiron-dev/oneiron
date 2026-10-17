@@ -32,6 +32,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.focus.scratchpad.append",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ScratchpadAppendRequest,
+                >(),
+            ),
+            (
+                "self.focus.scratchpad.seal",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ScratchpadSealRequest,
+                >(),
+            ),
+            (
                 "self.memory.diary",
                 crate::code_run::vault_read::request_schema::<DiaryEntryRequest>(),
             ),
@@ -168,6 +180,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<TaskUpdateRequest>(),
             ),
             (
+                "tasks.accept",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAccept>(),
+            ),
+            (
                 "vault.witness",
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
@@ -196,6 +212,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.receipts.get",
                 crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
+                "vault.explain.memory",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ExplainMemoryRequest,
+                >(),
+            ),
+            (
+                "vault.explain.gate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ExplainGateRequest,
+                >(),
             ),
             (
                 "vault.kv.get",
@@ -278,6 +306,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.packs.remove",
+                crate::code_run::vault_read::request_schema::<PackRemoveRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.put",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.list",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionsRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.revoke",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionRevokeRequest>(),
+            ),
+            (
                 "vault.packs.setup.prepare",
                 crate::code_run::vault_read::request_schema::<PackSetupRequest>(),
             ),
@@ -297,6 +341,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.authority.audit",
                 crate::code_run::vault_read::request_schema::<crate::receipt::AuthorityAuditQuery>(
                 ),
+            ),
+            (
+                "vault.mesh.path_receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::MeshPathReceiptsRequest,
+                >(),
             ),
             (
                 "vault.inspection.resolve",
@@ -464,6 +514,96 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.research.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchBindWire,
+                >(),
+            ),
+            (
+                "vault.research.fork",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchForkWire,
+                >(),
+            ),
+            (
+                "vault.research.weave",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchWeaveWire,
+                >(),
+            ),
+            (
+                "vault.research.measure_search",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchSearchWire,
+                >(),
+            ),
+            (
+                "vault.research.measure_held_out",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchHeldOutWire,
+                >(),
+            ),
+            (
+                "vault.research.mark_invalid",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchInvalidWire,
+                >(),
+            ),
+            (
+                "vault.research.prune",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchPruneWire,
+                >(),
+            ),
+            (
+                "vault.research.select",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchSelectWire,
+                >(),
+            ),
+            (
+                "vault.research.promotion_basis",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchBasisWire,
+                >(),
+            ),
+            (
+                "vault.research.reserve_confirmation",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchCandidateWire,
+                >(),
+            ),
+            (
+                "vault.research.promote",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchPromoteWire,
+                >(),
+            ),
+            (
+                "vault.research.reserve_work",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchWorkWire,
+                >(),
+            ),
+            (
+                "vault.research.settle_work",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchSettleWire,
+                >(),
+            ),
+            (
+                "vault.research.refund_work",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchRefundWire,
+                >(),
+            ),
+            (
+                "vault.research.record_benchmark",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchBenchmarkWire,
+                >(),
+            ),
+            (
                 "vault.authority.handoff_alarms",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -497,6 +637,26 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.legal_holds.lift_and_erase",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+                >(),
+            ),
+            (
+                "vault.courtesy_delete.send",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CourtesyDeleteSendRequest,
+                >(),
+            ),
+            (
+                "vault.courtesy_delete.sent",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.courtesy_delete.incoming",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.courtesy_delete.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CourtesyDeleteAnswerRequest,
                 >(),
             ),
             (
@@ -764,6 +924,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.artifacts.review_slides",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::SlideReviewSubmit,
+                >(),
+            ),
+            (
+                "vault.artifacts.ask",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactAskSubmit,
+                >(),
+            ),
+            (
+                "vault.critic.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::critic::review::CriticReviewSubmit,
                 >(),
             ),
             (
@@ -1088,6 +1260,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.questions.refresh",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionRefreshRequest>(
+                ),
+            ),
+            (
                 "vault.decisions.asks.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::receipt::DecisionAskAnswerRequest,
@@ -1271,6 +1448,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.desktop.window",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::WindowInput>(),
+            ),
+            (
+                "self.desktop.handover",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::HandoverInput>(),
             ),
             (
                 "vault.commit",
@@ -1587,6 +1768,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "self.leader.split",
+                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderSplitInput>(),
+            ),
+            (
                 "self.skills.call",
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),
@@ -1657,6 +1842,20 @@ pub fn mcp_arguments_schema_from_input(
             &["scopes"]
         }
         "self.focus.scratchpad.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.focus.scratchpad.append" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.focus.scratchpad.seal" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1825,6 +2024,14 @@ pub fn mcp_arguments_schema_from_input(
                 "frame_epoch".to_owned(),
                 schema.pointer("/properties/frame_epoch")?.clone(),
             );
+            properties.insert(
+                "handle".to_owned(),
+                schema.pointer("/properties/handle")?.clone(),
+            );
+            properties.insert(
+                "after".to_owned(),
+                schema.pointer("/properties/after")?.clone(),
+            );
             &[]
         }
         "tasks.create" => {
@@ -1840,6 +2047,15 @@ pub fn mcp_arguments_schema_from_input(
                 "assignee".to_owned(),
                 schema.pointer("/properties/assignee")?.clone(),
             );
+            properties.insert(
+                "intent_key".to_owned(),
+                schema.pointer("/properties/intent_key")?.clone(),
+            );
+            properties.insert(
+                "brief".to_owned(),
+                schema.pointer("/properties/brief")?.clone(),
+            );
+            properties.insert("ttl".to_owned(), schema.pointer("/properties/ttl")?.clone());
             &["spec"]
         }
         "tasks.wave" => {
@@ -1878,6 +2094,17 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "tasks.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "task_ref".to_owned(),
+                schema.pointer("/properties/task_ref")?.clone(),
+            );
+            &["spec", "task_ref"]
+        }
+        "tasks.accept" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1931,6 +2158,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.explain.memory" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.explain.gate" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2056,6 +2297,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.packs.remove" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.packs.setup.prepare" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2085,6 +2354,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.authority.audit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.path_receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2281,6 +2557,111 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.research.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.fork" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.weave" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.measure_search" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.measure_held_out" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.mark_invalid" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.prune" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.select" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.promotion_basis" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.reserve_confirmation" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.promote" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.reserve_work" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.settle_work" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.refund_work" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.record_benchmark" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.authority.handoff_alarms" => &[],
         "vault.authority.handoff_alarms.acknowledge" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -2306,6 +2687,22 @@ pub fn mcp_arguments_schema_from_input(
         "vault.legal_holds.list" => &[],
         "vault.legal_holds.log" => &[],
         "vault.legal_holds.lift_and_erase" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.courtesy_delete.send" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.courtesy_delete.sent" => &[],
+        "vault.courtesy_delete.incoming" => &[],
+        "vault.courtesy_delete.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2624,6 +3021,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.review_slides" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.critic.review" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3127,6 +3538,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.questions.refresh" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.decisions.asks.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3578,6 +3996,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.focus.scratchpad.recall" => {
             let _input: crate::task_verb::sdk::ScratchpadRecallRequest = decode(value.clone())?;
         }
+        "self.focus.scratchpad.append" => {
+            let _input: crate::task_verb::sdk::ScratchpadAppendRequest = decode(value.clone())?;
+        }
+        "self.focus.scratchpad.seal" => {
+            let _input: crate::task_verb::sdk::ScratchpadSealRequest = decode(value.clone())?;
+        }
         "self.memory.diary" => {
             let _input: DiaryEntryRequest = decode(value.clone())?;
         }
@@ -3668,6 +4092,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.update" => {
             let _input: TaskUpdateRequest = decode(value.clone())?;
         }
+        "tasks.accept" => {
+            let _input: crate::task_verb::TaskAccept = decode(value.clone())?;
+        }
         "vault.witness" => {
             let input: crate::memory::WitnessTurn = decode(value.clone())?;
             crate::memory::caps::check_witness_turn(&input)?;
@@ -3703,6 +4130,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.receipts.get" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
+        }
+        "vault.explain.memory" => {
+            let _input: crate::task_verb::sdk::ExplainMemoryRequest = decode(value.clone())?;
+        }
+        "vault.explain.gate" => {
+            let _input: crate::task_verb::sdk::ExplainGateRequest = decode(value.clone())?;
         }
         "vault.kv.get" => {
             let _input: crate::memory::KeyValueAddress = decode(value.clone())?;
@@ -3759,6 +4192,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.packs.remove" => {
+            let _input: PackRemoveRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.put" => {
+            let _input: ChannelSubscriptionRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.list" => {
+            let _input: ChannelSubscriptionsRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.revoke" => {
+            let _input: ChannelSubscriptionRevokeRequest = decode(value.clone())?;
+        }
         "vault.packs.setup.prepare" => {
             let _input: PackSetupRequest = decode(value.clone())?;
         }
@@ -3773,6 +4218,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.authority.audit" => {
             let _input: crate::receipt::AuthorityAuditQuery = decode(value.clone())?;
+        }
+        "vault.mesh.path_receipts" => {
+            let _input: crate::task_verb::sdk::MeshPathReceiptsRequest = decode(value.clone())?;
         }
         "vault.inspection.resolve" => {
             let _input: crate::lens::InspectionResolveRequest = decode(value.clone())?;
@@ -3859,6 +4307,51 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.records.erase_confirm" => {
             let _input: crate::task_verb::sdk::RecordEraseConfirmRequest = decode(value.clone())?;
         }
+        "vault.research.bind" => {
+            let _input: crate::task_verb::sdk::ResearchBindWire = decode(value.clone())?;
+        }
+        "vault.research.fork" => {
+            let _input: crate::task_verb::sdk::ResearchForkWire = decode(value.clone())?;
+        }
+        "vault.research.weave" => {
+            let _input: crate::task_verb::sdk::ResearchWeaveWire = decode(value.clone())?;
+        }
+        "vault.research.measure_search" => {
+            let _input: crate::task_verb::sdk::ResearchSearchWire = decode(value.clone())?;
+        }
+        "vault.research.measure_held_out" => {
+            let _input: crate::task_verb::sdk::ResearchHeldOutWire = decode(value.clone())?;
+        }
+        "vault.research.mark_invalid" => {
+            let _input: crate::task_verb::sdk::ResearchInvalidWire = decode(value.clone())?;
+        }
+        "vault.research.prune" => {
+            let _input: crate::task_verb::sdk::ResearchPruneWire = decode(value.clone())?;
+        }
+        "vault.research.select" => {
+            let _input: crate::task_verb::sdk::ResearchSelectWire = decode(value.clone())?;
+        }
+        "vault.research.promotion_basis" => {
+            let _input: crate::task_verb::sdk::ResearchBasisWire = decode(value.clone())?;
+        }
+        "vault.research.reserve_confirmation" => {
+            let _input: crate::task_verb::sdk::ResearchCandidateWire = decode(value.clone())?;
+        }
+        "vault.research.promote" => {
+            let _input: crate::task_verb::sdk::ResearchPromoteWire = decode(value.clone())?;
+        }
+        "vault.research.reserve_work" => {
+            let _input: crate::task_verb::sdk::ResearchWorkWire = decode(value.clone())?;
+        }
+        "vault.research.settle_work" => {
+            let _input: crate::task_verb::sdk::ResearchSettleWire = decode(value.clone())?;
+        }
+        "vault.research.refund_work" => {
+            let _input: crate::task_verb::sdk::ResearchRefundWire = decode(value.clone())?;
+        }
+        "vault.research.record_benchmark" => {
+            let _input: crate::task_verb::sdk::ResearchBenchmarkWire = decode(value.clone())?;
+        }
         "vault.authority.handoff_alarms" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -3880,6 +4373,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.legal_holds.lift_and_erase" => {
             let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
                 decode(value.clone())?;
+        }
+        "vault.courtesy_delete.send" => {
+            let _input: crate::task_verb::sdk::CourtesyDeleteSendRequest = decode(value.clone())?;
+        }
+        "vault.courtesy_delete.sent" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.courtesy_delete.incoming" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.courtesy_delete.answer" => {
+            let _input: crate::task_verb::sdk::CourtesyDeleteAnswerRequest = decode(value.clone())?;
         }
         "vault.embedding_spaces.list" => {
             let _input: EmptyRequest = decode(value.clone())?;
@@ -4038,6 +4543,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.artifacts.review_slides" => {
             let _input: crate::blob_artifact::SlideReviewSubmit = decode(value.clone())?;
+        }
+        "vault.artifacts.ask" => {
+            let _input: crate::blob_artifact::ArtifactAskSubmit = decode(value.clone())?;
+        }
+        "vault.critic.review" => {
+            let _input: crate::critic::review::CriticReviewSubmit = decode(value.clone())?;
         }
         "vault.artifacts.propose_deck" => {
             let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
@@ -4243,6 +4754,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.questions.answers" => {
             let _input: crate::receipt::QuestionAnswersRequest = decode(value.clone())?;
         }
+        "vault.questions.refresh" => {
+            let _input: crate::receipt::QuestionRefreshRequest = decode(value.clone())?;
+        }
         "vault.decisions.asks.answer" => {
             let _input: crate::receipt::DecisionAskAnswerRequest = decode(value.clone())?;
         }
@@ -4374,6 +4888,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.desktop.window" => {
             let _input: oneiron_browser::WindowInput = decode(value.clone())?;
+        }
+        "self.desktop.handover" => {
+            let _input: oneiron_browser::HandoverInput = decode(value.clone())?;
         }
         "vault.commit" => {
             let input: CommitRequest = decode(value.clone())?;
@@ -4585,6 +5102,10 @@ pub fn invoke(
         "self.focus.scratchpad.recall" => {
             encode(self_focus_scratchpad_recall(memory, decode(value)?)?)
         }
+        "self.focus.scratchpad.append" => {
+            encode(self_focus_scratchpad_append(memory, decode(value)?)?)
+        }
+        "self.focus.scratchpad.seal" => encode(self_focus_scratchpad_seal(memory, decode(value)?)?),
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
@@ -4613,6 +5134,7 @@ pub fn invoke(
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
+        "tasks.accept" => encode(tasks_accept(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
@@ -4620,6 +5142,8 @@ pub fn invoke(
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
         "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
+        "vault.explain.memory" => encode(vault_explain_memory(memory, decode(value)?)?),
+        "vault.explain.gate" => encode(vault_explain_gate(memory, decode(value)?)?),
         "vault.kv.get" => encode(vault_kv_get(memory, decode(value)?)?),
         "vault.kv.put" => encode(vault_kv_put(memory, decode(value)?)?),
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
@@ -4649,11 +5173,23 @@ pub fn invoke(
             encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
         }
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.packs.remove" => encode(vault_packs_remove(memory, decode(value)?)?),
+        "vault.connectors.subscriptions.put" => {
+            encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
+        }
+        "vault.connectors.subscriptions.list" => {
+            encode(vault_connectors_subscriptions_list(memory, decode(value)?)?)
+        }
+        "vault.connectors.subscriptions.revoke" => encode(vault_connectors_subscriptions_revoke(
+            memory,
+            decode(value)?,
+        )?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
         "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
         "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
         "vault.packs.setup.verify" => encode(vault_packs_setup_verify(memory, decode(value)?)?),
         "vault.authority.audit" => encode(vault_authority_audit(memory, decode(value)?)?),
+        "vault.mesh.path_receipts" => encode(vault_mesh_path_receipts(memory, decode(value)?)?),
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
             encode(vault_shared_propose_delete(memory, decode(value)?)?)
@@ -4700,6 +5236,35 @@ pub fn invoke(
         "vault.records.erase_confirm" => {
             encode(vault_records_erase_confirm(memory, decode(value)?)?)
         }
+        "vault.research.bind" => encode(vault_research_bind(memory, decode(value)?)?),
+        "vault.research.fork" => encode(vault_research_fork(memory, decode(value)?)?),
+        "vault.research.weave" => encode(vault_research_weave(memory, decode(value)?)?),
+        "vault.research.measure_search" => {
+            encode(vault_research_measure_search(memory, decode(value)?)?)
+        }
+        "vault.research.measure_held_out" => {
+            encode(vault_research_measure_held_out(memory, decode(value)?)?)
+        }
+        "vault.research.mark_invalid" => {
+            encode(vault_research_mark_invalid(memory, decode(value)?)?)
+        }
+        "vault.research.prune" => encode(vault_research_prune(memory, decode(value)?)?),
+        "vault.research.select" => encode(vault_research_select(memory, decode(value)?)?),
+        "vault.research.promotion_basis" => {
+            encode(vault_research_promotion_basis(memory, decode(value)?)?)
+        }
+        "vault.research.reserve_confirmation" => {
+            encode(vault_research_reserve_confirmation(memory, decode(value)?)?)
+        }
+        "vault.research.promote" => encode(vault_research_promote(memory, decode(value)?)?),
+        "vault.research.reserve_work" => {
+            encode(vault_research_reserve_work(memory, decode(value)?)?)
+        }
+        "vault.research.settle_work" => encode(vault_research_settle_work(memory, decode(value)?)?),
+        "vault.research.refund_work" => encode(vault_research_refund_work(memory, decode(value)?)?),
+        "vault.research.record_benchmark" => {
+            encode(vault_research_record_benchmark(memory, decode(value)?)?)
+        }
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
         }
@@ -4712,6 +5277,14 @@ pub fn invoke(
         "vault.legal_holds.log" => encode(vault_legal_holds_log(memory, decode(value)?)?),
         "vault.legal_holds.lift_and_erase" => {
             encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
+        }
+        "vault.courtesy_delete.send" => encode(vault_courtesy_delete_send(memory, decode(value)?)?),
+        "vault.courtesy_delete.sent" => encode(vault_courtesy_delete_sent(memory, decode(value)?)?),
+        "vault.courtesy_delete.incoming" => {
+            encode(vault_courtesy_delete_incoming(memory, decode(value)?)?)
+        }
+        "vault.courtesy_delete.answer" => {
+            encode(vault_courtesy_delete_answer(memory, decode(value)?)?)
         }
         "vault.embedding_spaces.list" => {
             encode(vault_embedding_spaces_list(memory, decode(value)?)?)
@@ -4806,6 +5379,8 @@ pub fn invoke(
         "vault.artifacts.review_slides" => {
             encode(vault_artifacts_review_slides(memory, decode(value)?)?)
         }
+        "vault.artifacts.ask" => encode(vault_artifacts_ask(memory, decode(value)?)?),
+        "vault.critic.review" => encode(vault_critic_review(memory, decode(value)?)?),
         "vault.artifacts.propose_deck" => {
             encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
         }
@@ -4899,6 +5474,7 @@ pub fn invoke(
         "vault.questions.backfill" => encode(vault_questions_backfill(memory, decode(value)?)?),
         "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
         "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
+        "vault.questions.refresh" => encode(vault_questions_refresh(memory, decode(value)?)?),
         "vault.decisions.asks.answer" => {
             encode(vault_decisions_asks_answer(memory, decode(value)?)?)
         }
@@ -5164,6 +5740,10 @@ pub fn invoke_browser(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
+        "self.desktop.handover" => serde_json::to_value(self_desktop_handover(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
         _ => {
             return Err(oneiron_browser::BrowserError::Input(format!(
                 "{verb} is not a browser verb"
@@ -5218,17 +5798,31 @@ pub fn self_focus_scratchpad_recall(
 ) -> MemoryResult<crate::task_verb::sdk::ScratchpadRecallReply> {
     crate::task_verb::sdk::scratchpad_recall_reply(memory, &input)
 }
+pub fn self_focus_scratchpad_append(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ScratchpadAppendRequest,
+) -> MemoryResult<crate::task_verb::sdk::ScratchpadWriteReply> {
+    crate::task_verb::sdk::scratchpad_append_reply(memory, &input)
+}
+pub fn self_focus_scratchpad_seal(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ScratchpadSealRequest,
+) -> MemoryResult<crate::task_verb::sdk::ScratchpadWriteReply> {
+    crate::task_verb::sdk::scratchpad_seal_reply(memory, &input)
+}
 pub fn self_memory_diary(
     memory: &Memory<'_>,
     input: DiaryEntryRequest,
 ) -> MemoryResult<crate::task_verb::sdk::DiaryEntryReceipt> {
-    crate::gate::record_references::admit_prose_links(
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
         memory,
         "self.memory.diary",
         &input,
         &["/content"],
     )?;
-    crate::task_verb::sdk::self_memory_diary_write(memory, input)
+    let landed = crate::task_verb::sdk::self_memory_diary_write(memory, input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
 }
 pub fn self_memory_diary_reads(
     memory: &Memory<'_>,
@@ -5349,6 +5943,7 @@ pub fn steer(
     memory: &Memory<'_>,
     input: SteerRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SteerReceipt> {
+    crate::gate::record_references::admit_row_references(memory, "steer", &input, &["/task_ref"])?;
     crate::task_verb::sdk::steer_child(memory, input)
 }
 pub fn describe(
@@ -5369,6 +5964,8 @@ pub fn describe(
         Err(MemoryError::bad_request(
             "describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds",
         ))?
+    } else if input.handle.is_some() || input.after.is_some() {
+        crate::task_verb::sdk::describe_handle_status(memory, &input)?
     } else {
         memory.describe(
             input
@@ -5383,13 +5980,22 @@ pub fn tasks_create(
     memory: &Memory<'_>,
     input: TaskCreateRequest,
 ) -> MemoryResult<crate::task_verb::TaskCreateReceipt> {
-    crate::gate::record_references::admit_prose_links(
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
         memory,
         "tasks.create",
         &input,
-        &["/label", "/spec"],
+        &[
+            "/label",
+            "/spec/title",
+            "/spec/description",
+            "/spec/brief",
+            "/spec/notes",
+            "/spec/instructions",
+        ],
     )?;
-    memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)
+    let landed = memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
 }
 pub fn tasks_wave(
     memory: &Memory<'_>,
@@ -5432,6 +6038,18 @@ pub fn tasks_update(
         &["/task_ref"],
     )?;
     memory.tasks_update_request(&input)
+}
+pub fn tasks_accept(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskAccept,
+) -> MemoryResult<crate::task_verb::TaskCallReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "tasks.accept",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.tasks_accept(input)
 }
 pub fn vault_witness(
     memory: &Memory<'_>,
@@ -5501,6 +6119,18 @@ pub fn vault_receipts_get(
 ) -> MemoryResult<Option<crate::receipt::CallReceipt>> {
     memory.call_receipt(&input.receipt_ref)
 }
+pub fn vault_explain_memory(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ExplainMemoryRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::ExplainMemoryReply>> {
+    crate::task_verb::sdk::host_only(memory, "vault.explain.memory", &input)
+}
+pub fn vault_explain_gate(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ExplainGateRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::ExplainGateReply>> {
+    crate::task_verb::sdk::host_only(memory, "vault.explain.gate", &input)
+}
 pub fn vault_kv_get(
     memory: &Memory<'_>,
     input: crate::memory::KeyValueAddress,
@@ -5511,8 +6141,15 @@ pub fn vault_kv_put(
     memory: &Memory<'_>,
     input: crate::memory::KeyValuePut,
 ) -> MemoryResult<crate::memory::KeyValuePutReceipt> {
-    crate::gate::record_references::admit_prose_links(memory, "vault.kv.put", &input, &["/value"])?;
-    memory.key_value_put(&input)
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+        memory,
+        "vault.kv.put",
+        &input,
+        &["/value"],
+    )?;
+    let landed = memory.key_value_put(&input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
 }
 pub fn vault_kv_delete(
     memory: &Memory<'_>,
@@ -5618,6 +6255,30 @@ pub fn vault_packs_put(
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
 }
+pub fn vault_packs_remove(
+    memory: &Memory<'_>,
+    input: PackRemoveRequest,
+) -> MemoryResult<crate::skill_hub::pack_catalog::PackInstallReceipt> {
+    crate::task_verb::sdk::remove_pack_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_put(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionRequest,
+) -> MemoryResult<crate::connector_key::ChannelMessageSubscription> {
+    crate::task_verb::sdk::subscribe_channel_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_list(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionsRequest,
+) -> MemoryResult<crate::task_verb::sdk::ChannelSubscriptions> {
+    crate::task_verb::sdk::channel_subscriptions_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_revoke(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::ChannelSubscriptionRevoked> {
+    crate::task_verb::sdk::revoke_channel_subscription_embedded(memory, input)
+}
 pub fn vault_packs_setup_prepare(
     memory: &Memory<'_>,
     input: PackSetupRequest,
@@ -5647,6 +6308,12 @@ pub fn vault_authority_audit(
     input: crate::receipt::AuthorityAuditQuery,
 ) -> MemoryResult<crate::receipt::AuthorityAuditPage> {
     crate::receipt::authority_audit_embedded(memory, input)
+}
+pub fn vault_mesh_path_receipts(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MeshPathReceiptsRequest,
+) -> MemoryResult<Vec<crate::sync::mesh_path::MeshPathReceipt>> {
+    crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)
 }
 pub fn vault_inspection_resolve(
     memory: &Memory<'_>,
@@ -5905,6 +6572,96 @@ pub fn vault_records_erase_confirm(
 ) -> MemoryResult<crate::task_verb::sdk::RecordEraseOutcome> {
     crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)
 }
+pub fn vault_research_bind(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchBindWire,
+) -> MemoryResult<crate::autoreason_campaign::research::ResearchBinding> {
+    crate::task_verb::sdk::research_bind(memory, input)
+}
+pub fn vault_research_fork(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchForkWire,
+) -> MemoryResult<crate::autoreason_campaign::research::ExperimentNode> {
+    crate::task_verb::sdk::research_fork(memory, input)
+}
+pub fn vault_research_weave(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchWeaveWire,
+) -> MemoryResult<crate::autoreason_campaign::research::ExperimentNode> {
+    crate::task_verb::sdk::research_weave(memory, input)
+}
+pub fn vault_research_measure_search(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchSearchWire,
+) -> MemoryResult<crate::autoreason_campaign::research::ExperimentNode> {
+    crate::task_verb::sdk::research_measure_search(memory, input)
+}
+pub fn vault_research_measure_held_out(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchHeldOutWire,
+) -> MemoryResult<crate::autoreason_campaign::research::ExperimentNode> {
+    crate::task_verb::sdk::research_measure_held_out(memory, input)
+}
+pub fn vault_research_mark_invalid(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchInvalidWire,
+) -> MemoryResult<crate::autoreason_campaign::research::ExperimentNode> {
+    crate::task_verb::sdk::research_mark_invalid(memory, input)
+}
+pub fn vault_research_prune(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchPruneWire,
+) -> MemoryResult<crate::autoreason_campaign::research::ExperimentNode> {
+    crate::task_verb::sdk::research_prune(memory, input)
+}
+pub fn vault_research_select(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchSelectWire,
+) -> MemoryResult<crate::autoreason_campaign::research::SelectionReceipt> {
+    crate::task_verb::sdk::research_select(memory, input)
+}
+pub fn vault_research_promotion_basis(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchBasisWire,
+) -> MemoryResult<crate::autoreason_campaign::research::PromotionBasis> {
+    crate::task_verb::sdk::research_promotion_basis(memory, input)
+}
+pub fn vault_research_reserve_confirmation(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchCandidateWire,
+) -> MemoryResult<crate::skill_optimize::EvalRelease> {
+    crate::task_verb::sdk::research_reserve_confirmation(memory, input)
+}
+pub fn vault_research_promote(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchPromoteWire,
+) -> MemoryResult<crate::autoreason_campaign::research::CampaignPromotionReceipt> {
+    crate::task_verb::sdk::research_promote(memory, input)
+}
+pub fn vault_research_reserve_work(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchWorkWire,
+) -> MemoryResult<crate::entity_id::EntityId> {
+    crate::task_verb::sdk::research_reserve_work(memory, input)
+}
+pub fn vault_research_settle_work(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchSettleWire,
+) -> MemoryResult<crate::autoreason_campaign::research::ResearchReservation> {
+    crate::task_verb::sdk::research_settle_work(memory, input)
+}
+pub fn vault_research_refund_work(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchRefundWire,
+) -> MemoryResult<crate::autoreason_campaign::research::ResearchReservation> {
+    crate::task_verb::sdk::research_refund_work(memory, input)
+}
+pub fn vault_research_record_benchmark(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchBenchmarkWire,
+) -> MemoryResult<crate::autoreason_campaign::research::SelectionBenchmark> {
+    crate::task_verb::sdk::research_record_benchmark(memory, input)
+}
 pub fn vault_authority_handoff_alarms(
     memory: &Memory<'_>,
     _input: EmptyRequest,
@@ -5971,6 +6728,38 @@ pub fn vault_legal_holds_lift_and_erase(
         &memory.embedded_owner("vault.legal_holds.lift_and_erase")?,
         input,
     )
+}
+pub fn vault_courtesy_delete_send(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CourtesyDeleteSendRequest,
+) -> MemoryResult<crate::task_verb::sdk::CourtesyDeleteSent> {
+    crate::task_verb::sdk::courtesy_delete_host_only(memory, "vault.courtesy_delete.send", &input)
+}
+pub fn vault_courtesy_delete_sent(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::CourtesyDeleteSent>> {
+    crate::task_verb::sdk::courtesy_delete_host_only(
+        memory,
+        "vault.courtesy_delete.sent",
+        &EmptyRequest {},
+    )
+}
+pub fn vault_courtesy_delete_incoming(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::CourtesyDeleteIncoming>> {
+    crate::task_verb::sdk::courtesy_delete_host_only(
+        memory,
+        "vault.courtesy_delete.incoming",
+        &EmptyRequest {},
+    )
+}
+pub fn vault_courtesy_delete_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CourtesyDeleteAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::CourtesyDeleteIncoming> {
+    crate::task_verb::sdk::courtesy_delete_host_only(memory, "vault.courtesy_delete.answer", &input)
 }
 pub fn vault_embedding_spaces_list(
     memory: &Memory<'_>,
@@ -6341,6 +7130,18 @@ pub fn vault_artifacts_review_slides(
     input: crate::blob_artifact::SlideReviewSubmit,
 ) -> MemoryResult<crate::blob_artifact::SlideReviewOutcome> {
     memory.artifacts_review_slides(&input)
+}
+pub fn vault_artifacts_ask(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactAskSubmit,
+) -> MemoryResult<crate::blob_artifact::ArtifactAskOutcome> {
+    memory.artifacts_ask(&input)
+}
+pub fn vault_critic_review(
+    memory: &Memory<'_>,
+    input: crate::critic::review::CriticReviewSubmit,
+) -> MemoryResult<crate::critic::review::CriticReviewOutcome> {
+    crate::task_verb::sdk::host_only(memory, "vault.critic.review", &input)
 }
 pub fn vault_artifacts_propose_deck(
     memory: &Memory<'_>,
@@ -6875,6 +7676,12 @@ pub fn vault_questions_answers(
 ) -> MemoryResult<Vec<crate::receipt::QuestionAnswer>> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.answers", &input)
 }
+pub fn vault_questions_refresh(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionRefreshRequest,
+) -> MemoryResult<Vec<crate::llm::decision::questions::AnswerRecord>> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.refresh", &input)
+}
 pub fn vault_decisions_asks_answer(
     memory: &Memory<'_>,
     input: crate::receipt::DecisionAskAnswerRequest,
@@ -7139,6 +7946,12 @@ pub fn self_desktop_window(
 ) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
     driver.window(input)
 }
+pub fn self_desktop_handover(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::HandoverInput,
+) -> Result<oneiron_browser::HandoverOutput, oneiron_browser::BrowserError> {
+    driver.handover(input)
+}
 pub fn vault_commit(
     memory: &Memory<'_>,
     input: CommitRequest,
@@ -7213,6 +8026,12 @@ pub fn vault_delete(
     memory: &Memory<'_>,
     input: SafeDeleteRequest,
 ) -> MemoryResult<crate::memory::DeleteReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.delete",
+        &input,
+        &["/entity_ref"],
+    )?;
     memory.safe_delete(&input.entity_ref, input.reason)
 }
 pub fn vault_writes_pending(
@@ -7654,13 +8473,15 @@ pub fn vault_notes_create(
     memory: &Memory<'_>,
     input: CreateNoteRequest,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
-    crate::gate::record_references::admit_prose_links(
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
         memory,
         "vault.notes.create",
         &input,
         &["/markdown"],
     )?;
-    memory.create_note(&input.kind, &input.markdown)
+    let landed = memory.create_note(&input.kind, &input.markdown)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
 }
 pub fn vault_notes_from_entity(
     memory: &Memory<'_>,
@@ -7678,7 +8499,7 @@ pub fn vault_notes_edit(
     memory: &Memory<'_>,
     input: EditNoteRequest,
 ) -> MemoryResult<crate::note::NoteProgramEditOutcome> {
-    crate::gate::record_references::admit_prose_links(
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
         memory,
         "vault.notes.edit",
         &input,
@@ -7690,7 +8511,9 @@ pub fn vault_notes_edit(
         &input,
         &["/note_ref"],
     )?;
-    memory.edit_note(&input.note_ref, &input.edit)
+    let landed = memory.edit_note(&input.note_ref, &input.edit)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
 }
 pub fn vault_notes_seal(
     memory: &Memory<'_>,

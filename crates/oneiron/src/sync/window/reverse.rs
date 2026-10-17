@@ -452,6 +452,25 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // FIX 1794: a room's side rows ride beside its carrier, and a
+            // turn's claim, response and thread facts beside the turn's.
+            if window_key.world().is_none()
+                && let Some(header) = EntityMetadataHeader::parse(&raw)
+                && matches!(
+                    header.entity_type,
+                    ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_CONVERSATION
+                )
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::room_facts::mirror_room_facts(
+                    vault,
+                    doc,
+                    id,
+                    header.entity_type,
+                    &[],
+                )?
+            {
+                wrote_any = true;
+            }
         }
 
         backfill_sources.push(*id);

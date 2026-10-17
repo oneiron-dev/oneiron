@@ -117,6 +117,15 @@ pub const TASK_ASK_SOFT_CONFIRM: &[u8] = b"oneiron.tasks.ask.soft_confirm.v1";
 /// person.
 pub const TASK_ASK_GUEST_GRANT: &[u8] = b"oneiron.tasks.ask.guest.v1";
 
+/// The TASK an Auto post names (`task_verb::highway_post`). Parts: actor,
+/// intent key. The store-local vault id is left out on purpose: every replica
+/// of one vault holds its own, and one post must name one TASK on all of them.
+pub const TASK_POST: &[u8] = b"oneiron.tasks.post.v1";
+
+/// The TASK a settled create proposal names (`task_verb::proposal_create`).
+/// Parts: the proposal claim id.
+pub const TASK_SETTLE: &[u8] = b"oneiron.tasks.settle.v1";
+
 /// The CONNECTOR_SEND event a delivered connector receipt projects
 /// (`comm::projector`). Parts: task.
 pub const COMM_CONNECTOR_SEND_EVENT: &[u8] = b"oneiron.comm.connector_send_event.v1\0";
@@ -165,6 +174,11 @@ pub const PROJECT_REVISION: &[u8] = b"oneiron/project-revision-id/v1/";
 /// question's registered name, then the caller's instance parts.
 pub const DECISION_QUESTION: &[u8] = b"oneiron.decision.question.v1";
 
+/// A host rule row: the owner's reason on one answered decision ask
+/// (`llm::decision::rules`). Parts: the question's id, its version (u32be), then
+/// each evidence id in the order it was asked.
+pub const DECISION_HOST_RULE: &[u8] = b"oneiron.decision.host_rule.v1";
+
 /// A coordination pattern's context and a team run's decision on a pack
 /// attribution (`skill_attribution::host`). Parts: `pattern` and the pattern's
 /// token, or `decider` and the team reference.
@@ -179,9 +193,20 @@ pub const SIDE_ROW_MASK: &[u8] = b"oneiron.side_row.mask.v1\0";
 /// (`learning_setting::global_setting_subject`). Parts: the catalog key.
 pub const GLOBAL_SETTING_SUBJECT: &[u8] = b"oneiron.learning.setting.global_subject.v1\0";
 
+/// The subproject a TASK wraps when its leader splits it
+/// (`code_run::dispatcher::leader`): one child per wrapper, so a retried split
+/// names the child the first try linked. Parts: the wrapper TASK.
+pub const TASK_SUBPROJECT: &[u8] = b"oneiron/task-subproject/v1/";
+
+/// What a received AgentPack mints (`skill_hub::pack_catalog::agent_admission`).
+/// Parts: `agent` and the pack source's content hash, so a reinstall of the
+/// same bytes finds the agent it minted; or `knowledge`, the agent and the
+/// row's index (u32be).
+pub const AGENT_PACK_TRAVEL: &[u8] = b"oneiron/agent-pack-travel/v1/";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 45] = [
+pub(crate) const ALL: [&[u8]; 50] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -212,6 +237,8 @@ pub(crate) const ALL: [&[u8]; 45] = [
     TASK_ASK_SETTLEMENT,
     TASK_ASK_SOFT_CONFIRM,
     TASK_ASK_GUEST_GRANT,
+    TASK_POST,
+    TASK_SETTLE,
     COMM_CONNECTOR_SEND_EVENT,
     OUTBOUND_RECEIPT_RECORD,
     FIRST_PARTY_SKILL_HUB,
@@ -224,7 +251,10 @@ pub(crate) const ALL: [&[u8]; 45] = [
     IMPORTED_NOTE,
     PROJECT_REVISION,
     DECISION_QUESTION,
+    DECISION_HOST_RULE,
     COORDINATION_PATTERN,
     SIDE_ROW_MASK,
     GLOBAL_SETTING_SUBJECT,
+    TASK_SUBPROJECT,
+    AGENT_PACK_TRAVEL,
 ];

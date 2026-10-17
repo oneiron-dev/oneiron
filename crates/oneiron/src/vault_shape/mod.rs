@@ -102,6 +102,8 @@ pub enum ShapeRow {
     /// preset its defaults came from. A vault is shared once; no seed
     /// reshares it.
     Shared {
+        #[serde(with = "crate::federation::vault_id_decimal")]
+        #[schemars(with = "String")]
         vault_id: u64,
         #[serde(default)]
         preset: Option<ShapePreset>,

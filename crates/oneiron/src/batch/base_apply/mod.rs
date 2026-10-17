@@ -153,6 +153,7 @@ pub(super) fn apply_ops_with_origin(
 ) -> Result<()> {
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
+    let run_derivations = crate::skill_attribution::run_derivations(&ops.ops, replay);
     let hub_admission = gate_mode.hub_admission.take();
     let refinement_admission = gate_mode.refinement_admission.take();
     let birth_mask = gate_mode.birth_mask;
@@ -687,7 +688,9 @@ pub(super) fn apply_ops_with_origin(
                     mutation_recorded_at,
                     text_index_trusted,
                 )?;
-                // A batch-deleted world takes its keys with it (fix 7).
+                // A batch delete tears the row, a hard delete (ARCH-0038), so
+                // a batch-deleted world takes its keys with it (fix 7). There
+                // is no soft batch delete; a soft delete keeps the keys.
                 crate::world_keys::destroy_world_keys_in_txn(
                     store,
                     wtxn,
@@ -842,6 +845,7 @@ pub(super) fn apply_ops_with_origin(
     }
 
     masked_files.restrict(store, wtxn)?;
+    crate::skill_attribution::note_run_derivations_in_txn(store, wtxn, run_derivations.as_ref())?;
 
     finalize_batch_indexes(
         store,

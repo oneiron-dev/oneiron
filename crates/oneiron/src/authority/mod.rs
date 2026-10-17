@@ -32,12 +32,16 @@
 
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
+mod adopted_build;
+mod adopted_evidence;
+mod adopted_fold;
 mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
 mod causal_write;
 mod checkpoint;
+mod checkpoint_adopt;
 mod checkpoint_attest;
 mod checkpoint_image;
 mod checkpoint_policy;
@@ -142,6 +146,13 @@ pub use federation_activation::federation_grant_activation;
 // module's internal wiring — sibling files and `tests` share one scope through
 // `use super::*`, so the file boundaries below do not change name resolution.
 pub use causal_write::CausalWriteDisposition;
+pub use checkpoint::{
+    AUTHORITY_CHECKPOINT_MAX_AGE_SECS, AUTHORITY_CHECKPOINT_NEW_BYTES,
+    AUTHORITY_CHECKPOINT_NEW_ENTRIES, AuthorityCheckpointUpkeep,
+};
+pub use checkpoint_adopt::{
+    AuthorityCheckpointBundle, AuthorityCheckpointExpectation, VerifiedAuthorityCheckpoint,
+};
 pub use checkpoint_attest::*;
 pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
@@ -150,10 +161,13 @@ pub use fold_state::*;
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
-pub use history_coverage::{AuthorityHistoryCoverage, AuthorityHistoryRequest};
+pub use history_coverage::{
+    AuthorityArchiveCoverage, AuthorityHistoryCoverage, AuthorityHistoryRequest,
+};
 pub use history_fetch::{
-    AUTHORITY_HISTORY_PAGE_MAX, AuthorityHistoryFetch, AuthorityHistoryPage,
-    AuthorityHistoryVerificationCoverage,
+    AUTHORITY_HISTORY_PAGE_BYTES, AUTHORITY_HISTORY_PAGE_MAX,
+    AUTHORITY_HISTORY_SELECTION_ID_CONTEXT, AuthorityHistoryFetch, AuthorityHistoryPage,
+    AuthorityHistorySelection, AuthorityHistoryVerificationCoverage,
 };
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
@@ -185,12 +199,14 @@ pub use slip_pairing::{
 pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
-pub use slip_vault::HostSlipIssuer;
+pub use slip_vault::{ConnectOffer, HostSlipIssuer};
 pub use task_actor::AdmittedTaskGrant;
 pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
+pub(crate) use adopted_evidence::adopted_evidence_in_txn;
+pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
@@ -215,7 +231,7 @@ pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
-pub(crate) use retired_signers::{authority_row_resident, stored_authority_row};
+pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.

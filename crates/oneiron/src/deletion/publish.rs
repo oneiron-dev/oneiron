@@ -324,6 +324,29 @@ impl Vault {
         Ok(true)
     }
 
+    /// Publishes the `pt:` tombstones an erase staged for its world's key pads
+    /// in `windows` once the erase has committed, rather than at each window's
+    /// next load (FIX 343). The markers are durable, so a failure here leaves
+    /// them to that load and is never a failure of the erase.
+    pub(super) fn publish_pad_tombstones_after_commit(
+        &self,
+        windows: &std::collections::BTreeSet<String>,
+    ) {
+        #[cfg(feature = "sync")]
+        for window in windows {
+            let key = crate::sync::WindowKey::new(window.as_str());
+            if let Err(error) = crate::sync::window::publish_pending_tombstones(self, &key) {
+                tracing::warn!(
+                    %error,
+                    window = %window,
+                    "erased world's pad tombstones left to the window's next load"
+                );
+            }
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = windows;
+    }
+
     /// A separate local-read notice after the destructive LMDB transaction
     /// commits. Tombstone publication is too early for hard purge, and a soft
     /// scrub must notify even when later CRDT publication fails. The existing
@@ -450,6 +473,11 @@ impl Vault {
                 .and_then(|()| {
                     if value.reason.is_hard() {
                         self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+                        crate::world_keys::reject_held_pad_world_in_txn(
+                            &self.store,
+                            &wtxn,
+                            &[*id],
+                        )?;
                         self.reject_held_redirect_shells_in_txn(&wtxn, id)
                     } else {
                         Ok(())

@@ -68,6 +68,30 @@ impl FederationPeer {
         self.selector.grant_id
     }
 
+    /// This peer's standing in the shared vault, read over its own grant
+    /// (FIX 360): the selector is revalidated, then the authority lane
+    /// classifies that grant's member and scope. No standing refuses; it is
+    /// never a member.
+    pub(in crate::sync) fn membership(
+        &self,
+        vault: &Vault,
+    ) -> Result<crate::federation::MembershipStanding> {
+        self.revalidate(vault)?;
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .authenticated_grant_membership_in_txn(
+                &txn,
+                self.scope,
+                self.principal,
+                self.selector.grant_id,
+            )?
+            .ok_or_else(|| {
+                Error::sync_protocol(SyncProtocolValidation::Selector {
+                    reason: SyncSelectorValidation::MemberNotGranted,
+                })
+            })
+    }
+
     fn digest(&self) -> [u8; 32] {
         let mut hash = blake3::Hasher::new();
         hash.update(b"oneiron/federation-peer/v1");

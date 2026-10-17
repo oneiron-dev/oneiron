@@ -7,6 +7,7 @@
 //! these variants sat flat on `Error`.
 
 use crate::entity_id::EntityId;
+use crate::room_join::RoomJoinHold;
 
 use super::ErrorKind;
 
@@ -66,6 +67,16 @@ pub enum RecordError {
     /// A live shared-ancestor rule narrowed the default leader-chat admission.
     #[error("leader chat refused by rule claim {}", rule.to_hex())]
     LeaderChatRule { rule: EntityId },
+    /// The actor holds no speaking role in the room, or may not host it: a
+    /// person, the Dreamer or other upkeep actor, or an agent with no
+    /// standing there.
+    #[error("room speaker {} is not eligible", actor.to_hex())]
+    RoomSpeakerIneligible { actor: EntityId },
+    /// A person's first write in a room waits on its room join, which holds
+    /// on the consents it names. Nothing was written. Boxed: the hold
+    /// carries a key and a list.
+    #[error("{0}")]
+    RoomJoinHeld(Box<RoomJoinHold>),
 
     #[error("DAG parent is outside the conversation")]
     DagParentOutsideConversation,
@@ -165,6 +176,13 @@ pub enum RecordError {
         identity_ref: EntityId,
         requested_mode: String,
     },
+    /// The workspace's `work_companion` policy is `require` and the member
+    /// brought her own companion. It never falls back to a work companion
+    /// birth. Nothing was written.
+    #[error(
+        "workspace work_companion policy is require: start a work companion; a brought one is refused"
+    )]
+    WorkCompanionRequired,
     /// A CounterpartyContact record failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
@@ -232,6 +250,21 @@ pub enum RecordError {
         id.to_hex()
     )]
     AuthorityLogFull { id: EntityId, signer: String },
+    /// The authority fold needs history this vault does not hold (OF-469):
+    /// no fold answers until an import closes it. `missing` ascends; on a
+    /// vault that adopted a checkpoint image it may name covered rows, which
+    /// a late fork or an op the image cannot fold past needs. Fetching them
+    /// may name further ancestors: ask for the vault's history request again
+    /// after each import.
+    #[error("authority history incomplete: {} rows required", missing.len())]
+    AuthorityHistoryRequired {
+        /// The authority vault (its genesis hash) the history belongs to.
+        vault_id: Option<[u8; 32]>,
+        /// The checkpoint v2 image id the request was computed against.
+        checkpoint: Option<[u8; 32]>,
+        /// The authority entry hashes the fold needs, ascending.
+        missing: Vec<[u8; 32]>,
+    },
     #[error("MESSAGE stream already active: {}", message.to_hex())]
     StreamAlreadyActive { message: EntityId },
     #[error("MESSAGE stream handle is not active: {}", message.to_hex())]
@@ -261,8 +294,10 @@ impl RecordError {
             Self::ProjectHistoryOverBudget { .. } => ErrorKind::ProjectHistoryOverBudget,
             Self::ProjectAuthorityUnresolved { .. } => ErrorKind::ProjectAuthorityUnresolved,
             Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,
-            Self::ConversationState(_) => ErrorKind::ConversationState,
-            Self::ConversationDenied | Self::LeaderChatRule { .. } => ErrorKind::ConversationDenied,
+            Self::ConversationState(_) | Self::RoomJoinHeld(_) => ErrorKind::ConversationState,
+            Self::ConversationDenied
+            | Self::LeaderChatRule { .. }
+            | Self::RoomSpeakerIneligible { .. } => ErrorKind::ConversationDenied,
             Self::MessageStreamRecoveryFailed(_) => ErrorKind::MessageStreamRecoveryFailed,
             Self::DagParentOutsideConversation => ErrorKind::DagParentOutsideConversation,
             Self::HeadAdvanceOffTrunk => ErrorKind::HeadAdvanceOffTrunk,
@@ -289,6 +324,7 @@ impl RecordError {
             Self::WorkspaceMailboxAutonomyNotReady { .. } => {
                 ErrorKind::WorkspaceMailboxAutonomyNotReady
             }
+            Self::WorkCompanionRequired => ErrorKind::WorkCompanionRequired,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,
@@ -307,6 +343,7 @@ impl RecordError {
             Self::AuthorityLogStoreKeyMismatch { .. } => ErrorKind::AuthorityLogStoreKeyMismatch,
             Self::AuthorityLogSignerPending { .. } => ErrorKind::AuthorityLogSignerPending,
             Self::AuthorityLogFull { .. } => ErrorKind::AuthorityLogFull,
+            Self::AuthorityHistoryRequired { .. } => ErrorKind::AuthorityHistoryRequired,
         }
     }
 }

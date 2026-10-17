@@ -69,6 +69,8 @@ impl Vault {
         if reason.active_store_hard_purge_v1() {
             let txn = self.store.env.read_txn()?;
             self.store.reject_legal_hold_in_txn(&txn, id.as_bytes())?;
+            // A row may have landed since the header read (OF-470).
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
         }
         let crdt_persisted = self.write_crdt_tombstone(
             id,
@@ -102,6 +104,7 @@ impl Vault {
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
         if reason.active_store_hard_purge_v1() {
             self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         }
         if !crdt_persisted && reason.active_store_hard_purge_v1() {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
@@ -162,8 +165,20 @@ impl Vault {
             return Ok(DeleteEntityOutcome::missing());
         }
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
-        let (existed, citing) =
-            self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
+        // Only an erase destroys a world's keys, and its pad tombstones
+        // publish once this commits (FIX 343).
+        let erase = reason.active_store_hard_purge_v1();
+        let pad_windows = if erase {
+            self.world_pad_windows_in_txn(&wtxn, id)?
+        } else {
+            std::collections::BTreeSet::new()
+        };
+        let (existed, citing) = self.purge_entity_active_store_in_txn(
+            &mut wtxn,
+            id,
+            Some(&tombstone.request_id),
+            erase,
+        )?;
         affected.extend(citing);
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
@@ -237,6 +252,7 @@ impl Vault {
         if crdt_persisted {
             self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }
+        self.publish_pad_tombstones_after_commit(&pad_windows);
         Ok(DeleteEntityOutcome {
             existed,
             receipt_id: Some(receipt_id),

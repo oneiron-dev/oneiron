@@ -4,11 +4,13 @@ mod connector_events;
 mod connector_sends;
 mod cooperative_deletion;
 mod core;
+mod desktop_seats;
 mod embedding;
 mod housekeeping;
 mod leases;
 mod lifecycle;
 mod live_runs;
+mod media_door;
 mod media_embedding;
 mod message_stream;
 #[cfg(unix)]
@@ -28,11 +30,14 @@ mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::{SyncServer, TaskWorkTurn};
+pub(crate) use self::desktop_seats::{DesktopSeat, DesktopSeats};
 pub(crate) use self::housekeeping::{HousekeepingAdmission, admit_every_pass};
 pub(crate) use self::lifecycle::LifecycleScheduler;
 pub(crate) use self::live_runs::{
     HeldLiveRun, LiveRunCaller, LiveRunRefusal, LiveRuns, ResolvedLiveRun,
 };
+pub use self::media_door::MediaDoor;
+pub(crate) use self::media_door::{MediaRefusal, admit_media};
 pub(crate) use self::media_embedding::MediaEmbedRefusal;
 #[cfg(unix)]
 pub(crate) use self::organs::organ_dir;
