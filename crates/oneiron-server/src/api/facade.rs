@@ -339,6 +339,12 @@ async fn facade_call_receipt(
             &refusal.body.error.message,
         ));
     }
+    if let Some(refusal) = &refusal {
+        result_digest = Some(oneiron::receipt::call_refusal_digest(
+            &refusal.body.error.code,
+            &refusal.body.error.message,
+        ));
+    }
     let outcome = match &refusal {
         Some(refusal) => CallOutcome::Refused {
             code: refusal.body.error.code.clone(),

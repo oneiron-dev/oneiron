@@ -253,29 +253,11 @@ impl WidenRecord {
     }
 }
 
-/// Each parent attempt's widen proposals the board has not approved (the
-/// Coach's `misalignment` count, OF-568). A proposal is a wider context the
-/// gate refused to grant directly; an approved one has landed and is not
-/// counted. Key: the parent attempt's bytes.
-pub(crate) fn unlanded_widens_by_parent(
-    vault: &crate::Vault,
-) -> Result<std::collections::BTreeMap<[u8; 16], u64>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let mut out = std::collections::BTreeMap::new();
-    for (_, record) in WIDEN.scan(&vault.store, &rtxn)? {
-        if record.landed.is_none() {
-            *out.entry(*record.request.intent.parent.as_bytes()).or_default() += 1;
-        }
-    }
-    Ok(out)
-}
-
 /// Each parent attempt's widen proposals raised at or after `since` that the
 /// board has not approved, pending or declined alike (the Coach's
 /// `misalignment` count, OF-568). A declined proposal is a board refusal and
 /// stays evidence; an approved one has landed, and an older one is outside
 /// the window. Key: the parent attempt's bytes.
-#[allow(dead_code)] // The Coach's widen_denial_findings switches to it.
 pub(crate) fn unlanded_widens_by_parent_since(
     vault: &crate::Vault,
     since: u64,
