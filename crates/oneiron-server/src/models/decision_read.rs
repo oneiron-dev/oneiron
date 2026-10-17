@@ -67,6 +67,8 @@ pub struct DecisionReadDoor {
     connector: PaidConnector,
     probe: Option<ProbeQuestions>,
     person_threshold: f64,
+    /// The ThinkThreshold row's start value; none on a door a host builds.
+    think_threshold: Option<f64>,
     /// The recipe the reader renders with, when it is this server's own.
     recipe: Option<Arc<DecisionReadRecipe>>,
 }
@@ -85,6 +87,7 @@ impl DecisionReadDoor {
             connector,
             probe,
             person_threshold,
+            think_threshold: None,
             recipe: None,
         }
     }
@@ -149,6 +152,14 @@ impl DecisionReadDoor {
     pub fn person_threshold(&self) -> f64 {
         self.person_threshold
     }
+
+    /// The ThinkThreshold row's configured start value, for the host's
+    /// `DecisionBandPolicy::set_think_threshold`. A door a host builds itself
+    /// has none: its paired readings stay on the receipt and route nothing.
+    #[must_use]
+    pub fn think_threshold(&self) -> Option<f64> {
+        self.think_threshold
+    }
 }
 
 /// The door `config` describes, its reads sent on `runtime`. `None` without
@@ -178,6 +189,7 @@ pub(super) fn bind(
         settings.recipe.probe().cloned(),
         settings.person_threshold,
     );
+    door.think_threshold = Some(settings.think_threshold);
     door.recipe = Some(Arc::clone(&settings.recipe));
     Ok(Some(door))
 }

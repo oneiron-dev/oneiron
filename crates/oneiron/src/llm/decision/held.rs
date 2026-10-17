@@ -22,6 +22,8 @@ pub struct HeldLadder {
     pub big: Option<Arc<dyn DecisionProvider>>,
     pub human: Arc<dyn HumanDecisionQueue>,
     pub human_pin: ProviderPin,
+    /// The host's paired question; see [`DecisionLadder::paired`].
+    pub paired: Option<DecisionQuestion>,
     pub person: Option<DecisionQuestion>,
     /// The host's presence question; see [`DecisionLadder::presence`].
     pub presence: Option<DecisionQuestion>,
@@ -44,6 +46,7 @@ impl HeldLadder {
                 model: "no-person".into(),
                 version: "1".into(),
             },
+            paired: None,
             person: None,
             presence: None,
         }
@@ -61,6 +64,7 @@ impl HeldLadder {
             human: self.human.as_ref(),
             human_pin: self.human_pin.clone(),
             ask_to: None,
+            paired: self.paired.as_ref(),
             person: self.person.as_ref(),
             presence: self.presence.as_ref(),
             correlation: None,

@@ -465,6 +465,7 @@ pub fn place_task(
         human: decisions.ladder.human,
         human_pin: decisions.ladder.human_pin.clone(),
         ask_to: decisions.ladder.ask_to,
+        paired: decisions.ladder.paired,
         person: decisions.ladder.person,
         presence: decisions.ladder.presence,
         correlation: decisions.ladder.correlation,
