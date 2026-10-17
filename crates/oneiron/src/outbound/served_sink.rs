@@ -66,6 +66,9 @@ const LINE_MAX_TEXT_UNITS: usize = 5_000;
 const LINE_REPLY_TOKEN_FRESH_SECS: u64 = 45;
 /// The prefix the LINE adapter stamps on a sender's provider user id.
 const LINE_USER_TARGET_PREFIX: &str = "line:user:";
+/// The prefixes a send names a LINE group or multi-person room by.
+const LINE_GROUP_TARGET_PREFIX: &str = "line:group:";
+const LINE_ROOM_TARGET_PREFIX: &str = "line:room:";
 /// LINE's answer to a reply token that is used or expired.
 const LINE_INVALID_REPLY_TOKEN: &str = "Invalid reply token";
 /// LINE's answer once the account has no messages left this month.
@@ -289,13 +292,17 @@ impl<'a> ServedChannelSink<'a> {
             Err(_) => return OutboundExecutionOutcome::failed("line_connection_unchecked"),
         };
         // Read before the door opens: the door holds the vault's writer.
+        let answered = self.answered_provider_event(request, LINE_CHANNEL);
         let reply_token = match mode {
             LineMode::Push => None,
-            LineMode::Reply | LineMode::ReplyOrPush => self.line_reply_token(request),
+            LineMode::Reply | LineMode::ReplyOrPush => answered
+                .as_ref()
+                .and_then(|body| fresh_line_reply_token(body, crate::unix_seconds_now())),
         };
         if mode == LineMode::Reply && reply_token.is_none() {
             return OutboundExecutionOutcome::failed("line_reply_token_unavailable");
         }
+        let destination = line_destination(answered.as_ref(), &request.intent.target);
         let mut outcome = None;
         let _door = self.vault.inject_secret_at_door(
             &secret.name,
@@ -308,6 +315,7 @@ impl<'a> ServedChannelSink<'a> {
                     request,
                     &text,
                     reply_token.as_deref(),
+                    destination.as_deref(),
                     mode,
                 ));
                 Ok(())
@@ -324,6 +332,7 @@ impl<'a> ServedChannelSink<'a> {
         request: &OutboundExecutionRequest<'_>,
         text: &str,
         reply_token: Option<&str>,
+        destination: Option<&str>,
         mode: LineMode,
     ) -> OutboundExecutionOutcome {
         let messages = serde_json::json!([{ "type": "text", "text": text }]);
@@ -339,13 +348,9 @@ impl<'a> ServedChannelSink<'a> {
                 }
             }
         }
-        let target = request.intent.target.as_str();
-        let to = target
-            .strip_prefix(LINE_USER_TARGET_PREFIX)
-            .unwrap_or(target);
-        if to.is_empty() || to.contains(':') {
+        let Some(to) = destination else {
             return OutboundExecutionOutcome::failed("line_target_unrecognized");
-        }
+        };
         self.line_count_push(token);
         let retry_key = line_retry_key(
             request
@@ -396,15 +401,6 @@ impl<'a> ServedChannelSink<'a> {
             }
         };
         serde_json::from_slice(&body).ok()
-    }
-
-    /// The fresh reply token of the inbound LINE event this send answers;
-    /// the archive keeps the token. `None` when the send answers no LINE
-    /// event, the event is not this send's sender's, or it is older than
-    /// [`LINE_REPLY_TOKEN_FRESH_SECS`]: the send pushes.
-    fn line_reply_token(&self, request: &OutboundExecutionRequest<'_>) -> Option<String> {
-        let body = self.answered_provider_event(request, LINE_CHANNEL)?;
-        fresh_line_reply_token(&body, crate::unix_seconds_now())
     }
 
     /// Tells the OF-520 port when this push takes the account past its plan's
@@ -569,6 +565,33 @@ fn slack_reply_thread(body: &serde_json::Value) -> Option<String> {
 
 /// The reply token an archived LINE event carries, while the event is
 /// younger than [`LINE_REPLY_TOKEN_FRESH_SECS`] by its own `timestamp` (ms).
+/// Where a LINE push goes: the group or room the answered message came
+/// from, as a Slack reply goes to its channel, else the target's user
+/// (`line:user:<id>`), group (`line:group:<id>`), room (`line:room:<id>`)
+/// or bare LINE id. `None` for a target LINE cannot address. A fresh reply
+/// token already answers in the message's own chat.
+fn line_destination(answered: Option<&serde_json::Value>, target: &str) -> Option<String> {
+    let chat = answered
+        .and_then(|body| body.pointer("/event/source"))
+        .and_then(|source| match source.get("type")?.as_str()? {
+            "group" => source.get("groupId")?.as_str(),
+            "room" => source.get("roomId")?.as_str(),
+            _ => None,
+        });
+    let to = match chat {
+        Some(chat) => chat,
+        None => [
+            LINE_USER_TARGET_PREFIX,
+            LINE_GROUP_TARGET_PREFIX,
+            LINE_ROOM_TARGET_PREFIX,
+        ]
+        .iter()
+        .find_map(|prefix| target.strip_prefix(prefix))
+        .unwrap_or(target),
+    };
+    (!to.is_empty() && !to.contains(':')).then(|| to.to_owned())
+}
+
 fn fresh_line_reply_token(value: &serde_json::Value, now: u64) -> Option<String> {
     let token = value.pointer("/event/replyToken")?.as_str()?.trim();
     let at = value.pointer("/event/timestamp")?.as_u64()? / 1000;
