@@ -254,7 +254,7 @@ async fn call(
         stream,
         brain,
         VoiceWireBindings {
-            door: Arc::clone(server.ai.models()),
+            door: server.media_door(),
             vault: Arc::clone(vault),
             render,
             sample_rate,

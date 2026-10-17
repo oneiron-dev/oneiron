@@ -86,6 +86,7 @@ pub(crate) use evidence_support::has_live_support_in_txn;
 pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 pub use history_handoff::*;
 pub use lexical_query_hint::*;
+pub(crate) use lifecycle::is_observed_preference;
 pub(crate) use machine_birth::SignedClaimBirth;
 pub use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 pub use predicate_grammar::*;
@@ -99,6 +100,7 @@ pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
 pub use scoped_read::*;
 pub(crate) use scoped_read::{claim_access_axes, invalidate_weave_digest_source_in_txn};
 pub use source_trust::*;
+pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker};
 pub(crate) use write_target::validate_claim_write_target_in_txn;
 
 #[cfg(test)]
