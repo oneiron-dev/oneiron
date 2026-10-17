@@ -11,6 +11,7 @@ use crate::code_run::{CodeRunDeterminism, SelfCall};
 use crate::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, SelfDispatchResponse,
+    StepCancellation,
 };
 use crate::error::{ArtifactError, Error, Result};
 use crate::skill::SkillRole;
@@ -103,6 +104,8 @@ fn matches_shape(value: &JsonValue, shape: &JsonValue) -> bool {
 /// The invocation witness names the entity the load door chose: the skill,
 /// or its open proposal while an exploration trial routes this attempt.
 /// An outcome is credited separately once the attempt has a terminal receipt.
+/// The skill runs under a token nothing but its owner's suspension stops;
+/// the engine host runs it under its caller's step token instead.
 #[expect(
     clippy::too_many_arguments,
     reason = "the caller lends its existing lease, runtime, host, and deterministic step identity"
@@ -119,6 +122,46 @@ pub fn execute_callable_skill(
     seq: u64,
     determinism: CodeRunDeterminism,
     at: u64,
+) -> Result<JsCodeModeStepOutcome> {
+    execute_callable_skill_cancellable(
+        vault,
+        leased,
+        skill,
+        executor,
+        args,
+        runtime,
+        host,
+        run_id,
+        seq,
+        determinism,
+        at,
+        &StepCancellation::never(),
+    )
+}
+
+/// [`execute_callable_skill`] under `parent`, the caller's step token
+/// (FIX 600). The invocation registers in the vault's live set before its
+/// final load, under a child of `parent`: a stop of the caller stops it,
+/// and its owner's suspension stops it alone. A cancelled invocation fails
+/// with [`crate::error::CodeError::CodeStepCancelled`] and writes no
+/// success witness.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the caller lends its existing lease, runtime, host, deterministic step identity and step token"
+)]
+pub(crate) fn execute_callable_skill_cancellable(
+    vault: &std::sync::Arc<Vault>,
+    leased: &AttemptRecord,
+    skill: &EntityId,
+    executor: &str,
+    args: &JsonValue,
+    runtime: &mut dyn JsCodeModeRuntime,
+    host: &mut dyn JsCodeModeHost,
+    run_id: EntityId,
+    seq: u64,
+    determinism: CodeRunDeterminism,
+    at: u64,
+    parent: &StepCancellation,
 ) -> Result<JsCodeModeStepOutcome> {
     // Validate before appending a manifest entry; failed argument admission
     // must not assert that the body was loaded.
@@ -142,6 +185,13 @@ pub fn execute_callable_skill(
         ));
     }
     crate::skill_reliability::validate_executor(executor)?;
+    // Registered before the final load: a suspension that commits later
+    // finds this entry, and one that committed earlier fails the load. The
+    // entry lives until the call has finished or failed.
+    let invocation = vault
+        .skill_invocations
+        .register(*skill, run_id, seq, parent);
+    let cancel = invocation.token();
     let loaded = vault.load_leased_callable_skill_pack(leased, skill, executor, at)?;
     let tier = callable_tier(vault, &loaded.record)?;
     let call = loaded
@@ -180,7 +230,7 @@ pub fn execute_callable_skill(
             ),
         ))?;
     }
-    let outcome = runtime.run_step(
+    let outcome = runtime.run_step_cancellable(
         JsCodeModeStep {
             run_id,
             seq,
@@ -191,6 +241,7 @@ pub fn execute_callable_skill(
             determinism,
         },
         &mut SkillHost(host),
+        cancel,
     )?;
     if !outcome.done {
         return Err(invalid("callable skill did not finish"));
@@ -200,6 +251,9 @@ pub fn execute_callable_skill(
     if !matches_shape(&output, &call.returns) {
         return Err(invalid("callable skill return differs from its contract"));
     }
+    // The call has finished: it leaves the live set unless a cancel landed
+    // first, which fails it with no success witness.
+    invocation.finish()?;
     crate::skill_reliability::record_callable_invocation(
         vault,
         leased,

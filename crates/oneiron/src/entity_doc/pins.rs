@@ -241,9 +241,11 @@ impl Vault {
             .map_err(|_| invalid("document registry poisoned"))?;
         let receipt = self.with_write_txn_grouped(|txn| {
             let owner_actor = super::forks::owner_in_txn(self, txn, owner)?;
-            // A held record keeps its history (OF-470).
+            // A held record keeps its history, and so does a pad whose world
+            // or sealed claim is held (OF-470).
             self.store
                 .reject_legal_hold_in_txn(txn, entity.as_bytes())?;
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, txn, &[*entity])?;
             let receipt_id = EntityId::now();
             super::admit_history_erase_in_txn(
                 self,
