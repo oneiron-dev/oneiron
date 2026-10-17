@@ -473,6 +473,52 @@ pub(crate) fn setting_value_scoped_in_txn(
     Ok(spec.seed)
 }
 
+/// Every owner row as stored, in key order: its scope, the row, and the
+/// owner who set it (32 hex), for the owner's list doors. A type row's key
+/// names its node only, so its scope reads `tree_version` 0: a type row
+/// matches its node at any tree version.
+///
+/// # Errors
+///
+/// A row that does not decode; storage errors.
+pub fn list_setting_rows(vault: &Vault) -> Result<Vec<(SettingScope, SettingRow, String)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = Vec::new();
+    for (stored_key, stored) in SETTING.scan(&vault.store, &rtxn)? {
+        let parts: Vec<&str> = stored_key.split('\0').collect();
+        let mode = match parts.get(1).copied() {
+            Some("seed") => SettingMode::Seed,
+            Some("pin") => SettingMode::Pin,
+            _ => continue,
+        };
+        let scope = match parts.as_slice() {
+            [_, _] => SettingScope::Vault,
+            [_, _, "project", hex] => match crate::entity_id::EntityId::from_hex(hex) {
+                Ok(project) => SettingScope::Project(project),
+                Err(_) => continue,
+            },
+            [_, _, "type", node] => SettingScope::Type(crate::learning::TypeRef {
+                node_id: (*node).to_owned(),
+                tree_version: 0,
+            }),
+            _ => continue,
+        };
+        out.push((
+            scope,
+            SettingRow {
+                key: parts[0].to_owned(),
+                mode,
+                value: stored.value,
+                weight_runs: stored.weight_runs,
+                at: stored.at,
+                why: stored.why,
+            },
+            stored.by,
+        ));
+    }
+    Ok(out)
+}
+
 pub(crate) fn owner_row_value(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
