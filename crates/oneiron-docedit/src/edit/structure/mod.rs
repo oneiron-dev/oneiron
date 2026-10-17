@@ -2,7 +2,10 @@
 //! passthrough"): `add_shape` from a preset, `delete_shape` under the
 //! animation and connector dependency rules, a legal `reparent` within one
 //! slide, and the slide-level `duplicate_slide` and `reorder_slides`
-//! (`slides/`).
+//! (`slides/`). The live-deck projector's verbs ride the same door
+//! (`arrange.rs`, `slides/lifecycle.rs`): a blank `add_slide` over a layout,
+//! `delete_slide`, a sibling `reorder_shape`, an empty `add_group` and a
+//! cross-slide `copy_to_slide`.
 //!
 //! Like a value edit, one structural edit is one checked operation on a copy
 //! of the package (`check.rs`, `slides/check.rs`): surviving shapes keep
@@ -10,6 +13,7 @@
 //! leaves the package as it was. New native and slide ids come from the
 //! caller's high-water mark (managed history), never from the surviving
 //! shapes or slides alone.
+mod arrange;
 mod check;
 mod slides;
 #[cfg(test)]
@@ -62,6 +66,49 @@ pub enum StructureEdit<'a> {
     },
     /// Every slide id, in the new order.
     ReorderSlides { order: &'a [u32] },
+    /// A blank slide over the slide layout `layout`, after the slide part
+    /// `after` in the slide list and its section (first for `None`).
+    AddSlide {
+        after: Option<&'a str>,
+        layout: &'a str,
+        /// The deck's slide-id high-water mark in managed history.
+        high_water: u32,
+        /// Derives the slide's `p14:creationId`.
+        seed: &'a [u8],
+    },
+    /// The slide leaves the slide list, its section and the presentation's
+    /// relationships; its part stays in the archive, unreachable. A custom
+    /// show that lists it, or another slide that links to it, refuses.
+    /// `expected` is the slide's render fingerprint as read.
+    DeleteSlide { slide: &'a str, expected: [u8; 32] },
+    /// The shape (and its members) to sibling position `index` among the
+    /// direct members of its own container: z-order, nothing else.
+    ReorderShape { target: Target<'a>, index: usize },
+    /// An empty group appended to the slide's shape tree, framed so its child
+    /// space is slide space.
+    AddGroup { slide: &'a str, group: NewGroup<'a> },
+    /// A copy of the shape (and its members) appended to the shape tree of
+    /// the slide `to`: every relationship it uses re-related from `to`, its
+    /// native ids drawn above `to`'s high-water mark (one new id per old
+    /// id), its creation ids kept unless `to` holds them. Glue to a shape
+    /// outside the copy is dropped; the source is left as it was.
+    CopyToSlide {
+        target: Target<'a>,
+        to: &'a str,
+        /// `to`'s shape-id high-water mark in managed history.
+        high_water: u32,
+        seed: &'a [u8],
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct NewGroup<'a> {
+    pub name: &'a str,
+    /// Slide EMU; the child offset and extent are the same.
+    pub offset: (i64, i64),
+    pub extent: (i64, i64),
+    pub high_water: u32,
+    pub seed: &'a [u8],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -116,6 +163,8 @@ enum Plan {
     Moved,
     Duplicated(slides::Duplicate),
     Reordered,
+    /// A projector verb; `arrange::verify` checks it from the effects.
+    Arranged,
 }
 
 impl StructureEdit<'_> {
@@ -124,7 +173,13 @@ impl StructureEdit<'_> {
         match self {
             Self::AddShape { slide, .. } => Some(slide),
             Self::DeleteShape { target, .. } | Self::Reparent { target, .. } => Some(target.slide),
-            Self::DuplicateSlide { .. } | Self::ReorderSlides { .. } => None,
+            Self::AddGroup { slide, .. } => Some(slide),
+            Self::ReorderShape { target, .. } => Some(target.slide),
+            Self::DuplicateSlide { .. }
+            | Self::ReorderSlides { .. }
+            | Self::AddSlide { .. }
+            | Self::DeleteSlide { .. }
+            | Self::CopyToSlide { .. } => None,
         }
     }
 }
@@ -162,8 +217,39 @@ pub fn structure_patch(
             seed,
         } => slides::duplicate(&mut next, &before, slide, expected, high_water, seed)?,
         StructureEdit::ReorderSlides { order } => slides::reorder(&mut next, &before, order)?,
+        StructureEdit::AddSlide {
+            after,
+            layout,
+            high_water,
+            seed,
+        } => slides::add_blank(&mut next, &before, after, layout, high_water, seed)?,
+        StructureEdit::DeleteSlide { slide, expected } => {
+            slides::delete(&mut next, &before, slide, expected)?
+        }
+        StructureEdit::ReorderShape { target, index } => {
+            let (at, shape) = locate(&before, &target)?;
+            arrange::reorder(&mut next, &before.slides[at], shape, index)?
+        }
+        StructureEdit::AddGroup { slide, group } => {
+            let view = before
+                .slides
+                .iter()
+                .find(|view| view.part == slide)
+                .ok_or(EditRefusal::Missing("slide"))?;
+            arrange::add_group(&mut next, view, &group)?
+        }
+        StructureEdit::CopyToSlide {
+            target,
+            to,
+            high_water,
+            seed,
+        } => {
+            let (at, shape) = locate(&before, &target)?;
+            arrange::copy_to_slide(&mut next, &before, at, shape, to, high_water, seed)?
+        }
     };
     let changed = match (&plan, *op) {
+        (Plan::Arranged, _) => arrange::verify(deck, &next, &before, op, &effects)?,
         (Plan::Duplicated(copy), _) => slides::duplicated(deck, &next, &before, op, copy)?,
         (Plan::Reordered, StructureEdit::ReorderSlides { order }) => {
             slides::reordered(deck, &next, &before, order)?

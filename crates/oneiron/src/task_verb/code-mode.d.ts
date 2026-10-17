@@ -102,6 +102,10 @@ declare namespace self {
     save(input: { expected_version?: string | null; files: { content: string; path: string }[]; id?: string | null }): Promise<unknown>;
   };
   const spawn: (input: { ask: string; intent_key: string; source: unknown }) => Promise<unknown>;
+  const team: {
+    record(input: { axis: "converge" | "diverge"; calls?: number | null; confessions?: number | null; coverage?: { cellsFilled: number; cellsTotal: number } | null; decidedBy: { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number }; members: string[]; roles?: Record<string, number> | null; spend?: number | null; spendCap?: number | null; teamRef: string }): Promise<unknown>;
+    start(input: { intentKey: string; members: { agent: string; briefing?: string | null; intentKey: string }[]; pattern: string; tournament?: string | null }): Promise<unknown>;
+  };
   const unfold: (input: { fold: string }) => Promise<unknown>;
 }
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
@@ -210,10 +214,14 @@ declare const vault: {
     propose(input: { compiled: unknown; intent_prompt: string; pack_content_hash: string; slot: object }): Promise<unknown>;
   };
   members: {
+    accept(input: { invitation: string; vault_id: number }): Promise<unknown>;
     add(input: { member: string; role?: string | null; vault_id: number }): Promise<unknown>;
     change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
+    decline(input: { invitation: string; vault_id: number }): Promise<unknown>;
+    invitations(input: { vault_id: number }): Promise<unknown>;
     leave(input: { vault_id: number }): Promise<unknown>;
     remove(input: { member: string; vault_id: number }): Promise<unknown>;
+    withdraw_invitation(input: { invitation: string; member: string; vault_id: number }): Promise<unknown>;
   };
   neighbors(input: { entity_ref: string; opts: object }): Promise<unknown>;
   notes: {

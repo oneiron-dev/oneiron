@@ -120,8 +120,13 @@ pub(super) fn materialize_entities_with_changes(
                 .flatten();
             let unborn = match EntityId::from_hex(key.as_ref()) {
                 Ok(id) if watches(vault, &id) => {
-                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
-                        .is_none()
+                    crate::ports::EntityStoreRead::port_entity_with_raw(
+                        &vault.store,
+                        wtxn,
+                        &id,
+                        |_| Ok(()),
+                    )?
+                    .is_none()
                 }
                 _ => false,
             };

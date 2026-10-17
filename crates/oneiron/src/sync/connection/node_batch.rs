@@ -51,6 +51,15 @@ impl SyncConnection {
                     }
                     UpdateVerdict::Portable => {}
                 }
+                // A window the home refused to grant again: the write waits
+                // queued, as offline, until a grant or sync-all sends it.
+                if !client.residence_granted(&update.window_key) {
+                    self.queue
+                        .push(&update.window_key, &update.update_bytes)
+                        .map_err(|error| error.to_string())?;
+                    updates.remove(0);
+                    continue;
+                }
                 // Check room before reserving a durable sequence. Excess work
                 // stays in the buffer for the next tick, never a per-op send.
                 let candidate = if opened {
