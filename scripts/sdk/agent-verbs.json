@@ -1401,6 +1401,40 @@
       "section": false
     },
     {
+      "name": "vault.settings.wake_policy.set",
+      "description": "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof.",
+      "input": "crate::policy_setting_doors::WakePolicySetRequest",
+      "output": "crate::policy_setting_doors::PolicyActionOutcome",
+      "call": "crate::policy_setting_doors::wake_policy_set_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.settings.inference_defaults",
+      "description": "Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling.",
+      "input": "EmptyRequest",
+      "output": "crate::policy_setting_doors::PolicyActionOutcome",
+      "call": "crate::policy_setting_doors::inference_defaults_embedded(memory)?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.settings.inference_defaults.replace",
+      "description": "Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling.",
+      "input": "crate::policy_setting_doors::InferenceDefaultsReplaceRequest",
+      "output": "crate::policy_setting_doors::PolicyActionOutcome",
+      "call": "crate::policy_setting_doors::inference_defaults_replace_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.lenses.propose",
       "description": "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it.",
       "input": "crate::lens::LensProposeRequest",
