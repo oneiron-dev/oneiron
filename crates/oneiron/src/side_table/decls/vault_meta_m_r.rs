@@ -172,6 +172,9 @@ side_tables! {
     ORIGIN_VISIBLE_REF: VaultMeta b"origin:visible_ref:v1:" Raw;
     /// Best-effort de-duplication lease for one authorized-outbound recovery sweep. Key: ().
     OUTBOUND_AUTHORIZED_RECOVERY_LEASE: VaultMeta b"outbound:authorized_recovery_lease:v1" Raw;
+    /// One connector call held for consent or governance, or waiting on its delivery: the exact
+    /// request a resume re-enters with (ONE-2510). Key: id16 (call ref).
+    OUTBOUND_CONNECTOR_CALL_PENDING: VaultMeta b"outbound:connector_call:v1:" Named;
     /// Hash of semantic send key -> (intent id hash32, reservation timestamp u64be). Key: hash32.
     OUTBOUND_DEDUPE_RESERVATION: VaultMeta b"outbound:dedupe:v1:" Raw;
     /// Intent id -> semantic send key's full `outbound:dedupe:v1:` key. Key: hash32.

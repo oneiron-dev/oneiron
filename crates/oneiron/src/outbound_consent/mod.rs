@@ -7,6 +7,7 @@
 //! the resolved endpoint checked here is the endpoint shown at grant time.
 
 mod authority;
+mod connector_call;
 mod execution;
 mod recovery;
 mod result_scrub;
@@ -20,6 +21,10 @@ mod tests;
 pub(crate) use self::authority::FrozenCallValidation;
 pub use self::authority::{
     FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization,
+};
+pub use self::connector_call::{
+    CONNECTOR_REPLY_MAX_BYTES, ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome,
+    ConnectorCallRequest, UntrustedToolResult,
 };
 pub use self::execution::ScopedMcpDispatchResult;
 // Test-only execution entry point: the durable lane is driven by recovery in
@@ -40,6 +45,7 @@ pub use self::scope::{
     ScopedMcpConsentDecision, ScopedMcpEscalationReason, ScopedMcpGrantRef,
     evaluate_scoped_mcp_call, evaluate_scoped_mcp_calls,
 };
+pub use self::tool_call::FrozenToolCallView;
 
 // The flat outbound_consent.rs module used to provide these names to the
 // sibling test module through `use super::*`: its own private crate import

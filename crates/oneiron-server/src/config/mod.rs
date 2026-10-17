@@ -2,6 +2,7 @@
 
 pub mod backup;
 pub mod browser;
+pub mod connectors;
 pub mod desktop;
 pub mod embedder;
 mod embedder_shape;
@@ -27,6 +28,7 @@ mod trusted_proxy;
 
 pub use backup::{BackupConfig, default_backup_dir};
 pub use browser::BrowserConfig;
+pub use connectors::{ConnectorHostConfig, ConnectorTransport};
 pub use desktop::DesktopConfig;
 pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,
