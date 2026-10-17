@@ -16950,12 +16950,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OfficialDreamerSeat",
+      "OfficialSeatDreamerProvider"
+     ],
+     "path": "src/dispatch_byoa/dreamer_provider.rs",
+     "purpose": "Registration of the named official seats as Dreamer providers (OF-137)",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ByoaError"
      ],
      "path": "src/dispatch_byoa/error.rs",
      "purpose": "Error enum, literal refusal reasons, result alias, and the invalid() constructor",
      "surface": {
-      "crate-vis": 48,
+      "crate-vis": 47,
       "enum": 1,
       "type": 1
      }
@@ -16990,7 +17004,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -17023,7 +17037,7 @@
      "surface": {
       "const": 5,
       "enum": 5,
-      "fn": 20,
+      "fn": 22,
       "struct": 14,
       "trait": 1
      }
@@ -17043,7 +17057,7 @@
      "purpose": "Named propose-only Dreamer runners over the existing foreign CLI sandbox",
      "surface": {
       "const": 3,
-      "fn": 3,
+      "fn": 5,
       "struct": 5,
       "trait": 1
      }
@@ -51147,7 +51161,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52192,7 +52206,7 @@
    },
    "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3156,
+   "source_files": 3157,
    "test_files": 903
   },
   "oneiron-android": {
@@ -65716,6 +65730,7 @@
       "RevokeArgs",
       "SeatCommand",
       "SeatLoginPlanArgs",
+      "SeatRunnerPolicyArgs",
       "SkillsPackArgs",
       "TokenAgentArgs",
       "TokenBootstrapArgs",
@@ -65731,7 +65746,7 @@
       "enum": 10,
       "fn": 3,
       "re-export": 10,
-      "struct": 21
+      "struct": 22
      }
     },
     {
@@ -66241,7 +66256,7 @@
      "path": "src/commands/seat.rs",
      "purpose": "`oneiron seat …`: the owner's official-seat sign-in surface (OF-375)",
      "surface": {
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -69377,11 +69392,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OfficialCliSeatExecutor",
+      "OfficialRunnerSeatSettings",
       "OfficialSeatDreamerExecutor",
+      "RunnerPolicySeatRow",
+      "RunnerPolicySurface",
+      "RunnerProviderRow",
       "RunnerSeatDreamerExecutor",
       "RunnerSeatPolicySettings",
       "RunnerSeatSettings",
@@ -69392,8 +69411,8 @@
      "path": "src/runtime/seat_login.rs",
      "purpose": "Host surface for official subscription seats (OF-375)",
      "surface": {
-      "fn": 6,
-      "struct": 8
+      "fn": 10,
+      "struct": 12
      }
     },
     {
@@ -70697,7 +70716,7 @@
     "runtime": {
      "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -70779,7 +70798,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 39,
+   "over_bar": 40,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 564,
    "test_files": 182
