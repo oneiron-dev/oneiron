@@ -156,7 +156,7 @@ pub use self::brief::{
     SkillOptimizeAuthor, SkillOptimizeBrief, optimize_brief, optimize_brief_for_principal_at,
     skill_optimize_call_purpose,
 };
-pub use self::decisions::{SkillOptimizeDecisions, SkillReplayPair};
+pub use self::decisions::{SkillOptimizeDecisions, SkillReplayPair, judgment_kind};
 pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
@@ -178,17 +178,17 @@ pub use self::job::{
     PROVENANCE_OPTIMIZE_RECEIPTS_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeOutcome,
     run_skill_optimize, run_skill_optimize_as, run_skill_optimize_for_resident,
 };
-pub(crate) use self::judge_swap::run_judge_swap;
+pub(crate) use self::judge_swap::{run_judge_swap, swap_case_ask};
 pub use self::judge_swap::{
-    JUDGE_SWAP_NOTIFICATION_PRODUCER, JudgeIncumbent, JudgeShadowAnswer, JudgeShadowCase,
-    JudgeShadowHost, JudgeSwapDisagreement, JudgeSwapPick, JudgeSwapPolicy, JudgeSwapReceipt,
-    JudgeSwapReport, JudgeSwapSettledBy, JudgeTieBreaker, judge_incumbent, judge_swap_policy,
-    judge_swap_receipts, pick_judge_swap_case, set_judge_swap_policy,
+    JUDGE_SWAP_NOTIFICATION_PRODUCER, JudgeIncumbent, JudgeOutcomeLink, JudgeShadowAnswer,
+    JudgeShadowCase, JudgeShadowHost, JudgeSwapDisagreement, JudgeSwapPick, JudgeSwapPolicy,
+    JudgeSwapReceipt, JudgeSwapReport, JudgeSwapSettledBy, JudgeTieBreaker, judge_incumbent,
+    judge_swap_policy, judge_swap_receipts, pick_judge_swap_case, set_judge_swap_policy,
 };
-pub(crate) use self::labels::take_digest_asks_in_txn;
+pub(crate) use self::labels::{judge_ask_room, take_digest_asks_in_txn};
 pub use self::labels::{
     JudgeAsk, JudgeAskReason, JudgeLabel, ask_judge_disagreement, ask_judge_uncertainty,
-    judge_label_anchor, record_judge_pick, set_judge_digest_minutes,
+    judge_digest_minutes, judge_label_anchor, record_judge_pick, set_judge_digest_minutes,
 };
 pub use self::offer::{
     ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck,

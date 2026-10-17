@@ -651,23 +651,27 @@
       "section": false,
       "binding": {
         "assemble": true,
-        "defaults": true,
         "args": [
           {
             "name": "limit",
             "kind": "limit",
             "default": 100
+          },
+          {
+            "name": "kinds",
+            "kind": "kinds"
           }
         ],
         "docs": {
-          "remote": "    /// Lists governance receipts, newest first.\n",
-          "ts": "/** Governance receipts, newest first. */",
-          "py": "Governance receipts, newest first."
+          "remote": "    /// Lists governance receipts, newest first: the gate decision ledger, or\n    /// the receipts of the named kinds.\n",
+          "ts": "/** Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds. */",
+          "py": "Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds."
         }
       },
       "uniffi": {
         "args": {
-          "limit": "u32"
+          "limit": "u32",
+          "kinds": "Option<Vec<String>>"
         },
         "output": "Vec<FacadeReceipt>"
       }
@@ -857,6 +861,46 @@
       }
     },
     {
+      "name": "vault.campaign.program.create",
+      "description": "Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns.",
+      "input": "crate::campaign::surface::CreateCampaignProgramRequest",
+      "output": "crate::campaign::surface::CampaignProgramRecord",
+      "call": "memory.campaign_program_create(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.campaign.program.read",
+      "description": "One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now.",
+      "input": "crate::campaign::surface::CampaignProgramReadRequest",
+      "output": "crate::campaign::surface::CampaignProgramReadResult",
+      "call": "memory.campaign_program_read(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.campaign.program.update",
+      "description": "Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops.",
+      "input": "crate::campaign::surface::UpdateCampaignProgramRequest",
+      "output": "crate::campaign::surface::CampaignProgramRecord",
+      "call": "memory.campaign_program_update(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.campaign.program.archive",
+      "description": "Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops.",
+      "input": "crate::campaign::surface::ArchiveCampaignProgramRequest",
+      "output": "crate::campaign::surface::CampaignProgramRecord",
+      "call": "memory.campaign_program_archive(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.weave.report",
       "description": "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role.",
       "input": "crate::claim::WeaveReportRequest",
@@ -905,6 +949,28 @@
       "input": "crate::claim::WeaveWrongLinkRequest",
       "output": "crate::claim::WeaveLinkCorrectionView",
       "call": "memory.weave_owner_wrong_link(&memory.embedded_owner(\"vault.weave.owner.link.wrong\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.weave.item.wrong",
+      "description": "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays.",
+      "input": "crate::claim::WeaveWrongItemRequest",
+      "output": "crate::claim::WeaveItemCorrectionView",
+      "call": "memory.weave_wrong_item(None, &memory.embedded_owner(\"vault.weave.item.wrong\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.weave.owner.item.wrong",
+      "description": "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays.",
+      "input": "crate::claim::WeaveWrongItemRequest",
+      "output": "crate::claim::WeaveItemCorrectionView",
+      "call": "memory.weave_owner_wrong_item(&memory.embedded_owner(\"vault.weave.owner.item.wrong\")?, &input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -1750,6 +1816,8 @@
       "input": "crate::task_verb::sdk::SecretUseRequest",
       "output": "crate::task_verb::sdk::SecretUseAnswer",
       "call": "crate::task_verb::sdk::use_secret_as_caller(memory, input)?",
+      "host_door": true,
+      "host_door_caller": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -2294,7 +2362,14 @@
         "spec": "$"
       },
       "mcp_scope": "unrestricted",
-      "section": true
+      "section": true,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "handle", "type": "crate::task_verb::TaskAskHandle"},
+          {"name": "step_key", "type": "String", "default": "sdk.wait"}
+        ]
+      }
     },
     {
       "name": "tasks.answer",
@@ -2310,7 +2385,14 @@
         "spec": "$"
       },
       "mcp_scope": "unrestricted",
-      "section": true
+      "section": true,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "handle", "type": "crate::task_verb::TaskAskHandle"},
+          {"name": "word", "type": "crate::task_verb::TaskAskWord"}
+        ]
+      }
     },
     {
       "name": "tasks.outcomes",
@@ -2328,7 +2410,13 @@
         "spec": "$"
       },
       "mcp_scope": "unrestricted",
-      "section": true
+      "section": true,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "handle", "field": "$", "type": "crate::task_verb::TaskAskHandle"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.list",
@@ -2339,7 +2427,8 @@
       "scope": "Read",
       "mcp_fields": {},
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {"generic": true, "args": []}
     },
     {
       "name": "vault.rooms.messages",
@@ -2361,7 +2450,15 @@
         "resume": "turn_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"},
+          {"name": "after", "type": "Option<String>"},
+          {"name": "limit", "type": "Option<usize>"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.participants",
@@ -2395,7 +2492,13 @@
         "room_ref": "room_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.find",
@@ -2420,7 +2523,15 @@
         "resume": "turn_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"},
+          {"name": "after", "type": "Option<String>"},
+          {"name": "limit", "type": "Option<usize>"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.get",
@@ -2437,7 +2548,14 @@
         "turn_ref": "turn_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"},
+          {"name": "turn_ref", "type": "String"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.trunk",
@@ -2454,7 +2572,14 @@
         "turn_ref": "turn_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"},
+          {"name": "turn_ref", "type": "String"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.reply_strips",
@@ -2481,7 +2606,14 @@
         "turn_ref": "turn_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"},
+          {"name": "turn_ref", "type": "String"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.speak",
@@ -2973,7 +3105,7 @@
     },
     {
       "name": "ai.video.poll",
-      "description": "Where a video job stands; a finished one answers with its clip, once.",
+      "description": "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it.",
       "input": "AiVideoJobRequest",
       "output": "crate::task_verb::sdk::AiVideoJob",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.poll\", &input)?",
@@ -5051,6 +5183,14 @@
       "name": "self.team.record",
       "input": "crate::team::TeamRecordInput",
       "output": "crate::team::TeamRunAnswer",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
+      "name": "self.team.submit",
+      "input": "crate::code_run::TeamSubmitInput",
+      "output": "crate::code_run::TeamSubmitAnswer",
       "scope": "Write",
       "context": "run",
       "effect": "Team"

@@ -174,6 +174,18 @@ impl OneironClient {
                 "vault.kv.namespaces" => {
                     remote_agent_verb_output::<Vec<Vec<String>>>(client, verb, &input)
                 }
+                "vault.campaign.program.create" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignProgramRecord,
+                >(client, verb, &input),
+                "vault.campaign.program.read" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignProgramReadResult,
+                >(client, verb, &input),
+                "vault.campaign.program.update" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignProgramRecord,
+                >(client, verb, &input),
+                "vault.campaign.program.archive" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignProgramRecord,
+                >(client, verb, &input),
                 "vault.weave.report" => {
                     remote_agent_verb_output::<oneiron::claim::WeaveReportView>(
                         client, verb, &input,
@@ -190,6 +202,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.weave.owner.link.wrong" => remote_agent_verb_output::<
                     oneiron::claim::WeaveLinkCorrectionView,
+                >(client, verb, &input),
+                "vault.weave.item.wrong" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveItemCorrectionView,
+                >(client, verb, &input),
+                "vault.weave.owner.item.wrong" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveItemCorrectionView,
                 >(client, verb, &input),
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
@@ -1344,14 +1362,16 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.export", value)
     }
-    /// Lists governance receipts, newest first.
+    /// Lists governance receipts, newest first: the gate decision ledger, or
+    /// the receipts of the named kinds.
     pub fn vault_receipts(
         &self,
         limit: usize,
+        kinds: &[String],
     ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
         let input = oneiron::task_verb::sdk::VaultReceiptsRequest {
             limit: Some(limit),
-            ..Default::default()
+            kinds: kinds.to_vec(),
         };
         oneiron::memory::caps::check_limit(
             input
@@ -1456,6 +1476,54 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.kv.namespaces", value)
     }
+    pub fn vault_campaign_program_create(
+        &self,
+        input: &oneiron::campaign::surface::CreateCampaignProgramRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignProgramRecord, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.program.create", value)
+    }
+    pub fn vault_campaign_program_read(
+        &self,
+        input: &oneiron::campaign::surface::CampaignProgramReadRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignProgramReadResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.program.read", value)
+    }
+    pub fn vault_campaign_program_update(
+        &self,
+        input: &oneiron::campaign::surface::UpdateCampaignProgramRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignProgramRecord, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.program.update", value)
+    }
+    pub fn vault_campaign_program_archive(
+        &self,
+        input: &oneiron::campaign::surface::ArchiveCampaignProgramRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignProgramRecord, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.program.archive", value)
+    }
     pub fn vault_weave_report(
         &self,
         input: &oneiron::claim::WeaveReportRequest,
@@ -1515,6 +1583,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.weave.owner.link.wrong", value)
+    }
+    pub fn vault_weave_item_wrong(
+        &self,
+        input: &oneiron::claim::WeaveWrongItemRequest,
+    ) -> Result<oneiron::claim::WeaveItemCorrectionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.item.wrong", value)
+    }
+    pub fn vault_weave_owner_item_wrong(
+        &self,
+        input: &oneiron::claim::WeaveWrongItemRequest,
+    ) -> Result<oneiron::claim::WeaveItemCorrectionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.owner.item.wrong", value)
     }
     pub fn vault_packs_put(
         &self,

@@ -13,24 +13,36 @@
 //! disagreements count. The owner's hand-test pick decides a case first, a
 //! settled outcome next, and the vault's tie-breaker policy the rest: a third
 //! judge from another model family, or for a floor axis the incumbent holding
-//! until an anchor speaks. A swap that later picks or outcomes contradict
-//! re-pins back. No original answer is rescored or rewritten, and every swap
-//! and every re-pin reaches the vault's owners.
+//! until an anchor speaks. A pick on a skill's case is a label in that skill's
+//! judge anchor. The outcome a case settles on follows the question it asked:
+//! held-out wins for a score, the axis's anchored observations for a goal
+//! axis, the sealed audit for an honesty finding, and the responsible role's
+//! answer for a tradeoff. Nothing settles a blind preference or a structural
+//! or contrastive audit: only a pick decides those. A swap that later picks
+//! or outcomes contradict re-pins back. No original answer is
+//! rescored or rewritten, and every swap and every re-pin reaches the vault's
+//! owners.
 use std::borrow::Borrow;
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::learning::{
-    DivergenceCase, LearningCell, LearningPredicate, Retest, RetestScore, TakeoverVerdict,
-    judge_takeover_verdict, learning_estimate, record_judge_conversion, record_retest,
-    withdraw_judge_conversion,
+    DivergenceCase, LearningCell, LearningPredicate, Observation, Retest, RetestScore,
+    TakeoverVerdict, judge_takeover_verdict, learning_estimate, record_judge_conversion,
+    record_retest, withdraw_judge_conversion,
 };
 use crate::llm::decision::DecisionAnswer;
-use crate::skill_optimize::{GoalAxisKind, skill_edit_goal};
+use crate::self_heal::audit::SealCheckKind;
+use crate::skill_optimize::{
+    GoalAxisKind, JudgeLabel, SkillEditDisposition, TradeoffRung, judge_label_anchor,
+    skill_edit_goal, skill_edit_verdicts_for_proposal,
+};
 use crate::{EntityId, Error, Result, Vault};
 
 /// Kept judgments one pass reads, newest first.
@@ -71,6 +83,10 @@ pub struct JudgeShadowCase {
     /// The judge that answered it, `model@version`.
     pub judge: String,
     pub answer: DecisionAnswer,
+    /// The wording key it was asked under (`score`, `honesty`,
+    /// `axis.<name>`, ...; see [`crate::skill_optimize::judgment_kind`]); the
+    /// outcome that settles it is read by it. `None` when the host can't tell.
+    pub kind: Option<String>,
     /// The typed question, as hex, and when it was asked: a hand-test finds
     /// the case in the host's journal by them.
     pub question: String,
@@ -187,24 +203,53 @@ pub enum JudgeSwapSettledBy {
     Open,
 }
 
+/// Where a disagreement's settled outcome is read, by the question it asked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum JudgeOutcomeLink {
+    /// A whole-skill or task-success score: the share of these held-out
+    /// receipts the skill won.
+    HeldOut {
+        skill: String,
+        receipts: Vec<String>,
+    },
+    /// A named or live goal axis: the share of these receipts whose anchored
+    /// observation on the axis succeeded.
+    Axis {
+        skill: String,
+        axis: String,
+        receipts: Vec<String>,
+    },
+    /// An honesty finding: whether the run's sealed audit found a flaw its
+    /// confession hid.
+    Audit { receipt: String },
+    /// A tradeoff call: the responsible person's or role's answer to the ask
+    /// on exactly this question.
+    Tradeoff { proposal: String, digest: String },
+}
+
 /// One case the two judges answered differently.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JudgeSwapDisagreement {
     pub case_ref: String,
-    /// The typed question, as hex, and when it was asked.
+    /// The typed question, as hex, its wording key, and when it was asked.
     pub question: String,
+    pub kind: Option<String>,
     pub asked_at: u64,
     pub source_family: String,
     /// The case judged a floor axis.
     pub floor: bool,
+    /// The skill the case judged, as hex: a pick on it is a label in that
+    /// skill's judge anchor.
+    pub skill: Option<String>,
     /// Each judge's answer, the incumbent's first.
     pub answers: Vec<JudgeShadowAnswer>,
-    /// The skill, as hex, and the held-out receipts a settled outcome is
-    /// read from; empty when the case has none to settle.
-    pub outcome_skill: Option<String>,
-    pub outcome_receipts: Vec<String>,
-    /// The share of those receipts the skill won, once all of them settled.
-    pub outcome: Option<f64>,
+    /// Where the settled outcome is read; `None` when the case's question
+    /// has none.
+    pub outcome_link: Option<JudgeOutcomeLink>,
+    /// The settled outcome, as an answer to the case's question, once it
+    /// settled.
+    pub outcome: Option<DecisionAnswer>,
     /// The third judge's answer, when the tie-breaker asked one.
     pub tie_breaker: Option<JudgeShadowAnswer>,
     /// The judge whose answer the case sided with; `None` while open.
@@ -240,7 +285,8 @@ pub struct JudgeSwapReceipt {
 }
 
 /// The owner's hand-test answer to one disagreement: the judge whose answer
-/// is right. It overrides any outcome or tie-breaker on the case.
+/// is right. It overrides any outcome or tie-breaker on the case, and like
+/// every calibration label it is final.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JudgeSwapPick {
     pub case_ref: String,
@@ -430,9 +476,9 @@ fn shadow(
             noise.map(crate::learning::Estimate::mean),
         ),
     };
-    let mut outcomes = Outcomes::default();
+    let mut anchors = Anchors::default();
     for (_, case) in &mut disagreements {
-        anchor(vault, &pair, &mut outcomes, case)?;
+        anchor(vault, &pair, &mut anchors, case)?;
     }
     let mut arbitrated = false;
     match verdict {
@@ -536,10 +582,10 @@ fn recheck(
         return Ok(None);
     };
     let pair = pair_tag(previous, &incumbent.judge);
-    let mut outcomes = Outcomes::default();
+    let mut anchors = Anchors::default();
     let mut disagreements = swap.disagreements.clone();
     for case in &mut disagreements {
-        anchor(vault, &pair, &mut outcomes, case)?;
+        anchor(vault, &pair, &mut anchors, case)?;
     }
     if anchored(disagreements.iter(), previous) <= anchored(disagreements.iter(), &incumbent.judge)
     {
@@ -579,13 +625,14 @@ fn disagreement(
     case: &JudgeShadowCase,
     answer: JudgeShadowAnswer,
 ) -> Result<JudgeSwapDisagreement> {
-    let (outcome_skill, outcome_receipts) = outcome_link(&case.state).unzip();
     Ok(JudgeSwapDisagreement {
         case_ref: case.case_ref.clone(),
         question: case.question.clone(),
+        kind: case.kind.clone(),
         asked_at: case.asked_at,
         source_family: case.source_family.clone(),
         floor: judged_floor(vault, &case.state)?,
+        skill: judged_skill(&case.state),
         answers: vec![
             JudgeShadowAnswer {
                 judge: incumbent.to_owned(),
@@ -593,8 +640,10 @@ fn disagreement(
             },
             answer,
         ],
-        outcome_skill,
-        outcome_receipts: outcome_receipts.unwrap_or_default(),
+        outcome_link: case
+            .kind
+            .as_deref()
+            .and_then(|kind| outcome_link(kind, &case.state)),
         outcome: None,
         tie_breaker: None,
         sided_with: None,
@@ -607,20 +656,18 @@ fn disagreement(
 fn anchor(
     vault: &Vault,
     pair: &str,
-    outcomes: &mut Outcomes,
+    anchors: &mut Anchors,
     case: &mut JudgeSwapDisagreement,
 ) -> Result<()> {
-    if let Some(pick) = load::<JudgeSwapPick>(vault, &pick_key(pair, &case.case_ref))?
-        && case.answers.iter().any(|answer| answer.judge == pick.judge)
-    {
-        case.sided_with = Some(pick.judge);
+    if let Some(judge) = anchors.picked(vault, pair, case)? {
+        case.sided_with = Some(judge);
         case.settled_by = JudgeSwapSettledBy::Pick;
         return Ok(());
     }
-    if let Some(skill) = &case.outcome_skill {
-        case.outcome = outcomes.rate(vault, skill, &case.outcome_receipts)?;
-        if let Some(rate) = case.outcome
-            && let Some(judge) = sides_with(&case.answers, &DecisionAnswer::Score(rate))
+    if let Some(link) = &case.outcome_link {
+        case.outcome = anchors.settled(vault, link, &case.answers[0].answer)?;
+        if let Some(outcome) = &case.outcome
+            && let Some(judge) = sides_with(&case.answers, outcome)
         {
             case.sided_with = Some(judge);
             case.settled_by = JudgeSwapSettledBy::Outcome;
@@ -729,26 +776,67 @@ where
     )
 }
 
-/// The skill and held-out receipts whose settled outcome bears on a score
-/// case: a whole-skill score on its held-out runs. An axis, an honesty
-/// objective, an audit or a pair has none.
-fn outcome_link(state: &Value) -> Option<(String, Vec<String>)> {
-    if state.get("axis").is_some() || state.get("objective").is_some() {
-        return None;
+/// Where the settled outcome of a case asked under `kind` is read; `None`
+/// for a blind preference and a structural or contrastive audit, which
+/// nothing settles, and for a state that lacks what its kind reads.
+fn outcome_link(kind: &str, state: &Value) -> Option<JudgeOutcomeLink> {
+    let text = |value: &Value, field: &str| value.get(field)?.as_str().map(str::to_owned);
+    let receipts = |value: &Value| {
+        value
+            .get("held_out_receipts")?
+            .as_array()?
+            .iter()
+            .map(|receipt| receipt.as_str().map(str::to_owned))
+            .collect::<Option<Vec<String>>>()
+            .filter(|receipts| !receipts.is_empty())
+    };
+    match kind {
+        "score" | "task_success" => Some(JudgeOutcomeLink::HeldOut {
+            skill: text(state, "skill")?,
+            receipts: receipts(state)?,
+        }),
+        "live_axis" => {
+            let case = state.get("case")?;
+            Some(JudgeOutcomeLink::Axis {
+                skill: text(case, "skill")?,
+                axis: text(state.get("axis")?, "name")?,
+                receipts: receipts(case)?,
+            })
+        }
+        "honesty" => Some(JudgeOutcomeLink::Audit {
+            receipt: text(state, "receipt")?,
+        }),
+        "tradeoff" => Some(JudgeOutcomeLink::Tradeoff {
+            proposal: text(state.get("question")?, "proposal")?,
+            digest: text(state, "digest")?,
+        }),
+        // `axis.<name>`; a preference, structural or contrastive case has
+        // none.
+        _ => {
+            let axis = kind.strip_prefix("axis.")?;
+            Some(JudgeOutcomeLink::Axis {
+                skill: text(state, "skill")?,
+                axis: axis.to_owned(),
+                receipts: receipts(state)?,
+            })
+        }
     }
-    let skill = state.get("skill")?.as_str()?.to_owned();
-    let receipts = state
-        .get("held_out_receipts")?
-        .as_array()?
-        .iter()
-        .map(|receipt| receipt.as_str().map(str::to_owned))
-        .collect::<Option<Vec<String>>>()?;
-    (!receipts.is_empty()).then_some((skill, receipts))
+}
+
+/// The skill a case judged, as hex: a whole-skill, axis or honesty case
+/// names it, a live-axis case in its nested case.
+fn judged_skill(state: &Value) -> Option<String> {
+    state
+        .get("skill")
+        .or_else(|| state.get("case")?.get("skill"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 /// Whether a case judged a floor axis: an honesty objective always does; a
-/// named or live axis does when the skill's goal declares it a floor, and
-/// when that goal can no longer be read.
+/// named or live axis does when its goal declared it a floor when it was
+/// asked, else when the skill's goal declares it one now, and when that goal
+/// can no longer be read.
 fn judged_floor(vault: &Vault, state: &Value) -> Result<bool> {
     if state.get("objective").is_some() {
         return Ok(true);
@@ -759,12 +847,13 @@ fn judged_floor(vault: &Vault, state: &Value) -> Result<bool> {
     else {
         return Ok(false);
     };
-    let skill = state
-        .get("skill")
-        .or_else(|| state.get("case")?.get("skill"))
-        .and_then(Value::as_str)
-        .and_then(|hex| EntityId::from_hex(hex).ok());
-    let Some(skill) = skill else {
+    if let Some(kind) = state
+        .get("axis_kind")
+        .and_then(|kind| GoalAxisKind::deserialize(kind).ok())
+    {
+        return Ok(kind == GoalAxisKind::Floor);
+    }
+    let Some(skill) = judged_skill(state).and_then(|hex| EntityId::from_hex(&hex).ok()) else {
         return Ok(true);
     };
     Ok(skill_edit_goal(vault, &skill).map_or(true, |goal| {
@@ -775,15 +864,93 @@ fn judged_floor(vault: &Vault, state: &Value) -> Result<bool> {
     }))
 }
 
-/// Settled held-out outcomes, read once per skill in a pass.
+/// Picks and settled outcomes, each source read once in a pass.
 #[derive(Default)]
-struct Outcomes(BTreeMap<String, BTreeMap<String, bool>>);
+struct Anchors {
+    /// Each skill's held-out wins, by receipt.
+    won: BTreeMap<String, BTreeMap<String, bool>>,
+    /// Each skill's swap labels between the pass's two judges.
+    labels: BTreeMap<EntityId, Vec<JudgeLabel>>,
+}
 
-impl Outcomes {
+impl Anchors {
+    /// The judge the newest owner's pick on `case` names, if any.
+    fn picked(
+        &mut self,
+        vault: &Vault,
+        pair: &str,
+        case: &JudgeSwapDisagreement,
+    ) -> Result<Option<String>> {
+        let named = |judge: &String| case.answers.iter().any(|answer| &answer.judge == judge);
+        let Some(skill) = case
+            .skill
+            .as_deref()
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+        else {
+            let prefix = format!("{}:", pick_key(pair, &case.case_ref));
+            let mut newest: Option<JudgeSwapPick> = None;
+            for key in vault.sync_state_keys_with_prefix(&prefix)? {
+                if let Some(pick) = load::<JudgeSwapPick>(vault, &key)?
+                    && newest.as_ref().is_none_or(|newest| pick.at > newest.at)
+                {
+                    newest = Some(pick);
+                }
+            }
+            return Ok(newest.map(|pick| pick.judge).filter(named));
+        };
+        let labels = match self.labels.entry(skill) {
+            Entry::Occupied(kept) => kept.into_mut(),
+            Entry::Vacant(slot) => {
+                slot.insert(judge_label_anchor(vault, skill, &label_campaign(pair))?)
+            }
+        };
+        Ok(labels
+            .iter()
+            .filter(|label| label.ask.evidence == case.case_ref)
+            .max_by_key(|label| label.picked_at)
+            .and_then(|label| {
+                case.answers
+                    .iter()
+                    .find(|answer| label_option(answer) == label.chosen)
+            })
+            .map(|answer| answer.judge.clone()))
+    }
+
+    /// `link`'s settled outcome, as an answer shaped like `like`; `None`
+    /// until it settled.
+    fn settled(
+        &mut self,
+        vault: &Vault,
+        link: &JudgeOutcomeLink,
+        like: &DecisionAnswer,
+    ) -> Result<Option<DecisionAnswer>> {
+        Ok(match link {
+            JudgeOutcomeLink::HeldOut { skill, receipts } => self
+                .held_out_rate(vault, skill, receipts)?
+                .map(|rate| shaped(like, rate)),
+            JudgeOutcomeLink::Axis {
+                skill,
+                axis,
+                receipts,
+            } => axis_rate(vault, skill, axis, receipts)?.map(|rate| shaped(like, rate)),
+            JudgeOutcomeLink::Audit { receipt } => {
+                hidden_flaw(vault, receipt)?.map(DecisionAnswer::Noul)
+            }
+            JudgeOutcomeLink::Tradeoff { proposal, digest } => {
+                tradeoff_answer(vault, proposal, digest)?.map(DecisionAnswer::Choice)
+            }
+        })
+    }
+
     /// The share of `receipts` the skill won; `None` until every one of
     /// them has settled.
-    fn rate(&mut self, vault: &Vault, skill: &str, receipts: &[String]) -> Result<Option<f64>> {
-        if !self.0.contains_key(skill) {
+    fn held_out_rate(
+        &mut self,
+        vault: &Vault,
+        skill: &str,
+        receipts: &[String],
+    ) -> Result<Option<f64>> {
+        if !self.won.contains_key(skill) {
             let mut won = BTreeMap::new();
             if let Ok(id) = EntityId::from_hex(skill) {
                 let txn = vault.store.env.read_txn()?;
@@ -791,9 +958,9 @@ impl Outcomes {
                     vault, &txn, &id,
                 )?);
             }
-            self.0.insert(skill.to_owned(), won);
+            self.won.insert(skill.to_owned(), won);
         }
-        let won = &self.0[skill];
+        let won = &self.won[skill];
         let mut wins = 0_u32;
         for receipt in receipts {
             match won.get(receipt) {
@@ -802,6 +969,106 @@ impl Outcomes {
             }
         }
         Ok(Some(f64::from(wins) / f64::from(count(receipts.len()))))
+    }
+}
+
+/// The share of `receipts` whose anchored observation on the skill's `axis`
+/// succeeded: a person's verdict, a world outcome or an audit, never a
+/// model's judgment. `None` until each receipt has one, and while two
+/// observations of one receipt disagree.
+fn axis_rate(vault: &Vault, skill: &str, axis: &str, receipts: &[String]) -> Result<Option<f64>> {
+    let Ok(skill) = EntityId::from_hex(skill) else {
+        return Ok(None);
+    };
+    let txn = vault.store.env.read_txn()?;
+    let cells: Vec<[u8; 32]> =
+        crate::learning::evidence::cells_for_subject_in_txn(vault, &txn, &skill)?
+            .into_iter()
+            .filter(|row| {
+                row.cell.predicate == LearningPredicate::Reliability
+                    && row.cell.axis.as_deref() == Some(axis)
+            })
+            .map(|row| row.cell.digest())
+            .collect();
+    let mut wins = 0_u32;
+    for receipt in receipts {
+        let mut seen = BTreeSet::new();
+        for digest in &cells {
+            if let Some(row) = crate::learning::evidence::EVIDENCE.get(
+                &vault.store,
+                &txn,
+                &(*digest, receipt.clone()),
+            )? && !row.on_judge_model
+                && let Observation::Success(success) = row.observation
+            {
+                seen.insert(success);
+            }
+        }
+        match (seen.len(), seen.first()) {
+            (1, Some(success)) => wins += u32::from(*success),
+            _ => return Ok(None),
+        }
+    }
+    Ok(Some(f64::from(wins) / f64::from(count(receipts.len()))))
+}
+
+/// Whether the run behind `receipt` (`attempt:<32 hex>`) hid a flaw, by its
+/// sealed audit: yes once a check found a flaw its confession didn't
+/// disclose, no once a random audit checked every objective and found none
+/// hidden. `None` before either.
+fn hidden_flaw(vault: &Vault, receipt: &str) -> Result<Option<bool>> {
+    let Some(attempt) = receipt
+        .strip_prefix("attempt:")
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+    else {
+        return Ok(None);
+    };
+    let Some(seal) = vault.sealed_attempt_receipt(AttemptId::from_bytes(attempt.as_bytes())?)?
+    else {
+        return Ok(None);
+    };
+    if crate::learning::honesty::seal_assessment(&seal).weighted_hidden_flaws > 0.0 {
+        return Ok(Some(true));
+    }
+    let audited = seal
+        .checks
+        .iter()
+        .any(|check| check.request.kind == SealCheckKind::RandomAudit && check.outcome.is_some());
+    Ok(audited.then_some(false))
+}
+
+/// The answer the responsible person or role gave the tradeoff ask on
+/// `proposal` whose question had `digest`: `approve` or `reject`. `None`
+/// while unanswered, and for a ruling by a preference rule or a judge.
+fn tradeoff_answer(vault: &Vault, proposal: &str, digest: &str) -> Result<Option<String>> {
+    let Ok(proposal) = EntityId::from_hex(proposal) else {
+        return Ok(None);
+    };
+    Ok(skill_edit_verdicts_for_proposal(vault, &proposal)?
+        .into_iter()
+        .rev()
+        .filter(|verdict| verdict.displaced_by_revision.is_none())
+        .find_map(|verdict| {
+            let resolution = verdict.tradeoff_resolution.as_ref()?;
+            if resolution.evidence != digest
+                || !matches!(resolution.rung, TradeoffRung::Person | TradeoffRung::Role)
+            {
+                return None;
+            }
+            match verdict.disposition {
+                SkillEditDisposition::AcceptedTradeoff => Some("approve".to_owned()),
+                SkillEditDisposition::RejectedTradeoff => Some("reject".to_owned()),
+                _ => None,
+            }
+        }))
+}
+
+/// A settled share as an answer to the case's question: the share itself
+/// for a score, whether it is at least half for a yes-or-no.
+fn shaped(like: &DecisionAnswer, rate: f64) -> DecisionAnswer {
+    match like {
+        DecisionAnswer::Noul(_) => DecisionAnswer::Noul(rate >= 0.5),
+        _ => DecisionAnswer::Score(rate),
     }
 }
 
@@ -896,13 +1163,17 @@ pub fn set_judge_swap_policy(
 /// The owner's hand-test pick on one disagreement of the swap `receipt`
 /// names: `judge`'s answer is right. It decides the case over any outcome or
 /// tie-breaker in every later pass between the same two judges, and a pick
-/// that contradicts a takeover can re-pin it back. A later pick replaces it.
+/// that contradicts a takeover can re-pin it back. On a skill's case the pick
+/// is a label in that skill's judge anchor, delivered by the swap's notice.
+/// Like every calibration label it is final: the same pick again returns it,
+/// and another one fails. Each owner picks once; the newest owner's pick
+/// decides.
 ///
 /// # Errors
 ///
 /// A credential that no longer names a live owner, an unknown receipt, a
-/// case the swap did not disagree on, a judge that answered neither side, or
-/// storage errors.
+/// case the swap did not disagree on, a judge that answered neither side, a
+/// pick that differs from this owner's earlier one, or storage errors.
 pub fn pick_judge_swap_case(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -924,10 +1195,54 @@ pub fn pick_judge_swap_case(
         .ok_or(Error::InvalidClaimBody(
             "the swap did not disagree on that case",
         ))?;
-    if !case.answers.iter().any(|answer| answer.judge == judge) {
+    let Some(chosen) = case.answers.iter().position(|answer| answer.judge == judge) else {
         return Err(Error::InvalidClaimBody(
             "a pick names one of the two judges",
         ));
+    };
+    let pair = pair_tag(&swap.from_judge, &swap.to_judge);
+    if let Some(skill) = case
+        .skill
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+        && let [first, second] = case.answers.as_slice()
+    {
+        let campaign = label_campaign(&pair);
+        let options = [label_option(first), label_option(second)];
+        if judge_label_anchor(vault, skill, &campaign)?
+            .iter()
+            .any(|label| {
+                label.ask.responsible == by
+                    && label.ask.evidence == case.case_ref
+                    && label.chosen != options[chosen]
+            })
+        {
+            return Err(Error::InvalidClaimBody("a hand-test pick is final"));
+        }
+        let label = super::labels::record_judge_swap_label(
+            vault,
+            owner,
+            skill,
+            &campaign,
+            &case.case_ref,
+            [&options[0], &options[1]],
+            chosen == 1,
+            swap.at,
+            at,
+        )?;
+        return Ok(JudgeSwapPick {
+            case_ref: case.case_ref.clone(),
+            judge: judge.to_owned(),
+            by: by.to_hex(),
+            at: label.picked_at,
+        });
+    }
+    let key = format!("{}:{}", pick_key(&pair, &case.case_ref), by.to_hex());
+    if let Some(earlier) = load::<JudgeSwapPick>(vault, &key)? {
+        if earlier.judge != judge {
+            return Err(Error::InvalidClaimBody("a hand-test pick is final"));
+        }
+        return Ok(earlier);
     }
     let pick = JudgeSwapPick {
         case_ref: case.case_ref.clone(),
@@ -935,9 +1250,38 @@ pub fn pick_judge_swap_case(
         by: by.to_hex(),
         at,
     };
-    let pair = pair_tag(&swap.from_judge, &swap.to_judge);
-    save(vault, &pick_key(&pair, &pick.case_ref), &pick)?;
+    save(vault, &key, &pick)?;
     Ok(pick)
+}
+
+/// The label campaign a pair of judges' swap picks are kept under.
+fn label_campaign(pair: &str) -> String {
+    format!("judge_swap:{pair}")
+}
+
+/// One judge's answer as a label option: the judge and its answer.
+fn label_option(answer: &JudgeShadowAnswer) -> String {
+    let said = serde_json::to_string(&answer.answer).unwrap_or_default();
+    format!("{}: {said}", answer.judge)
+}
+
+/// The calibration ask a pick on `case` answers, the question its hand-test
+/// asks: the skill whose anchor the label joins, the pair's label campaign,
+/// and the two judges' answers as options, the incumbent's first. Its
+/// evidence is the case's ref. `None` when the case names no skill.
+pub(crate) fn swap_case_ask(
+    swap: &JudgeSwapReceipt,
+    case: &JudgeSwapDisagreement,
+) -> Option<(EntityId, String, [String; 2])> {
+    let skill = case
+        .skill
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok())?;
+    let [first, second] = case.answers.as_slice() else {
+        return None;
+    };
+    let campaign = label_campaign(&pair_tag(&swap.from_judge, &swap.to_judge));
+    Some((skill, campaign, [label_option(first), label_option(second)]))
 }
 
 /// The same answer, or two scores within [`SCORE_AGREEMENT`].

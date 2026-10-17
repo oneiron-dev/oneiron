@@ -97,7 +97,7 @@ const HOST_FACETS: [&str; 6] = [
     COACH_TRADEOFF_ROUTE_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 7] = [
+const MAINTENANCE_FACETS: [&str; 8] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -105,6 +105,7 @@ const MAINTENANCE_FACETS: [&str; 7] = [
     COACH_RESEARCH_SELECT_FACET,
     COACH_LEARNING_SWEEP_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
+    super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 const READ_HARDENING_RUNS: usize = 256;
@@ -395,7 +396,9 @@ impl Vault {
     }
 
     /// Records what the receipts since showed against one offer's promise,
-    /// under the leased `coach.offer_check` attempt its check date queued.
+    /// under the leased `coach.offer_check` attempt its check date queued. A
+    /// check that read whether the promise held is an outcome for the
+    /// Coach's own offer record; an unknown one is none.
     pub fn run_coach_offer_check(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -404,7 +407,19 @@ impl Vault {
     ) -> Result<crate::skill_optimize::OfferCheck> {
         self.require_coach_attempt(attempt, COACH_OFFER_CHECK_FACET)?;
         let offer = offer_check_target(&attempt.status.payload.input)?;
-        crate::skill_optimize::record_offer_check(self, &offer, input, now)
+        let check = crate::skill_optimize::record_offer_check(self, &offer, input, now)?;
+        if let Some(held) = check.held {
+            super::coach_learning::record_coach_outcome(
+                self,
+                super::coach_learning::COACH_OFFER_AXIS,
+                format!("offer_check:{}", check.id.to_hex()),
+                check.at,
+                crate::learning::Anchor::WorldOutcome,
+                held,
+                now,
+            )?;
+        }
+        Ok(check)
     }
 
     /// The leased attempt is this facet's, stamped for the Coach.

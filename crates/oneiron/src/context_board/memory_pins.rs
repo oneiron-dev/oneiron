@@ -56,6 +56,29 @@ impl MemoriesSection {
         Ok(receipts)
     }
 
+    /// Pins rows by entity id, as a retrieval's result refs name them, under
+    /// `reader`'s ceiling and `disclosure`'s clamp, as a short-ref pin reads.
+    /// Each id returns its receipt, withheld or missing ones included.
+    pub fn include_pinned_ids_with_disclosure(
+        &mut self,
+        reader: &ScopedRead<'_>,
+        ids: &[crate::EntityId],
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+    ) -> Result<Vec<ScopedReadReceipt>> {
+        let mut receipts = Vec::with_capacity(ids.len());
+        let mut pins = std::collections::BTreeSet::<String>::new();
+        for id in ids {
+            let (receipt, row) = pinned_row(reader, PointRead::id(*id), None, disclosure)?;
+            receipts.push(receipt);
+            if let Some(row) = row.filter(|row| pins.insert(row.id.clone())) {
+                self.rows.retain(|old| old.id != row.id);
+                self.rows.push(row);
+            }
+        }
+        self.refinish();
+        Ok(receipts)
+    }
+
     /// Re-runs the projection's ordering and budget over the current rows.
     pub(super) fn refinish(&mut self) {
         *self = finish_projection(
