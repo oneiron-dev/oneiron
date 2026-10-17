@@ -794,7 +794,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/checkout/lease/mod.rs` | src | s | 3 re-export · 2 crate-vis | — | — |
 | `src/checkout/lease/types.rs` | src | m | 12 struct · 8 enum · 3 trait · 8 fn · 2 type · 5 const | CheckoutClaimRequest, CheckoutError, CheckoutFactMutation, CheckoutFactSink, CheckoutId, CheckoutLeaseAct, CheckoutLeaseFence, CheckoutLeaseGrant +15 | Lease domain vocabulary: ids, requests, grants, receipts, errors, and traits |
 | `src/checkout/tests.rs` | test | L | — | — | — |
-| `src/claim/core_types.rs` | src | m | 3 struct · 1 enum · 2 fn · 1 const · 15 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim | The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, its hand-rolled… |
+| `src/claim/core_types.rs` | src | m | 3 struct · 1 enum · 2 fn · 1 const · 16 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim | The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, its hand-rolled… |
 | `src/claim/decay.rs` | src | s | 2 struct · 1 enum · 4 fn · 4 const · 2 crate-vis | AccessFactorPolicy, ClaimAgingClass, ClaimRetrievability | Read-side memory decay: the pure aging-class `access_factor` contract |
 | `src/claim/deferred.rs` | src | m | 4 fn · 15 crate-vis | — | Local, content-bound destructive proposals |
 | `src/claim/demotion.rs` | src | s | 1 fn · 1 crate-vis | — | Critical demotion proposals and the transactional monotonic demotion state machine |
@@ -1032,7 +1032,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/comm/claims.rs` | src | m | 2 struct · 5 enum · 8 fn · 1 type · 7 const · 9 crate-vis | ClaimClassDescriptorRow, CommClaim, CommClaimValue, CommClearOptOutOutcome, CommError, SendOverrideMatch, SendOverrideScope | Claim family predicates, key vocabulary, typed values, body build/parse/validate |
 | `src/comm/consent.rs` | src | m | 12 fn · 14 crate-vis | — | Human consent gates, send overrides and standing opt-out folds |
 | `src/comm/consent_projection_tests.rs` | test | m | — | — | F06: an inbound STOP ends a projector pass as a durable, readable opt-out on every vault shape, and a STOP… |
-| `src/comm/descriptor.rs` | src | m | 2 struct · 1 enum · 10 fn · 1 const · 3 crate-vis | ClaimClassDescriptor, ClaimWriteClass, EnforcementStamp | ARCH-0057 claim-class descriptors as synced maintenance entities (OF-272) |
+| `src/comm/descriptor.rs` | src | m | 2 struct · 3 enum · 15 fn · 1 const · 4 crate-vis | ClaimClassDescriptor, ClaimSubjectKind, ClaimValidatorKind, ClaimWriteClass, EnforcementStamp | ARCH-0057 claim-class descriptors as synced maintenance entities (OF-272) |
 | `src/comm/mod.rs` | src | m | 5 re-export · 8 crate-vis | — | Communication standing-state claims and the ARCH-0035 projector |
 | `src/comm/opt_out_slots.rs` | src | s | 4 crate-vis | — | One (party, channel) opt-out slot read across the party's redirect shells, and the pending human-clear gates… |
 | `src/comm/parties.rs` | src | m | 1 fn · 16 crate-vis | — | Node-local party shortcut vs synced PERSON truth plus twin reconciliation |
