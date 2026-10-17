@@ -48397,12 +48397,12 @@
      "purpose": "The room join and consent doors (OF-531)",
      "surface": {
       "crate-vis": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "JoinParticipation",

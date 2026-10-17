@@ -3857,8 +3857,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/codec.rs` | src | L | 45 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
 | `src/workspace_roster/intent.rs` | src | m | 5 struct · 1 enum · 5 fn · 3 crate-vis | CompanionBirthIntent, CompanionChoice, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent, WorkspaceRosterPreset | Onboarding request shapes and their structural validation |
 | `src/workspace_roster/join_consent.rs` | src | L | 6 struct · 9 enum · 6 fn · 5 crate-vis | AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet, ConsentState, JoinDecision +7 | Three consents, three parties (OF-531): one typed decision that joins a payer's spend, a vault's membership… |
-| `src/workspace_roster/join_door.rs` | src | m | 3 struct · 4 fn · 3 crate-vis | ConsentAnswer, JoinDecisionView, JoinOutcome | The room join and consent doors (OF-531) |
-| `src/workspace_roster/join_receipt.rs` | src | s | 3 struct · 1 enum · 5 fn · 12 crate-vis | JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer | The join receipt (OF-531): one typed record per join intent |
+| `src/workspace_roster/join_door.rs` | src | m | 3 struct · 5 fn · 3 crate-vis | ConsentAnswer, JoinDecisionView, JoinOutcome | The room join and consent doors (OF-531) |
+| `src/workspace_roster/join_receipt.rs` | src | m | 3 struct · 1 enum · 5 fn · 12 crate-vis | JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer | The join receipt (OF-531): one typed record per join intent |
 | `src/workspace_roster/mod.rs` | src | s | 17 re-export · 16 crate-vis | — | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
 | `src/workspace_roster/project/asks.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ProjectAsk | A project's asks queue (ARCH-0067 tasks and asks) |
 | `src/workspace_roster/project/branch.rs` | src | m | 5 crate-vis | — | The fork rule (Astra #1434 F1) |
