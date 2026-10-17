@@ -108,6 +108,9 @@ side_tables! {
     /// OF-365: the owner's disclosure-mode knob (always_ask / auto / always_yes; absent means
     /// auto). Value: the mode's ASCII name. Key: ().
     DISCLOSURE_OFFER_MODE: VaultMeta b"settings:disclosure:v1:offer_mode" Raw;
+    /// Owner-set action-mode policy: the state-index window and its mode bands (OF-335).
+    /// Key: ().
+    DREAMER_ACTION_MODE_POLICY: VaultMeta b"settings:dreamer:action_mode:v1" LegacyJson;
     /// Owner-set rubric dial for the memory-curator maintenance pass. Key: ().
     DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson;
     /// Owner-set retune thresholds for the tuning-harness evaluation loop. Key: ().
@@ -188,6 +191,19 @@ side_tables! {
     /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
     /// the exact content hash it scored). Key: id16 (skill entity).
     SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
+    /// One attempt an exploration trial routed to its proposal: the charge it reserved against the
+    /// goal claim's exploration slice and, once its spend scope settles, what it spent (MessagePack
+    /// named map). Key: id16 (attempt).
+    SKILL_EXPLORATION_ROUTE: VaultMeta b"skill:exploration_route:v1:" Named;
+    /// What skill trials charged one goal claim's exploration slice, and the overruns its owner
+    /// approved (MessagePack named map). Key: id16 (goal claim).
+    SKILL_EXPLORATION_SLICE: VaultMeta b"skill:exploration_slice:v1:" Named;
+    /// The proposal whose exploration trial an active skill serves (MessagePack string). Key: id16
+    /// (incumbent skill).
+    SKILL_EXPLORATION_TARGET: VaultMeta b"skill:exploration_target:v1:" Named;
+    /// One optimizer proposal's exploration trial: its basis, exposure bound, routed runs, overrun
+    /// ask and state (MessagePack named map). Key: id16 (proposal).
+    SKILL_EXPLORATION_TRIAL: VaultMeta b"skill:exploration_trial:v1:" Named;
     /// Marker (the single byte 1) that one attempt receipt's pack loaded one skill. Key: u64be
     /// receipt length + receipt string + id16.
     SKILL_RESIDENT_LOADED_SKILL: VaultMeta b"skill:resident_loaded_skill:v1:" Raw;
@@ -314,6 +330,10 @@ side_tables! {
     SKILL_OPTIMIZE_LIVE_AXES: VaultMeta b"skill_optimize/live_axes/v1\0" Raw;
     /// Optimizer-birth marker. Key: id16.
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
+    /// A proposal's offline preflight: its floor and cost axes and the honesty floor scored on the
+    /// held-out set before any live run, and whether every floor held, bound to both bodies, the
+    /// evidence and the goal revision (MessagePack named map). Key: id16 (proposal).
+    SKILL_OPTIMIZE_PREFLIGHT: VaultMeta b"skill_optimize/preflight/v1\0" Named;
     /// A skill goal's join to a project's goal record (MessagePack named map). Key: id16 (goal).
     SKILL_OPTIMIZE_PROJECT_GOAL: VaultMeta b"skill_optimize/project_goal/v1\0" Raw;
     /// A vault owner's dismissal of one learned goal-revision proposal under the goal claim in
