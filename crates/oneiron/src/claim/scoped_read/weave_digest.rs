@@ -6,7 +6,7 @@
 //! policy lives here. Each published period with anything in it queues the
 //! lens's generate step (`weave_lens.rs`), whose render lands on the row.
 use super::weave_lens::{
-    KeptLiveLens, WeaveLensRender, settle_live_weave_lens, settle_weave_lens_axes,
+    KeptLiveLens, WeaveLensRefusal, WeaveLensRender, settle_live_weave_lens, settle_weave_lens_axes,
 };
 use super::{
     ScopedRead, ScopedReadReceipt, ScopedReadResult, WeaveItem, WeaveReader, WeaveReport,
@@ -157,6 +157,18 @@ pub struct StoredWeaveDigest {
     pub report: ScopedReadResult<WeaveReport>,
     /// The lens's generate step's render of this period, once it landed.
     pub lens: Option<WeaveLensRender>,
+    /// Why the generate step left this period with no render.
+    pub lens_refused: Option<WeaveLensRefusal>,
+}
+
+/// Why the timer left a schedule row: until when, and the refusal that held
+/// it. An owner's due notice holds its row with no refusal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveScheduleHold {
+    pub until: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub because: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -177,6 +189,9 @@ struct WireSchedule {
     /// its render failed. The next render or schedule write clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     held_until: Option<u64>,
+    /// The refused render that set `held_until`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    held_because: Option<String>,
 }
 
 impl WireSchedule {
@@ -203,6 +218,7 @@ impl WireSchedule {
             cadence: row.cadence,
             next_due_at: row.next_due_at,
             held_until: None,
+            held_because: None,
             recipe: row
                 .recipe
                 .iter()
@@ -246,6 +262,8 @@ struct WireDigest {
     sections: Vec<WireSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lens: Option<WeaveLensRender>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lens_refused: Option<WeaveLensRefusal>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -345,6 +363,7 @@ impl WireDigest {
                 })
                 .collect::<Result<Vec<_>>>()?,
             lens: None,
+            lens_refused: None,
         })
     }
     fn into_report(self) -> Result<ScopedReadResult<WeaveReport>> {
@@ -637,7 +656,7 @@ impl Vault {
     pub fn weave_digest_schedules(
         &self,
         owner: &AuthenticatedOwner,
-    ) -> Result<Vec<WeaveDigestSchedule>> {
+    ) -> Result<Vec<(WeaveDigestSchedule, Option<WeaveScheduleHold>)>> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         let mut rows = Vec::new();
@@ -646,10 +665,14 @@ impl Vault {
             let Some(reader) = WeaveDigestReader::from_schedule_key(&key) else {
                 continue;
             };
-            if let Ok(wire) = serde_json::from_slice::<WireSchedule>(&bytes)
-                && let Ok(row) = wire.into_row(reader)
-            {
-                rows.push(row);
+            if let Ok(mut wire) = serde_json::from_slice::<WireSchedule>(&bytes) {
+                let hold = wire.held_until.map(|until| WeaveScheduleHold {
+                    until,
+                    because: wire.held_because.take(),
+                });
+                if let Ok(row) = wire.into_row(reader) {
+                    rows.push((row, hold));
+                }
             }
         }
         Ok(rows)
@@ -720,10 +743,10 @@ impl Vault {
             };
             match outcome {
                 Ok(true) => served += 1,
-                Ok(false) => self.hold_weave_schedule(&key, &saved, now)?,
+                Ok(false) => self.hold_weave_schedule(&key, &saved, now, None)?,
                 Err(error) => {
                     tracing::warn!(?error, "scheduled weave digest refused; held a period");
-                    self.hold_weave_schedule(&key, &saved, now)?;
+                    self.hold_weave_schedule(&key, &saved, now, Some(error.to_string()))?;
                 }
             }
         }
@@ -767,6 +790,7 @@ impl Vault {
         let scheduled_for = wire.next_due_at;
         let held = serde_json::to_vec(&WireSchedule {
             held_until: Some(wire.next_boundary_after(now)?),
+            held_because: None,
             ..wire
         })
         .map_err(|_| invalid())?;
@@ -783,13 +807,21 @@ impl Vault {
         })
     }
 
-    /// Leave a row the timer could not serve until its next boundary.
-    fn hold_weave_schedule(&self, key: &[u8], saved: &[u8], now: u64) -> Result<()> {
+    /// Leave a row the timer could not serve until its next boundary, with
+    /// the refusal that held it for the owner's schedule view.
+    fn hold_weave_schedule(
+        &self,
+        key: &[u8],
+        saved: &[u8],
+        now: u64,
+        because: Option<String>,
+    ) -> Result<()> {
         let Ok(wire) = serde_json::from_slice::<WireSchedule>(saved) else {
             return Ok(());
         };
         let held = serde_json::to_vec(&WireSchedule {
             held_until: Some(wire.next_boundary_after(now)?),
+            held_because: because,
             ..wire
         })
         .map_err(|_| invalid())?;
@@ -846,6 +878,7 @@ impl Vault {
                 let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
                 let rendered_at = wire.rendered_at;
                 let lens = wire.lens.take();
+                let lens_refused = wire.lens_refused.take();
                 let report = wire.into_report()?;
                 if !sources_live_in_txn(&self.store, &txn, &report.value)? {
                     return Ok(None);
@@ -856,6 +889,7 @@ impl Vault {
                     rendered_at,
                     report,
                     lens,
+                    lens_refused,
                 }));
             }
         };
@@ -903,6 +937,33 @@ impl Vault {
             }
         }
         Ok(landed)
+    }
+
+    /// Save why the generate step left its period with no render, only while
+    /// the row is still the one it rendered from and holds neither a render
+    /// nor a refusal. `true`: the refusal landed.
+    pub(crate) fn refuse_weave_lens(
+        &self,
+        reader: WeaveDigestReader,
+        scheduled_for: u64,
+        rendered_at: u64,
+        refusal: &WeaveLensRefusal,
+    ) -> Result<bool> {
+        let key = digest_key(reader, scheduled_for);
+        self.with_write_txn_grouped(|txn| {
+            let Some(bytes) = self.store.vault_meta.get(&*txn, &key)? else {
+                return Ok(false);
+            };
+            let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+            if wire.rendered_at != rendered_at || wire.lens.is_some() || wire.lens_refused.is_some()
+            {
+                return Ok(false);
+            }
+            wire.lens_refused = Some(refusal.clone());
+            let bytes = serde_json::to_vec(&wire).map_err(|_| invalid())?;
+            self.store.vault_meta.put(txn, &key, &bytes)?;
+            Ok(true)
+        })
     }
 
     /// Keep a live lens's render as `reader`'s newest (OF-499), then settle
@@ -1035,6 +1096,7 @@ impl ScopedRead<'_> {
         let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
         let rendered_at = wire.rendered_at;
         let lens = wire.lens.take();
+        let lens_refused = wire.lens_refused.take();
         let report = wire.into_report()?;
         if report.value.sections.len() > allowed.max_sections
             || report.value.sections.iter().any(|section| {
@@ -1139,6 +1201,7 @@ impl ScopedRead<'_> {
             rendered_at,
             report,
             lens,
+            lens_refused,
         }))
     }
 
@@ -1312,6 +1375,7 @@ impl ScopedRead<'_> {
                 rendered_at: now,
                 report,
                 lens: None,
+                lens_refused: None,
             }))
         })
     }

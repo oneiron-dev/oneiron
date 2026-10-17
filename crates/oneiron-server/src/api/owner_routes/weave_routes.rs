@@ -60,8 +60,8 @@ async fn schedules(
         Ok(server
             .vault()
             .weave_digest_schedules(&owner)?
-            .iter()
-            .map(WeaveScheduleView::from_schedule)
+            .into_iter()
+            .map(|(row, held)| WeaveScheduleView::from_schedule(&row, held))
             .collect())
     })
     .await?;
@@ -80,7 +80,7 @@ async fn set_schedule(
     let set = blocking(move || -> OwnerResult<WeaveScheduleView> {
         let row = request.into_schedule().map_err(memory_invalid)?;
         server.vault().set_weave_digest_schedule(&owner, &row)?;
-        Ok(WeaveScheduleView::from_schedule(&row))
+        Ok(WeaveScheduleView::from_schedule(&row, None))
     })
     .await?;
     Ok(Json(set))
