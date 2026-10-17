@@ -58460,14 +58460,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "SheetFate"
+      "SheetFate",
+      "XlsxAxis",
+      "XlsxAxisEdit"
      ],
      "path": "src/xlsx_shift.rs",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 1
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
      }
     },
     {
