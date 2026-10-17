@@ -17,8 +17,8 @@
     "guest.c": "df292f54abcb0f2afe068ed663b3a41799ef77ed36e2c08fa077a90e7b14f512",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
     "bootstrap.js": "b07fb0d96286dd18c2b43803ce47c30da6c5ab50f2903df588347e65c32037b9",
-    "reader_forks.js": "8d02a17f35352f05f9d69ec713d53d3b6c492376e5ea2a5258165c186dc16a22",
-    "diff.js": "5a84ee2b34fb7ce00625750ceffa3357a744142edb649162c68f02e3d1526437",
+    "reader_forks.js": "0da7b0ede6cd13a463e1fd19e2e20a607ece26d8cbe10b3931adf33fdea35200",
+    "diff.js": "6268af5e130181e33866c6e34127e92a97c3544cef2850580d84541e74c23014",
     "hook_guest.c": "7e65ba8fce7db9d63991003b9430f3bd451669ab10daaf07788a797ac74d3816",
     "hook_bootstrap.js": "7647b9e3d05d4e0220b38f0f509dbd021eea47f1a0bf125550ba8f752958c8bb",
     "generate_bridge.py": "e099779784519585bf281f126c4db5630c10ca7b75f5efed94593b890436dcd2",
@@ -27,13 +27,13 @@
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "0812019494127452a898358696dbb025cc3f0952ee688975b044b95aa3f13cc2",
-      "bytes": 1080507
+      "sha256": "70d01ff1f2dcc74cf491b0ae121b3ab465ef1af8d55c19a4227fa6b42e9e5b73",
+      "bytes": 1081467
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "a8a9fa19ed2d72d7ed924d99914225b7506f522b2cce01aee0c317d96fd22a1a",
-      "bytes": 1072958
+      "sha256": "1e466e9843f2c959fa299f63f55e89903c3eb786c7e3870a51ada62bf9767cb7",
+      "bytes": 1073918
     },
     "hook": {
       "file": "quickjs-hook.wasm",
