@@ -126,12 +126,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade.rs` | src | L | 12 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | s | 1 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/agent_verbs.rs` | src | XL | 1 crate-vis | — | — |
-| `src/api/facade/host_doors.rs` | src | m | 23 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 24 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 5 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE) |
-| `src/api/facade/shared_act_doors.rs` | src | m | 13 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
+| `src/api/facade/shared_act_doors.rs` | src | m | 14 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
+| `src/api/facade/weave_doors.rs` | src | s | 1 crate-vis | — | The weave lens's human doors (OF-499): the one-tap wrong control a person uses on a link in their own report |
 | `src/api/feedback_inbox.rs` | src | m | 2 crate-vis | — | The open feedback inbox (ARCH-0056 #open-inbox): anyone may leave this vault a note, with no key and no… |
 | `src/api/feedback_inbox/flood.rs` | src | s | 4 crate-vis | — | The open inbox's flood cap: the one refusal its keyless intake makes |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
@@ -188,6 +189,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_origin.rs` | src | s | 1 crate-vis | — | `/v1/owner/origin-authority`: the owner's origin cutover (ARCH-0068 RA7) |
 | `src/api/owner_routes.rs` | src | L | 5 crate-vis | — | `/v1/owner`: the vault owner's own actions over HTTP |
 | `src/api/owner_routes/commitment_routes.rs` | src | s | 1 crate-vis | — | Owner doors for where commitment reminders go (OF-187) |
+| `src/api/owner_routes/concern_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/inbox/concern/outcome`: the owner settles one of the Coach's agent-health cards (OF-568)… |
 | `src/api/owner_routes/conflict_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023… |
 | `src/api/owner_routes/cooperative_deletion_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route |
 | `src/api/owner_routes/decision_ask_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/decisions/asks`: the typed decisions the host's ladder asked the vault owner (ARCH-0076, its last… |
@@ -373,8 +375,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/control_keys/http.rs` | src | s | 1 fn | — | Optional private control-plane router; tenant bearer auth remains separate |
 | `src/control_keys/tests.rs` | test | s | — | — | — |
 | `src/decision_graph.rs` | src | s | 3 crate-vis | — | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question |
-| `src/decision_host.rs` | src | m | 1 struct · 7 fn · 5 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
-| `src/decision_verdict.rs` | src | m | 2 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
+| `src/decision_host.rs` | src | m | 1 struct · 7 fn · 6 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
+| `src/decision_verdict.rs` | src | m | 7 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `src/device_local.rs` | src | s | 6 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
 | `src/embedder/admitted.rs` | src | s | 3 crate-vis | — | A remote embedder's requests under run admission (ARCH-0053 `#run-admission`) |
 | `src/embedder/endpoint.rs` | src | L | 16 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
@@ -485,8 +487,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/codec.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | McpToolArguments | MCP argument codecs: parsed-value and raw-JSON integer normalization |
 | `src/mcp/endpoint_args.rs` | src | m | 8 struct · 1 enum · 4 fn · 3 crate-vis | McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest, McpReadResultToolArgs, McpResultFacet, McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs +1 | Endpoint tool argument envelopes: setup, execute-code, paging, and verbs |
 | `src/mcp/endpoint_schema.rs` | src | m | 5 const · 7 crate-vis | — | JSON schemas for endpoint tools: setup, execute-code, paging, and verbs |
-| `src/mcp/exec_host.rs` | src | m | 3 struct · 1 enum · 2 trait · 7 fn · 1 type · 2 crate-vis | CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpEngineNativeCodeHost | MCP code-execution host seam and the engine-native host binding |
-| `src/mcp/mod.rs` | src | s | 2 mod · 12 re-export · 7 crate-vis | — | MCP connector actor registry |
+| `src/mcp/exec_host.rs` | src | m | 3 struct · 1 enum · 2 trait · 7 fn · 1 type · 4 crate-vis | CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpEngineNativeCodeHost | MCP code-execution host seam and the engine-native host binding |
+| `src/mcp/mod.rs` | src | s | 2 mod · 12 re-export · 8 crate-vis | — | MCP connector actor registry |
 | `src/mcp/oauth_client.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | AuthorizationResponse, ClientApplication, OAuthClientError, OAuthTokenCache, TokenCacheKey | Issuer-bound OAuth client state and pinned client metadata (ARCH-0028) |
 | `src/mcp/oauth_client/tests.rs` | test | s | — | — | — |
 | `src/mcp/paging.rs` | src | m | 3 struct · 3 enum · 22 fn · 1 const · 4 crate-vis | McpPageBudget, McpPageCursorError, McpPageResume, McpPageSource, McpResultEnd, McpRetrievalHealth | MCP page budgets, cursors, snapshots, and canonical-JSON digests |
@@ -599,7 +601,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/read_shape.rs` | src | s | 1 struct · 1 fn · 1 const · 6 crate-vis | RetrievalQueryCheck | One retrieval request's shape (F21(a)): its query against `[limits].retrieval_query_bytes`, and the OF-520… |
 | `src/server/recall.rs` | src | m | 5 crate-vis | — | The recall verb as every server transport runs it |
 | `src/server/recall_rerank.rs` | src | s | 5 crate-vis | — | The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)… |
-| `src/server/resident_pump.rs` | src | m | 1 crate-vis | — | The resident run pump (OF-533): runs each resident agent's dispatches bound to their own leased attempts, so… |
+| `src/server/resident_pump.rs` | src | m | 1 crate-vis | — | The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's… |
 | `src/server/slip_transport_tests.rs` | test | s | — | — | Slip-only transport admission with a historical receipt-key registry row |
 | `src/server/tagging.rs` | src | s | 2 crate-vis | — | The tagging worker: the one thing that drives the engine's tagging reconciler |
 | `src/server/tests.rs` | test | m | 1 crate-vis | — | — |
