@@ -469,6 +469,8 @@ pub struct HardEraseWork {
     pub windows_compacted: u64,
     pub windows_deferred_live: u64,
     pub windows_deferred_raced: u64,
+    /// Windows and documents a legal hold keeps as they are (OF-470).
+    pub windows_deferred_held: u64,
     pub receipts_finalized: u64,
     /// Obligations past their 30-day deadline.
     pub deadline_breaches: u64,
@@ -721,11 +723,14 @@ impl Vault {
         let (outcome, finished) = match result {
             Ok(Ok(run)) => {
                 // An owner's erasure run that left a window uncompacted (a
-                // caller held it, or a write raced it) has not answered the
-                // owner: it is retried as the owner's, after the backoff.
+                // caller held it, a write raced it, or a legal hold kept it)
+                // has not answered the owner: it is retried as the owner's,
+                // after the backoff.
                 let owner_left = running.owners()
                     && matches!(run.work, SweepWork::HardErase(work)
-                        if work.windows_deferred_live > 0 || work.windows_deferred_raced > 0);
+                        if work.windows_deferred_live > 0
+                            || work.windows_deferred_raced > 0
+                            || work.windows_deferred_held > 0);
                 let items_failed = run.work.items_failed() > 0 || owner_left;
                 if run.complete && !items_failed {
                     // A walk that began before this run covers the rows due

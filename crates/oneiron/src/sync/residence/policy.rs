@@ -77,6 +77,18 @@ pub fn set_device_sync_preference(
     Ok(preference)
 }
 
+/// Whether this vault is a replica of a vault another machine started: its
+/// own-device sync lane reached the home at least once (`m:last_sync`). Its
+/// setup then comes from the home's rows, even none, never from its own
+/// file config (OF-370). A replica that never reached its home yet reads as
+/// a vault of its own.
+pub fn synced_as_replica(vault: &Vault) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(crate::sync::window_rows::LAST_SYNC
+        .get(&vault.store, &rtxn, &())?
+        .is_some())
+}
+
 /// Whether this machine is the elected MACRO home. The election names the
 /// candidate by the same stable sync device id this install mints.
 pub fn local_is_elected_home(vault: &Vault) -> Result<bool> {

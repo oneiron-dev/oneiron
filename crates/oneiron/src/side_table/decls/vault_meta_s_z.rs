@@ -76,9 +76,13 @@ side_tables! {
     /// hash, the detector's reason and the parts its readers withhold. The carrier keeps its
     /// bytes. Holds no value. Key: the carrier table's name, a colon, then its row key.
     SECRET_LIFT_MARK: VaultMeta b"secret_lift:mark:v1:" Named Engine;
+    /// The needs-you notice the lift sweep raised last for its open proposals: the run that raised
+    /// it and each owner's inbox row, acknowledged once none is open (OF-067). Key: ().
+    SECRET_LIFT_NOTICE: VaultMeta b"secret_lift:notice:v1" Named Engine;
     /// A hit the historical lift sweep could not place, filed for the owner: the record or row
-    /// that holds it, the detector's reason and why the sweep left it (OF-067). Holds no value.
-    /// Key: the family's code, a zero byte, then the record's key.
+    /// that holds it, the detector's reason and why the sweep left it, and once closed, when, by
+    /// whom and why (OF-067). Holds no value. Key: the family's code, a zero byte, `h` for a
+    /// retained-history proposal or `r` for the row's own, then the row's key.
     SECRET_LIFT_PROPOSAL: VaultMeta b"secret_lift:proposal:v1:" Named;
     /// One finished lift sweep run's owner receipt: counts per family, never a value or a digest
     /// (OF-067). Key: id16 (run id).
@@ -474,6 +478,13 @@ side_tables! {
     STORAGE_ABI_VERSION: VaultMeta b"storage_abi_version" Raw;
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.
     MESSAGE_STREAM_RECEIPT_BY_REF: VaultMeta b"stream:v1:" Named;
+    /// Born-with text a copy from another vault carried for one row: the fields its sharer let
+    /// travel (OF-491), prose only, never a ref. Key: id16 (the row).
+    SYNC_BORN_WITH_CARRIED: VaultMeta b"sync:born_with:carried:v1:" Named;
+    /// The born-with text the owner lets one federation grant's windows carry to another vault,
+    /// set on this device and never synced or taken from the wire (OF-491). Key: id16 (the
+    /// grant).
+    SYNC_BORN_WITH_GRANT: VaultMeta b"sync:born_with:grant:v1:" Named;
     /// Which turns' saved tag sets name one entity, real or provisional: derived, local, never
     /// synced. Empty marker. Key: entity id16 + turn id16.
     TAGGING_MENTION_REF: VaultMeta b"tagging:mention_ref:v1:" Raw;

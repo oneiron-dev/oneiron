@@ -245,12 +245,21 @@ impl Vault {
                 let live = storage::load(&self.store, txn, &h)?;
                 let mut fork = live.fork(&req.base)?;
                 bind_actor(self, txn, &fork, req.actor, at)?;
+                // A handle of a key the live text's lift marked writes its
+                // value again (OF-067).
+                let lifted = crate::batch::secret_scan::LiftedKeys::of_in_txn(
+                    &self.store,
+                    txn,
+                    [live.text()],
+                )?;
                 if let Some(text) = &req.rewrite {
                     crate::batch::secret_scan::scan_content_in_txn(
                         &self.store,
                         txn,
                         text.as_bytes(),
                     )?;
+                    let resolved = lifted.resolved(text);
+                    let text = resolved.as_deref().unwrap_or(text);
                     fork.edit_as(req.actor, at, |body| {
                         body.delete(0, body.len_unicode())
                             .map_err(|_| invalid("fork rewrite delete"))?;
@@ -260,7 +269,7 @@ impl Vault {
                 } else {
                     for op in &req.edits {
                         let secrets = secret_scan_mode_in_txn(&self.store, txn)?;
-                        super::verbs::apply(&mut fork, req.entity, op, at, secrets)?;
+                        super::verbs::apply(&mut fork, req.entity, op, at, secrets, &lifted)?;
                     }
                 }
                 let id = EntityId::now();
