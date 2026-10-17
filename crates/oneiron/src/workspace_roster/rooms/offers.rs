@@ -14,6 +14,7 @@
 //! no TTL and no close flag. Answering a card is [`super::offer_settle`].
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +27,7 @@ use crate::llm::run_admission::DeclaredMaximum;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::store::Store;
 use crate::workspace_roster::{
     ConsentNeed, JoinDecision, JoinRefusal, JoinRequest, JoinSubject,
     join_subject_for_actor_in_txn, rooms_join_in_txn,
@@ -174,6 +176,37 @@ pub(super) fn is_offer_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Deletes every card minted in `room`, whatever its state (a superseded
+/// card keeps its row after the new one is current), then the room's
+/// current-card pointers. OFFERS is keyed by offer id, not by room, so the
+/// sweep reads the whole table in keyset pages.
+pub(super) fn delete_room_offers(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+) -> Result<()> {
+    let page_limit = super::history::PAGE_LIMIT;
+    let mut after: Option<String> = None;
+    loop {
+        let start = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
+        let page: Vec<(String, StoredOffer)> = OFFERS
+            .iter_range(store, txn, start, Bound::Unbounded)?
+            .take(page_limit)
+            .collect::<Result<_>>()?;
+        for (offer_id, stored) in &page {
+            if stored.card.room == room {
+                OFFERS.delete(store, txn, offer_id)?;
+            }
+        }
+        if page.len() < page_limit {
+            break;
+        }
+        after = page.last().map(|(offer_id, _)| offer_id.clone());
+    }
+    OFFER_CURRENT.delete_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?;
+    Ok(())
 }
 
 /// A caller's idempotency key: 1..=128 printable bytes, as a join's.
