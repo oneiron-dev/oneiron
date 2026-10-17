@@ -16,6 +16,9 @@ use tokio::net::UnixStream;
 use tokio::net::unix::OwnedReadHalf;
 use tokio::time::{Instant, timeout, timeout_at};
 
+use oneiron::voice_cascade::media::VoiceMediaOutput;
+
+use super::media_bridge::{HEARD_REVISION, MediaBridge, MediaEvent};
 use super::{HostError, VoiceHost, VoiceOutputs};
 
 #[derive(Deserialize)]
@@ -85,8 +88,30 @@ impl VoiceHost {
         outputs: &mut VoiceOutputs<B, T, C>,
         stop: impl Future<Output = ()>,
     ) -> io::Result<()> {
+        self.serve_with(stream, outputs, None, stop).await
+    }
+
+    /// [`Self::serve_until`], hearing the owner's audio and speaking through
+    /// `bridge` beside the stream.
+    pub(super) async fn serve_media_until<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+        &self,
+        stream: UnixStream,
+        outputs: &mut VoiceOutputs<B, T, C>,
+        bridge: &mut MediaBridge,
+        stop: impl Future<Output = ()>,
+    ) -> io::Result<()> {
+        self.serve_with(stream, outputs, Some(bridge), stop).await
+    }
+
+    async fn serve_with<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+        &self,
+        stream: UnixStream,
+        outputs: &mut VoiceOutputs<B, T, C>,
+        bridge: Option<&mut MediaBridge>,
+        stop: impl Future<Output = ()>,
+    ) -> io::Result<()> {
         let end_on_drop = EndOnDrop(self);
-        let result = self.serve_inner(stream, &mut outputs.brain, stop).await;
+        let result = self.serve_inner(stream, outputs, bridge, stop).await;
         let stop = self
             .end()
             .map_err(|_| io::Error::other("voice teardown failed"))?;
@@ -99,10 +124,11 @@ impl VoiceHost {
         Ok(())
     }
 
-    async fn serve_inner(
+    async fn serve_inner<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         stream: UnixStream,
-        brain: &mut impl Brain,
+        outputs: &mut VoiceOutputs<B, T, C>,
+        mut bridge: Option<&mut MediaBridge>,
         stop: impl Future<Output = ()>,
     ) -> io::Result<()> {
         tokio::pin!(stop);
@@ -158,6 +184,34 @@ impl VoiceHost {
                         Err(_) => Response::Error { code: "invalid_request" },
                     }
                 }
+                event = async {
+                    match bridge.as_deref_mut() {
+                        Some(bridge) => bridge.next().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let Some(bridge) = bridge.as_deref_mut() else { continue };
+                    match event {
+                        MediaEvent::Stopped => break,
+                        MediaEvent::In(input) => self.media_in(input, bridge, outputs),
+                        MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => {
+                            // Spoken audio plays only for the session's current generation.
+                            if let Some(frame) = self.filter_pcm(frame) {
+                                bridge.play(frame).await?;
+                            }
+                        }
+                        MediaEvent::Out(VoiceMediaOutput::SpeechFailed { generation, .. }) => {
+                            Self::speech_failed(generation, outputs);
+                        }
+                        MediaEvent::Out(VoiceMediaOutput::Heard { event, .. }) => {
+                            // A heard final replaces any enrichment in flight, as a wire final does.
+                            if let Some((handle, work)) = self.heard(bridge, event) {
+                                pending = Some(Box::pin(async move { (handle, HEARD_REVISION, work.run().await) }));
+                            }
+                        }
+                    }
+                    continue;
+                }
                 result = async { pending.as_mut().expect("guarded pending work").await }, if pending.is_some() => {
                     pending = None;
                     let (handle, revision, result) = result;
@@ -178,7 +232,7 @@ impl VoiceHost {
                             // Refs remain non-authoritative. The existing brain must
                             // use ordinary disclosure/tool gates when resolving them.
                             // Submission is synchronous, outside the session lock.
-                            brain.start(&request).map_err(|_| io::Error::other("brain submission failed"))?;
+                            outputs.brain.start(&request).map_err(|_| io::Error::other("brain submission failed"))?;
                             Response::Final { handle, revision, context: request.retrieval }
                         }
                         Ok(_) => Response::Error { code: "stale_request" },

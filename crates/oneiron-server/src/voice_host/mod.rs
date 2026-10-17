@@ -8,12 +8,16 @@
 //! The wake supervisor attaches this host to its existing backend and pass
 //! meter through `oneiron_driver::PassAttachmentSource` (see `attachment`).
 //! Serving still requires an owner-admitted stream and real output seams.
+//! With [`VoiceServeBindings::with_media`] the host also hears and speaks
+//! itself on the vault's live media routes (`media_bridge`).
 
 mod attachment;
 mod connection;
 mod extraction;
+mod media_bridge;
 mod serve_bindings;
 
+pub use media_bridge::{MediaTts, VoiceMediaBindings, VoiceMediaIn};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 
 use std::sync::{Arc, Mutex, MutexGuard};
