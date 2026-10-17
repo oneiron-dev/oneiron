@@ -294,15 +294,22 @@ pub enum QuestionAudience {
 
 /// The media a unit's answerer is handed beside its text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct QuestionMedia {
     /// The images the unit's ASSET sources hold, read under the principal,
     /// for an answerer that reads images.
     pub images: bool,
+    /// The audio clips the unit's ASSET sources hold, read under the
+    /// principal, for an answerer that hears audio; heard as audio, never as
+    /// a transcript.
+    pub audio: bool,
 }
 impl Default for QuestionMedia {
     fn default() -> Self {
-        Self { images: true }
+        Self {
+            images: true,
+            audio: true,
+        }
     }
 }
 

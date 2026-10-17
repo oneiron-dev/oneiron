@@ -28,4 +28,6 @@ pub(crate) use self::speech_identity::{
     executor_speech_turn_id_for_run,
 };
 pub(crate) use self::wait_delivery::deliver_wait_in_txn;
-pub use self::wait_delivery::{WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap};
+pub use self::wait_delivery::{
+    WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap, park_and_bind_wait_trap,
+};
