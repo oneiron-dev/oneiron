@@ -14,6 +14,7 @@ use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
+use super::self_heal::SelfHealConfig;
 use super::skills::SkillsConfig;
 use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
@@ -284,6 +285,9 @@ pub struct ServeConfig {
     /// The `[failure_signals]` section: the publisher this deployment's
     /// failure signals go to.
     pub failure_signals: FailureSignalsConfig,
+    /// The `[self_heal]` section: the model-graded detectors over retrieval
+    /// telemetry.
+    pub self_heal: SelfHealConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
     /// The `[skills]` section: the skill-edit gate's live pull budget.
@@ -372,6 +376,7 @@ impl Default for ServeConfig {
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
             failure_signals: FailureSignalsConfig::default(),
+            self_heal: SelfHealConfig::default(),
             recall: RecallConfig::default(),
             skills: SkillsConfig::default(),
             keystore: KeystoreConfig::default(),
@@ -445,6 +450,7 @@ impl fmt::Debug for ServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("failure_signals", &self.failure_signals)
+            .field("self_heal", &self.self_heal)
             .field("recall", &self.recall)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)

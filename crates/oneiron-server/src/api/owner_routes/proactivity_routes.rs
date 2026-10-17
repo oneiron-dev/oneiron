@@ -8,6 +8,9 @@
 //! `/v1/owner/proactivity/action-mode` (OF-335) is the owner's action-mode
 //! policy: the state-index window with its targets and the mode bands the
 //! nightly refresh proposes from.
+//! `/v1/owner/self-heal/findings` (OF-418) lists one detector's raised T3
+//! findings with the owner's labels and takes the owner's one label on each,
+//! which a `t2` detector of the same family learns from.
 //! Approving a draft approves its exact content, then schedules it through
 //! the ordinary outbound gate as the Dreamer on the owner's behalf; the
 //! gate's grants, consent and windows still decide the send.
@@ -29,6 +32,8 @@ use oneiron::dreamer_runner::maintenance::representation::{
 };
 use oneiron::dreamer_runner::maintenance::stewardship::{StewardshipRule, StewardshipRules};
 use oneiron::memory::OutboundScheduleContext;
+use oneiron::self_heal::detector_pass::MAX_T3_FINDINGS;
+use oneiron::self_heal::distillation::ReviewedFinding;
 use oneiron::skill_optimize::{OfferAnswer, OfferAnswerRecord, TrainingOffer};
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +59,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/coach/training-offers/answer", post(answer_training_offer))
         .route("/identity/asks", get(identity_asks))
         .route("/identity/asks/answer", post(answer_identity_ask))
+        .route("/self-heal/findings", get(self_heal_findings))
+        .route("/self-heal/findings/label", post(label_self_heal_finding))
 }
 
 fn now_secs() -> u64 {
@@ -436,4 +443,95 @@ async fn answer_identity_ask(
     })
     .await?;
     Ok(Json(settled))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FindingsQuery {
+    /// The detector's family, as configured.
+    family: String,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// One raised T3 finding as the owner sees it.
+#[derive(Debug, Serialize)]
+struct FindingView {
+    /// The finding's event id, as 32 hex: what a label names.
+    event: String,
+    detector: String,
+    class: &'static str,
+    /// When the window it judged began.
+    from: u64,
+    learned_at: u64,
+    /// The retrieval runs it judged.
+    runs: Vec<String>,
+    /// `true` confirmed, `false` rejected, absent not yet labeled.
+    label: Option<bool>,
+}
+
+/// `GET /v1/owner/self-heal/findings?family=<family>`: one detector's raised
+/// T3 findings, newest first, each with the owner's label.
+async fn self_heal_findings(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<FindingsQuery>, QueryRejection>,
+) -> OwnerReply<Vec<FindingView>> {
+    owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let findings = blocking(move || {
+        Ok(server
+            .vault()
+            .t3_findings(&query.family, query.limit.unwrap_or(MAX_T3_FINDINGS))?)
+    })
+    .await?;
+    Ok(Json(
+        findings
+            .into_iter()
+            .map(|finding| FindingView {
+                event: finding.event_id.to_hex(),
+                detector: finding.event.detector_id,
+                class: finding.event.event_class.as_str(),
+                from: finding.event.valid_from,
+                learned_at: finding.learned_at,
+                runs: finding
+                    .event
+                    .evidence_refs
+                    .iter()
+                    .map(|run| run.to_hex())
+                    .collect(),
+                label: finding.label,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LabelFinding {
+    family: String,
+    /// The finding's event id, as 32 hex.
+    event: String,
+    /// Whether the finding names a real problem.
+    positive: bool,
+}
+
+/// `POST /v1/owner/self-heal/findings/label`: the owner's one label on a
+/// raised T3 finding. A label never changes; a second, different one is
+/// refused.
+async fn label_self_heal_finding(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<LabelFinding>, JsonRejection>,
+) -> OwnerReply<ReviewedFinding> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let label = blocking(move || -> OwnerResult<ReviewedFinding> {
+        let event = entity_id("event", &request.event)?;
+        Ok(server
+            .vault()
+            .review_t3_finding(&owner, &request.family, event, request.positive)?)
+    })
+    .await?;
+    Ok(Json(label))
 }

@@ -38,7 +38,7 @@ pub enum ProposedTier {
     SessionJudge,
 }
 impl ProposedTier {
-    fn token(self) -> &'static str {
+    pub(super) fn token(self) -> &'static str {
         match self {
             Self::Centroid => "t2a",
             Self::PromptClassifier => "t2b",
