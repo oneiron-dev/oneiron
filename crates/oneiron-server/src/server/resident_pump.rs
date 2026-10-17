@@ -563,7 +563,9 @@ fn enter_run(
         )
         .map_err(text)?
         .enter();
-    let meter = spend.map(|scope| ScopeMeter::open(vault, scope)).transpose()?;
+    let meter = spend
+        .map(|scope| ScopeMeter::open(vault, scope))
+        .transpose()?;
     door.bind_meter(match &meter {
         Some(meter) => Some((meter.guard.clone(), meter.payer.clone())),
         None => provider.host_meter().map(|guard| (guard, None)),
