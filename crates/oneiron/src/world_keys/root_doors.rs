@@ -68,7 +68,7 @@ pub struct RootRestore {
     pub narrowed: Vec<NarrowedWorld>,
 }
 
-fn this_machine_only(origin: EditOrigin) -> Result<()> {
+pub(super) fn this_machine_only(origin: EditOrigin) -> Result<()> {
     match origin {
         EditOrigin::ThisMachine => Ok(()),
         EditOrigin::Peer(_) => Err(refused("a remote request never pins, anchors or restores")),
@@ -287,6 +287,21 @@ impl Vault {
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ActivatedRoot> {
+        self.activate_owner_root_with(owner, origin, prepared, carry, |_| Ok(()))
+            .map(|(activated, ())| activated)
+    }
+
+    /// [`Self::activate_owner_root`], with `also` run in its transaction once
+    /// the new root stands: a kit's inventory and its vault-key wrap commit
+    /// with the root or not at all.
+    pub(crate) fn activate_owner_root_with<T>(
+        &self,
+        owner: &AuthenticatedOwner,
+        origin: EditOrigin,
+        prepared: PreparedRoot,
+        carry: &BTreeSet<EntityId>,
+        also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+    ) -> Result<(ActivatedRoot, T)> {
         this_machine_only(origin)?;
         self.precheck_root_door(owner, |txn, fold| {
             let me = crate::identity::read_machine_id_in_txn(self, txn)?;
@@ -295,7 +310,7 @@ impl Vault {
         let (secret, request) = self.own_request()?;
         let seed = prepared.seed();
         let anchor = seed.anchor();
-        let (root, report) = self.with_write_txn(|txn| {
+        let (root, report, extra) = self.with_write_txn(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
             let old = self.authority_view_readonly_in_txn(txn)?;
@@ -329,12 +344,16 @@ impl Vault {
             if !stands || mid.pinned_root != Some(pin) {
                 return Err(refused("the new root's marks do not stand"));
             }
-            Ok((root, self.repin_finish_in_txn(txn, &door, start)?.report))
+            let report = self.repin_finish_in_txn(txn, &door, start)?.report;
+            Ok((root, report, also(txn)?))
         })?;
-        Ok(ActivatedRoot {
-            root: root.id,
-            keys: report,
-        })
+        Ok((
+            ActivatedRoot {
+                root: root.id,
+                keys: report,
+            },
+            extra,
+        ))
     }
 
     /// Kit use: marks a machine `Owned(Yours)` under the seed's anchor.

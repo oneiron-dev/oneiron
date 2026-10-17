@@ -173,7 +173,10 @@ fn check_name(name: &str) -> anyhow::Result<()> {
 
 /// One secret, from the named owner-only file or else stdin, exactly as given
 /// but for one trailing line break.
-fn read_secret(source: &SecretSourceArgs, what: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+pub(super) fn read_secret(
+    source: &SecretSourceArgs,
+    what: &str,
+) -> anyhow::Result<Zeroizing<Vec<u8>>> {
     let mut value = Zeroizing::new(Vec::with_capacity(SECRET_LIMIT + 1));
     match &source.secret_file {
         Some(path) => read_owner_only(path, &mut value)?,
@@ -381,6 +384,7 @@ impl HostUnlock {
                 let secret = oneiron::world_keys::escrow_recipient(&seed)?;
                 Self::Escrow { label, secret }
             }
+            UnlockMethod::Kit => super::recovery_kit::kit_unlock(args)?,
         })
     }
 

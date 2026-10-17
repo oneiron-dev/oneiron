@@ -135,8 +135,8 @@ pub struct RestoreArgs {
 
     /// How the backup's vault key unlocks: `device` (this install's
     /// keystore, from the device wrap the backup carries), `password`,
-    /// `passkey` or `escrow`. Every way but `device` needs `--trust`. Where
-    /// no vault is yet, the restore makes it and wraps its key to this
+    /// `passkey`, `escrow` or `kit`. Every way but `device` needs `--trust`.
+    /// Where no vault is yet, the restore makes it and wraps its key to this
     /// install.
     #[arg(long, value_enum, default_value_t = UnlockMethod::Device, conflicts_with = "activate")]
     pub unlock: UnlockMethod,
@@ -148,6 +148,17 @@ pub struct RestoreArgs {
     /// With `--unlock escrow`: the escrow wrap's label.
     #[arg(long, value_name = "NAME")]
     pub label: Option<String>,
+
+    /// With `--unlock kit`: a world kit piece file, a recovery code as text
+    /// or a piece export. Give two, or one and the kit passphrase, read from
+    /// stdin or `--secret-file`.
+    #[arg(long = "piece", value_name = "FILE")]
+    pub pieces: Vec<PathBuf>,
+
+    /// With `--unlock kit`: the vault id the kit is bound to, 64 hex digits,
+    /// as `oneiron recovery-kit status` prints it.
+    #[arg(long, value_name = "HEX")]
+    pub vault_id: Option<String>,
 
     /// Trust exactly the checkpoint signers in this file, in place of this
     /// install's: `oneiron vault-key signer` prints one on a host that holds
@@ -179,6 +190,8 @@ pub enum UnlockMethod {
     Passkey,
     /// An escrow recipient's seed, from a recovery box or as a secret.
     Escrow,
+    /// The world recovery kit: its root opens the `world-kit` escrow wrap.
+    Kit,
 }
 
 /// Where a secret is read, and the recovery box that keeps escrow seeds. A

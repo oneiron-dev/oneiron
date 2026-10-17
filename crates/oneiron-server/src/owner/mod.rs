@@ -20,6 +20,7 @@ pub(crate) mod note_imports;
 pub(crate) mod off_record;
 pub(crate) mod pack_drift;
 pub(crate) mod persona;
+pub(crate) mod recovery_kit;
 pub(crate) mod runs;
 pub(crate) mod schedule;
 pub(crate) mod secrets;

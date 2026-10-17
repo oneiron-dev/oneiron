@@ -30,7 +30,7 @@ const CODE_GROUP: usize = 4;
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /// Public kit identifier, inside every stored piece; it also salts the passphrase point.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct KitId(pub [u8; 4]);
 
 /// One point of a kit's line and the kit facts every piece repeats.

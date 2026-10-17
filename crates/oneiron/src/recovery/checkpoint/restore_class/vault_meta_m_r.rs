@@ -159,6 +159,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::RECEIPT_ARCHIVE_SLOT, CONTENT),
     (&t::RECEIPT_ARCHIVE_SOURCE_RETIRED, CONTENT),
     (&t::RECEIPT_FAMILY_INDEX_VERSION, CONTENT),
+    // A restore never rolls back which kit is current, or revives a replaced one.
+    (&t::RECOVERY_KIT, LIVE),
     (&t::IDENTITY_REDIRECT, CONTENT),
     (&t::REPO_CONFLICT_RECONCILIATION_INDEX, CONTENT),
     (&t::REPO_MUTATION_OPLOG, CONTENT),
