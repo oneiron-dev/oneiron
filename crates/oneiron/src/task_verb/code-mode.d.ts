@@ -989,7 +989,7 @@ declare namespace Sdk {
   type EntityRequest = { entity_ref: string };
   type ResolveRecordRefRequest = { reference: string };
   type RecordRefPreview = { record: RecordRef; revision?: string | null; snippet?: string | null };
-  type RecordLinksRequest = { text?: string | null; turn_ref?: string | null; after?: string | null; limit?: number | null };
+  type RecordLinksRequest = { text?: string | null; texts?: string[] | null; turn_ref?: string | null; after?: string | null; limit?: number | null };
   type ProseSpan = { kind: "plain"; start: number; end: number; start_utf16: number; end_utf16: number; text: string } | { kind: "link"; start: number; end: number; start_utf16: number; end_utf16: number; label: string; record: RecordRef; narrowing: ScopedReadReceipt };
   type LinkedText = { message_id?: string | null; spans: ProseSpan[] };
   type RecordLinks = { texts: LinkedText[]; narrowing?: ScopedReadReceipt | null; next_after?: string | null };
@@ -1874,7 +1874,7 @@ declare const vault: Sdk.VaultHost & {
     erase_preview(input: Sdk.RecordEraseRequest): Promise<Sdk.RecordErasePreview | StoredResult>;
   };
   refs: {
-    /** A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
+    /** A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
     links(input: Sdk.RecordLinksRequest): Promise<Sdk.RecordLinks | StoredResult>;
     /** The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same. */
     resolve(input: Sdk.ResolveRecordRefRequest): Promise<Sdk.ScopedReadResult<Sdk.RecordRefPreview> | StoredResult>;

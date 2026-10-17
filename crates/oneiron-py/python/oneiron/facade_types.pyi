@@ -4719,6 +4719,7 @@ class RecordRefPreview(TypedDict):
     snippet: NotRequired[str | None]
 class RecordLinksRequest(TypedDict):
     text: NotRequired[str | None]
+    texts: NotRequired[list[str] | None]
     turn_ref: NotRequired[str | None]
     after: NotRequired[str | None]
     limit: NotRequired[int | None]

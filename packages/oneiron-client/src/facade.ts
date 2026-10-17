@@ -844,7 +844,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.hydrate": { description: "Hydrates short refs or hex ids to full entity views, with the read's receipt.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.get": { description: "Reads one entity as a typed view, or none when absent or withheld; the receipt says which.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.refs.resolve": { description: "The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.refs.links": { description: "A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.refs.links": { description: "A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.search.bm25": { description: "BM25 text search over the engine index; surfaceable claims only.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.neighbors": { description: "The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.structural.put": { description: "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -1577,7 +1577,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       refs: {
         /** The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same. */
         resolve: (input: Facade.ResolveRecordRefRequest, options?: O): FacadeReturns<"vault.refs.resolve">[K] => invoke("vault.refs.resolve", input, options, newInvocation()),
-        /** A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
+        /** A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
         links: (input: Facade.RecordLinksRequest, options?: O): FacadeReturns<"vault.refs.links">[K] => invoke("vault.refs.links", input, options, newInvocation()),
       },
       search: {
