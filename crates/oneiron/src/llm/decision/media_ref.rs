@@ -5,7 +5,9 @@
 //! resolves it through the asker's own lane before a call. A medium no rung reads is
 //! never captioned in its place; its entry says it was not served, and why.
 
-use super::{DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion, EvidenceVersion};
+use super::{
+    DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion, DecisionRung, EvidenceVersion,
+};
 use crate::ingest::meeting_audio::{SourceSpan, SpeakerTrack, SpeechSpan};
 use crate::llm::image::ImageBytes;
 use crate::memory::PixelRegion;
@@ -221,20 +223,17 @@ impl MediaCall {
         object.insert(MEDIA_FIELD.to_owned(), entries);
         Ok(state)
     }
-}
 
-impl DecisionLadder<'_> {
-    /// The media of one call of `question` under `dial`. Each image is checked against
-    /// its ref and rides as a named image when a rung from the dial's first to its
-    /// ceiling reads images, the dial then starting at the first that does; otherwise
-    /// every image is listed as not served, and the call stands on the rest of its state.
-    /// Audio is checked and listed as not served: no rung reads it yet.
-    pub fn media_call(
-        &self,
-        question: &DecisionQuestion,
+    /// The media of one call under `dial`. Each image is checked against its ref and
+    /// rides as a named image when `first_taking` finds a rung from the dial's first to
+    /// its ceiling that takes them, the dial then starting there; otherwise every image
+    /// is listed as not served, and the call stands on the rest of its state. Audio is
+    /// checked and listed as not served: no rung reads it yet.
+    pub fn of(
         dial: DecisionDial,
         media: Vec<ResolvedMedia>,
-    ) -> LlmResult<MediaCall> {
+        first_taking: impl FnOnce(&[DecisionImage]) -> Option<DecisionRung>,
+    ) -> LlmResult<Self> {
         let mut entries = Vec::with_capacity(media.len());
         let mut images = Vec::new();
         for medium in media {
@@ -278,7 +277,7 @@ impl DecisionLadder<'_> {
         DecisionImage::validate_all(&images)?;
         let mut dial = dial;
         if !images.is_empty() {
-            match self.first_taking(question, dial, &images) {
+            match first_taking(&images) {
                 Some(first) => dial.first = first,
                 None => {
                     images.clear();
@@ -290,10 +289,24 @@ impl DecisionLadder<'_> {
                 }
             }
         }
-        Ok(MediaCall {
+        Ok(Self {
             entries,
             images,
             dial,
         })
+    }
+}
+
+impl DecisionLadder<'_> {
+    /// The media of one call of `question` under `dial` ([`MediaCall::of`]): its images
+    /// ride from the first rung of this ladder, from the dial's first to its ceiling,
+    /// whose provider takes `question` over them.
+    pub fn media_call(
+        &self,
+        question: &DecisionQuestion,
+        dial: DecisionDial,
+        media: Vec<ResolvedMedia>,
+    ) -> LlmResult<MediaCall> {
+        MediaCall::of(dial, media, |images| self.first_taking(question, dial, images))
     }
 }
