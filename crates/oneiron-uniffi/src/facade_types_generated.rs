@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 302 facade rows, 1082 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 270.
+// UniFFI census: 303 facade rows, 1086 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 271.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
 #![allow(
@@ -5146,6 +5146,8 @@ pub enum PackCandidateReason {
     QualificationRequired,
     #[serde(rename = "advisories")]
     Advisories,
+    #[serde(rename = "needs_world")]
+    NeedsWorld,
 }
 
 /// `oneiron::skill_hub::pack_catalog::admission_types::BundledSkillPermissions`.
@@ -10694,6 +10696,51 @@ pub struct ArtifactExportFile {
     pub born_with: std::collections::HashMap<String, String>,
     #[serde(rename = "content_base64")]
     pub content_base64: String,
+}
+
+/// `oneiron::share_travel::agent_pack_export::AgentPackExportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPackExportRequest {
+    #[serde(rename = "agent_ref")]
+    pub agent_ref: String,
+    #[serde(rename = "travel", default, skip_serializing_if = "Option::is_none")]
+    pub travel: Option<TravelChoice>,
+}
+
+/// `oneiron::share_travel::OmittedKnowledge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OmittedKnowledge {
+    #[serde(rename = "claim")]
+    pub claim: String,
+    #[serde(rename = "reason")]
+    pub reason: String,
+}
+
+/// `oneiron::share_travel::agent_pack_export::AgentPackExportFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgentPackExportFile {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "content_base64")]
+    pub content_base64: String,
+}
+
+/// `oneiron::share_travel::agent_pack_export::AgentPackExport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgentPackExport {
+    #[serde(rename = "agent_ref")]
+    pub agent_ref: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "born_with")]
+    pub born_with: std::collections::HashMap<String, String>,
+    #[serde(rename = "omitted")]
+    pub omitted: Vec<OmittedKnowledge>,
+    #[serde(rename = "files")]
+    pub files: Vec<AgentPackExportFile>,
 }
 
 /// `oneiron::blob_artifact::verbs::BornFromRequest`.
