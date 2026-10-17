@@ -149,6 +149,46 @@ fn select_candidates(
     Ok(candidates)
 }
 
+/// One exact target a caller already chose, read the way the ranking reads
+/// a skill but with no N-dial, reserve or loss filter: the caller's own
+/// evidence (a failure the Coach diagnosed) is why it is asked. The target
+/// must be active, optimizable and carry no open proposed revision.
+pub(super) fn repair_candidate(vault: &Vault, skill: &EntityId) -> Result<SkillOptimizeCandidate> {
+    let record = vault
+        .get_skill_record(skill)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    if record.lifecycle_status != SkillLifecycle::Active
+        || !tier_verdict(vault, skill, &record)?.optimizable()
+    {
+        return Err(super::dials::invalid(
+            "a repair targets an active skill the optimizer may revise",
+        ));
+    }
+    let resident = crate::skill::resident_of(&record)?;
+    for id in all_skill_ids(vault)? {
+        let Some(other) = vault.get_skill_record(&id)? else {
+            continue;
+        };
+        if other.lifecycle_status == SkillLifecycle::Candidate
+            && other.approval_status == ClaimApprovalStatus::Proposed
+            && other.skill_id == record.skill_id
+            && crate::skill::resident_of(&other)? == resident
+        {
+            return Err(super::dials::invalid(
+                "the repair target already has an open proposed revision",
+            ));
+        }
+    }
+    let prior = skill_reliability_prior(vault, skill)?;
+    let reading = dev_partition_reading(vault, skill, prior)?;
+    Ok(SkillOptimizeCandidate {
+        skill: *skill,
+        posterior: reading.posterior,
+        prior,
+        attributed_outcomes: reading.attributed,
+    })
+}
+
 fn all_skill_ids(vault: &Vault) -> Result<Vec<EntityId>> {
     let mut out: Vec<EntityId> = Vec::new();
     loop {

@@ -269,13 +269,15 @@ pub(super) fn strip_guest_share_metadata(
 }
 
 fn guest_share_metadata_blob(blob: &[u8]) -> bool {
-    // A world key pad is half of a world's key: a guest never holds one.
+    // A world key pad is half of a world's key: a guest never holds one. Nor does a guest
+    // hold the vault's embedding setup (OF-370).
     EntityMetadataHeader::parse(blob).is_some_and(|header| {
         matches!(
             header.entity_type,
             ENTITY_TYPE_FEDERATION_GRANT
                 | ENTITY_TYPE_AUTHORITY_LOG
                 | crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
+                | crate::registry::ENTITY_TYPE_EMBEDDING_SETUP
         )
     })
 }
@@ -438,13 +440,17 @@ pub(super) fn filter_window_doc(
         scope_position,
     )?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
-    // Credentials never leave through a selector, whatever the carrier says.
+    // Credentials never leave through a selector, whatever the carrier says, and neither does
+    // this vault's embedding setup (OF-370): a peer or a guest keeps its own.
     let mut custody_withheld = BTreeSet::new();
     map_for_each_value_bytes(&source_entities, |key, blob| {
-        if blob
-            .and_then(EntityMetadataHeader::parse)
-            .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
-            && let Ok(id) = EntityId::from_hex(key)
+        if blob.and_then(EntityMetadataHeader::parse).is_some_and(|h| {
+            matches!(
+                h.entity_type,
+                crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                    | crate::registry::ENTITY_TYPE_EMBEDDING_SETUP
+            )
+        }) && let Ok(id) = EntityId::from_hex(key)
         {
             custody_withheld.insert(id);
         }

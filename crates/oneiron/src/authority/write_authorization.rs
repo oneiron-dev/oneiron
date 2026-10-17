@@ -120,23 +120,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         writer: &WriteActor,
     ) -> Result<AuthorityFold> {
-        let raw = self
-            .store
-            .port_entity_record(txn, &writer.entity_ref())?
-            .map(|row| row.encode())
-            .ok_or(Error::InvalidClaimBody(
-                "writer must name a live authority-bearing entity",
-            ))?;
-        let entity_type = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("writer entity header"))?
-            .entity_type;
-        crate::provenance::validate_actor_class(entity_type, writer.actor_class())?;
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
-        if fold.vault_root_is_conflicted() {
-            return Err(Error::InvalidClaimBody(
-                "authority log folds to conflicting vault roots",
-            ));
-        }
+        let fold = self.write_actor_store_truth_in_txn(txn, writer)?;
         if fold.vault_id.is_some() {
             match fold.actor_write_disposition(
                 &writer.entity_ref(),
@@ -153,6 +137,61 @@ impl Vault {
                     return Err(Error::Claim(ClaimError::WriteConcurrentWithRevocation));
                 }
             }
+        }
+        Ok(fold)
+    }
+
+    /// [`Self::verify_write_actor_in_txn`] for the in-process host's own
+    /// caller (`Memory::native_invocation`, OF-220): the same store truth,
+    /// and on a rooted vault no binding asked of an actor the log never
+    /// bound at this class, as the engine's runners and agents and the
+    /// embedded SDK's actors are not. An actor the log bound is held to that
+    /// binding: one revoked, or quarantined by a revocation, is refused, so
+    /// native standing never outlives a revocation.
+    pub(crate) fn verify_native_write_actor_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        writer: &WriteActor,
+    ) -> Result<()> {
+        let fold = self.write_actor_store_truth_in_txn(txn, writer)?;
+        if fold.vault_id.is_some()
+            && fold.actor_write_disposition(
+                &writer.entity_ref(),
+                writer.actor_class().gate_actor_class(),
+                writer.authority_frontier(),
+            ) == CausalWriteDisposition::Quarantined
+        {
+            return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+                reason: "the actor's authority binding was revoked",
+            }));
+        }
+        Ok(())
+    }
+
+    /// The store truth every writer check starts from: the writer names a
+    /// live entity whose type admits its class, under an authority log that
+    /// folds to at most one root. Answers that fold.
+    fn write_actor_store_truth_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        writer: &WriteActor,
+    ) -> Result<AuthorityFold> {
+        let raw = self
+            .store
+            .port_entity_record(txn, &writer.entity_ref())?
+            .map(|row| row.encode())
+            .ok_or(Error::InvalidClaimBody(
+                "writer must name a live authority-bearing entity",
+            ))?;
+        let entity_type = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("writer entity header"))?
+            .entity_type;
+        crate::provenance::validate_actor_class(entity_type, writer.actor_class())?;
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        if fold.vault_root_is_conflicted() {
+            return Err(Error::InvalidClaimBody(
+                "authority log folds to conflicting vault roots",
+            ));
         }
         Ok(fold)
     }

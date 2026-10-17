@@ -11,6 +11,7 @@
 //! fill them without re-versioning the schema.
 
 mod accounting;
+mod channel_subscription;
 mod charter;
 mod codec;
 pub mod events;
@@ -29,6 +30,7 @@ mod txn;
 mod tests;
 
 pub use self::accounting::{CONNECTOR_KEY_MAX_DISPATCH_BATCH, ConnectorKeySendAdmission};
+pub use self::channel_subscription::ChannelMessageSubscription;
 pub use self::charter::{CompiledCharter, ConnectorCharterCompileIssue, compile_connector_charter};
 pub use self::codec::{
     CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, decode_connector_key_body,
