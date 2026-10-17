@@ -51,6 +51,14 @@ it, then runs on its own media permit and carries the identity's fenced
 source clip. The bank is checked before the clip is sent and again before the
 audio comes back.
 
+The worker decodes a `/render` upload sent gzip- or zstd-encoded (OF-604), up
+to the same body bound. Set `request_compression = "zstd"` on the `voxcpm2`
+provider entry (`"gzip"` on a Python before 3.14, which has no
+`compression.zstd`), and the engine sends an upload of 16 KiB or more encoded
+when that makes it smaller. A codec the worker cannot read is answered 415;
+the engine then sends that upload again, plain, and sends plain until it
+restarts. `VoxCpm2HttpQueue` sends plain.
+
 The CPU-only harness uses an injected fake model to prove request framing,
 ref forwarding, PCM conversion, and target metadata. It is **not** a GPU
 latency/quality or owner-ear verdict. Run: `uv run --with numpy python3 -m unittest

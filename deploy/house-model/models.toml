@@ -17,12 +17,14 @@ base_url = "http://127.0.0.1:18091"
 response_format = "none"        # the ruled recipe runs without a schema (RESEARCH-1232)
 context_tokens = 32768
 revision = "qwen3.8-27b-exl3-4bpw-dflash2-d7"
+request_compression = "zstd"    # exl3_server.py decodes it (README.md, "Compressed requests")
 
 [models.providers.llama]
 kind = "local-openai-compat"
 base_url = "http://127.0.0.1:18134"
 context_tokens = 32768
 revision = "qwen3.8-27b-q4km"   # part of the decision read's pinned revision
+request_compression = "zstd"    # when build-llama.sh built the server
 
 [models.roles.generative_reasoner]
 rungs = [{ model = "exl3:qwen3.8-27b" }, { model = "llama:qwen3.8-27b" }]

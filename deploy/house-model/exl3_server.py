@@ -12,6 +12,9 @@ it: the text before `</think>` comes back as `reasoning_content`, the answer as
 `content`. `reasoning_budget_tokens` caps the thinking part; at the cap the
 server closes the thought itself and the answer gets the rest of `max_tokens`.
 A `response_format` schema constrains the answer only, never the thought.
+
+A request body may come gzip- or zstd-encoded (`body_codec.py`); one in a
+codec this server cannot read is answered 415.
 """
 import argparse
 import json
@@ -21,6 +24,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from body_codec import UnsupportedEncoding, decode_body
 from jinja2 import Environment
 from exllamav3 import Cache, CacheLayer_quant, Config, Generator, Job, LLGuidanceFilter, Model, Tokenizer
 from exllamav3.generator.sampler import ComboSampler
@@ -358,7 +362,8 @@ def serve(args, state):
             headers_sent = False
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                body = json.loads(self.rfile.read(length))
+                body = json.loads(decode_body(self.headers.get("Content-Encoding"),
+                                              self.rfile.read(length)))
                 if not isinstance(body, dict):
                     raise RequestError("the body must be a JSON object")
                 streaming = bool(body.get("stream", False))
@@ -403,6 +408,9 @@ def serve(args, state):
                                      "choices": [{"index": 0, "message": message,
                                                   "finish_reason": result["finish_reason"]}],
                                      "usage": result["usage"], "timings": result["timings"]})
+            except UnsupportedEncoding as e:
+                self._json(415, {"error": {"message": f"Content-Encoding {e} is not supported",
+                                           "type": "invalid_request_error"}})
             except (RequestError, ValueError, KeyError, TypeError) as e:
                 print(f"REQUEST_ERROR {type(e).__name__}: {e}", flush=True)
                 if headers_sent:

@@ -468,6 +468,12 @@ impl ProviderFile {
     }
 }
 
+/// Whether a kind's request bodies can go compressed: a chat wire's, and
+/// our own VoxCPM2 worker's render uploads, which it decodes (OF-604, D1).
+fn compresses(kind: ProviderKind) -> bool {
+    kind.generates() || kind == ProviderKind::Voxcpm2
+}
+
 /// The request compression an entry has: what it wrote, else its route's in
 /// [`REQUEST_COMPRESSION_ROUTES`]. A broker-held key has none: the broker
 /// picks its own, and an entry's codec does not reach it.
@@ -503,10 +509,15 @@ fn request_compression(
             route: known.and_then(|known| known.route),
         }),
     };
-    if compression.is_some() && (brokered || !kind.generates()) {
+    if compression.is_some() && (brokered || !compresses(kind)) {
+        if file.is_some() && kind == ProviderKind::Oneironer {
+            anyhow::bail!(
+                "models.providers.{name}.request_compression: a tagger's requests go to oneironer.url; set oneironer.request_compression there"
+            );
+        }
         if file.is_some() {
             anyhow::bail!(
-                "models.providers.{name}.request_compression applies to a generating provider whose key is not key_secret"
+                "models.providers.{name}.request_compression applies to a generating or VoxCPM2 provider whose key is not key_secret"
             );
         }
         return Ok(None);

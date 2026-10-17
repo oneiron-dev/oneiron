@@ -44,7 +44,9 @@ sudo useradd --system --home /var/lib/oneiron-house oneiron-house
 sudo python3 -m venv /opt/oneiron-house/.venv
 # a CUDA PyTorch wheel matching the driver first, then:
 sudo /opt/oneiron-house/.venv/bin/pip install -r deploy/house-model/requirements.txt
-# llama.cpp built with CUDA at /opt/oneiron-house/llama.cpp/build/bin/llama-server
+# llama.cpp with CUDA and request decoding, at /opt/oneiron-house/llama.cpp/build/bin/llama-server
+sudo apt-get install libzstd-dev zlib1g-dev
+sudo deploy/house-model/build-llama.sh
 sudo cp deploy/house-model/house.env.example /etc/oneiron-house.env
 sudo cp deploy/systemd/oneiron-house-exl3.service deploy/systemd/oneiron-house-llama.service /etc/systemd/system/
 sudo systemctl enable --now oneiron-house-exl3 oneiron-house-llama
@@ -67,3 +69,24 @@ and the answer gets the rest of `max_tokens`. A `response_format` schema
 constrains the answer only. A prompt that fills the context is refused with
 `400` and `code = "context_length_exceeded"`. Requests take turns: one runs
 at a time, as the measured recipe ran.
+
+## Compressed requests
+
+Both servers decode a request body sent gzip- or zstd-encoded (OF-604), so
+both entries in `models.toml` set `request_compression = "zstd"`: the engine
+sends a body of 16 KiB or more in zstd level 3 when that is smaller.
+`exl3_server.py` decodes with `body_codec.py` (zstd needs Python 3.14 or the
+`zstandard` package in `requirements.txt`); `llama-server` decodes when
+`build-llama.sh` built it, with cpp-httplib's zstd and zlib support on. A
+server that cannot read the codec answers 415 (an older `llama-server` may
+answer 400); the engine then sends that request again, plain, and sends that
+provider plain bodies until it restarts.
+
+A vLLM server decodes through the same module as an ASGI middleware:
+
+```sh
+PYTHONPATH=/opt/oneiron/deploy/house-model \
+  vllm serve <model> --middleware body_codec.DecodeContentEncoding
+```
+
+Then its entry may set `request_compression = "zstd"` too.

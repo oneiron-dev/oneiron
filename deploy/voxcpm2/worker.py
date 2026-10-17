@@ -13,8 +13,14 @@ import tempfile
 import threading
 import time
 import uuid
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+try:
+    from compression import zstd as _zstd
+except ImportError:
+    _zstd = None
 
 MODEL_ID = "openbmb/VoxCPM2"
 FIELDS = ("max_text_bytes", "max_pcm_bytes", "max_ref_bytes", "max_queued_renders",
@@ -63,6 +69,32 @@ def unpack(body, max_header=32768, *, include_header_length=False):
     if include_header_length:
         return meta, body[4+n:], n
     return meta, body[4+n:]
+
+
+class UnsupportedEncoding(ValueError):
+    """A Content-Encoding this worker cannot read: answer 415."""
+
+
+def decode_body(encoding, raw, limit):
+    """`raw` under its Content-Encoding (gzip, or zstd on Python 3.14), at
+    most `limit` bytes decoded (OF-604): the engine sends a render upload of
+    16 KiB or more encoded when its provider entry names the codec."""
+    token = (encoding or "identity").strip().lower()
+    if token == "identity":
+        return raw
+    if token == "gzip":
+        decoder, error = zlib.decompressobj(wbits=31), zlib.error
+    elif token == "zstd" and _zstd is not None:
+        decoder, error = _zstd.ZstdDecompressor(), _zstd.ZstdError
+    else:
+        raise UnsupportedEncoding(token)
+    try:
+        body = decoder.decompress(raw, limit + 1)
+    except error:
+        raise ValueError("encoded body") from None
+    if len(body) > limit or not decoder.eof:
+        raise ValueError("request size")
+    return body
 
 
 def pack(meta, audio):
@@ -222,7 +254,8 @@ def handler_for(worker):
                     raise ValueError("incomplete upload")
                 parts.append(piece)
                 remaining -= len(piece)
-            return unpack(b"".join(parts), worker.limits["max_header_bytes"],
+            body = decode_body(self.headers.get("Content-Encoding"), b"".join(parts), max_body)
+            return unpack(body, worker.limits["max_header_bytes"],
                           include_header_length=True)
 
         def do_POST(self):
@@ -241,6 +274,9 @@ def handler_for(worker):
                     data = worker.render(meta, wav, header_bytes)
                 except (TimeoutError, socket.timeout):
                     self.send_error(408, "upload deadline exceeded")
+                    return
+                except UnsupportedEncoding:
+                    self.send_error(415, "unsupported content encoding")
                     return
                 except (ValueError, TypeError, UnicodeError, KeyError):
                     self.send_error(400, "invalid render request")

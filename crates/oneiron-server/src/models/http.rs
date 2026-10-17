@@ -121,38 +121,52 @@ struct Compressor {
     on: AtomicBool,
 }
 
+/// `plain` in `codec`: `None` when the body is under
+/// [`MIN_COMPRESSED_BYTES`], the codec is gzip on a cloud node, or encoding
+/// would not make it smaller. The tagger's client shares it.
+pub(crate) fn encode_request_body(codec: RequestCodec, plain: &[u8]) -> Option<Vec<u8>> {
+    if plain.len() < MIN_COMPRESSED_BYTES
+        || (codec == RequestCodec::Gzip && CLOUD_NODE.load(Ordering::Relaxed))
+    {
+        return None;
+    }
+    let encoded = match codec {
+        RequestCodec::Gzip => {
+            let mut encoder = flate2::write::GzEncoder::new(
+                Vec::with_capacity(plain.len() / 2),
+                flate2::Compression::new(GZIP_LEVEL),
+            );
+            encoder.write_all(plain).ok()?;
+            encoder.finish().ok()?
+        }
+        RequestCodec::Zstd => zstd::stream::encode_all(plain, ZSTD_LEVEL).ok()?,
+    };
+    (encoded.len() < plain.len()).then_some(encoded)
+}
+
+/// The `Content-Encoding` token of `codec`.
+pub(crate) const fn codec_token(codec: RequestCodec) -> &'static str {
+    match codec {
+        RequestCodec::Gzip => "gzip",
+        RequestCodec::Zstd => "zstd",
+    }
+}
+
 impl Compressor {
     /// `plain` in this provider's codec, for a post to `path`: `None` when
-    /// it is off, the route is not one it decodes on, the body is under
-    /// [`MIN_COMPRESSED_BYTES`], the codec is gzip on a cloud node, or
-    /// encoding would not make it smaller.
+    /// it is off, the route is not one it decodes on, or
+    /// [`encode_request_body`] leaves it plain.
     fn encode(&self, path: &str, plain: &[u8]) -> Option<Vec<u8>> {
         if !self.on.load(Ordering::Relaxed)
             || self.compression.route.is_some_and(|route| route != path)
-            || plain.len() < MIN_COMPRESSED_BYTES
-            || (self.compression.codec == RequestCodec::Gzip && CLOUD_NODE.load(Ordering::Relaxed))
         {
             return None;
         }
-        let encoded = match self.compression.codec {
-            RequestCodec::Gzip => {
-                let mut encoder = flate2::write::GzEncoder::new(
-                    Vec::with_capacity(plain.len() / 2),
-                    flate2::Compression::new(GZIP_LEVEL),
-                );
-                encoder.write_all(plain).ok()?;
-                encoder.finish().ok()?
-            }
-            RequestCodec::Zstd => zstd::stream::encode_all(plain, ZSTD_LEVEL).ok()?,
-        };
-        (encoded.len() < plain.len()).then_some(encoded)
+        encode_request_body(self.compression.codec, plain)
     }
 
     fn token(&self) -> &'static str {
-        match self.compression.codec {
-            RequestCodec::Gzip => "gzip",
-            RequestCodec::Zstd => "zstd",
-        }
+        codec_token(self.compression.codec)
     }
 }
 
@@ -261,19 +275,29 @@ impl ProviderHttp {
     }
 
     /// Posts `body` as JSON, compressed when this provider's route takes it
-    /// (ARCH-0081 §6). A 400 or 415 to a compressed body is sent once more,
-    /// plain; when the plain answer differs, the encoding was the cause and
-    /// compression turns off for this process.
+    /// (ARCH-0081 §6).
     fn post(&self, path: &str, headers: &BTreeMap<String, String>, body: &JsonValue) -> Sending {
         let plain = serde_json::to_vec(body).unwrap_or_default();
-        let request = self.request(path, headers);
+        self.send_body(path, || self.request(path, headers), plain)
+    }
+
+    /// Sends `plain` on a request `request` builds, compressed when this
+    /// provider's route takes it. A 400 or 415 to a compressed body is sent
+    /// once more, plain; when the plain answer differs, the encoding was the
+    /// cause and compression turns off for this process.
+    fn send_body(
+        &self,
+        path: &str,
+        request: impl Fn() -> reqwest::RequestBuilder,
+        plain: Vec<u8>,
+    ) -> Sending {
         let encoded = self.compression.as_ref().and_then(|compressor| {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
         });
         let Some((compressor, encoded)) = encoded else {
-            return Box::pin(request.body(plain).send());
+            return Box::pin(request().body(plain).send());
         };
-        let resend = self.request(path, headers);
+        let (request, resend) = (request(), request());
         Box::pin(async move {
             let response = request
                 .header(reqwest::header::CONTENT_ENCODING, compressor.token())
@@ -337,25 +361,42 @@ impl ProviderHttp {
     }
 
     /// One media exchange at `path`, its reply body read whole up to
-    /// [`MAX_MEDIA_REPLY_BYTES`]. One request, as every exchange here.
+    /// [`MAX_MEDIA_REPLY_BYTES`]. One request, as every exchange here; a
+    /// JSON or octet body is compressed as [`Self::send_body`] says.
     pub(super) async fn send_media(
         &self,
         path: &str,
         send: MediaSend,
     ) -> Result<BytesReply, HttpFailure> {
         let url = self.url(path);
-        let request = match send {
-            MediaSend::Get => self.client.get(url),
-            MediaSend::Delete => self.client.delete(url),
-            MediaSend::Json(body) => self.client.post(url).json(&body),
-            MediaSend::Multipart(form) => self.client.post(url).multipart(form),
-            MediaSend::Octets(body) => self
-                .client
-                .post(url)
-                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-                .body(body),
+        let body = |content_type: &'static str| {
+            let url = url.as_str();
+            move || {
+                self.client
+                    .post(url)
+                    .header(reqwest::header::CONTENT_TYPE, content_type)
+            }
         };
-        let response = request.send().await?;
+        let response = match send {
+            MediaSend::Get => self.client.get(url.as_str()).send().await?,
+            MediaSend::Delete => self.client.delete(url.as_str()).send().await?,
+            MediaSend::Json(json) => {
+                let plain = serde_json::to_vec(&json).unwrap_or_default();
+                self.send_body(path, body("application/json"), plain)
+                    .await?
+            }
+            MediaSend::Multipart(form) => {
+                self.client
+                    .post(url.as_str())
+                    .multipart(form)
+                    .send()
+                    .await?
+            }
+            MediaSend::Octets(octets) => {
+                self.send_body(path, body("application/octet-stream"), octets)
+                    .await?
+            }
+        };
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
         let body = bounded_body(response, MAX_MEDIA_REPLY_BYTES).await?;
