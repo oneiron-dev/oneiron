@@ -15,6 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use oneiron::embed::{
@@ -115,6 +116,10 @@ pub(crate) struct RuntimeMediaEmbedder {
     ai: AiHandle,
     vault: Arc<oneiron::Vault>,
     egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
+    /// Whether each call names the space's width as `dimensions`: set once
+    /// the rung answers wider than the space, as a matryoshka rung answers
+    /// its native width unless asked.
+    names_width: AtomicBool,
     /// The runtime the synchronous door drives its calls on; a blocking
     /// caller sets it.
     runtime: Option<tokio::runtime::Handle>,
@@ -153,6 +158,7 @@ impl SyncServer {
             ai: self.ai.clone(),
             vault: Arc::clone(&self.vault),
             egress: self.extraction_egress.clone(),
+            names_width: AtomicBool::new(false),
             runtime: None,
         })
     }
@@ -305,7 +311,8 @@ impl RuntimeMediaEmbedder {
 
     /// One part to its vector, as an `ai.embed` call: the vault's inference
     /// policy admits it for this rung, and the rung's ladder sends and
-    /// settles it on the media meter.
+    /// settles it on the media meter. A vector wider than the space asks
+    /// once more, naming the space's width.
     async fn embed_one(&self, part: MediaPart) -> Result<Vec<f32>, MediaEmbedRefusal> {
         let modality = part.modality();
         if !self.inputs.contains(&modality) {
@@ -314,7 +321,32 @@ impl RuntimeMediaEmbedder {
                 modality,
             });
         }
-        let request = self.admit(part)?;
+        let named = self.names_width.load(Ordering::Relaxed);
+        let mut vector = self.embed_call(part.clone(), named).await?;
+        if !named && vector.len() > self.space.dimensions {
+            self.names_width.store(true, Ordering::Relaxed);
+            vector = self.embed_call(part, true).await?;
+        }
+        if vector.len() != self.space.dimensions {
+            return Err(MediaEmbedRefusal::Width {
+                space: self.space.id.clone(),
+                expected: self.space.dimensions,
+                got: vector.len(),
+            });
+        }
+        if vector.iter().any(|value| !value.is_finite()) {
+            return Err(MediaEmbedRefusal::Malformed);
+        }
+        Ok(vector)
+    }
+
+    /// One admitted call's single vector.
+    async fn embed_call(
+        &self,
+        part: MediaPart,
+        name_width: bool,
+    ) -> Result<Vec<f32>, MediaEmbedRefusal> {
+        let request = self.admit(part, name_width)?;
         let response = self
             .ai
             .model_runtime()
@@ -329,22 +361,13 @@ impl RuntimeMediaEmbedder {
         let (Some(vector), None) = (vectors.next(), vectors.next()) else {
             return Err(MediaEmbedRefusal::Malformed);
         };
-        if vector.len() != self.space.dimensions {
-            return Err(MediaEmbedRefusal::Width {
-                space: self.space.id.clone(),
-                expected: self.space.dimensions,
-                got: vector.len(),
-            });
-        }
-        if vector.iter().any(|value| !value.is_finite()) {
-            return Err(MediaEmbedRefusal::Malformed);
-        }
         Ok(vector)
     }
 
     /// The call as `/v1/ai/embed` admits it: the vault's inference policy
-    /// for this rung, and no world the call vouches for.
-    fn admit(&self, part: MediaPart) -> Result<MediaRequest, MediaEmbedRefusal> {
+    /// for this rung, and no world the call vouches for. `name_width` asks
+    /// for the space's width as the call's `dimensions`.
+    fn admit(&self, part: MediaPart, name_width: bool) -> Result<MediaRequest, MediaEmbedRefusal> {
         let purpose = CallPurpose::Other {
             name: format!("ai.{}", AiOperation::Embed.as_str()),
         };
@@ -365,7 +388,14 @@ impl RuntimeMediaEmbedder {
             operation: AiOperation::Embed,
             parts: vec![part],
             references: Vec::new(),
-            params: BTreeMap::new(),
+            params: if name_width {
+                BTreeMap::from([(
+                    "dimensions".to_owned(),
+                    serde_json::json!(self.space.dimensions),
+                )])
+            } else {
+                BTreeMap::new()
+            },
             voice: None,
         };
         let context = oneiron::llm::HostInferenceContext {
