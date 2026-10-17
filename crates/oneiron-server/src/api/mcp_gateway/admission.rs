@@ -56,6 +56,15 @@ pub(crate) fn mcp_admit_scoped_call(
         McpValidatedToolArgs::ReadResult(_) => {
             return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_READ_RESULT_TOOL, "name");
         }
+        // The wrapper never routes around the connector's allow-list: the
+        // verb it runs is admitted by name too. An action runs under the
+        // credential's own slip and read key, so no world or facet a
+        // registration narrows to rides it: a narrowed connector is refused,
+        // as for execute_code.
+        McpValidatedToolArgs::InvokeAction(action) => {
+            mcp_admit_bound_tool(actor, &action.verb).map_err(|error| error.with_field("verb"))?;
+            return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_INVOKE_ACTION_TOOL, "name");
+        }
         McpValidatedToolArgs::Verb(verb) => verb,
     };
     mcp_admit_verb_scope(server, verb.tool, &verb.payload.arguments, actor)
@@ -203,6 +212,7 @@ fn mcp_called_tool_name(args: &McpValidatedToolArgs) -> &'static str {
         McpValidatedToolArgs::Setup(_) => crate::mcp::MCP_SETUP_TOOL,
         McpValidatedToolArgs::ExecuteCode(_) => crate::mcp::MCP_EXECUTE_CODE_TOOL,
         McpValidatedToolArgs::ReadResult(_) => crate::mcp::MCP_READ_RESULT_TOOL,
+        McpValidatedToolArgs::InvokeAction(_) => crate::mcp::MCP_INVOKE_ACTION_TOOL,
         McpValidatedToolArgs::Verb(verb) => verb.tool.name,
     }
 }
