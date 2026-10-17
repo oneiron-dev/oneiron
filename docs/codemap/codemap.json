@@ -44600,7 +44600,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 24,
       "re-export": 16
      }
@@ -45532,6 +45532,16 @@
      "purpose": "Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state…",
      "surface": {
       "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/withdrawn_cutoffs.rs",
+     "purpose": "OF-013: withdrawn-generation cutoffs on the window plane",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -53168,7 +53178,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 159,
+     "files": 160,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53359,7 +53369,7 @@
    },
    "over_bar": 170,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3238,
+   "source_files": 3239,
    "test_files": 902
   },
   "oneiron-android": {
