@@ -741,9 +741,11 @@ fn live_attempt(
 }
 
 /// `loop`: one actor's identical `(verb, request_digest)` calls in a row, with
-/// no other call by that actor between them. A call receipt names no attempt,
-/// so the card's task is none. An agent run's own calls leave no receipt and
-/// are judged per attempt (`run_loop`).
+/// no other call by that actor between them and no new input: two calls
+/// whose inputs were both captured repeat only on an equal action digest
+/// ([`same_inputs`]). A call receipt names no attempt, so the card's task is
+/// none. An agent run's own calls leave no receipt and are judged per attempt
+/// (`run_loop`).
 fn loop_findings(
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
     dispatched: &Dispatches,
@@ -760,7 +762,12 @@ fn loop_findings(
             let end = rows[start..]
                 .iter()
                 .position(|(_, row)| {
-                    row.verb != first.verb || row.request_digest != first.request_digest
+                    row.verb != first.verb
+                        || row.request_digest != first.request_digest
+                        || !same_inputs(
+                            row.action_digest.as_deref(),
+                            first.action_digest.as_deref(),
+                        )
                 })
                 .map_or(rows.len(), |offset| start + offset);
             let run = &rows[start..end];
@@ -797,6 +804,17 @@ fn loop_findings(
         }
     }
     out
+}
+
+/// No new input between two equal calls, by their action digests: both
+/// captured and equal. A call whose inputs were not captured (it reads the
+/// world, or names too many entities) shows no input change, so its
+/// arguments alone decide.
+fn same_inputs(first: Option<&str>, second: Option<&str>) -> bool {
+    match (first, second) {
+        (Some(first), Some(second)) => first == second,
+        _ => true,
+    }
 }
 
 /// `silent`: a leased attempt whose actor made no call within the dial, with
