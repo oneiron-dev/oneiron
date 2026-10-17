@@ -575,6 +575,11 @@ export_facade! {
     let output = client.reveal_describe(&input)?;
     crate::codec::lift_record("reveal.describe", &output)
 };
+"self.use" => fn self_use(&self, input: SecretUseRequest) -> SecretUseAnswer = |client| {
+    let input: oneiron::task_verb::sdk::SecretUseRequest = crate::codec::lower_record("self.use", input)?;
+    let output = client.self_use(&input)?;
+    crate::codec::lift_record("self.use", &output)
+};
 "vault.shares.create" => fn vault_shares_create(&self, input: ShareCreateRequest) -> ShareCreated = |client| {
     let input: oneiron::task_verb::sdk::ShareCreateRequest = crate::codec::lower_record("vault.shares.create", input)?;
     let output = client.vault_shares_create(&input)?;
