@@ -44,10 +44,12 @@ impl HookVerdict for ServerHookVerdict {
         }
         request.deadline_ms = Some(request.deadline_ms.map_or(left, |own| own.min(left)));
         let memory = server.vault.memory(reader, class);
-        // A hook pulls no image: it has no credential lane to pull one with.
-        let verdict =
-            crate::decision_verdict::run_verdict(&server, reader, class, &memory, None, &request)
-                .map_err(|error| format!("{}: {}", error.code, error.message))?;
+        // A hook pulls no image: it has no credential lane to pull one
+        // with, and no browser holds one for it.
+        let verdict = crate::decision_verdict::run_verdict(
+            &server, reader, class, &memory, None, None, &request,
+        )
+        .map_err(|error| format!("{}: {}", error.code, error.message))?;
         serde_json::to_string(&verdict).map_err(|_| "the verdict did not encode".to_owned())
     }
 }
