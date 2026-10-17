@@ -163,6 +163,7 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     crate::dreamer_runner::maintenance::agent_health::HEALTH_WIDEN_DENIALS,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_COST_SPIKE,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_ESCALATE_TTL_HOURS,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_CARD_FLOOR,
 ];
 
 /// The catalog row named `key`, if the engine knows it.
