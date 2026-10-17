@@ -233,7 +233,9 @@ pub fn site_of(url: &str) -> Option<String> {
         return None;
     }
     let authority = rest.split(['/', '?', '#']).next()?;
-    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
     (!host.is_empty() && !host.contains("{{")).then(|| host.to_ascii_lowercase())
 }
 
@@ -261,9 +263,9 @@ fn fill_slots(
                     .find("}}")
                     .ok_or_else(|| BrowserError::Input("a {{ slot is never closed".to_owned()))?;
                 let name = after[..close].trim();
-                let arg = args
-                    .get(name)
-                    .ok_or_else(|| BrowserError::Input(format!("slot {{{{{name}}}}} is no parameter")))?;
+                let arg = args.get(name).ok_or_else(|| {
+                    BrowserError::Input(format!("slot {{{{{name}}}}} is no parameter"))
+                })?;
                 filled.push_str(arg);
                 rest = &after[close + 2..];
             }

@@ -67,7 +67,7 @@ declare namespace self {
       review(input: { request: string; approve: boolean }): Promise<unknown>;
     };
   };
-  const message: (input: { pr: string; text: string }) => Promise<unknown>;
+  const message: (input: { mention?: { end: number; message: string; start: number; turn: string } | null; pr: string; text: string }) => Promise<unknown>;
   const skills: {
     call(input: { args: unknown; skill: string }): Promise<unknown>;
     callables(input: object): Promise<unknown>;
@@ -79,7 +79,7 @@ declare namespace self {
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;
-  create(input: { label?: string | null; spec: unknown }): Promise<unknown>;
+  create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;
   outcomes(input: { group_ref: string }): Promise<unknown>;
   refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
   update(input: { task_ref: string }): Promise<unknown>;

@@ -25,13 +25,13 @@ use oneiron::skill_hub::{
 };
 use serde::{Deserialize, Serialize};
 
-use oneiron::connector_key::ProviderConnectionChecks;
 use oneiron::lens::{GeneratedUiCard, GeneratedUiStateSnapshot};
 use oneiron::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
 
 use super::{OwnerReply, blocking, owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
+use crate::builtin_host::HostConnectionChecks;
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
@@ -1038,7 +1038,7 @@ async fn setup_answer(
                 match view.card_action(&card.action_id, &card.state)? {
                     PackSetupCardAction::Answer(answer) => answer,
                     PackSetupCardAction::Verify { connection } => {
-                        let checks = ProviderConnectionChecks::new()?;
+                        let checks = HostConnectionChecks::new(&server)?;
                         return PackSetupReply::new(vault.verify_pack_connection(
                             &owner,
                             &request.pack,
@@ -1086,7 +1086,7 @@ async fn setup_verify(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let reply = blocking(move || {
-        let checks = ProviderConnectionChecks::new()?;
+        let checks = HostConnectionChecks::new(&server)?;
         PackSetupReply::new(server.vault().verify_pack_connection(
             &owner,
             &request.pack,

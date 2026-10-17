@@ -135,8 +135,8 @@ pub(crate) fn run_graph_question_with_proposals(
                         return Ok(None);
                     }
                     super::standing::backfill_graph_decision(
-                        vault, principal, reference, actor, context, frontier, &images,
-                        &audio, *decision, proposals, now,
+                        vault, principal, reference, actor, context, frontier, &images, &audio,
+                        *decision, proposals, now,
                     )
                     .map(Some)
                 }
