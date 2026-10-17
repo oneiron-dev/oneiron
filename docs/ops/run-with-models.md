@@ -949,6 +949,55 @@ whose provider reports no duration is charged the length of the WAV it was
 sent. These calls are buffered, so live partial transcripts wait for a
 streaming media lease.
 
+### The server's own voice loop (`[models.voice]`)
+
+With `socket` set, `serve` listens there for the sibling process that carries
+a call's audio (Linux; elsewhere the socket is not bound and voice stays
+off). The socket's parent must be an existing owner-only runtime directory.
+The socket is created 0600 and removed when serve stops. One call runs at a
+time; a second connection waits for the first to end.
+
+```toml
+[models.voice]
+socket = "/run/oneiron/voice.sock"
+extraction_prompt_file = "prompts/voice-extraction.md"  # or extraction_prompt
+stock_voice = "alloy"          # or bank_voice = "<voice id>"
+queue_capacity = 64            # media calls queued (default 64)
+call_budget_units = 64000      # each call's line for the host's own calls
+```
+
+A call opens with one JSON line:
+`{"op":"hello","token":"v2.slip...","binding":{"timestamp":..,"nonce":"..","signature":".."},"sample_rate":16000,"channels":1}`.
+- The token and binding proof are the owner's capability slip and a fresh
+  transport proof, the same ones the HTTP API takes in `Authorization` and
+  `x-oneiron-binding`.
+- They pass the same doors at the on-device locality, then the owner door.
+- A bad or missing token closes the socket before any audio. An admitted call
+  is answered `{"op":"accepted"}`.
+
+After that the stream carries:
+- **the transcript ops** (`open`, `partial`, `final`, `close`);
+- **media in:** `pcm` (STANDARD base64 of whole PCM16LE samples, at most about
+  12 KiB raw a frame), `cut`, `speaking`, `roster_changed`, and
+  `drained{generation}` once a `generation_end`'s audio has all played;
+- **media out:** `pcm{generation, sample_rate, data}` (mono PCM16LE),
+  `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice` and
+  `session_ended`.
+
+How a call runs:
+- Each heard final is answered by the chat role as `/ai/chat` answers it: the
+  default agent's instructions, the call's earlier turns and the transcript,
+  with tools off, on the owner's budget line (`[models.chat]
+  turn_budget_units` a turn).
+- Each sentence is spoken on the vault's live TTS route while its safeguard
+  runs.
+- Partials are enriched with the extraction prompt on the runtime's
+  summarizer route, which must name a model that `[models]` serves.
+- The enrichment and the safeguard model run on the call's own line.
+
+A full media queue makes heard audio wait for the next cut and a sentence
+wait for room. A queue that takes nothing for 30 seconds stops the reply.
+
 ### Lazy images and `ask_image`
 
 A read serves each generated image down a ladder. A reader whose request
