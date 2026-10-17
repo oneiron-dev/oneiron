@@ -21,9 +21,9 @@ use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit};
 use oneiron::{
-    ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage,
-    ModelId, RetryableLlmError,
+    ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
+    LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
+    RetryableLlmError,
 };
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
@@ -38,6 +38,11 @@ use super::offer::ServedOffer;
 use super::served::served_receipt;
 use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
+
+/// A chat call's answer and the model of the rung that gave it.
+type ServedFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = LlmResult<(LlmResponse, ModelId)>> + Send + 'a>,
+>;
 
 /// One rung: a provider's offer for one model, and the instruction prepended
 /// to every call it serves.
@@ -830,6 +835,21 @@ impl OfferLadder {
     ) -> LlmResult<LlmResponse> {
         self.generate_from(run, request, selector, may_send, wait_budget, true)
             .await
+            .map(|(response, _)| response)
+    }
+
+    /// [`Self::generate`], with the model of the rung that answered, the
+    /// owner's fallback included: the executor a caller stamps on the
+    /// attempt it ran for (OF-540).
+    pub async fn generate_served(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+    ) -> LlmResult<(LlmResponse, ModelId)> {
+        let budget = Duration::from_secs(self.rests.max_wait_secs());
+        self.generate_from(run, request, selector, &|| true, budget, true)
+            .await
     }
 
     /// [`Self::generate_within`]; once every rung has parked, a call whose
@@ -844,7 +864,7 @@ impl OfferLadder {
         may_send: &'a (dyn Fn() -> bool + Sync),
         wait_budget: Duration,
         may_fall_back: bool,
-    ) -> LlmGenerateFuture<'a> {
+    ) -> ServedFuture<'a> {
         Box::pin(async move {
             self.walk_generate(run, request, selector, may_send, wait_budget, may_fall_back)
                 .await
@@ -859,7 +879,7 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         wait_budget: Duration,
         may_fall_back: bool,
-    ) -> LlmResult<LlmResponse> {
+    ) -> LlmResult<(LlmResponse, ModelId)> {
         self.admits(&request)?;
         // The run is live until this call ends: the host stays awake for it.
         let _awake = oneiron_vault_contract::host_adapters::run_awake();
@@ -917,7 +937,9 @@ impl OfferLadder {
                 };
                 sent[index] = true;
                 match self.send(call, index, may_send, &mut walk).await? {
-                    Sent::Answer(response) => return Ok(response),
+                    Sent::Answer(response) => {
+                        return Ok((response, self.rungs[index].model.clone()));
+                    }
                     Sent::Failed | Sent::Held => {}
                     Sent::Stopped => return Err(self.unanswered(call, walk)),
                 }
