@@ -126,13 +126,13 @@ impl SyncServer {
         }
     }
 
-    /// The media's vectors in its declared space, driven on the runtime this
-    /// blocking thread belongs to.
+    /// The media's vectors in its declared space, driven on
+    /// [`Self::recall_embed_runtime`].
     fn recall_media_vectors(
         &self,
         media: DecodedMediaQuery,
     ) -> MemoryResult<Vec<(String, InputKind, Vec<f32>)>> {
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        let Ok(runtime) = self.recall_embed_runtime() else {
             return Err(MemoryError::new(
                 MEMORY_CODE_MODEL_UNAVAILABLE,
                 "vault.recall: no runtime drives the media embedder",
@@ -187,14 +187,30 @@ impl SyncServer {
         }
     }
 
+    /// The runtime a blocking recall drives its `ai.embed` calls on: the
+    /// multi-thread runtime this thread belongs to, else the server's own
+    /// call runtime (a current-thread host's blocking work runs on a thread
+    /// outside it, and a caller outside any runtime has none).
+    fn recall_embed_runtime(&self) -> MemoryResult<tokio::runtime::Handle> {
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                Ok(handle)
+            }
+            _ => self.rerank_runtime.handle(),
+        }
+    }
+
     /// The query's vector in declared space `space`, through the text tower
-    /// of the `ai.embed` rung its id names, driven on the runtime this
-    /// blocking thread belongs to; `None` when it does not embed, so recall
-    /// runs sparse.
+    /// of the `ai.embed` rung its id names, driven on
+    /// [`Self::recall_embed_runtime`]; `None` when it does not embed, so
+    /// recall runs sparse.
     fn recall_slot_vector(&self, space: &str, query: &str) -> Option<Vec<f32>> {
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            tracing::debug!(%space, "recall runs sparse: no runtime drives the text slot's embedder");
-            return None;
+        let runtime = match self.recall_embed_runtime() {
+            Ok(handle) => handle,
+            Err(error) => {
+                tracing::debug!(%space, %error, "recall runs sparse: no runtime drives the text slot's embedder");
+                return None;
+            }
         };
         let embedded = self.media_embedder(space).and_then(|embedder| {
             runtime.block_on(embedder.embed_query(
@@ -345,7 +361,8 @@ impl SyncServer {
             self.vault.call_mode_deadline(),
         )?;
         // A recall naming media takes the embedding door, which answers it.
-        let Some(budget) = budget.filter(|_| effort == Effort::Light && input.media.is_none()) else {
+        let Some(budget) = budget.filter(|_| effort == Effort::Light && input.media.is_none())
+        else {
             let memory = reader(&self.vault, actor, class, proof.as_ref())
                 .at(locality)
                 .listing_producers(producers);
@@ -416,7 +433,11 @@ fn media_refusal(error: crate::error::ApiError) -> MemoryError {
         _ => MEMORY_CODE_INTERNAL,
     };
     let suggestions: Vec<&str> = error.suggestions().iter().map(String::as_str).collect();
-    MemoryError::new(code, format!("vault.recall: {}", error.message()), &suggestions)
+    MemoryError::new(
+        code,
+        format!("vault.recall: {}", error.message()),
+        &suggestions,
+    )
 }
 
 /// `actor`'s memory facade, reading under the slip it presented.

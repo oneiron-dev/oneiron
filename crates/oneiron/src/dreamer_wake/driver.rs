@@ -781,7 +781,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         actual_units: completed_units,
                         now: input.now,
                     })?;
-                    self.complete_attempt(&admitted, input.now)?;
+                    self.complete_attempt(&*exec, &admitted, input.now).await?;
                     self.write_milestone(attempt_id, DreamerMilestoneKind::Done, input.now)?;
                     report.completed += 1;
                 }

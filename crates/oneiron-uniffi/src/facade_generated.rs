@@ -98,6 +98,11 @@ export_facade! {
     let output = client.tasks_create(&input)?;
     crate::codec::lift_record("tasks.create", &output)
 };
+"tasks.wave" => fn tasks_wave(&self, input: TaskWaveRequest) -> TaskWaveReceipt = |client| {
+    let input: oneiron::task_verb::sdk::TaskWaveRequest = crate::codec::lower_record("tasks.wave", input)?;
+    let output = client.tasks_wave(&input)?;
+    crate::codec::lift_record("tasks.wave", &output)
+};
 "tasks.update" => fn tasks_update(&self, input: TaskUpdateRequest) -> TaskUpdateReceipt = |client| {
     let input: oneiron::task_verb::sdk::TaskUpdateRequest = crate::codec::lower_record("tasks.update", input)?;
     let output = client.tasks_update(&input)?;
@@ -255,7 +260,7 @@ export_facade! {
     let output = client.vault_shared_deletion(&input)?;
     crate::codec::lift_record("vault.shared.deletion", &output)
 };
-"vault.members.add" => fn vault_members_add(&self, input: SharedMemberAddRequest) -> SharedActExecutionReceipt = |client| {
+"vault.members.add" => fn vault_members_add(&self, input: SharedMemberAddRequest) -> SharedMemberInvited = |client| {
     let input: oneiron::task_verb::sdk::SharedMemberAddRequest = crate::codec::lower_record("vault.members.add", input)?;
     let output = client.vault_members_add(&input)?;
     crate::codec::lift_record("vault.members.add", &output)
@@ -549,6 +554,16 @@ export_facade! {
     let input: oneiron::code_document::CodeStateRequest = crate::codec::lower_record("vault.code.blame", input)?;
     let output = client.vault_code_blame(&input)?;
     crate::codec::lift_record("vault.code.blame", &output)
+};
+"vault.code.proposal_view" => fn vault_code_proposal_view(&self, input: CodeProposalViewRequest) -> Option<CodeProposalView> = |client| {
+    let input: oneiron::code_document::CodeProposalViewRequest = crate::codec::lower_record("vault.code.proposal_view", input)?;
+    let output = client.vault_code_proposal_view(&input)?;
+    crate::codec::lift_record("vault.code.proposal_view", &output)
+};
+"vault.code.repo_diff" => fn vault_code_repo_diff(&self, input: CodeRepoDiffRequest) -> Option<CodeRepoDiffView> = |client| {
+    let input: oneiron::code_document::CodeRepoDiffRequest = crate::codec::lower_record("vault.code.repo_diff", input)?;
+    let output = client.vault_code_repo_diff(&input)?;
+    crate::codec::lift_record("vault.code.repo_diff", &output)
 };
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;
