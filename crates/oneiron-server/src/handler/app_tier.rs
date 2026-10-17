@@ -191,6 +191,10 @@ pub(super) async fn handle_sync_message(
 
 /// App-tier admission is disjoint from sync-mode binding. In particular, a
 /// sync-only connection can remain unbound for its entire lifetime.
+///
+/// The synchronous door: a verb runs here, through the blocking bridge
+/// ([`crate::livequery::bound_rpc_reply`]), not off a socket's loop.
+#[cfg(test)]
 pub(super) fn handle_app_message(
     server: &SyncServer,
     state: &mut ConnState,
@@ -198,9 +202,48 @@ pub(super) fn handle_app_message(
     payload: &[u8],
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
-    handle_app_message_with_connection(server, state, tag, payload, direct_tx, None)
+    let Some(call) =
+        handle_app_message_with_connection(server, state, tag, payload, direct_tx, None)?
+    else {
+        return Ok(());
+    };
+    let reply = crate::livequery::bound_rpc_reply(server, &call.auth, call.request)?;
+    for frame in reply.queued(call.conn) {
+        direct_tx
+            .send(frame)
+            .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+    }
+    Ok(())
 }
 
+/// A verb RPC the owner loop answers off the loop: the bound credential it
+/// runs under, the request, and the socket its answer is queued for.
+pub(super) struct VerbCall {
+    auth: CoreAuth,
+    request: crate::livequery::RpcRequest,
+    conn: u32,
+}
+
+impl VerbCall {
+    /// Runs the verb to its answer and queues the answer on `direct_tx`,
+    /// whose send door judges each frame again (DEC-0005).
+    pub(super) async fn answer(
+        self,
+        server: std::sync::Arc<SyncServer>,
+        direct_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    ) -> Result<(), ProtocolError> {
+        let reply = crate::livequery::rpc_reply(&server, &self.auth, self.request).await?;
+        for frame in reply.queued(self.conn) {
+            direct_tx
+                .send(frame)
+                .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+        }
+        Ok(())
+    }
+}
+
+/// Answers an app-tier frame here, except a verb RPC, which it hands back to
+/// run off the caller's loop.
 pub(super) fn handle_app_message_with_connection(
     server: &SyncServer,
     state: &mut ConnState,
@@ -208,7 +251,7 @@ pub(super) fn handle_app_message_with_connection(
     payload: &[u8],
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     connection: Option<&mut crate::livequery::connection::Connection>,
-) -> Result<(), ProtocolError> {
+) -> Result<Option<VerbCall>, ProtocolError> {
     if state.protocol_version < protocol::APP_TIER_PROTOCOL_VERSION_VERSION {
         return Err(ProtocolError::RpcVersionMismatch);
     }
@@ -255,7 +298,7 @@ pub(super) fn handle_app_message_with_connection(
                     .send(frame)
                     .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
             }
-            return Ok(());
+            return Ok(None);
         }
         let auth = require_bound_app_auth(server, state)?;
         let _ = server.wire_telemetry.record(
@@ -287,7 +330,11 @@ pub(super) fn handle_app_message_with_connection(
             )?
             .queued(conn)
         } else {
-            crate::livequery::bound_rpc_reply(server, auth, request)?.queued(conn)
+            return Ok(Some(VerbCall {
+                auth: auth.clone(),
+                request,
+                conn,
+            }));
         };
         for frame in frames {
             direct_tx
@@ -310,7 +357,7 @@ pub(super) fn handle_app_message_with_connection(
                 .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 pub(super) fn require_bound_app_auth<'a>(
