@@ -3,8 +3,10 @@
 //! the objection window and stays effect-free; this module validates each
 //! act's typed plan, claims the matured act in the writer that applies its
 //! effect, and records one receipt that every affected holder is told about.
-//! Erase keeps its own executor (`Memory::execute_completed_entity_erase`);
-//! a Member's or Admin's ask for one is `erase_ask`.
+//! Erase keeps its own executor (`Memory::execute_completed_entity_erase`),
+//! and once it has erased the record [`Vault::record_erase_completion`]
+//! writes the act's receipt and tells the Owners (OF-150); a Member's or
+//! Admin's ask for one is `erase_ask`.
 mod erase_ask;
 mod membership;
 
@@ -26,6 +28,10 @@ use super::PendingAuthorityAct;
 
 const RECEIPT_PREFIX: &[u8] = b"shared-act:receipt:v1:";
 const OUTCOME_PREFIX: &[u8] = b"shared-act:outcome:v1:";
+const REMOVAL_EXPORT_PREFIX: &[u8] = b"shared-act:removal-export:v1:";
+/// How long an export-first removal's archive waits on the host for the
+/// removed Owner to fetch it (OF-150), on the store clock.
+pub const REMOVAL_EXPORT_RETAIN_SECS: u64 = 14 * 24 * 60 * 60;
 const PLAN_VERSION: u8 = 1;
 /// How long a deleted vault stays in backups, so disaster recovery can return it.
 pub const DELETED_VAULT_BACKUP_RETENTION_SECS: u64 = 90 * 24 * 60 * 60;
@@ -151,6 +157,12 @@ pub enum SharedVaultChange {
         from: String,
         to: String,
     },
+    /// A held erase's own executor erased `record` (entity id hex);
+    /// `redaction` names its redaction receipt, when one was written.
+    RecordErased {
+        record: String,
+        redaction: Option<String>,
+    },
 }
 
 /// The durable receipt of one executed shared act or membership change. An
@@ -198,6 +210,21 @@ pub struct SharedActExport {
 pub struct SharedActExecution {
     pub receipt: SharedActExecutionReceipt,
     pub export: Option<crate::batch::export::WholeVaultExport>,
+}
+
+/// An export-first removal's archive, kept for the removed Owner until
+/// `expires_at` (OF-150). Their device fetches it with the slip the removal
+/// revoked (`Vault::removed_owner_exports`), so a lost answer or a retried
+/// execution never loses it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemovalExportCopy {
+    pub receipt_id: String,
+    pub vault_id: u64,
+    /// The removed Owner, PERSON hex.
+    pub member: String,
+    pub expires_at: u64,
+    pub export: crate::memory::MemoryExport,
 }
 
 /// One recipient's durable notice that a receipt was written.
@@ -574,11 +601,145 @@ impl Vault {
             authority_entry,
             now,
         )?;
+        if let (Some(summary), Some(archive)) = (&receipt.export, &archive) {
+            let copy = RemovalExportCopy {
+                receipt_id: receipt.id.clone(),
+                vault_id: act.vault_id,
+                member: summary.member.clone(),
+                expires_at: now
+                    .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
+                    .ok_or_else(invalid)?,
+                export: crate::memory::MemoryExport {
+                    format: crate::batch::export::VAULT_ARCHIVE_FORMAT.to_owned(),
+                    archive: archive.bytes().to_vec(),
+                    digest: summary.digest.clone(),
+                },
+            };
+            self.store.vault_meta.put(
+                &mut txn,
+                &key(
+                    REMOVAL_EXPORT_PREFIX,
+                    &format!("{}:{}", copy.member, copy.receipt_id),
+                ),
+                &encode(&copy)?,
+            )?;
+        }
         txn.commit()?;
         Ok(SharedActExecution {
             receipt,
             export: archive,
         })
+    }
+
+    /// The export-first removal archives kept for `member` that are still
+    /// within their retention at `now`.
+    pub(crate) fn removal_exports_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        member: EntityId,
+        now: u64,
+    ) -> Result<Vec<RemovalExportCopy>> {
+        let prefix = key(REMOVAL_EXPORT_PREFIX, &format!("{}:", member.to_hex()));
+        let mut copies = Vec::new();
+        for row in self.store.vault_meta.prefix_iter(txn, &prefix)? {
+            let (_, raw) = row?;
+            let copy: RemovalExportCopy = decode(&raw)?;
+            if now < copy.expires_at {
+                copies.push(copy);
+            }
+        }
+        Ok(copies)
+    }
+
+    /// Drops every export-first removal archive past its retention. It reads
+    /// first and opens a writer only when one has expired; it answers how
+    /// many it dropped.
+    pub(crate) fn drop_expired_removal_exports(&self) -> Result<usize> {
+        let expired = {
+            let txn = self.store.env.read_txn()?;
+            let now = self.store.clock.now_recorded_at();
+            let mut expired = Vec::new();
+            for row in self
+                .store
+                .vault_meta
+                .prefix_iter(&txn, REMOVAL_EXPORT_PREFIX)?
+            {
+                let (row_key, raw) = row?;
+                let copy: RemovalExportCopy = decode(&raw)?;
+                if now >= copy.expires_at {
+                    expired.push(row_key.to_vec());
+                }
+            }
+            expired
+        };
+        if expired.is_empty() {
+            return Ok(0);
+        }
+        let mut txn = self.store.env.write_txn()?;
+        for row_key in &expired {
+            self.store.vault_meta.delete(&mut txn, row_key)?;
+        }
+        txn.commit()?;
+        Ok(expired.len())
+    }
+
+    /// The completion of a held `erase` act (OF-150): once its own executor
+    /// ([`crate::Memory::execute_completed_entity_erase`]) has erased the
+    /// record the act names, its receipt, keyed by the act's own id, and one
+    /// notice to each live Owner and the executor, the act's starter. A
+    /// repeat returns the first receipt. Refused while the act is unclaimed
+    /// or its erase is still under way.
+    pub fn record_erase_completion(
+        &self,
+        executor: &AuthenticatedOwner,
+        act_id: &str,
+    ) -> Result<SharedActExecutionReceipt> {
+        let mut txn = self.store.env.write_txn()?;
+        let actor = executor.revalidate_person_in_txn(self, &txn)?;
+        let act = self
+            .pending_authority_act_in_txn(&txn, act_id)?
+            .ok_or_else(invalid)?;
+        if SharedActKind::parse(&act.act) != Some(SharedActKind::Erase)
+            || act.starter != actor.to_hex()
+        {
+            return Err(invalid());
+        }
+        if let Some(receipt) = self.shared_act_receipt_in_txn(&txn, &act.id)? {
+            return Ok(receipt);
+        }
+        let execution = act.execution.clone().ok_or_else(invalid)?;
+        let record = self.held_erase_record(&act).ok_or_else(invalid)?;
+        if execution.receipt.is_none()
+            && !self.local_hard_delete_marker_exists_in_txn(&txn, &record)?
+        {
+            return Err(Error::ConcurrentWrite("the held erase is still under way"));
+        }
+        check_vault(self, &txn, act.vault_id)?;
+        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
+        let owners = live_owners(&self.live_act_holders(&txn, act.vault_id, now)?, None);
+        let effect = Effect {
+            change: SharedVaultChange::RecordErased {
+                record: record.to_hex(),
+                redaction: execution.receipt,
+            },
+            grants: Vec::new(),
+            revoked_slips: Vec::new(),
+            notify: BTreeSet::new(),
+        };
+        let receipt = self.record_shared_change_in_txn(
+            &mut txn,
+            act.id.clone(),
+            act.vault_id,
+            Some((act.id, execution.request)),
+            actor,
+            owners,
+            effect,
+            None,
+            None,
+            now,
+        )?;
+        txn.commit()?;
+        Ok(receipt)
     }
 
     /// Persist the receipt and one notice to each live Owner, the actor and

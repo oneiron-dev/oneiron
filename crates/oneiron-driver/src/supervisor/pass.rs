@@ -67,10 +67,17 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     let attachment = factory
         .pass_attachment(vault, &guard)
         .map_err(PassRunError::PreAdmission)?;
+    // The Coach's optimizer lives for the pass and is lent to its driver.
+    let optimizer = factory
+        .skill_optimizer(vault, &guard)
+        .map_err(PassRunError::PreAdmission)?;
     let mut driver = DreamerWakeDriver::new(vault, pass_budget_id.to_owned(), deadline)
         .with_budget_guard(guard.clone());
     if let Some(author) = config.milestones.clone() {
         driver = driver.with_milestone_author(author);
+    }
+    if let Some(optimizer) = &optimizer {
+        driver = driver.with_skill_optimizer(optimizer.optimizer());
     }
     let mut executors = if scope == DreamerConsolidationScope::Macro {
         let buckets = oneiron::DreamerRunnerStore::new(vault)

@@ -100,10 +100,11 @@ pub(super) async fn bind(
     let backend = Arc::new(CodeModeBackend {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
-        guard,
+        guard: guard.clone(),
     });
-    // A reader child's calls take the same admission, on its own child
-    // scope's guard in place of code mode's.
+    // A reader child's calls take the same admission: on its own child
+    // scope's guard when its run spends under a scope, else on code mode's
+    // own, lent below as the host's meter.
     let reader_meter: crate::mcp::ReaderMeter = {
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
@@ -130,7 +131,14 @@ pub(super) async fn bind(
     let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
         Ok(provider) => provider
             .with_clock_from_first_start()
-            .with_reader_meter(reader_meter),
+            .with_reader_meter(reader_meter)
+            .with_host_meter(guard)
+            .with_reader_window_tokens(
+                super::dreamer::dream_windows(models)
+                    .get(&seat.model)
+                    .copied()
+                    .unwrap_or(0),
+            ),
         Err(error) => {
             tracing::error!(%error, "code mode's executor config is invalid");
             return server;

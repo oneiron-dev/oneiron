@@ -35,6 +35,10 @@ pub const HOOK_PASS_ENTRIES: usize = 256;
 /// How often the runner re-reads its cursors without a change notice: not
 /// every claim write notifies.
 pub const HOOK_RUNNER_TICK: Duration = Duration::from_secs(2);
+/// Admits one runner pass, or refuses it with `None`; the pass holds what it
+/// returns until it ends. Managed serve hands in its reap freeze, so a frozen
+/// vault runs no hook and a pass in flight keeps it from reading quiescent.
+pub type HookPassAdmission = std::sync::Arc<dyn Fn() -> Option<Box<dyn Send>> + Send + Sync>;
 /// The largest input a memo row pins.
 pub(super) const MAX_PINNED_INPUT: usize = 256 * 1024;
 pub(super) const MAX_OUTCOME_BYTES: usize = 64 * 1024;
@@ -177,13 +181,15 @@ impl FactHookRunner {
     /// Runs passes until `shutdown` turns true. It subscribes to the vault's
     /// change notice before the first pass, catches up from every cursor at
     /// start, then wakes on a notice or every [`HOOK_RUNNER_TICK`]. Each pass
-    /// runs on a blocking thread. `verdict` answers generative hooks'
+    /// runs on a blocking thread, under one `admit`; a refused pass waits
+    /// for the next notice or tick. `verdict` answers generative hooks'
     /// `ai.verdict`.
     #[cfg(feature = "sync")]
     pub fn spawn(
         vault: std::sync::Arc<Vault>,
         runtime: std::sync::Arc<dyn HookBodyRuntime>,
         verdict: Option<std::sync::Arc<dyn HookVerdict>>,
+        admit: HookPassAdmission,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
         use std::sync::Arc;
@@ -199,25 +205,35 @@ impl FactHookRunner {
                 if *shutdown.borrow() {
                     break;
                 }
-                let (pass_runner, pass_vault, pass_runtime) = (
-                    Arc::clone(&runner),
-                    Arc::clone(&vault),
-                    Arc::clone(&runtime),
-                );
-                let pass = tokio::task::spawn_blocking(move || {
-                    pass_runner.run_pass(&pass_vault, pass_runtime.as_ref(), HOOK_PASS_ENTRIES)
-                })
-                .await;
-                let more = match pass {
-                    Ok(Ok(report)) => report.more,
-                    Ok(Err(error)) => {
-                        tracing::warn!(%error, "fact hook pass failed");
-                        false
+                let more = match admit() {
+                    Some(admission) => {
+                        let (pass_runner, pass_vault, pass_runtime) = (
+                            Arc::clone(&runner),
+                            Arc::clone(&vault),
+                            Arc::clone(&runtime),
+                        );
+                        let pass = tokio::task::spawn_blocking(move || {
+                            let _admission = admission;
+                            pass_runner.run_pass(
+                                &pass_vault,
+                                pass_runtime.as_ref(),
+                                HOOK_PASS_ENTRIES,
+                            )
+                        })
+                        .await;
+                        match pass {
+                            Ok(Ok(report)) => report.more,
+                            Ok(Err(error)) => {
+                                tracing::warn!(%error, "fact hook pass failed");
+                                false
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, "fact hook pass did not finish");
+                                false
+                            }
+                        }
                     }
-                    Err(error) => {
-                        tracing::warn!(%error, "fact hook pass did not finish");
-                        false
-                    }
+                    None => false,
                 };
                 if more {
                     continue;
@@ -535,12 +551,12 @@ impl Pass<'_> {
                     created_at: at,
                     settled_at: None,
                 };
-                store::INTENTS.put(&vault.store, txn, &key, &intent)?;
+                store::INTENTS.put(vault, txn, &key, &intent)?;
             }
             let previous = store::MEMOS
                 .get(&vault.store, txn, &key)?
                 .map(|old| old.committed_at);
-            store::MEMOS.put(&vault.store, txn, &key, &memo)?;
+            store::MEMOS.put(vault, txn, &key, &memo)?;
             store::index_run_in_txn(
                 vault,
                 txn,
@@ -550,7 +566,7 @@ impl Pass<'_> {
                 HookRunRef::Fact(key),
             )?;
             let hook_receipt = receipt(run, verdict, check, rows_read, duration_ms, now);
-            store::RECEIPTS.put(&vault.store, txn, &key, &hook_receipt)?;
+            store::RECEIPTS.put(vault, txn, &key, &hook_receipt)?;
             store::advance_cursor_in_txn(vault, txn, run.binding_id, run.entry.position, at)?;
             Ok(check)
         })?;

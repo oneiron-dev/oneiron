@@ -761,7 +761,7 @@ impl<'c> Chain<'c> {
         }
         let at = vault.store.clock.now_recorded_at().saturating_mul(1_000);
         for run in &self.runs {
-            store::RECEIPTS.put(&vault.store, txn, &run.key, &self.receipt(run))?;
+            store::RECEIPTS.put(vault, txn, &run.key, &self.receipt(run))?;
             record::put_in_txn(vault, txn, &run.key, &self.saved(run, at))?;
         }
         for (id, row, chain) in &self.blocks {
@@ -776,7 +776,7 @@ impl<'c> Chain<'c> {
             if let Some(id) = proposal {
                 lineage::put_in_txn(vault, txn, id.as_bytes(), &intent.lineage)?;
             }
-            store::INTENTS.put(&vault.store, txn, key, intent)?;
+            store::INTENTS.put(vault, txn, key, intent)?;
         }
         Ok(())
     }

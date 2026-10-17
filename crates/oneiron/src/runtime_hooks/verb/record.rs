@@ -58,7 +58,7 @@ pub(super) fn put_in_txn(
     let previous = VERB_RUNS
         .get(&vault.store, txn, key)?
         .map(|old| old.committed_at);
-    VERB_RUNS.put(&vault.store, txn, key, record)?;
+    VERB_RUNS.put(vault, txn, key, record)?;
     store::index_run_in_txn(
         vault,
         txn,
