@@ -29,6 +29,10 @@ const DEFAULT_MAX_RESPONSE_BYTES: u64 = 64 << 20;
 /// The PersonThreshold row's start value: high, so "ask a person?" stays
 /// rare until the Coach tunes it from real overrides.
 const DEFAULT_PERSON_THRESHOLD: f64 = 0.9;
+/// The ThinkThreshold row's start value: a paired "does this need more
+/// thinking?" reading at or above it climbs a rung. Below the person row's,
+/// since a stronger rung costs less than a person's time; canon sets none.
+const DEFAULT_THINK_THRESHOLD: f64 = 0.8;
 const RECIPE_FORMAT: u32 = 3;
 
 /// `[models.decision_read]` as written.
@@ -38,6 +42,7 @@ pub(super) struct DecisionReadFile {
     recipe: PathBuf,
     max_response_bytes: Option<u64>,
     person_threshold: Option<f64>,
+    think_threshold: Option<f64>,
 }
 
 // `[models]` compares whole; a threshold that is not a number fails to resolve.
@@ -52,9 +57,12 @@ pub struct DecisionReadSettings {
     /// The start value a host gives `DecisionBandPolicy::set_person_threshold`
     /// (the PersonThreshold row), in (0, 1].
     pub person_threshold: f64,
+    /// The start value a host gives `DecisionBandPolicy::set_think_threshold`
+    /// (the ThinkThreshold row), in (0, 1].
+    pub think_threshold: f64,
 }
 
-// The threshold is checked to lie in (0, 1], so it is never NaN.
+// The thresholds are checked to lie in (0, 1], so neither is NaN.
 impl Eq for DecisionReadSettings {}
 
 impl DecisionReadFile {
@@ -88,9 +96,13 @@ impl DecisionReadFile {
             .max_response_bytes
             .unwrap_or(DEFAULT_MAX_RESPONSE_BYTES);
         let person_threshold = self.person_threshold.unwrap_or(DEFAULT_PERSON_THRESHOLD);
-        if max_response_bytes == 0 || !(person_threshold > 0.0 && person_threshold <= 1.0) {
+        let think_threshold = self.think_threshold.unwrap_or(DEFAULT_THINK_THRESHOLD);
+        if max_response_bytes == 0
+            || !(person_threshold > 0.0 && person_threshold <= 1.0)
+            || !(think_threshold > 0.0 && think_threshold <= 1.0)
+        {
             anyhow::bail!(
-                "models.decision_read: max_response_bytes must be > 0 and person_threshold in (0, 1]"
+                "models.decision_read: max_response_bytes must be > 0, and person_threshold and think_threshold in (0, 1]"
             );
         }
         let path = match base {
@@ -103,6 +115,7 @@ impl DecisionReadFile {
             recipe: Arc::new(recipe),
             max_response_bytes,
             person_threshold,
+            think_threshold,
         })
     }
 }
