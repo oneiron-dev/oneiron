@@ -26282,7 +26282,7 @@
      "path": "src/learning_setting.rs",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
-      "const": 12,
+      "const": 15,
       "crate-vis": 4,
       "enum": 2,
       "fn": 10,
