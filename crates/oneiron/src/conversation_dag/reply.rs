@@ -479,6 +479,86 @@ impl Vault {
         })
     }
 
+    /// [`Self::thread`] and [`Self::thread_roots`] as `read` reads them
+    /// (FIX 2951): the roots under `trunk` it admits, and the first of them,
+    /// with its chain chosen as [`Self::thread`] chooses one and its count
+    /// and time taken from the replies it admits, never from the cached meta
+    /// line. A trunk whose every thread it withholds reads as one with none.
+    pub fn thread_under(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        trunk: EntityId,
+    ) -> Result<(Thread, Vec<EntityId>)> {
+        let (conversation, roots) = {
+            let txn = self.store.env.read_txn()?;
+            (
+                conversation_of(&self.store, &txn, &trunk)?,
+                roots_in_txn(self, &txn, trunk)?,
+            )
+        };
+        let mut admitted = Vec::new();
+        for root in roots {
+            if read.is_entity_readable(&root)? {
+                admitted.push(root);
+            }
+        }
+        admitted.sort_unstable();
+        let Some(&root) = admitted.first() else {
+            let none = Thread {
+                conversation,
+                root: None,
+                count: 0,
+                replies: Vec::new(),
+                last_at: None,
+            };
+            return Ok((none, admitted));
+        };
+        let chain = {
+            let txn = self.store.env.read_txn()?;
+            let mut chain = vec![root];
+            chain.extend(chain_in_txn(self, &txn, conversation, root, None)?);
+            let mut timed = Vec::with_capacity(chain.len());
+            for id in chain {
+                let row =
+                    crate::ports::EntityStoreRead::port_entity_record(&self.store, &txn, &id)?
+                        .ok_or(Error::EntityNotFound)?;
+                timed.push((id, row.occurred.start));
+            }
+            timed
+        };
+        let mut replies = Vec::new();
+        let mut last_at: Option<u64> = None;
+        for (id, at) in chain {
+            if read.is_entity_readable(&id)? {
+                replies.push(id);
+                last_at = Some(last_at.map_or(at, |last| last.max(at)));
+            }
+        }
+        let thread = Thread {
+            conversation,
+            root: Some(root),
+            count: replies.len() as u64,
+            replies,
+            last_at,
+        };
+        Ok((thread, admitted))
+    }
+
+    /// [`Self::thread_meta`] as `read` reads it: [`Self::thread_under`]'s
+    /// root, count and time, never the cached raw line.
+    pub fn thread_meta_under(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        trunk: EntityId,
+    ) -> Result<Option<ThreadMeta>> {
+        let (thread, _) = self.thread_under(read, trunk)?;
+        Ok(thread.root.map(|root| ThreadMeta {
+            root,
+            count: thread.count,
+            last_at: thread.last_at.unwrap_or_default(),
+        }))
+    }
+
     /// Continues the thread chain on Parent without changing the conversation
     /// HEAD. The reply target stays the caller's (or the quoted message's
     /// TURN), so a thread reply may answer a trunk message; absent both, it

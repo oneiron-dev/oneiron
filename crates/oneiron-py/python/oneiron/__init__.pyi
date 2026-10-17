@@ -35,6 +35,8 @@ class WitnessTurn(TypedDict):
     messages: list[WitnessMessage]
     # Unix seconds; omitted is stamped at the call boundary.
     occurred_at: NotRequired[int]
+    # A new project room thread root's audience; fixed once set.
+    thread_audience: NotRequired[list[str] | None]
 
 class WitnessReceipt(TypedDict):
     turn_short_id: str
@@ -426,6 +428,8 @@ class Oneiron:
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
+        def courtesy_delete(self) -> "Oneiron._VaultCourtesyDeleteVerbs": ...
+        @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
@@ -685,6 +689,15 @@ class Oneiron:
             """The owner-visible legal hold log, oldest first."""
         def lift_and_erase(self, spec: Facade.LegalHoldLiftAndEraseRequest) -> Facade.LegalHoldLiftAndErased:
             """The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."""
+    class _VaultCourtesyDeleteVerbs:
+        def send(self, spec: Facade.CourtesyDeleteSendRequest) -> Facade.CourtesyDeleteSent:
+            """The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."""
+        def sent(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.CourtesyDeleteSent]:
+            """Every courtesy delete ask this vault sent, with its delivery status, for the owner."""
+        def incoming(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.CourtesyDeleteIncoming]:
+            """Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer."""
+        def answer(self, spec: Facade.CourtesyDeleteAnswerRequest) -> Facade.CourtesyDeleteIncoming:
+            """The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where."""
     class _VaultEmbeddingSpacesVerbs:
         def list(self, spec: Facade.EmptyRequest | None = None) -> Facade.EmbeddingSpacesView:
             """Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."""
@@ -852,7 +865,7 @@ class Oneiron:
         def claim(self, room_ref: str, turn_ref: str) -> Facade.RoomClaimOutcome:
             """Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."""
         def speak(self, spec: Facade.WitnessTurn) -> Facade.WitnessReceipt:
-            """Speaks one turn into the current room turn's room, through the normal witness gate."""
+            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."""
         def join(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
             """Files and decides a request to take part in a room or one of its threads."""
         def consent(self, spec: Facade.ConsentAnswer) -> Facade.JoinOutcome:

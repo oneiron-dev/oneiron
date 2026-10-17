@@ -67,7 +67,7 @@ pub(crate) fn verb_ask_settled_in_txn(
         .settlement
         .requested
         .intent_key
-        .strip_prefix("hook.verb/")
+        .strip_prefix(super::ask::VERB_HOOK_INTENT)
         .and_then(|rest| rest.split_once('/'))
     else {
         return Ok(());

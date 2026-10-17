@@ -241,8 +241,6 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
     // tried.
     let mut paragraph_end: Option<usize> = None;
     let mut unclosed = BTreeSet::new();
-    // The current line opens with a block quote marker.
-    let mut quoted = false;
     let mut line_start = true;
     let mut at = 0;
     while at < scan_end && links.len() < MAX_PROSE_LINKS {
@@ -258,13 +256,11 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
                     from,
                     starts_paragraph,
                     heading,
-                    quoted: line_quoted,
                 } => {
                     if starts_paragraph {
                         paragraph_end = heading.then_some(line_end);
                         unclosed.clear();
                     }
-                    quoted = line_quoted;
                     at += from;
                     continue;
                 }
@@ -292,11 +288,8 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
                     Some(end) if end > at => end,
                     _ => {
                         unclosed.clear();
-                        let end = blocks.paragraph_end(
-                            &bytes[..scan_end],
-                            line_end_at(bytes, at, scan_end),
-                            quoted,
-                        );
+                        let end = blocks
+                            .paragraph_end(&bytes[..scan_end], line_end_at(bytes, at, scan_end));
                         paragraph_end = Some(end);
                         end
                     }
@@ -333,20 +326,6 @@ fn line_end_at(bytes: &[u8], at: usize, scan_end: usize) -> usize {
         .iter()
         .position(|&byte| byte == b'\n')
         .map_or(scan_end, |offset| at + offset)
-}
-
-/// How far in a line's text starts, in columns: a tab runs to the next
-/// multiple of four.
-fn indent_columns(line: &[u8]) -> usize {
-    let mut columns = 0;
-    for &byte in line {
-        match byte {
-            b' ' => columns += 1,
-            b'\t' => columns += 4 - columns % 4,
-            _ => break,
-        }
-    }
-    columns
 }
 
 /// What ends an open raw HTML block (CommonMark's seven kinds).
