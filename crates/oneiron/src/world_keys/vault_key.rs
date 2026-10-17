@@ -784,6 +784,54 @@ impl Vault {
         )
     }
 
+    /// Seals the held vault data key to `recipient` as escrow wrap `label`, in
+    /// the caller's transaction, replacing a wrap of that label. `None` when
+    /// this handle does not hold the key.
+    pub(crate) fn put_vault_key_escrow_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        label: &str,
+        recipient: &HybridPublicKey,
+    ) -> Result<Option<VaultKeyWrapInfo>> {
+        check_name(label)?;
+        let Some(key) = self.held_vault_key() else {
+            return Ok(None);
+        };
+        let vault_id = *self.vault_id().as_bytes();
+        let commitment = key.commitment(&vault_id);
+        let state = STATE
+            .get(&self.store, txn, &())?
+            .ok_or_else(|| refused("the vault has no data key"))?;
+        if state.commitment != commitment {
+            return Err(refused("this handle holds another vault key"));
+        }
+        let kind = VaultKeyWrapKind::Escrow {
+            label: label.to_owned(),
+        };
+        let envelope = seal_wrap(
+            &vault_id,
+            &commitment,
+            &kind,
+            &WrapSecret::Hybrid(recipient),
+            &key,
+        )?;
+        let info = VaultKeyWrapInfo {
+            id: kind.id(),
+            kind,
+            created_at: self.instant_in_txn(txn)?.secs(),
+        };
+        WRAPS.put(
+            &self.store,
+            txn,
+            &info.id,
+            &StoredWrap {
+                info: info.clone(),
+                envelope,
+            },
+        )?;
+        Ok(Some(info))
+    }
+
     /// The vault key's passkey PRF input for `credential` ([`passkey_prf_input`]).
     pub fn vault_key_passkey_prf_input(&self, credential: &str) -> Result<[u8; 32]> {
         passkey_prf_input(self.vault_id().as_bytes(), credential)

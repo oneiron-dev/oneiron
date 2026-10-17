@@ -422,6 +422,10 @@ side_tables! {
     RECEIPT_ARCHIVE_SOURCE_RETIRED: VaultMeta b"receipt/archive-source-retired/v1\0" Raw;
     /// Receipt-family index backfill marker. Key: ().
     RECEIPT_FAMILY_INDEX_VERSION: VaultMeta b"receipt_family_index:v1:version" Raw;
+    /// One recovery kit this vault issued: its homes, passphrase cost, coverage, root, and
+    /// whether the owner re-entered its pieces (OF-173). Never a piece, point, tag, passphrase
+    /// or seed. Key: hex(kit id).
+    RECOVERY_KIT: VaultMeta b"recovery_kit:v1:" Named;
     /// Rebuildable projection row: the head set a merged/split identity shell currently resolves to.
     /// Key: id16 (shell id).
     IDENTITY_REDIRECT: VaultMeta b"redirect:v1:" Raw;
