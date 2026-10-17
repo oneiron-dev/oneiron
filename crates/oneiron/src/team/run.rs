@@ -65,8 +65,10 @@ pub struct TeamStartInput {
     pub intent_key: String,
     /// The members, 1..=64, each spawned into the team as a child of the run.
     pub members: Vec<TeamMemberInput>,
-    /// An autoreason tournament's run id. Set, the members are its authors,
-    /// in its market; the pattern must be `market`.
+    /// An autoreason tournament's run id: the id, as hex, of the campaign
+    /// experiment the tournament runs as, which the leader must be or work
+    /// under. Set, the members are its authors, in its market; the pattern
+    /// must be `market`.
     pub tournament: Option<String>,
 }
 

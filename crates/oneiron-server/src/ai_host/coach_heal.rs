@@ -1,7 +1,8 @@
 //! The host Coach (ARCH-0066 #coach, OF-418). It leases the `coach.heal`
 //! queue, where each failure-ladder case the escalation hands to the Coach
 //! and each Issues wake a blocked report raises wait, and runs the engine's
-//! propose-only door for each on the host's decision ladder. What lands is a
+//! propose-only door for each, judged by the Coach's own seat (else the
+//! host's decision ladder). What lands is a
 //! proposed heal in the owner's run tray; nothing is repaired here. A case
 //! routed to `skill_edit` asks the Coach's skill author for a revision of its
 //! skill, which the heal carries as a gated candidate. The
@@ -22,10 +23,36 @@ use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, CompleteDreamerAttempt,
     DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore, FailDreamerAttempt,
 };
-use oneiron::llm::decision::DecisionRung;
+use oneiron::llm::decision::{DecisionDial, DecisionRung, HeldLadder};
+use oneiron::llm::manifest::ModelRole;
 
 use super::skill_author::CoachSkillAuthor;
+use crate::decision_host::MODEL_DIAL;
 use crate::server::SyncServer;
+
+/// The Coach's own judge (ARCH-0066 #coach): a Big-rung ladder routed to
+/// the Coach's seat. `None` when no Coach seat is configured or no Big rung
+/// is; the host's decision ladder judges then, as it does for every other
+/// host judgment.
+pub(super) fn coach_ladder(server: &SyncServer) -> Option<HeldLadder> {
+    server.ai.seat(ModelRole::Coach)?;
+    match server.decision_ladder_for_role(ModelRole::Coach) {
+        Ok(ladder) => Some(ladder),
+        Err(error) => {
+            tracing::debug!(%error, "the Coach judges on the host ladder");
+            None
+        }
+    }
+}
+
+/// The dial a Coach judgment runs on: the Coach's own ladder has its Big
+/// rung alone; the host's is dialed to its Big rung.
+pub(super) fn coach_dial(server: &SyncServer, coach: Option<&HeldLadder>) -> DecisionDial {
+    match coach {
+        Some(_) => MODEL_DIAL,
+        None => server.decision_host().dial(DecisionRung::Big),
+    }
+}
 
 /// The host's wording of the route question; the state carries the case or
 /// the report.
@@ -154,10 +181,13 @@ fn run_one(
         return super::coach_health::run(server, admitted, now);
     }
     let host = server.decision_host();
+    let coach = coach_ladder(server);
     let decisions = HealDecisions {
-        ladder: host.ladder().ladder(),
+        ladder: coach
+            .as_ref()
+            .map_or_else(|| host.ladder().ladder(), HeldLadder::ladder),
         principal,
-        dial: host.dial(DecisionRung::Big),
+        dial: coach_dial(server, coach.as_ref()),
         bands: host.bands(),
         wording: WORDING.to_owned(),
         budget: DECIDE_BUDGET,
