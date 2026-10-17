@@ -8,13 +8,16 @@
 //! a refusal whose `hook` carries the typed stop. A call the generated
 //! `invoke` runs for an on-device caller with no credential saves how to run
 //! it again with its ask, so settlement resumes it (`Vault::drain_verb_asks`);
-//! a retry then answers what it returned.
+//! a retry then answers what it returned. So does a credential caller's call
+//! whose host bound its instrument and door: settlement runs it through that
+//! door, once the host verified the credential again.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::runtime_hooks::verb::VerbAskCredential;
 use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume};
 use crate::task_verb::sdk::{AgentVerb, masked_reveal_reply, revealed_hook_view, validate_input};
 use crate::{EntityId, Vault};
@@ -54,18 +57,20 @@ pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
 ///
 /// A hook's stop, as the refusal the caller reads; storage errors.
 pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    row_pre_resumable(memory, verb, args, None)?.map_err(stopped)
+    row_pre_resumable(memory, verb, args, None, None)?.map_err(stopped)
 }
 
 /// [`row_pre`] with the stop as it is. `resume` is how settlement runs the
-/// call again without its caller; a door that runs the row itself, not
-/// through the generated `invoke`, passes `None`, since the drain could not
+/// call again without its caller, and `credential` how it runs a credential
+/// caller's through its door; a door that runs the row itself, not through
+/// the generated `invoke`, passes `None` for both, since the drain could not
 /// run it the way that door does.
 fn row_pre_resumable(
     memory: &Memory<'_>,
     verb: &str,
     args: Value,
     resume: Option<VerbResume>,
+    credential: Option<VerbAskCredential>,
 ) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
     let check = |args: &Value| {
         validate_input(verb, args).map_err(|error| error.to_string())?;
@@ -73,9 +78,14 @@ fn row_pre_resumable(
             .rewrite_admit()
             .map_or(Ok(()), |admit| admit(verb, args))
     };
-    Ok(memory
-        .vault()
-        .pre_verb_hooks_resumable(row_call(memory, verb)?, args, &check, resume)?)
+    let vault = memory.vault();
+    let call = row_call(memory, verb)?;
+    Ok(match credential {
+        Some(credential) => {
+            vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential))?
+        }
+        None => vault.pre_verb_hooks_resumable(call, args, &check, resume)?,
+    })
 }
 
 /// Runs the post chain over the row's JSON `result`: the caller's view of it.
@@ -136,7 +146,10 @@ pub fn row(
         .resume_bounds()
         .filter(|_| verb != AgentVerb::RevealWait.as_str())
         .map(|(session, room)| VerbResume::Row { session, room });
-    let pre = match row_pre_resumable(memory, verb, args, resume)? {
+    let credential = VerbCall::may_run(memory.vault(), verb)
+        .then(|| memory.verb_ask_credential())
+        .flatten();
+    let pre = match row_pre_resumable(memory, verb, args, resume, credential)? {
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop),
     };
@@ -166,7 +179,7 @@ where
     let args = encode(&input)?;
     // A typed door's own call may differ from the generated `invoke`'s, so
     // it saves no resume target: its caller's retry resumes it.
-    let pre = match row_pre_resumable(memory, verb, args.clone(), None)? {
+    let pre = match row_pre_resumable(memory, verb, args.clone(), None, None)? {
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop),
     };
@@ -213,20 +226,14 @@ fn stopped(stop: VerbHookStop) -> MemoryError {
 }
 
 /// A row's answer to a pre-chain stop: what a call settlement already ran
-/// returned, as the row's output, or the error it failed with. Any other
-/// stop is the refusal the caller reads.
+/// returned, as the row's output. Any other stop is the refusal the caller
+/// reads; the error a settled call failed with, or was refused with, keeps
+/// its code and rides in `hook` with its receipt.
 fn completed<O: DeserializeOwned>(verb: &str, stop: VerbHookStop) -> MemoryResult<O> {
     match stop {
         VerbHookStop::Completed { result, .. } => serde_json::from_value(result).map_err(|error| {
             MemoryError::bad_request(format!("{verb}'s saved result does not decode: {error}"))
         }),
-        VerbHookStop::CompletedWithError { code, message, .. } => Err(MemoryError::new(
-            &code,
-            message,
-            &[
-                "This invocation already ran once its hook's ask was answered; call again with a new invocation.",
-            ],
-        )),
         stop => Err(stopped(stop)),
     }
 }

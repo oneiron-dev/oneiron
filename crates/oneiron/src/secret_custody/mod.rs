@@ -55,6 +55,10 @@
 //! * reveal by handle (OF-560): an agent's `reveal`, `wait` and `describe`,
 //!   the owner's answer to a reveal's ask, and the owner's own read,
 //!   [`Vault::reveal_secret_as_owner`](crate::Vault::reveal_secret_as_owner).
+//! * use by handle (OF-560): an agent hands a secret to one trusted
+//!   operation and gets its result back, never the value, under the custody
+//!   binding alone; the owner adds that binding with
+//!   [`Vault::bind_secret_as_owner`](crate::Vault::bind_secret_as_owner).
 //!
 //! Companion [`crate::secret_manifest`] owns the repo-side TOML declaration
 //! and the narrow-only validator (manifest ∧ vault floor, most-restrictive
@@ -69,6 +73,7 @@ mod owner_door;
 mod reveal;
 mod transition;
 mod types;
+mod use_handle;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
 mod floor_keys {
@@ -126,6 +131,12 @@ pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
     SECRET_NAME_INDEX_PREFIX, SECRET_NAME_MAX_BYTES, SECRET_SCOPE_READ, SecretBinding,
     SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
+};
+pub(crate) use self::use_handle::SecretUser;
+pub use self::use_handle::{
+    SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_OPERATIONS, SECRET_USE_REASON,
+    SecretBindRequest, SecretBound, SecretUseDecision, SecretUseOperation, SecretUseOutcome,
+    SecretUseReceipt, SecretUseSend,
 };
 
 #[cfg(test)]

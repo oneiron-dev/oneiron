@@ -2606,6 +2606,20 @@ async fn reveal_describe(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn self_use(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(server, call, actor, class, "self.use", value, &producers)?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_shares_create(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -3455,6 +3469,28 @@ async fn vault_projects_confirm(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_projects_roster_write(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.projects.roster.write",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_projects_goal_intake(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -4255,6 +4291,30 @@ async fn vault_questions_pause(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_questions_backfill(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.questions.backfill")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.questions.backfill", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.questions.backfill", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_questions_backfill(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_questions_read(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -4955,6 +5015,470 @@ async fn vault_artifacts_put(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_artifacts_body_import(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.import",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.import"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.import",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_head(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.head",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.head"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.head",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.read",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.read"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_commits(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.commits",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.commits"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.commits",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_edit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.edit",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.edit"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.edit",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_fork_open(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.fork.open",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.open"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.fork.open",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_fork_edit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.fork.edit",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.edit"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.fork.edit",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_fork_diff(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.fork.diff",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.diff"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.fork.diff",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_fork_merge(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.fork.merge",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.merge"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.fork.merge",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_fork_discard(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.fork.discard",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.discard"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.fork.discard",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_export(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.export",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.export"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.export",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.preview",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.preview"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.preview",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_deck_review(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.deck.review",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.deck.review"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.deck.review",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_deck_merge(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.deck.merge",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.deck.merge"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.deck.merge",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_deck_export(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.deck.export",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.deck.export"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.deck.export",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_deck_gate(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.deck.gate",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_deck_oracle(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.deck.oracle",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_artifacts_append(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -5177,6 +5701,62 @@ async fn vault_notes_edit(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_notes_seal(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.notes.seal",
+        oneiron::memory::RoomTurnHandle::serves("vault.notes.seal"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.seal",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_lifecycle(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.notes.lifecycle",
+        oneiron::memory::RoomTurnHandle::serves("vault.notes.lifecycle"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.lifecycle",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 /// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -5339,6 +5919,7 @@ pub(crate) async fn call_verb(
         "reveal" => reveal(server, call, input).await,
         "reveal.wait" => reveal_wait(server, call, input).await,
         "reveal.describe" => reveal_describe(server, call, input).await,
+        "self.use" => self_use(server, call, input).await,
         "vault.shares.create" => vault_shares_create(server, call, input).await,
         "vault.shares.revoke" => vault_shares_revoke(server, call, input).await,
         "vault.shares.view" => vault_shares_view(server, call, input).await,
@@ -5381,6 +5962,7 @@ pub(crate) async fn call_verb(
         "vault.projects.proposals" => vault_projects_proposals(server, call, input).await,
         "vault.projects.dismiss_card" => vault_projects_dismiss_card(server, call, input).await,
         "vault.projects.confirm" => vault_projects_confirm(server, call, input).await,
+        "vault.projects.roster.write" => vault_projects_roster_write(server, call, input).await,
         "vault.projects.goal.intake" => vault_projects_goal_intake(server, call, input).await,
         "vault.rooms.join" => vault_rooms_join(server, call, input).await,
         "vault.rooms.consent" => vault_rooms_consent(server, call, input).await,
@@ -5427,6 +6009,7 @@ pub(crate) async fn call_verb(
         "vault.questions.create" => vault_questions_create(server, call, input).await,
         "vault.questions.edit" => vault_questions_edit(server, call, input).await,
         "vault.questions.pause" => vault_questions_pause(server, call, input).await,
+        "vault.questions.backfill" => vault_questions_backfill(server, call, input).await,
         "vault.questions.read" => vault_questions_read(server, call, input).await,
         "vault.questions.answers" => vault_questions_answers(server, call, input).await,
         "vault.decisions.asks.answer" => vault_decisions_asks_answer(server, call, input).await,
@@ -5463,6 +6046,43 @@ pub(crate) async fn call_verb(
         }
         "vault.batch" => vault_batch(server, call, input).await,
         "vault.artifacts.put" => vault_artifacts_put(server, call, input).await,
+        "vault.artifacts.body.import" => vault_artifacts_body_import(server, call, input).await,
+        "vault.artifacts.body.head" => vault_artifacts_body_head(server, call, input).await,
+        "vault.artifacts.body.read" => vault_artifacts_body_read(server, call, input).await,
+        "vault.artifacts.body.commits" => vault_artifacts_body_commits(server, call, input).await,
+        "vault.artifacts.body.edit" => vault_artifacts_body_edit(server, call, input).await,
+        "vault.artifacts.body.fork.open" => {
+            vault_artifacts_body_fork_open(server, call, input).await
+        }
+        "vault.artifacts.body.fork.edit" => {
+            vault_artifacts_body_fork_edit(server, call, input).await
+        }
+        "vault.artifacts.body.fork.diff" => {
+            vault_artifacts_body_fork_diff(server, call, input).await
+        }
+        "vault.artifacts.body.fork.merge" => {
+            vault_artifacts_body_fork_merge(server, call, input).await
+        }
+        "vault.artifacts.body.fork.discard" => {
+            vault_artifacts_body_fork_discard(server, call, input).await
+        }
+        "vault.artifacts.body.export" => vault_artifacts_body_export(server, call, input).await,
+        "vault.artifacts.body.preview" => vault_artifacts_body_preview(server, call, input).await,
+        "vault.artifacts.body.deck.review" => {
+            vault_artifacts_body_deck_review(server, call, input).await
+        }
+        "vault.artifacts.body.deck.merge" => {
+            vault_artifacts_body_deck_merge(server, call, input).await
+        }
+        "vault.artifacts.body.deck.export" => {
+            vault_artifacts_body_deck_export(server, call, input).await
+        }
+        "vault.artifacts.body.deck.gate" => {
+            vault_artifacts_body_deck_gate(server, call, input).await
+        }
+        "vault.artifacts.body.deck.oracle" => {
+            vault_artifacts_body_deck_oracle(server, call, input).await
+        }
         "vault.artifacts.append" => vault_artifacts_append(server, call, input).await,
         "vault.artifacts.read" => vault_artifacts_read(server, call, input).await,
         "vault.consolidation.enqueue" => vault_consolidation_enqueue(server, call, input).await,
@@ -5472,6 +6092,8 @@ pub(crate) async fn call_verb(
         "vault.notes.create" => vault_notes_create(server, call, input).await,
         "vault.notes.from_entity" => vault_notes_from_entity(server, call, input).await,
         "vault.notes.edit" => vault_notes_edit(server, call, input).await,
+        "vault.notes.seal" => vault_notes_seal(server, call, input).await,
+        "vault.notes.lifecycle" => vault_notes_lifecycle(server, call, input).await,
         "self.focus.refresh" | "self.focus.subscribe" | "self.focus.unsubscribe" => {
             Err(context_required(verb, VerbContext::Board))
         }
@@ -5491,6 +6113,7 @@ pub(crate) async fn call_verb(
         | "self.browser.batch"
         | "self.browser.library.find"
         | "self.browser.library.propose"
+        | "self.browser.library.retire"
         | "self.browser.library.run"
         | "self.desktop.open"
         | "self.desktop.observe"

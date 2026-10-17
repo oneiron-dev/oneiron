@@ -142,6 +142,7 @@ vaultDisclosureOffer(input: unknown): unknown
 reveal(input: unknown): unknown
 revealWait(input: unknown): unknown
 revealDescribe(input: unknown): unknown
+selfUse(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
@@ -182,6 +183,7 @@ vaultProjectsPropose(input: unknown): unknown
 vaultProjectsProposals(input: unknown): unknown
 vaultProjectsDismissCard(input: unknown): unknown
 vaultProjectsConfirm(input: unknown): unknown
+vaultProjectsRosterWrite(input: unknown): unknown
 vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
@@ -220,6 +222,7 @@ vaultGraphAsk(input: unknown): unknown
 vaultQuestionsCreate(input: unknown): unknown
 vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
+vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
 vaultDecisionsAsksAnswer(input: unknown): unknown
@@ -252,6 +255,23 @@ vaultConversationsTurnsCreate(input: unknown): unknown
 vaultConversationsRecordsAppend(input: unknown): unknown
 vaultBatch(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
+vaultArtifactsBodyImport(requestJson: string): string
+vaultArtifactsBodyHead(requestJson: string): string
+vaultArtifactsBodyRead(requestJson: string): string
+vaultArtifactsBodyCommits(requestJson: string): string
+vaultArtifactsBodyEdit(requestJson: string): string
+vaultArtifactsBodyForkOpen(requestJson: string): string
+vaultArtifactsBodyForkEdit(requestJson: string): string
+vaultArtifactsBodyForkDiff(requestJson: string): string
+vaultArtifactsBodyForkMerge(requestJson: string): string
+vaultArtifactsBodyForkDiscard(requestJson: string): string
+vaultArtifactsBodyExport(requestJson: string): string
+vaultArtifactsBodyPreview(requestJson: string): string
+vaultArtifactsBodyDeckReview(requestJson: string): string
+vaultArtifactsBodyDeckMerge(requestJson: string): string
+vaultArtifactsBodyDeckExport(requestJson: string): string
+vaultArtifactsBodyDeckGate(requestJson: string): string
+vaultArtifactsBodyDeckOracle(requestJson: string): string
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
@@ -261,11 +281,14 @@ connectorOutboundSchedule(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown
+vaultNotesSeal(requestJson: string): string
+vaultNotesLifecycle(requestJson: string): string
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
   lastReceiptRef(): string | null
+  retry(pending: unknown, verb: string, input: unknown): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

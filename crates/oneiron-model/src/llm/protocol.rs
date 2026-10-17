@@ -248,6 +248,10 @@ pub struct LlmUsage {
 }
 
 impl LlmUsage {
+    /// Key in a ladder's served receipt naming the provider of the rung that
+    /// answered. The host's own stamp, written beside the provider's usage.
+    pub const SERVED_PROVIDER_KEY: &'static str = "provider";
+
     #[must_use]
     pub fn zero() -> Self {
         Self {
@@ -255,6 +259,24 @@ impl LlmUsage {
             output: LlmOutputUsage::default(),
             raw_provider: JsonValue::Null,
         }
+    }
+
+    /// The provider a host's model ladder says answered this call: the
+    /// served receipt's [`Self::SERVED_PROVIDER_KEY`]. A served receipt names
+    /// its rung and holds the provider's own usage under `usage`, so a
+    /// provider's usage object is never read as one. `None` when no ladder
+    /// stamped the answer.
+    #[must_use]
+    pub fn served_provider(&self) -> Option<&str> {
+        let receipt = self.raw_provider.as_object()?;
+        if !receipt.get("rung").is_some_and(JsonValue::is_u64) || !receipt.contains_key("usage") {
+            return None;
+        }
+        receipt
+            .get(Self::SERVED_PROVIDER_KEY)?
+            .as_str()
+            .map(str::trim)
+            .filter(|provider| !provider.is_empty())
     }
 }
 
