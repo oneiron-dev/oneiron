@@ -146,6 +146,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PROVENANCE_BODY_DIGEST, CONTENT),
     (&t::PROVENANCE_BODY_RELEASED, LIVE),
     (&t::PROVENANCE_ROW_BIRTH, CONTENT),
+    (&t::PROVENANCE_WITHHELD_SECRET, LIVE),
     (&t::RAMP_DEMOTION, LIVE),
     (&t::RAMP_FLOOR, LIVE),
     (&t::RAMP_OUTCOME, LIVE),

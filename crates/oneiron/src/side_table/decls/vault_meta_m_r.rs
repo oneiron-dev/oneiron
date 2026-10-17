@@ -385,6 +385,9 @@ side_tables! {
     PROVENANCE_BODY_RELEASED: VaultMeta b"provenance:body_released:v1:" Named;
     /// One row's immutable birth envelope (Rule A made_by). Key: id16.
     PROVENANCE_ROW_BIRTH: VaultMeta b"provenance:row_birth:v1:" Named;
+    /// The local secret that keys a destination's withheld-ref handles (Q26 = B). Key: `()`. Never
+    /// shipped.
+    PROVENANCE_WITHHELD_SECRET: VaultMeta b"provenance:withheld_secret:v1:" Raw;
     /// Disposable cache: which PERSON actor currently represents one provider key. Key: bytes32
     /// (sha256 of provider key).
     PROVIDER_ACTOR_INDEX: VaultMeta b"provider_confidence/actor/v1\0" Raw;
