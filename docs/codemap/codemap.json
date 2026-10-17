@@ -67254,7 +67254,7 @@
      "path": "src/api/pairing.rs",
      "purpose": "Pairing-only enrollment and unauthenticated liveness discovery",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -68144,6 +68144,8 @@
       "ApiCommand",
       "Cli",
       "Command",
+      "DeviceCommand",
+      "DeviceEnrolArgs",
       "DreamerCommand",
       "DreamerGrantArgs",
       "EmbedderCommand",
@@ -68175,10 +68177,10 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 10,
+      "enum": 11,
       "fn": 3,
       "re-export": 10,
-      "struct": 22
+      "struct": 23
      }
     },
     {
@@ -68361,7 +68363,7 @@
       "const": 1,
       "crate-vis": 7,
       "fn": 12,
-      "re-export": 20,
+      "re-export": 21,
       "struct": 1
      }
     },
@@ -68384,6 +68386,16 @@
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/device.rs",
+     "purpose": "`device enrol`: enrols this stopped vault's machine with its home, from the owner's machine pairing link…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -68798,7 +68810,7 @@
      "path": "src/config/device_sync.rs",
      "purpose": "`[device_sync]`: the home this machine keeps its vault in sync with",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "struct": 1
      }
     },
@@ -69483,7 +69495,17 @@
      "path": "src/device_sync.rs",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync/enrolment.rs",
+     "purpose": "A device's enrolment with its home (ARCH-0023b: \"a device connects the moment it is enrolled\")",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -73136,7 +73158,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -73220,10 +73242,10 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
     },
     "embedded": {
@@ -73474,7 +73496,7 @@
    },
    "over_bar": 51,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 613,
+   "source_files": 615,
    "test_files": 182
   },
   "oneiron-spawn": {
