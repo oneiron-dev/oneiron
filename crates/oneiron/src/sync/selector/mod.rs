@@ -33,6 +33,8 @@ mod tests;
 use super::bridge;
 use super::loro_support;
 
+#[cfg(test)]
+pub(in crate::sync) use self::admission::admit_peer_window_update;
 #[cfg(feature = "test-hooks")]
 pub use self::admission::put_selector_test_federation_grant;
 #[cfg(feature = "sync")]
@@ -40,7 +42,7 @@ pub(in crate::sync) use self::admission::validate_sync_identity_body;
 pub(crate) use self::admission::{AdmittedUpdate, admit_staged_window_update};
 pub use self::admission::{FederationAdmissionRole, admit_federated_window_update};
 pub(in crate::sync) use self::admission::{
-    admit_peer_window_update, revalidate_admitted_facet_stamps,
+    admit_peer_window_update_as, revalidate_admitted_facet_stamps,
     revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
