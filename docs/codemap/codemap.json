@@ -16870,7 +16870,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 9
      }
     },
@@ -43525,7 +43525,7 @@
      "path": "src/sweep/compact.rs",
      "purpose": "Window shallow-snapshot compaction and erased-id scrub",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -45028,7 +45028,7 @@
      "path": "src/sync/server_state.rs",
      "purpose": "Server-side `sync_state` persistence per the ARCH-0023b key layout",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
