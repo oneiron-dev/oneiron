@@ -2762,19 +2762,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/kernel.rs` | src | m | 6 struct · 1 enum · 12 fn · 6 const · 93 crate-vis | ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView | — |
 | `src/receipt/ledgers.rs` | src | m | 3 fn · 15 crate-vis | — | — |
 | `src/receipt/lens.rs` | src | s | 2 struct · 2 enum | LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision | The receipts of the pack lens lifecycle (OF-250): a proposal, and the owner's selection or clearing of a… |
-| `src/receipt/mod.rs` | src | s | 14 re-export · 18 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
+| `src/receipt/mod.rs` | src | s | 16 re-export · 18 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
 | `src/receipt/pack_attribution.rs` | src | s | 6 struct · 1 fn · 4 crate-vis | ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext, SkillContribution, UsedProvenanceEdge | Frozen execution and actual-use facts on an attempt's pack receipt |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
+| `src/receipt/questions.rs` | src | s | 9 struct · 1 enum · 2 fn · 2 const | GraphAskDeclined, GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswersRequest, QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest +2 | OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs |
 | `src/receipt/record.rs` | src | m | 14 crate-vis | — | First-class, replicated immutable terminal outbound receipt record, the served-form receipt record a read… |
 | `src/receipt/reference_refusal.rs` | src | s | 6 crate-vis | — | Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer |
 | `src/receipt/send_receipt_txn.rs` | src | s | 2 crate-vis | — | Send receipt persistence inside a caller-owned transaction |
 | `src/receipt/served_form.rs` | src | s | 1 struct · 2 enum · 8 fn · 2 crate-vis | PixelPull, ServedForm, ServedRung | Served-form receipts (OF-329): which rung of the lazy-image ladder a read served an ASSET at, to which… |
 | `src/receipt/session.rs` | src | s | 2 struct · 7 fn | SessionLocalReceiptLog, SessionReceiptClose | — |
+| `src/receipt/share_doors.rs` | src | s | 3 struct · 1 fn | ShareRevokeReceipt, SharedBriefCitation, SharedBriefView | OF-491: what `vault.shares.revoke` and `vault.shares.view` answer |
 | `src/receipt/tests.rs` | test | XL | — | — | — |
 | `src/recovery.rs` | src | m | 2 struct · 2 enum · 7 fn · 3 const · 1 mod · 6 re-export · 4 crate-vis | QuarantinedArtifact, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
 | `src/recovery/canonical.rs` | src | L | 15 struct · 2 enum · 8 fn · 2 const · 18 crate-vis | CanonicalBaseEdge, CanonicalContainerManifest, CanonicalCustodyTransition, CanonicalDocumentFork, CanonicalDocumentPin, CanonicalDocumentPurge, CanonicalDocumentReceipt, CanonicalDocumentVersion +9 | CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction |
 | `src/recovery/canonical_tests.rs` | test | XL | — | — | Caller-visible canonical carry-list, bounded ladder and forward-rebuild laws |
-| `src/recovery/checkpoint/artifact.rs` | src | m | 1 struct · 1 enum · 5 fn · 8 crate-vis | ArtifactKind, CheckpointKey | Sealed checkpoint artifacts (OF-570 (c)) |
+| `src/recovery/checkpoint/artifact.rs` | src | m | 2 struct · 1 enum · 6 fn · 8 crate-vis | ArtifactKind, ArtifactUnlocks, CheckpointKey | Sealed checkpoint artifacts (OF-570 (c)) |
 | `src/recovery/checkpoint/authority_plane.rs` | src | L | 2 crate-vis | — | A historical restore gives content as it stood, never authority as it stood |
 | `src/recovery/checkpoint/authority_plane/tests.rs` | test | L | — | — | — |
 | `src/recovery/checkpoint/commitment.rs` | src | s | 1 struct · 1 fn · 15 crate-vis | CheckpointSigner | Hash-signed checkpoints (OF-570 (e)) |
@@ -2800,7 +2802,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/decisions/tests/tasks.rs` | test | m | 9 crate-vis | — | Census cases for what a task, an ask and an agent may do |
 | `src/recovery/checkpoint/decisions/tests/worlds.rs` | test | s | 1 crate-vis | — | Census case and regression for the worlds an agent may read |
 | `src/recovery/checkpoint/decisions/worlds.rs` | src | s | 2 crate-vis | — | Which worlds an executing principal may read: the owner grants and the default about it, as the… |
-| `src/recovery/checkpoint/mod.rs` | src | L | 3 struct · 1 enum · 15 fn · 3 re-export | RestoreEpoch, RestoreReason, RestoreReport, SideRestoreSource | Tier-C physical-row checkpoints and one restore/wake/migrate path |
+| `src/recovery/checkpoint/host_holds.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | HostOrderHolds | Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that… |
+| `src/recovery/checkpoint/mod.rs` | src | L | 3 struct · 1 enum · 15 fn · 4 re-export | RestoreEpoch, RestoreReason, RestoreReport, SideRestoreSource | Tier-C physical-row checkpoints and one restore/wake/migrate path |
 | `src/recovery/checkpoint/rebuild.rs` | src | s | 4 crate-vis | — | Rebuild mechanical projections and reset leased attempt ownership |
 | `src/recovery/checkpoint/restore_class/mod.rs` | src | m | 9 crate-vis | — | What a restore over a live vault does with each canonical row: one table, deny by default |
 | `src/recovery/checkpoint/restore_class/sync_state.rs` | src | s | 1 crate-vis | — | The restore class of every canonical `sync_state` family, in declaration order |
@@ -2811,7 +2814,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/restore_class/vault_meta_s_z.rs` | src | s | 1 crate-vis | — | The restore class of every canonical `vault_meta`, `s` to `z` family, in declaration order |
 | `src/recovery/checkpoint/test_hooks.rs` | src | s | 5 crate-vis | — | Test hooks that fail or panic a restore at a chosen step |
 | `src/recovery/checkpoint/tests.rs` | test | XL | — | — | — |
-| `src/recovery/checkpoint/tiers.rs` | src | s | 1 enum · 1 fn | StorageTier | Snapshot classification |
+| `src/recovery/checkpoint/tiers.rs` | src | s | 1 enum · 1 fn · 1 crate-vis | StorageTier | Snapshot classification |
 | `src/recovery/document.rs` | src | m | 3 struct · 1 fn · 13 crate-vis | CanonicalDocument, CanonicalHead, CanonicalHeadMove | Canonical entity-local documents and their bound workflows |
 | `src/recovery/document/materialize.rs` | src | m | 3 crate-vis | — | Scoped NOTE replacement and immutable-workflow preflight in one transaction |
 | `src/recovery/document/workflow.rs` | src | s | 5 crate-vis | — | Durable NOTE workflow capture and reference validation without CRDT op IDs |
@@ -3215,7 +3218,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/channel_identity_receipts.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord | Append-only channel-identity lifecycle receipt ledger |
 | `src/store/commitment_due.rs` | src | m | 15 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
 | `src/store/diagnostics.rs` | src | s | 1 struct · 3 fn | Diagnostics | The content-free counters one open vault owns |
-| `src/store/gate_decision/checkpoint_custody.rs` | src | m | 26 crate-vis | — | What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038… |
+| `src/store/gate_decision/checkpoint_custody.rs` | src | L | 29 crate-vis | — | What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038… |
 | `src/store/gate_decision/claim_refs.rs` | src | s | 8 crate-vis | — | Inbox-bundle claim references and uncommitted batch-preflight markers: the two gate-decision sidecars… |
 | `src/store/gate_decision/keys.rs` | src | s | 15 crate-vis | — | Gate-decision ledger key prefixes, key constructors, and the id successor |
 | `src/store/gate_decision/ledger.rs` | src | L | 1 fn · 31 crate-vis | — | Gate-decision ledger Store methods plus the row append and record codec |
@@ -3550,12 +3553,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_connector.rs` | src | s | 5 struct · 3 fn | ConnectorEntry, ConnectorListRequest, ConnectorNameRequest, ConnectorView, OutboundScheduleRequest | The `connector.*` rows over the foreign surface's catalog (`connector.list`, the discovery lens… |
 | `src/task_verb/sdk_diary.rs` | src | s | 2 struct · 1 enum · 3 fn | DiaryQueryEntry, DiaryQueryOutcome, DiaryQueryRequest | `self.memory.diary.query`: the caller reads an agent's private diary, stating a reason the agent sees in its… |
 | `src/task_verb/sdk_disclosure.rs` | src | s | 2 struct · 1 fn | DisclosureOfferRequest, DisclosureOffered | `vault.disclosure.offer`: an agent OFFERS the owner a contact clearance (OF-365, the ILDF2 consent channel) |
-| `src/task_verb/sdk_generated.rs` | src | XL | 179 fn · 2 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 187 fn · 2 const | — | — |
 | `src/task_verb/sdk_host.rs` | src | L | 20 struct · 5 enum · 16 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +17 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and… |
 | `src/task_verb/sdk_legal_hold.rs` | src | s | 5 struct · 1 enum · 5 fn | LegalHoldEraseState, LegalHoldErasedRecord, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest | The inputs and answers of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`… |
 | `src/task_verb/sdk_memory.rs` | src | s | 14 struct · 1 enum · 3 crate-vis | AppendBlobVersionRequest, BlobContent, ClaimRefRequest, CommitRequest, CreateNoteFromEntityRequest, CreateNoteRequest, EditNoteRequest, EntityRequest +7 | Typed inputs for the public memory verbs in the SDK inventory |
 | `src/task_verb/sdk_self.rs` | src | s | 4 struct · 2 fn | DiaryEntryReceipt, DiaryEntryRequest, SteerReceipt, SteerRequest | The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one… |
-| `src/task_verb/sdk_share.rs` | src | s | 2 struct · 1 fn | ShareCreateRequest, ShareCreated | `vault.shares.create`: the caller shares one stored brief with one recipient and chooses which born-with… |
+| `src/task_verb/sdk_share.rs` | src | s | 5 struct · 3 fn | ShareCreateRequest, ShareCreated, ShareRevokeRequest, ShareViewNarrowing, ShareViewRequest | `vault.shares.create`: the caller shares one stored brief with one recipient and chooses which born-with… |
 | `src/task_verb/sdk_shared.rs` | src | s | 10 struct · 13 fn | HandoffAlarmRequest, SharedActExecuted, SharedActRequest, SharedMemberAddRequest, SharedMemberRequest, SharedMemberRoleRequest, SharedReceiptRequest, SharedRemoveOwnerRequest +2 | The inputs and answers of the shared-vault rows a host door answers (OF-158): the acts the shared preset… |
 | `src/task_verb/subproject.rs` | src | s | 2 fn | — | A TASK that wraps a subproject (OF-389, ARCH-0079 "three kinds of work") |
 | `src/task_verb/symbol_lease.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 crate-vis | SymbolLease, SymbolLeaseOutcome | Node-local time-held symbol declarations and atomic queue ordering |
@@ -3819,7 +3822,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/content_window.rs` | src | s | 1 enum · 5 fn | SealedTake | The window side of sealed world content: what a reader seals from a private world's window, and how a reader… |
 | `src/world_keys/doors.rs` | src | L | 1 enum · 4 fn · 22 crate-vis | WorldKeyStatus | The doors that mint, wrap and open a world's key (contract §5), and what every world-key door shares: this… |
 | `src/world_keys/machine.rs` | src | s | 2 fn · 2 crate-vis | — | This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid… |
-| `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 14 re-export · 10 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
+| `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 15 re-export · 10 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
 | `src/world_keys/pads.rs` | src | m | 1 struct · 1 enum · 1 fn · 15 crate-vis | WorldKeyDestroyCause, WorldKeyDestruction | A world key's erasable half, and the world delete that destroys it (world privacy fix 7) |
 | `src/world_keys/reassert.rs` | src | s | 1 fn | — | The owner's re-assertion of one world after a pin change (contract §4) |
 | `src/world_keys/repin.rs` | src | m | 2 struct · 1 enum · 6 crate-vis | NarrowedWorld, RepinReport, Withheld | The one re-wrap sequence (contract §4) |
@@ -3831,7 +3834,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/state.rs` | src | s | 1 enum · 1 fn | WorldRecoveryState | The no-kit warning (ruling fix 10): a typed state |
 | `src/world_keys/tests.rs` | test | m | — | — | P6b done-means checks on the key core |
 | `src/world_keys/vault_doors.rs` | src | s | 5 fn · 4 crate-vis | — | The vault-handle doors for this install's own keys: installing the keystore, loading this install's signing… |
-| `src/world_keys/vault_key.rs` | src | m | 1 struct · 3 enum · 14 fn · 6 crate-vis | VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind | The vault data key and the wraps that unlock it (OF-570 E1) |
+| `src/world_keys/vault_key.rs` | src | L | 1 struct · 4 enum · 21 fn · 7 crate-vis | NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind | The vault data key and the wraps that unlock it (OF-570 E1) |
 | `src/world_keys/wrap.rs` | src | s | 3 crate-vis | — | One world key sealed to one recipient, and opened back with the recipient's secret |
 | `src/write_envelope.rs` | src | m | 5 struct · 24 fn · 1 mod · 1 re-export · 23 crate-vis | ClaimCandidate, MachineWriteSignature, SourceLineage, WriteEnvelope, WriteProvenance | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
 | `src/write_envelope/carry_forward.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 crate-vis | CarryForwardClaim, CarryForwardKind | Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger |
