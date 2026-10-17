@@ -14578,7 +14578,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RoomBar",
@@ -45539,7 +45539,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 265
+      "fn": 267
      }
     },
     {
@@ -48039,7 +48039,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 17
      }
     },
@@ -48781,11 +48781,25 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 2,
       "fn": 6,
-      "re-export": 7,
+      "re-export": 9,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OfferVoteRequest"
+     ],
+     "path": "src/workspace_roster/rooms/offer_activity.rs",
+     "purpose": "A room-wide offer card's time (OF-530 ruling A): it stays open while people engage with it, and ages out…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -48796,6 +48810,19 @@
      "purpose": "When an open offer card's thread has ended (OF-530, ARCH-0006a:233): a thread is live while it has an open…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OfferReopenRequest"
+     ],
+     "path": "src/workspace_roster/rooms/offer_reopen.rs",
+     "purpose": "Reopening a room-wide offer card (OF-530 ruling A): one click from the room's host, once the card has aged out",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -48828,9 +48855,9 @@
      "path": "src/workspace_roster/rooms/offers.rs",
      "purpose": "Offer cards (OF-530): an agent asks to join a room or one of its threads by a card, never by a turn…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 12,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 4
      }
     },
@@ -48905,7 +48932,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/rooms/witness.rs",
@@ -51652,7 +51679,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 86,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51675,7 +51702,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3123,
+   "source_files": 3125,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59547,7 +59574,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 220
+      "fn": 222
      }
     },
     {
@@ -60563,7 +60590,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 221
+      "fn": 223
      }
     },
     {
@@ -70581,8 +70608,10 @@
       "OfferAnswerRequest",
       "OfferCard",
       "OfferDraft",
+      "OfferReopenRequest",
       "OfferSettlement",
       "OfferState",
+      "OfferVoteRequest",
       "OffersPage",
       "OffersRequest",
       "OrganWaitView",
@@ -70912,7 +70941,7 @@
      "purpose": "—",
      "surface": {
       "enum": 179,
-      "struct": 453
+      "struct": 455
      }
     },
     {
