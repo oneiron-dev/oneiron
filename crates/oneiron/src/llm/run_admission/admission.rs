@@ -365,9 +365,7 @@ impl RunAdmission {
         };
         let (revision, declaration) = self.inner.snapshot();
         let declaration = declaration.with_reserve(reserve_units);
-        let admitted = self
-            .inner
-            .admit_model(&declaration, revision, call, None);
+        let admitted = self.inner.admit_model(&declaration, revision, call, None);
         self.inner.receipt_for(
             revision,
             selector,

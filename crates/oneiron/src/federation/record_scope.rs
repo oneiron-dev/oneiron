@@ -872,7 +872,7 @@ impl Vault {
                         && self.text_fence_in(&txn, id, &raw, door, "read", |_| Ok(false))?,
                 )
             };
-            let withdrawn = crate::ports::withdrawn_in_txn(&self.store, &txn, &id)?;
+            let withdrawn = !crate::ports::raw_readable_in_txn(&self.store, &txn, &id, &raw)?;
             let allowed = !withdrawn
                 && scope
                     .as_ref()
