@@ -22,6 +22,7 @@ use axum::{
     routing::post,
 };
 use oneiron::claim::CallerLocality;
+use oneiron::connector_key::PROXY_CONNECTOR;
 use oneiron::memory::RecallEffort;
 use oneiron::task_verb::sdk::RecallRequest;
 use oneiron::{
@@ -43,10 +44,6 @@ const EXCHANGE_PREDICATE: &str = "integration.exchange";
 
 /// The most recalled items one call injects.
 const RECALL_LIMIT: usize = 8;
-
-/// The connector the proxy registers as (ARCH-0028): the paired actor's key
-/// on it carries the ARCH-0072 grant slate admission reads.
-const PROXY_CONNECTOR: &str = "openai_proxy";
 
 /// What heads the injected block. The rows are the vault's, not the
 /// caller's, and they reach the model as data.
@@ -202,7 +199,7 @@ async fn admit_connector(
     if !registered {
         return Err(forbidden(
             "connector_unregistered",
-            "the paired actor holds no live openai_proxy connector key with a stamped grant slate",
+            "the paired actor holds no live openai_proxy connector key with a stamped grant slate; the owner admits it at POST /v1/owner/connectors/proxy",
         ));
     }
     Ok(actor)

@@ -420,10 +420,10 @@ fn mint_agent_credential(
         },
     )?;
     let owner = crate::owner::local_owner(&vault)?;
-    let principal = vault
+    let agent = vault
         .ensure_agent_principal(&args.name)
         .map_err(|error| anyhow::anyhow!("agent {}: {}", args.name, error.message))?;
-    let principal = principal.to_hex();
+    let principal = agent.to_hex();
     // The same store-truth class check `token read` makes, before rooting.
     oneiron::memory::parse_actor_key(&vault, &format!("agent:{principal}")).map_err(|error| {
         anyhow::anyhow!(
@@ -464,11 +464,14 @@ fn mint_agent_credential(
             Ok(replaced)
         });
     match granted {
-        Ok(replaced) => Ok(MintedAgent {
-            credential,
-            ceiling,
-            replaced: replaced.iter().map(|id| hex(id)).collect(),
-        }),
+        Ok(replaced) => {
+            admit_agent_proxy(&vault, &owner, agent, args);
+            Ok(MintedAgent {
+                credential,
+                ceiling,
+                replaced: replaced.iter().map(|id| hex(id)).collect(),
+            })
+        }
         Err(error) => {
             vault
                 .revoke_capability_slip_once(&issuer, slip_id)
@@ -481,6 +484,29 @@ fn mint_agent_credential(
                 })?;
             Err(error)
         }
+    }
+}
+
+/// Admits the OpenAI proxy for an agent whose tier proposes, as the owner
+/// who minted it (ARCH-0028), so its proxy calls need no second step. The
+/// credential stands without it: a refusal is reported, never raised.
+fn admit_agent_proxy(
+    vault: &oneiron::Vault,
+    owner: &oneiron::consent::AuthenticatedOwner,
+    agent: oneiron::EntityId,
+    args: &TokenAgentArgs,
+) {
+    if args.tier == AgentTier::ReadOnly {
+        return;
+    }
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    if let Err(error) = vault.admit_proxy_connector(owner, agent, at) {
+        eprintln!(
+            "agent {}: the OpenAI proxy is not admitted: {error}; the owner admits it at POST /v1/owner/connectors/proxy",
+            args.name
+        );
     }
 }
 
