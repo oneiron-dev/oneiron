@@ -1,6 +1,6 @@
 # Oneiron — Memory Wire
 
-> Actor-bound memory for agents. Start with witness, recall and receipts.
+> Actor-bound memory for agents. Start with vault.witness, vault.recall and vault.receipts.
 > The mirror below is full fidelity, generated from shipped SDK sources.
 
 ## Memory Wire SDK

@@ -47,28 +47,47 @@ one.
 
 ## Which verbs cross typed, and which cross `WireJson`
 
-A row's input and output cross as UniFFI records wherever the crate has one;
-everything else crosses as the `WireJson { canonical_json }` leaf. A
-`WireJson` input is parsed into the row's engine input type on the Rust side,
-so the engine type's own shape validates it, and the typed engine output is
-written back as one JSON value. That is still one typed method per verb with a
-JSON body: there is no generic `call(name, json)`.
+Every facade row crosses typed. A row whose engine type has a hand-written
+record in `src/dto.rs` crosses through it; every other row crosses through the
+records and enums `scripts/sdk/generate.py` writes into
+`src/facade_types_generated.rs` from the facade type inventory
+(`scripts/sdk/facade_types.py`, the one walker the TypeScript and Python
+declarations also read; `scripts/sdk/uniffi_types.py` projects it). That is
+one `uniffi::Record` or `uniffi::Enum` per engine struct or enum the rows
+reach, each deriving serde with the engine type's own wire shape: the same
+keys, the same enum tagging, the same optional fields. A row converts at its
+boundary through that shape, so the engine type's own serde validates every
+input. An input with no fields is no argument (`vaultRoomsList()`). There is
+no generic `call(name, json)`.
 
-- **Typed in and out (24):** `vault.witness`, `vault.claims.upsert`,
-  `vault.recall`, `vault.receipts`, `vault.rooms.speak`, `vault.commit`,
-  `vault.remember`, `vault.claims.retract`, `vault.forget`,
-  `vault.claims.list`, `vault.claims.history`, `vault.delete`,
-  `vault.writes.pending`, `vault.hydrate`, `vault.get`, `vault.search.bm25`,
-  `vault.neighbors`, `vault.structural.put`, `vault.habits.checkin`,
-  `vault.claims.admit`, `vault.artifacts.put`, `vault.artifacts.append`,
-  `vault.artifacts.read`, `connector.outbound.schedule`.
-- **Typed arguments, `WireJson` result (3):** `cancel(taskRef:)`,
+- **Hand-written records in and out (24):** `vault.witness`,
+  `vault.claims.upsert`, `vault.recall`, `vault.receipts`,
+  `vault.rooms.speak`, `vault.commit`, `vault.remember`,
+  `vault.claims.retract`, `vault.forget`, `vault.claims.list`,
+  `vault.claims.history`, `vault.delete`, `vault.writes.pending`,
+  `vault.hydrate`, `vault.get`, `vault.search.bm25`, `vault.neighbors`,
+  `vault.structural.put`, `vault.habits.checkin`, `vault.claims.admit`,
+  `vault.artifacts.put`, `vault.artifacts.append`, `vault.artifacts.read`,
+  `connector.outbound.schedule`.
+- **Typed arguments, generated result (3):** `cancel(taskRef:)`,
   `describe(taskRef:)`, `vaultExport(format:)`.
-- **`WireJson` input, typed result (2):** `vault.notes.create`,
+- **Generated input, hand-written result (2):** `vault.notes.create`,
   `vault.notes.from_entity` (both return `EntityRefReceipt`).
-- **`WireJson` in and out:** every other facade row, host doors included.
-  The generated file is the authoritative list; each method is named for its
-  row (`vault.kv.get` is `vaultKvGet(input:)`).
+- **Generated in and out:** every other facade row, host doors included (141
+  of the 170 facade rows on this table). The generated files are the
+  authoritative list; each method is named for its row (`vault.kv.get` is
+  `vaultKvGet(input:)` over the `KeyValueAddress` record).
+- **`WireJson`** stays only where UniFFI cannot say the shape, as a field
+  inside its record and never as the whole argument: each `serde_json::Value`
+  (a claim's value, a task spec, an entity body, `ai.*` params and the
+  others `generate.py` lists), and the two recursive types, `LensNode` at
+  `GeneratedLens.root` and `RunTreeNode` at `RunTree.roots` (a record cannot
+  hold itself). A row whose type the inventory
+  could not read would cross as `WireJson` whole; on this table there is
+  none. The generated file's header carries the census.
+- Where a generated type would take a hand-written record's name it is
+  prefixed `Wire` (`WireClaimView`, `WireEntityView`, ...): the same engine
+  type, carried at its wire widths.
 - **Definition-only (3):** `vault.consolidation.enqueue`,
   `vault.consolidation.status`, `vault.claims.seed` keep their typed
   signatures and fail closed with `INVALID_STATE` until the table gives them
@@ -105,7 +124,8 @@ mode into `swift/.generated/`, and runs `swift build` on the compile stub in
 `swift/Sources/OneironUniFFIStub/main.swift`. The stub is hand-maintained and
 lags the generated surface; it is a compile probe, not a consumer.
 
-A surface change edits the verb table and reruns
-`python3 scripts/sdk/generate.py`; a new typed record adds its codec in
-`src/codec.rs` and its engine type to the emitter's `UNIFFI_INPUTS` or
-`UNIFFI_RESULTS` table.
+A surface change edits the verb table or the engine types and reruns
+`python3 scripts/sdk/generate.py`, which regenerates both files. A
+hand-written record (one with foreign widths or call-time stamping) adds its
+codec in `src/codec.rs` and its engine type to the emitter's `UNIFFI_INPUTS`
+or `UNIFFI_RESULTS` table.

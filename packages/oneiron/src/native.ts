@@ -226,6 +226,7 @@ vaultNotesEdit(input: unknown): unknown
 
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
+  lastReceiptRef(): string | null
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

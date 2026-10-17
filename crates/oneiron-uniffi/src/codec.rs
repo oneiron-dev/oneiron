@@ -4,10 +4,13 @@
 //! Every generated verb lowers its foreign arguments into the row's engine
 //! input, calls the client's typed method for that row, and lifts the engine
 //! output back. A conversion is selected by its source and target types, never
-//! by verb name. A row with no UniFFI record crosses as [`WireJson`] at the
-//! opaque leaf: [`decode`] parses it into the row's engine input type, so that
-//! type's own serde shape validates it, and [`encode`] writes the typed output
-//! back. Widths are checked, never wrapped: a negative foreign timestamp is a
+//! by verb name. A row whose types have generated records
+//! (`facade_types_generated.rs`) converts through the wire shape the record
+//! and the engine type share: [`lower_record`] and [`lift_record`]. A row whose
+//! type the facade inventory cannot read crosses as [`WireJson`] whole:
+//! [`decode`] parses it into the row's engine input type, so that type's own
+//! serde shape validates it, and [`encode`] writes the typed output back.
+//! Widths are checked, never wrapped: a negative foreign timestamp is a
 //! `BAD_REQUEST`, an engine value past the foreign width an `INTERNAL`.
 
 use base64::Engine as _;
@@ -68,6 +71,10 @@ fn internal(message: String) -> OneironError {
 // ── the WireJson leaf ───────────────────────────────────────────────────
 
 /// Parses one verb's `WireJson` input into that verb's engine input type.
+#[allow(
+    dead_code,
+    reason = "the generator's door for a row whose input type the facade inventory cannot read; this table has none"
+)]
 pub(crate) fn decode<T: serde::de::DeserializeOwned>(
     verb: &str,
     input: &WireJson,
@@ -81,6 +88,10 @@ pub(crate) fn decode<T: serde::de::DeserializeOwned>(
 }
 
 /// Writes one verb's typed engine output as one JSON value.
+#[allow(
+    dead_code,
+    reason = "the generator's door for a row whose result type the facade inventory cannot read; this table has none"
+)]
 pub(crate) fn encode<T: serde::Serialize>(
     verb: &str,
     output: &T,
@@ -107,6 +118,74 @@ impl Lift<serde_json::Value> for WireJson {
             .map(|canonical_json| Self { canonical_json })
             .map_err(|error| internal(format!("could not encode a JSON value: {error}")))
     }
+}
+
+/// A `WireJson` field of a generated record is written as the JSON value it
+/// carries, not as its text, so the record's serde shape is the engine's.
+impl serde::Serialize for WireJson {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let value: serde_json::Value =
+            serde_json::from_str(&self.canonical_json).map_err(serde::ser::Error::custom)?;
+        serde::Serialize::serialize(&value, serializer)
+    }
+}
+
+/// Any one JSON value reads as the `WireJson` carrying its canonical text.
+impl<'de> serde::Deserialize<'de> for WireJson {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+        serde_json::to_string(&value)
+            .map(|canonical_json| Self { canonical_json })
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+// ── generated records ───────────────────────────────────────────────────
+//
+// `facade_types_generated.rs` mirrors each engine type a facade row reaches
+// with the engine type's own serde wire shape. A row converts at its boundary
+// through that shape: the record is written as JSON and read as the engine
+// type, so the engine type's own serde validates it, and the engine output is
+// written as JSON and read as the record. Nested types need no conversion of
+// their own.
+
+/// Lowers one verb's generated input record into that verb's engine input.
+pub(crate) fn lower_record<R: serde::Serialize, T: serde::de::DeserializeOwned>(
+    verb: &str,
+    record: R,
+) -> Result<T, OneironError> {
+    let value = serde_json::to_value(record).map_err(|error| {
+        bad_request(
+            format!("{verb}'s input could not be written as JSON: {error}"),
+            "Send the verb's documented input; a WireJson field holds one JSON value.",
+        )
+    })?;
+    serde_json::from_value(value).map_err(|error| {
+        bad_request(
+            format!("{verb}'s input is not the documented shape: {error}"),
+            "Send the verb's documented input.",
+        )
+    })
+}
+
+/// The engine input of a verb whose input record has no fields.
+pub(crate) fn lower_empty<T: serde::de::DeserializeOwned>(verb: &str) -> Result<T, OneironError> {
+    serde_json::from_value(serde_json::Value::Object(serde_json::Map::new()))
+        .map_err(|error| internal(format!("{verb}'s empty input does not read: {error}")))
+}
+
+/// Lifts one verb's engine output into its generated result record.
+pub(crate) fn lift_record<T: serde::Serialize, R: serde::de::DeserializeOwned>(
+    verb: &str,
+    output: &T,
+) -> Result<R, OneironError> {
+    let value = serde_json::to_value(output)
+        .map_err(|error| internal(format!("could not encode {verb}'s result: {error}")))?;
+    serde_json::from_value(value).map_err(|error| {
+        internal(format!(
+            "{verb}'s result does not read as its UniFFI record: {error}"
+        ))
+    })
 }
 
 // ── widths ──────────────────────────────────────────────────────────────

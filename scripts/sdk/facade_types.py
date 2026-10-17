@@ -47,6 +47,10 @@ EAGER = ('oneiron', 'oneiron_contracts', 'oneiron_authority', 'oneiron_model', '
 ROOT_CONTEXT = ('oneiron', 'crates/oneiron/src/task_verb/sdk.rs')
 
 INT = ('prim', 'int')
+# An integer leaf also names its Rust width, which a typed binding (UniFFI)
+# keeps; the TypeScript and Python projections read only `node[1]`.
+def width(name):
+    return ('prim', 'int', name)
 FLOAT = ('prim', 'float')
 STRING = ('prim', 'string')
 BOOL = ('prim', 'bool')
@@ -55,8 +59,8 @@ OPAQUE = ('opaque',)
 
 # Types of std and of external crates, by the last segment of their path.
 LEAVES = {
-    **{name: INT for name in ('u8', 'u16', 'u32', 'u64', 'u128', 'usize', 'i8', 'i16', 'i32', 'i64', 'i128', 'isize',
-                              'NonZeroU8', 'NonZeroU16', 'NonZeroU32', 'NonZeroU64', 'NonZeroUsize', 'NonZeroI64', 'NonZeroI32')},
+    **{name: width(name) for name in ('u8', 'u16', 'u32', 'u64', 'u128', 'usize', 'i8', 'i16', 'i32', 'i64', 'i128', 'isize',
+                                      'NonZeroU8', 'NonZeroU16', 'NonZeroU32', 'NonZeroU64', 'NonZeroUsize', 'NonZeroI64', 'NonZeroI32')},
     **{name: FLOAT for name in ('f32', 'f64', 'OrderedFloat', 'NotNan', 'Number')},
     **{name: STRING for name in ('String', 'str', 'char', 'PathBuf', 'Path', 'OsString', 'Uuid', 'Url', 'Version', 'IpAddr',
                                  'Ipv4Addr', 'Ipv6Addr', 'SocketAddr', 'SmolStr', 'CompactString', 'ArcStr', 'DateTime', 'Mime', 'HeaderValue')},
@@ -64,8 +68,8 @@ LEAVES = {
     'PhantomData': NULL,
     'Value': OPAQUE,
     'RawValue': OPAQUE,
-    'Duration': ('object', [('secs', INT, False), ('nanos', INT, False)], None),
-    'SystemTime': ('object', [('secs_since_epoch', INT, False), ('nanos_since_epoch', INT, False)], None),
+    'Duration': ('object', [('secs', width('u64'), False), ('nanos', width('u32'), False)], None),
+    'SystemTime': ('object', [('secs_since_epoch', width('u64'), False), ('nanos_since_epoch', width('u32'), False)], None),
 }
 # Names a Rust file uses without importing them.
 PRELUDE = {'String', 'Vec', 'Option', 'Box', 'Result', 'bool', 'str', 'char', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize',
@@ -230,6 +234,11 @@ def rename(name, case, variant):
     if case == 'kebab-case': return '-'.join(words)
     if case == 'SCREAMING-KEBAB-CASE': return '-'.join(words).upper()
     return name
+
+
+def codec_of(serde):
+    'The codec a field is read through, when it names one.'
+    return serde.get('with') or serde.get('deserialize_with')
 
 
 def serialize_case(value):
@@ -565,6 +574,14 @@ class Inventory:
         self.names = set()
         self.fallbacks = []   # (declaration, rust text, reason)
         self.opaques = []     # (declaration, rust text): serde_json values, opaque by design
+        # What a typed binding needs past the wire shape: each derived enum's
+        # serde tagging and variants, by declaration name, and each named
+        # field a writer must send as `null` rather than omit (an `Option`
+        # under a field codec with no `default`), by (owner, key), and each
+        # declaration that refuses unknown fields.
+        self.variants = {}
+        self.null_fields = set()
+        self.closed = set()
         self.roots = {}       # rust text -> IR
         crate, file = ROOT_CONTEXT
         file = file[len(CRATES[crate]) + 1:]
@@ -656,7 +673,7 @@ class Inventory:
         inner = [self.ir(a, context, params, where) for a in args]
         if name == 'Option' and inner: return ('option', inner[0])
         if name in WRAPPERS and inner: return inner[0]
-        if name in ('Bytes', 'ByteBuf'): return ('array', INT)
+        if name in ('Bytes', 'ByteBuf'): return ('array', width('u8'))
         if name in SEQUENCES and inner: return ('array', inner[0])
         if name in MAPS:
             if len(inner) > 1: return ('map', inner[1])
@@ -715,6 +732,8 @@ class Inventory:
             key = serialize_case(serde.get('rename')) or rename(name, case, False)
             optional = (value[0] == 'option' or 'default' in serde or container_default or 'skip_serializing_if' in serde
                         or serde.get('skip_serializing') is True or serde.get('skip_deserializing') is True)
+            if value[0] == 'option' and isinstance(codec_of(serde), str) and 'default' not in serde and not container_default:
+                self.null_fields.add((where, key))
             out.append((key, value, optional))
         return out, flat
 
@@ -748,9 +767,12 @@ class Inventory:
                 return self.ir(parse_type(serde[key]), context, params, where)
         if not derived & {'Serialize', 'Deserialize'}:
             return self.manual(item, context, params, where)
-        if derived & {'Serialize_repr', 'Deserialize_repr'}: return INT
+        if derived & {'Serialize_repr', 'Deserialize_repr'}:
+            repr_ = re.search(r'\brepr\s*\(\s*([ui](?:8|16|32|64|size))\b', item.attrs)
+            return width(repr_.group(1)) if repr_ else INT
         case = serialize_case(serde.get('rename_all'))
         default = serde.get('default') is True or isinstance(serde.get('default'), str)
+        if serde.get('deny_unknown_fields') is True: self.closed.add(where)
         if item.kind == 'struct':
             if item.shape == 'unit': return NULL
             if item.shape == 'tuple':
@@ -769,7 +791,7 @@ class Inventory:
         tag, content = serde.get('tag'), serde.get('content')
         untagged = serde.get('untagged') is True
         field_case = serialize_case(serde.get('rename_all_fields'))
-        members = []
+        members, variants = [], []
         for chunk in split_top(item.body):
             attrs, rest = leading_attrs(chunk)
             match = re.match(r'(\w+)\s*(.*)$', rest, re.S)
@@ -808,6 +830,10 @@ class Inventory:
                 elif shape == 'struct':
                     members.append(('object', [(label, self.object(body, inner_case, False, context, params, at, name + 'Body'), False)], name))
                 else: members.append(('object', [(label, value, False)], name))
+            variants.append({'name': name, 'label': label, 'untagged': bool(untagged or variant.get('untagged')),
+                             'other': variant.get('other') is True, 'shape': shape, 'member': members[-1]})
+        self.variants[where] = {'tag': tag if isinstance(tag, str) else None, 'content': content if isinstance(content, str) else None,
+                                'untagged': untagged, 'variants': variants}
         if not members: return ('never',)
         return members[0] if len(members) == 1 else ('union', members)
 
@@ -818,7 +844,8 @@ class Inventory:
             text = self.index.files[(crate, file)]
             body = text[position:close_of(text, text.index('{', position))]
             if re.search(r'serialize_str|collect_str|to_string\(\)\.serialize|as_str\(\)\.serialize|to_hex\(\)\.serialize', body): return STRING
-            if re.search(r'serialize_[ui]\d+|serialize_usize', body): return INT
+            written = re.search(r'serialize_([ui]\d+|usize)', body)
+            if written: return width(written.group(1))
             if re.search(r'serialize_f\d+', body): return FLOAT
             if re.search(r'serialize_bool', body): return BOOL
             if item.shape == 'tuple' and re.search(r'self\.0\.serialize\(', body):
