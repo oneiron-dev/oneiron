@@ -108,6 +108,22 @@ impl SideTableDbs for crate::Vault {
     }
 }
 
+/// A vault writes its own store's side tables, and holds the custody door the side-row wall
+/// mints through.
+impl SideTableDbs for crate::Vault {
+    fn side_vault_meta(&self) -> &OverlayDb {
+        self.store.side_vault_meta()
+    }
+
+    fn side_sync_state_opt(&self) -> Option<&OverlayStrDb> {
+        self.store.side_sync_state_opt()
+    }
+
+    fn side_custody(&self) -> Option<CustodyWrite<'_>> {
+        Some(CustodyWrite::of(self))
+    }
+}
+
 /// The bare `vault_meta` handle, for the open gates that read declared rows before a store exists.
 impl SideTableDbs for OverlayDb {
     fn side_vault_meta(&self) -> &OverlayDb {

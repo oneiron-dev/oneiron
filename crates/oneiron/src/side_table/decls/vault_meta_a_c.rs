@@ -375,6 +375,10 @@ side_tables! {
     CODE_RUN_RAW_OUTPUT_TAINT: VaultMeta b"code_run:raw_output:taint:v1:" Raw;
     /// A code run's raw output bytes, keyed by their deterministic content handle. Key: string.
     CODE_RUN_RAW_OUTPUT: VaultMeta b"code_run:raw_output:v1:" Raw;
+    /// A code run's fold receipt (ARCH-0079 #reader-forks): the source and range a fold read,
+    /// the jobs it named, the ranges read, unread and read short, its cutoff, recipe, summary
+    /// tree and taint dependencies (JSON). Key: id16(owner run) + id16(folded occurrence).
+    CODE_RUN_READER_FOLD: VaultMeta b"code_run:reader_fold:v1:" Raw;
     /// The index rows of a code run's reader children, by a one-byte tag: `c` id16(parent) +
     /// be64(ordinal) + id16(task) (children in spawn order), `f` id16(parent) + handle -> id16(task)
     /// (findings), `q` be64(enqueued ms) + id16(task) (the queue), `w` id16(task) + id16(set)
@@ -391,6 +395,9 @@ side_tables! {
     CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored;
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
+    /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
+    /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
+    CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
     CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored;

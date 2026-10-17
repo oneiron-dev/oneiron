@@ -115,6 +115,8 @@ pub enum AgentVerb {
     VaultArtifactsView,
     VaultCodeDiff,
     VaultCodeBlame,
+    VaultCodeProposalView,
+    VaultCodeRepoDiff,
     VaultArtifactsExport,
     VaultArtifactsBornFrom,
     VaultArtifactsProposals,
@@ -370,6 +372,8 @@ impl AgentVerb {
         Self::VaultArtifactsView,
         Self::VaultCodeDiff,
         Self::VaultCodeBlame,
+        Self::VaultCodeProposalView,
+        Self::VaultCodeRepoDiff,
         Self::VaultArtifactsExport,
         Self::VaultArtifactsBornFrom,
         Self::VaultArtifactsProposals,
@@ -632,6 +636,8 @@ impl AgentVerb {
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultCodeDiff => "vault.code.diff",
             Self::VaultCodeBlame => "vault.code.blame",
+            Self::VaultCodeProposalView => "vault.code.proposal_view",
+            Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
@@ -886,6 +892,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsView
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
+                | Self::VaultCodeProposalView
+                | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1148,6 +1156,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsView
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
+                | Self::VaultCodeProposalView
+                | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1435,6 +1445,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsView
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
+                | Self::VaultCodeProposalView
+                | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1851,6 +1863,8 @@ impl AgentVerb {
             Self::VaultArtifactsView => &["spec"],
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
+            Self::VaultCodeProposalView => &["spec"],
+            Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
@@ -2107,6 +2121,8 @@ impl AgentVerb {
             Self::VaultArtifactsView => &["spec"],
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
+            Self::VaultCodeProposalView => &["spec"],
+            Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
@@ -2533,7 +2549,7 @@ impl AgentVerb {
                 "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."
             }
             Self::VaultLensesList => {
-                "One page of the vault's lens proposals, each with its slot state from the owner's current selection."
+                "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
             }
             Self::VaultLensesDefault => {
                 "Composes the default vault lens from the named sources, read under the caller's own scope."
@@ -2557,6 +2573,12 @@ impl AgentVerb {
             }
             Self::VaultCodeBlame => {
                 "Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why."
+            }
+            Self::VaultCodeProposalView => {
+                "One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied."
+            }
+            Self::VaultCodeRepoDiff => {
+                "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it."
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."

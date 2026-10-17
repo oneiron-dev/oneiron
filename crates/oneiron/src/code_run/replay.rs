@@ -159,6 +159,9 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::TaskWaitSet(_) if self.effect != SelfEffect::TasksWaitSet => Err(
                 invalid_code_run_replay("task wait set answer belongs to another effect"),
             ),
+            SelfDispatchOutcome::Summarize(_) if self.effect != SelfEffect::Summarize => Err(
+                invalid_code_run_replay("summary answer belongs to another effect"),
+            ),
             SelfDispatchOutcome::Leader(_) if self.effect != SelfEffect::Leader => Err(
                 invalid_code_run_replay("leader answer belongs to another effect"),
             ),
@@ -484,16 +487,21 @@ impl ResultOccurrence {
     /// The occurrence of `output` that `owner` holds, or of its bytes alone
     /// when it has no owner. The one derivation of an occurrence id.
     pub fn of(owner: Option<EntityId>, output: &CodeRunRawOutput) -> Result<Self> {
-        Ok(Self(match owner {
-            Some(owner) => EntityId::derive(
-                b"oneiron:code-run-output-occurrence:v1",
-                &[owner.as_bytes().as_slice(), output.path.as_bytes()],
-            )?,
-            None => EntityId::derive(
+        match owner {
+            Some(owner) => Self::owned(owner, &output.path),
+            None => Ok(Self(EntityId::derive(
                 b"oneiron:code-run-output-unowned:v1",
                 &[output.raw_blake3.as_slice()],
-            )?,
-        }))
+            )?)),
+        }
+    }
+
+    /// The occurrence run `owner` holds at `path`.
+    pub fn owned(owner: EntityId, path: &str) -> Result<Self> {
+        Ok(Self(EntityId::derive(
+            b"oneiron:code-run-output-occurrence:v1",
+            &[owner.as_bytes().as_slice(), path.as_bytes()],
+        )?))
     }
 
     #[must_use]

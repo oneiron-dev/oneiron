@@ -10,8 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::codec::{agent_dispatch_actor, record_dispatch_input};
 use super::AgentDispatcher;
+use super::codec::{agent_dispatch_actor, record_dispatch_input};
 use super::widen_record::{
     PROPOSAL_INDEX, WIDEN, WidenLanding, WidenRecord, WidenTarget, invalid, validate_proposal_id,
 };

@@ -159,6 +159,23 @@ impl Vault {
         expected: Option<CodeRunReplayGeneration>,
         healed_model: Option<&ModelId>,
     ) -> Result<CodeRunReplayGeneration> {
+        self.put_code_run_replay_record_if_generation_with_heal_and(
+            record,
+            expected,
+            healed_model,
+            |_| Ok(()),
+        )
+    }
+
+    /// [`Self::put_code_run_replay_record_if_generation_with_heal`], with
+    /// `also`'s rows written in the same transaction after the record's.
+    pub(super) fn put_code_run_replay_record_if_generation_with_heal_and(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
+        also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<CodeRunReplayGeneration> {
         REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
         let mut wtxn = self.store.env.write_txn()?;
@@ -181,6 +198,7 @@ impl Vault {
         if let Some((key, count)) = next_heal_count {
             MODEL_HEAL_COUNTS.put(&self.store, &mut wtxn, &key, &HealCount(count))?;
         }
+        also(&mut wtxn)?;
         wtxn.commit()?;
         Ok(next_generation)
     }
@@ -409,6 +427,43 @@ impl Vault {
     ) -> Result<Option<String>> {
         let rtxn = self.store.env.read_txn()?;
         Ok(self.result_marks_in_txn(&rtxn, owner, output)?.1)
+    }
+
+    /// Marks the occurrence of `output` that `owner` holds with the taint of
+    /// every occurrence in `from` (each by the run that holds it), in one
+    /// transaction: their taint refs join its own, and the first secret mark
+    /// among them stands as its own when it has none. A body made from a
+    /// tainted one is tainted as long as it is.
+    pub(crate) fn inherit_code_run_result_marks(
+        &self,
+        owner: EntityId,
+        output: &CodeRunRawOutput,
+        from: &[(EntityId, CodeRunRawOutput)],
+    ) -> Result<()> {
+        let key = ResultOccurrence::of(Some(owner), output)?.mark_key(&output.handle);
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut refs = RAW_OUTPUT_TAINTS
+            .get(&self.store, &wtxn, &key)?
+            .unwrap_or_default();
+        let mut secret = RAW_OUTPUT_SECRETS.get(&self.store, &wtxn, &key)?;
+        let (own_refs, own_secret) = (refs.len(), secret.is_some());
+        for (source, held) in from {
+            let (more, marked) = self.result_marks_in_txn(&wtxn, Some(*source), held)?;
+            for taint in more {
+                if !refs.contains(&taint) {
+                    refs.push(taint);
+                }
+            }
+            secret = secret.or(marked);
+        }
+        if refs.len() > own_refs {
+            validate_taint_refs(&refs)?;
+            RAW_OUTPUT_TAINTS.put(&self.store, &mut wtxn, &key, &refs)?;
+        }
+        if !own_secret && let Some(reason) = &secret {
+            RAW_OUTPUT_SECRETS.put(&self.store, &mut wtxn, &key, reason)?;
+        }
+        Ok(wtxn.commit()?)
     }
 
     /// Every run's result manifests in the base vault, from its replay
