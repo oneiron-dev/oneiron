@@ -194,6 +194,29 @@ fn parse_line(line: &str) -> PadLine<'_> {
         })
 }
 
+/// A sealed pad's markdown as the Dreamer's after-seal review reads it
+/// (ARCH-0032 #scratchpad-marks): every `scratch` line blanked to spaces, so
+/// it never reaches the model and every byte offset still indexes the stored
+/// markdown. The flag says whether any line is marked `keep`.
+pub(crate) fn sealed_pad_review_text(markdown: &str) -> (String, bool) {
+    let mut text = String::with_capacity(markdown.len());
+    let mut keep = false;
+    for line in markdown.split_inclusive('\n') {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        match parse_line(body).mark {
+            Some(ScratchpadMark::Scratch) => {
+                text.extend(std::iter::repeat_n(' ', body.len()));
+                text.push_str(&line[body.len()..]);
+            }
+            mark => {
+                keep |= mark == Some(ScratchpadMark::Keep);
+                text.push_str(line);
+            }
+        }
+    }
+    (text, keep)
+}
+
 fn mark_token(mark: Option<ScratchpadMark>) -> &'static str {
     match mark {
         None => "",
@@ -357,6 +380,15 @@ impl crate::Vault {
     pub fn scratchpad_sealed(&self, pad: EntityId) -> crate::error::Result<bool> {
         let txn = self.store.env.read_txn()?;
         PAD.contains(&self.store, &txn, &PadKey::Sealed { pad })
+    }
+
+    /// [`Self::scratchpad_sealed`] inside the caller's read.
+    pub(crate) fn scratchpad_sealed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pad: EntityId,
+    ) -> crate::error::Result<bool> {
+        PAD.contains(&self.store, txn, &PadKey::Sealed { pad })
     }
 }
 

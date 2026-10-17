@@ -67,6 +67,7 @@ mod readers;
 mod scratchpad;
 mod stream;
 
+pub(crate) use scratchpad::sealed_pad_review_text;
 pub use scratchpad::{
     SCRATCHPAD_LINE_MAX_BYTES, SCRATCHPAD_RECALL_LINES, ScratchpadAppendReceipt, ScratchpadBoard,
     ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine,
