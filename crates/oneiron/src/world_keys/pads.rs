@@ -5,17 +5,19 @@
 //! erased. A wrap therefore never seals the key whole: it seals `key ⊕ pad`. The
 //! pad is 32 random bytes minted with the key, and it rides its own engine row,
 //! `WORLD_KEY_PAD`, one immutable row per key. That row replicates with the
-//! vault's base rows, the host included, so a kit restore on a new machine can
-//! rebuild the key. A pad alone is noise, and so is an opened wrap without it.
+//! vault's base rows, the host included; a kit restore on a new machine takes
+//! the pads from the sealed cloud bundle's pad object (`bundle`). A pad alone is
+//! noise, and so is an opened wrap without it.
 //!
 //! Erasing a world (a hard purge, a batch delete, or a peer's hard tombstone)
 //! purges every pad of the world on each replica that applies the erase, and
 //! queues a hard tombstone for each, so every wrap of every generation, old root
 //! and old machine stops opening. The erase also leaves a permanent destroyed
 //! fact: it refuses a late pad for the world, a new key and an open, and carries
-//! the receipt, ids only. It also purges the world's sealed copies on this
-//! replica's shelf and its sealing mirrors (`content`). Old offline backups and a
-//! key a caller already holds are outside what the erasure reaches. A legal hold
+//! the receipt, ids only. It also purges the world's sealing mirrors here
+//! (`content`), and each machine of the owner's strips the world's pads from
+//! every pad object the sealed cloud bundle keeps. Old offline backups and a key
+//! a caller already holds are outside what the erasure reaches. A legal hold
 //! on the world, or on a claim its key seals, refuses the erase before any pad
 //! goes (ARCH-0038 #legal-hold).
 //!
@@ -39,7 +41,6 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 
 const PAD_LABEL: &[u8] = b"oneiron/world-key-pad/v1\0";
-const CONTENT_TAG_CONTEXT: &str = "oneiron/sealed-world-content-tag/v1";
 const PAD_ROW_DOMAIN: &[u8] = b"oneiron/world-key-pad-row/v1";
 /// label ‖ world (16) ‖ generation (8, big-endian) ‖ mint (16) ‖ pad (32).
 const PAD_BODY_LEN: usize = PAD_LABEL.len() + 16 + 8 + 16 + 32;
@@ -73,18 +74,6 @@ impl WorldKeyPad {
     /// The pad's own bytes, for the sealed pad object (`bundle`).
     pub(super) fn bytes(&self) -> &[u8; 32] {
         &self.0
-    }
-
-    /// The tag `key`'s sealed content is filed under: `BLAKE3-derive_key(
-    /// "oneiron/sealed-world-content-tag/v1", key id ‖ pad)`. Every replica that
-    /// holds the pad can compute it; none can open content with it.
-    pub(super) fn content_tag(&self, key: &WorldKeyId) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key(CONTENT_TAG_CONTEXT);
-        hasher.update(&key.envelope_key_id());
-        hasher.update(&self.0[..]);
-        let tag = *hasher.finalize().as_bytes();
-        zeroize::Zeroize::zeroize(&mut hasher);
-        tag
     }
 
     /// `bytes ⊕ pad`: a key to the half its wraps seal, and that half back.
@@ -122,13 +111,6 @@ pub struct WorldKeyDestruction {
     pub keys: Vec<String>,
     /// The erased pad rows, as hex. Each also has a queued hard tombstone.
     pub pad_rows: Vec<String>,
-    /// The tags of the world's sealed copies, as hex: a holder without the pads
-    /// purges its copies by these.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sealed_tags: Vec<String>,
-    /// Sealed copies purged from this replica's shelf.
-    #[serde(default)]
-    pub sealed_copies: u64,
     /// The delete request this erasure rode, as hex, when it had one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
@@ -286,12 +268,12 @@ pub(crate) fn validate_pad_put_in_txn(
     Ok(())
 }
 
-/// Every pad row of `world` on this replica, with its sealed-content tag.
+/// Every pad row of `world` on this replica.
 fn world_pad_rows_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     world: EntityId,
-) -> Result<Vec<(EntityId, WorldKeyId, u64, [u8; 32])>> {
+) -> Result<Vec<(EntityId, WorldKeyId, u64)>> {
     let mut out = Vec::new();
     for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_WORLD_KEY_PAD, None)? {
         let id = id?;
@@ -300,10 +282,9 @@ fn world_pad_rows_in_txn(
         };
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("world key pad header"))?;
-        let (key, pad) = decode_pad_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let (key, _) = decode_pad_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if key.world == world {
-            let tag = pad.content_tag(&key);
-            out.push((id, key, header.learned_at, tag));
+            out.push((id, key, header.learned_at));
         }
     }
     Ok(out)
@@ -318,31 +299,8 @@ pub(crate) fn world_pad_learned_at_in_txn(
 ) -> Result<Vec<u64>> {
     Ok(world_pad_rows_in_txn(store, txn, world)?
         .into_iter()
-        .map(|(_, _, learned_at, _)| learned_at)
+        .map(|(_, _, learned_at)| learned_at)
         .collect())
-}
-
-/// Whether some key whose pad is on this replica files its sealed content
-/// under `tag`.
-pub(super) fn live_pad_tag_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    tag: &[u8; 32],
-) -> Result<bool> {
-    for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_WORLD_KEY_PAD, None)? {
-        let id = id?;
-        let Some(raw) = store.port_entity_raw(txn, &id)?.map(Zeroizing::new) else {
-            continue;
-        };
-        let (key, pad) = decode_pad_body(
-            raw.get(ENTITY_METADATA_HEADER_LEN..)
-                .ok_or(Error::CorruptedIndex("world key pad header"))?,
-        )?;
-        if pad.content_tag(&key) == *tag {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// Refuses destroying `world`'s keys while a legal hold stands on the world or
@@ -488,13 +446,11 @@ pub(crate) fn destroy_world_keys_in_txn(
         deleted_at,
         request_id: request_id.unwrap_or(*target.as_bytes()),
     };
-    for (id, _, learned_at, _) in &rows {
+    for (id, _, learned_at) in &rows {
         crate::batch::deindex_entity(store, wtxn, id)?;
         stage_engine_row_hard_erasure_in_txn(store, wtxn, id, *learned_at, &tombstone)?;
     }
-    let tags: Vec<[u8; 32]> = rows.iter().map(|(_, _, _, tag)| *tag).collect();
-    let sealed_copies =
-        super::content::purge_sealed_world_content_in_txn(store, wtxn, target, &tags)?;
+    super::content::purge_world_mirrors_in_txn(store, wtxn, target)?;
     if let Some(existing) = existing {
         return Ok(Some(existing));
     }
@@ -504,14 +460,9 @@ pub(crate) fn destroy_world_keys_in_txn(
         cause,
         keys: rows
             .iter()
-            .map(|(_, key, _, _)| format!("{}:{}", key.generation, hex(&key.mint)))
+            .map(|(_, key, _)| format!("{}:{}", key.generation, hex(&key.mint)))
             .collect(),
-        pad_rows: rows.iter().map(|(id, _, _, _)| id.to_hex()).collect(),
-        sealed_tags: tags
-            .iter()
-            .map(|tag| tag.iter().map(|byte| format!("{byte:02x}")).collect())
-            .collect(),
-        sealed_copies,
+        pad_rows: rows.iter().map(|(id, _, _)| id.to_hex()).collect(),
         request_id: request_id.as_ref().map(hex),
         at: crate::ports::recorded_at_in_txn(store, wtxn)?,
     };

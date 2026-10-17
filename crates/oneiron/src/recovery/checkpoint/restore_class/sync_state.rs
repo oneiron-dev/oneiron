@@ -88,8 +88,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_QD_E, CONTENT),
     (&t::SYNC_QN_E, CONTENT),
     (&t::SYNC_REASSERT_MARKER, CONTENT),
-    // The sealed bundle's custody and cursors follow the live vault, as the
-    // sealed shelf's do.
+    // The sealed bundle's custody and cursors follow the live vault.
     (&t::SYNC_RESIDENCE_BUNDLE_GENERATION, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_PART, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_STAGE, LIVE),
@@ -105,12 +104,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_RESIDENCE_OPENED_ITEM, CONTENT),
     (&t::SYNC_RESIDENCE_PROMOTED_WINDOW, CONTENT),
     (&t::SYNC_RESIDENCE_DEVICE_MODE, LIVE),
-    (&t::SYNC_RESIDENCE_SEALED_LABEL, LIVE),
-    (&t::SYNC_RESIDENCE_SEALED_NEXT, LIVE),
-    (&t::SYNC_RESIDENCE_SEALED_PUT, LIVE),
-    (&t::SYNC_RESIDENCE_SEALED_TAKEN, LIVE),
-    (&t::SYNC_RESIDENCE_SEALED_STAGE, LIVE),
-    (&t::SYNC_RESIDENCE_SEALED_WANT, LIVE),
     (&t::SYNC_RESIDENCE_ITEM_TOUCH, CONTENT),
     (&t::DEFERRED_SPAWNED_BY, CONTENT),
     (&t::DEFERRED_SPAWNED_BY_ENDPOINT, CONTENT),

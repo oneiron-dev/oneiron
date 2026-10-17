@@ -33,10 +33,9 @@ pub(super) const MAX_CONVERGENCE_ROUNDS: u32 = 5;
 
 pub(super) const EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS: u64 = 1;
 /// How often a live lane runs its residence upkeep: an opened machine's
-/// authority catch-up (OF-469), the sealed relay through the home (OF-534 G7),
-/// then the sealed bundle relay (FIX 922). Erase's rewrite of every kept pad
-/// object runs within one such tick of the erase's commit; the bundle's take
-/// and upload once per UTC slot.
+/// authority catch-up (OF-469), then the sealed bundle relay (FIX 922).
+/// Erase's rewrite of every kept pad object runs within one such tick of the
+/// erase's commit; the bundle's take and upload once per UTC slot.
 pub(super) const SEALED_RELAY_INTERVAL_SECS: u64 = 300;
 
 pub(super) type WsSink = SplitSink<WsStream, Message>;
