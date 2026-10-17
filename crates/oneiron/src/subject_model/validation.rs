@@ -3,7 +3,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, EntityWriteSegmentRead};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
 };
@@ -144,17 +144,14 @@ pub(crate) fn validate_subject_model_claim_in_session(
 ) -> Result<()> {
     if body.predicate == PREDICATE_PERSON_SUBSTRATE {
         let person = validate_person_substrate_claim_structure(body)?;
-        let entities = view.entity_rows_for_write()?;
-        let raw = entities.get(txn, person.as_bytes())?;
-        require_person_header(raw.as_deref())?;
+        view.port_entities_at_write_segment(txn, [&person], |[raw]| require_person_header(raw))?;
     } else if body.predicate == PREDICATE_ACTOR_SUBJECT_REF {
         let (actor, subject) = validate_actor_subject_claim_structure(body)?;
         // Resolve both endpoints from one segment-aware snapshot, not the
         // logical read view captured before earlier batch puts were staged.
-        let entities = view.entity_rows_for_write()?;
-        let actor_raw = entities.get(txn, actor.as_bytes())?;
-        let subject_raw = entities.get(txn, subject.as_bytes())?;
-        require_anchor_headers(actor_raw.as_deref(), subject_raw.as_deref())?;
+        view.port_entities_at_write_segment(txn, [&actor, &subject], |[actor_raw, subject_raw]| {
+            require_anchor_headers(actor_raw, subject_raw)
+        })?;
     }
     Ok(())
 }

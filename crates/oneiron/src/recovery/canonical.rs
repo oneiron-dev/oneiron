@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::document::{self, CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use super::validation;
 use super::{decode_recovery_artifact, seal_recovery_artifact};
-use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE};
+use crate::deletion::PENDING_TOMBSTONE;
 use crate::error::{ArtifactError, Error, Result};
-use crate::side_table::HexId;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::{EntityId, Vault};
 
 /// Canonical Layer-1 artifact discriminator (not a Loro snapshot).
@@ -476,9 +476,9 @@ fn mark_deleted_carriers_first(
             deleted.insert(*row?.0.id.as_bytes());
         }
         for row in &snapshot.entity_blobs {
-            if HARD_DELETE_MARKER
-                .get(&vault.store, &txn, &HexId(id(row.id)?))?
-                .is_some()
+            if vault
+                .store
+                .port_deletion_marked(&txn, DeletionMarker::HardDelete, &id(row.id)?)?
             {
                 deleted.insert(row.id);
             }
@@ -658,7 +658,10 @@ pub(crate) fn capture_canonical_window_within(
         .chain(snapshot.tombstones.iter().map(|row| row.id))
         .collect();
     for entity in candidates {
-        if let Some(value) = HARD_DELETE_MARKER.get(&vault.store, &txn, &HexId(id(entity)?))? {
+        if let Some(value) = vault
+            .store
+            .port_deletion_marker(&txn, DeletionMarker::HardDelete, &id(entity)?)?
+        {
             if !crate::deletion::decode_tombstone_value(&value).is_hard() {
                 return Err(invalid("invalid hard delete marker"));
             }
@@ -687,8 +690,13 @@ pub(crate) fn capture_canonical_window_within(
         let entity = id(row.id)?;
         // Borrowed: only the stored row's header decides, so the body of a
         // projection under repair is never copied to answer it.
-        let stored = vault.store.entities.get(&txn, entity.as_bytes())?;
-        if crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, stored.as_deref())? {
+        let marked = match vault.store.port_entity_with_raw(&txn, &entity, |stored| {
+            crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, Some(stored))
+        })? {
+            Some(marked) => marked,
+            None => crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, None)?,
+        };
+        if marked {
             return Err(invalid("deleted row without its tombstone"));
         }
     }
@@ -839,8 +847,11 @@ pub(crate) fn capture_canonical_window_within(
             {
                 continue;
             }
-            let mapping = format!("m:dw:{}", id(entity.id)?.to_hex());
-            if vault.store.sync_state.get(&txn, &mapping)?.as_deref() != Some(window.as_bytes())
+            if vault
+                .store
+                .port_deletion_marker(&txn, DeletionMarker::WindowAddress, &id(entity.id)?)?
+                .as_deref()
+                != Some(window.as_bytes())
                 && carried.get(&id(entity.id)?.to_hex()).map(Vec::as_slice)
                     != Some(world.as_bytes().as_slice())
             {
