@@ -61,7 +61,8 @@ pub(crate) struct ContextBoardRequest {
     /// MEMORIES section controls: whether to project it and the per-slot row caps.
     #[serde(default)]
     memories: Option<ContextBoardMemoriesControls>,
-    /// Session controls: the session id that carries the cursor across calls.
+    /// Session controls: the session id that carries the cursor across calls,
+    /// and the branch the board renders for.
     #[serde(default)]
     session: Option<ContextBoardSessionControls>,
     /// Companion scope that influences MEMORIES assembly.
@@ -327,8 +328,12 @@ pub(crate) async fn context_board_hydrate(
         .as_ref()
         .map(CoreContextPackRequest::named_refs)
         .unwrap_or_default();
-    // The hook blocks that reach this board's session: timed pins on its
-    // MEMORIES and TASKS rows (ARCH-0080 §11, OI-1 = A).
+    // The hook blocks that reach this board's session and branch: timed pins
+    // on its MEMORIES and TASKS rows (ARCH-0080 §11, OI-1 = A).
+    let branch = req.session.as_ref().and_then(|s| s.branch.as_deref());
+    if let Some(branch) = branch {
+        validate_session_id(branch, "session.branch")?;
+    }
     let hook_pins = server
         .vault
         .board_hook_pins(
@@ -336,7 +341,7 @@ pub(crate) async fn context_board_hydrate(
                 .as_ref()
                 .and_then(|s| s.session_id.as_deref())
                 .unwrap_or_default(),
-            None,
+            branch,
         )
         .map_err(|error| super::core_engine_error("board hook blocks failed", error))?;
     let (pack, memories, advanced) = match req.retrieval {

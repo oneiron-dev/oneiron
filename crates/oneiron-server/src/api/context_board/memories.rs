@@ -62,6 +62,11 @@ pub(crate) struct ContextBoardSessionControls {
     #[serde(default, rename = "session_id", alias = "sessionId")]
     #[schema(example = "session-123")]
     pub(super) session_id: Option<String>,
+    /// The conversation branch this board renders for. A hook block
+    /// addressed to a branch reaches only a board that names it.
+    #[serde(default)]
+    #[schema(example = "branch-2")]
+    pub(super) branch: Option<String>,
 }
 
 /// Companion scope that influences MEMORIES assembly.

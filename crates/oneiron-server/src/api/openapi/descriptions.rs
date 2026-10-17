@@ -458,10 +458,16 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
     ),
     (
         "ContextBoardSessionControls",
-        &[(
-            "session_id",
-            "Stable session key that carries the MEMORIES cursor across calls. Defaults to the caller's own identity.",
-        )],
+        &[
+            (
+                "session_id",
+                "Stable session key that carries the MEMORIES cursor across calls. Defaults to the caller's own identity.",
+            ),
+            (
+                "branch",
+                "The conversation branch this board renders for. A hook block addressed to a branch reaches only a board that names it.",
+            ),
+        ],
     ),
     (
         "ContextBoardCompanionControls",
