@@ -104,10 +104,6 @@ impl Vault {
         task: EntityId,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
-            let policy: crate::gate::ProjectConversionPolicy =
-                crate::gate::resolve_policy_manifest(&self.store, txn)?
-                    .project_conversion_policy()
-                    .ok_or_else(invalid)?;
             let mut row = room_thread_in(self, txn, room, thread)?;
             let turns = rooms::thread_turns_in(self, txn, room, thread)?;
             let source = rooms::room_in(self, txn, room)?;
@@ -117,12 +113,19 @@ impl Vault {
                 || !crate::task_verb::thread_task_is_open_in(self, txn, task)?
                 || row.converted_project.is_some()
                 || thread_project_in(self, txn, room, thread, self.project_type_byte()?)?.is_some()
-                || (!row.task_ids.contains(&task.to_hex())
-                    && turns.iter().map(|turn| turn.task_ids.len()).sum::<usize>()
-                        >= policy.max_tasks)
             {
                 return Err(invalid());
             }
+            // A thread binds however many tasks (rule 5); past the threshold
+            // row its census raises the owner's check for the thread.
+            let mut census = crate::scan_check::ScanCount::start(
+                &self.store,
+                txn,
+                crate::scan_check::EngineScan::RoomThreadTasks,
+                thread.as_bytes(),
+            )?;
+            census.rows(turns.iter().map(|turn| turn.task_ids.len()).sum());
+            census.finish(self);
             if !row.task_ids.contains(&task.to_hex()) {
                 row.task_ids.push(task.to_hex());
                 rooms::TURNS.put(&self.store, txn, &thread, &row)?;
@@ -337,9 +340,16 @@ impl Vault {
                 &bindings,
                 &source_members,
             )?;
-            if task_ids.len() > policy.max_tasks {
-                return Err(invalid());
-            }
+            // The thread's whole task set moves, however many (rule 5); past
+            // the threshold row its census raises the owner's check.
+            let mut census = crate::scan_check::ScanCount::start(
+                &self.store,
+                txn,
+                crate::scan_check::EngineScan::RoomThreadTasks,
+                thread.as_bytes(),
+            )?;
+            census.rows(task_ids.len());
+            census.finish(self);
             let mut holder = None;
             let mut tasks = Vec::with_capacity(task_ids.len());
             for &id in task_ids.keys() {
@@ -634,13 +644,14 @@ impl Vault {
         if owned != [room] {
             return Err(invalid());
         }
-        let runs = crate::conversation_dag::edge_ids(
+        // Every run the turn spawned hangs on it, however many (rule 5).
+        let runs = crate::vault::filtered_edge_peers_in(
             &self.store,
             &txn,
+            crate::ports::EdgeDirection::In,
             turn,
             EdgeKind::SpawnedBy,
-            true,
-            4096,
+            None,
         )?;
         let mut threads = Vec::new();
         // The containing thread hangs on its own message, even when it has no child.
@@ -669,14 +680,17 @@ impl Vault {
             }
         }
         // Parent → child index scopes this read to matching threads only.
+        // Every child is read, however many (rule 5); past the threshold row
+        // the owner's check is raised for the parent turn.
         let prefix = [room.as_bytes().as_slice(), turn.as_bytes().as_slice()].concat();
-        for (n, item) in rooms::THREAD_CHILDREN
-            .iter_from(&self.store, &txn, &prefix)?
-            .enumerate()
-        {
-            if n >= 4096 {
-                return Err(Error::IndexOverflow("message_thread_matches"));
-            }
+        let mut children = crate::scan_check::ScanCount::start(
+            &self.store,
+            &txn,
+            crate::scan_check::EngineScan::RoomHistoryRows,
+            &prefix,
+        )?;
+        for item in rooms::THREAD_CHILDREN.iter_from(&self.store, &txn, &prefix)? {
+            children.row();
             let (_, child) = item?;
             let row = rooms::turn_in(self, &txn, child)?;
             if row.room_id != room.to_hex()
@@ -688,16 +702,21 @@ impl Vault {
                 threads.push(child);
             }
         }
+        children.finish(self);
+        // Every project born from the message is read, however many.
+        let mut born = crate::scan_check::ScanCount::start(
+            &self.store,
+            &txn,
+            crate::scan_check::EngineScan::RoomPageRows,
+            message.as_bytes(),
+        )?;
         let mut projects = Vec::new();
-        for (n, item) in self
+        for item in self
             .store
             .vault_meta
             .prefix_iter(&txn, &origin::message_prefix(message))?
-            .enumerate()
         {
-            if n >= 4096 {
-                return Err(Error::IndexOverflow("message_project_matches"));
-            }
+            born.row();
             let (_, bytes) = item?;
             let id = EntityId::from_bytes(
                 bytes
@@ -727,6 +746,7 @@ impl Vault {
             }
             projects.push(id);
         }
+        born.finish(self);
         Ok(MessageHangs {
             runs,
             threads,
