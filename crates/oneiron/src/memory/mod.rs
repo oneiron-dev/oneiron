@@ -61,6 +61,7 @@ mod reads;
 mod recall;
 mod report;
 mod room_turn;
+mod shape_doors;
 mod structural;
 mod subscriptions;
 mod support;

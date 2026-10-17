@@ -65,6 +65,16 @@ export_facade! {
     let output = client.vault_people_get(&input)?;
     crate::codec::encode("vault.people.get", &output)
 };
+"vault.shape.read" => fn vault_shape_read(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::decode("vault.shape.read", &input)?;
+    let output = client.vault_shape_read(&input)?;
+    crate::codec::encode("vault.shape.read", &output)
+};
+"vault.shape.plan" => fn vault_shape_plan(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::vault_shape::ShapePlanRequest = crate::codec::decode("vault.shape.plan", &input)?;
+    let output = client.vault_shape_plan(&input)?;
+    crate::codec::encode("vault.shape.plan", &output)
+};
 "self.message" => fn self_message(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::memory::MessagePersonRequest = crate::codec::decode("self.message", &input)?;
     let output = client.self_message(&input)?;

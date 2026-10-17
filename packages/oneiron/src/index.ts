@@ -183,6 +183,12 @@ export class Oneiron {
       /** One person the vault knows, by their pr handle. */
       get: (input: Facade.PersonRequest): Facade.PersonRow => this.#call(() => this.#client.vaultPeopleGet(input) as Facade.PersonRow),
     },
+    shape: {
+      /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+      read: (input: Facade.EmptyRequest = {}): Facade.ShapeRead => this.#call(() => this.#client.vaultShapeRead(input) as Facade.ShapeRead),
+      /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+      plan: (input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan),
+    },
     /**
    * Witnesses one conversational turn.
    *

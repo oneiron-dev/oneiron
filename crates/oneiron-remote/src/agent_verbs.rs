@@ -76,6 +76,12 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.shape.read" => remote_agent_verb_output::<oneiron::vault_shape::ShapeRead>(
+                    client, verb, &input,
+                ),
+                "vault.shape.plan" => remote_agent_verb_output::<oneiron::vault_shape::ShapePlan>(
+                    client, verb, &input,
+                ),
                 "self.message" => {
                     remote_agent_verb_output::<oneiron::memory::MessagePersonReceipt>(
                         client, verb, &input,
@@ -827,6 +833,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.people.get", value)
+    }
+    pub fn vault_shape_read(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::vault_shape::ShapeRead, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shape.read", value)
+    }
+    pub fn vault_shape_plan(
+        &self,
+        input: &oneiron::vault_shape::ShapePlanRequest,
+    ) -> Result<oneiron::vault_shape::ShapePlan, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shape.plan", value)
     }
     pub fn self_message(
         &self,

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 195 facade rows, 691 declarations.
-Inputs: 170 of 195 fully typed, 24 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 161 of 195 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 197 facade rows, 703 declarations.
+Inputs: 172 of 197 fully typed, 24 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 163 of 197 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 40; unread shapes: 1.
 """
 
@@ -288,6 +288,92 @@ class PeoplePage(TypedDict):
     more: int
 class PersonRequest(TypedDict):
     pr: str
+class EmptyRequest(TypedDict):
+    ...
+ShapeCeiling = Literal["auto", "proposed"]
+class ShapeTargetWorld(TypedDict):
+    kind: Literal["world"]
+    name: str
+class ShapeTargetPack(TypedDict):
+    kind: Literal["pack"]
+    name: str
+class ShapeTargetActor(TypedDict):
+    kind: Literal["actor"]
+    agent_id: str
+class ShapeTargetSkill(TypedDict):
+    kind: Literal["skill"]
+    skill_id: str
+class ShapeTargetChannel(TypedDict):
+    kind: Literal["channel"]
+    channel: str
+    address: str
+class ShapeTargetGrant(TypedDict):
+    kind: Literal["grant"]
+    grant_ref: str
+class ShapeTargetSync(TypedDict):
+    kind: Literal["sync"]
+    entity_kind: str
+ShapeTarget = ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+class ShapeRowWorld(TypedDict):
+    kind: Literal["world"]
+    name: str
+class ShapeRowPack(TypedDict):
+    kind: Literal["pack"]
+    name: str
+    version: NotRequired[str | None]
+class ShapeRowActor(TypedDict):
+    kind: Literal["actor"]
+    agent_id: str
+    ceiling: ShapeCeiling
+    enabled: NotRequired[bool]
+class ShapeRowSkill(TypedDict):
+    kind: Literal["skill"]
+    skill_id: str
+    version: NotRequired[str | None]
+class ShapeRowChannel(TypedDict):
+    kind: Literal["channel"]
+    channel: str
+    address: str
+class ShapeRowGrant(TypedDict):
+    kind: Literal["grant"]
+    grant_ref: str
+class ShapeRowSync(TypedDict):
+    kind: Literal["sync"]
+    entity_kind: str
+    on_wire: bool
+class ShapeRowRetire(TypedDict):
+    kind: Literal["retire"]
+    target: ShapeTarget
+ShapeRow = ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
+class ShapeSeed(TypedDict):
+    rows: list[ShapeRow]
+class StoredShapeSeed(TypedDict):
+    id: str
+    revision: int
+    parent: NotRequired[str | None]
+    author: str
+    written_at: int
+    seed: ShapeSeed
+class ShapeRead(TypedDict):
+    seed: NotRequired[StoredShapeSeed | None]
+    live: ShapeSeed
+class ShapePlanRequest(TypedDict):
+    seed: NotRequired[ShapeSeed | None]
+ShapeChange = Literal["create", "update", "retire"]
+ShapeItemClass = Literal["receipted", "widening", "authority"]
+ShapePlanItem = TypedDict("ShapePlanItem", {"seq": int, "target": ShapeTarget, "change": ShapeChange, "class": ShapeItemClass, "before": NotRequired[ShapeRow | None], "after": NotRequired[ShapeRow | None], "door": NotRequired[str | None]})
+class ShapePlanSummary(TypedDict):
+    changes: int
+    needs_word: int
+    ceremonies: int
+    no_door: int
+class ShapePlan(TypedDict):
+    seed_id: NotRequired[str | None]
+    seed: ShapeSeed
+    frontier: str
+    items: list[ShapePlanItem]
+    undeclared: list[ShapeRow]
+    summary: ShapePlanSummary
 class MentionProvenance(TypedDict):
     turn: str
     message: str
@@ -1436,8 +1522,6 @@ class SharedActOutcome(TypedDict):
     recipient: str
     change: SharedVaultChange
     completed_at: int
-class EmptyRequest(TypedDict):
-    ...
 class SharedVaultDeletion(TypedDict):
     vault_id: int
     act_id: str

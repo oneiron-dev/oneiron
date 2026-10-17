@@ -199,6 +199,26 @@
       "section": false
     },
     {
+      "name": "vault.shape.read",
+      "description": "The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read.",
+      "input": "EmptyRequest",
+      "output": "crate::vault_shape::ShapeRead",
+      "call": "memory.shape_read()?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shape.plan",
+      "description": "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing.",
+      "input": "crate::vault_shape::ShapePlanRequest",
+      "output": "crate::vault_shape::ShapePlan",
+      "call": "memory.shape_plan(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "self.message",
       "description": "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use.",
       "input": "crate::memory::MessagePersonRequest",

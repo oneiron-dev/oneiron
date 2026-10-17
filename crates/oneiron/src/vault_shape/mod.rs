@@ -1,0 +1,261 @@
+//! Vault shape as code (ARCH-0070): the setup plane held in one hand.
+//!
+//! Four words, and only these four. **The shape** is the arrangement itself,
+//! held as one document. **The seed** is its durable in-vault declaration,
+//! the source the live arrangement projects. **Plan** is a pure read at a
+//! pinned frontier that renders the difference between the seed and the
+//! vault. **Apply** lands that difference one item at a time through the
+//! named doors the vault already has, each under its own gate.
+//!
+//! The memory plane is out of scope by construction: no [`ShapeRow`] can name
+//! a claim, an episode or a piece of evidence. It is a grammar the seed lacks,
+//! not a policy it obeys. Apply is additive over declared names: structure
+//! the seed does not name is invisible to it, and removal is only an explicit
+//! [`ShapeRow::Retire`] line, which always waits for the owner's word. A
+//! deleted line is never a deleted world. The shape holds no authority of its
+//! own; it says what should be true, never a new way of making it true.
+
+mod live;
+mod plan;
+mod seed;
+
+pub use plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary};
+pub use seed::StoredShapeSeed;
+
+use crate::error::{Error, Result};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+
+/// Most rows one seed may carry.
+pub const SHAPE_SEED_MAX_ROWS: usize = 4096;
+/// Longest name, id or reference a row may carry, in bytes.
+pub const SHAPE_NAME_MAX_BYTES: usize = 256;
+
+/// An actor's approval ceiling as a seed states it: `auto` lands its writes,
+/// `proposed` holds them for review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeCeiling {
+    Auto,
+    Proposed,
+}
+
+impl From<crate::agent_def::AgentCeiling> for ShapeCeiling {
+    fn from(ceiling: crate::agent_def::AgentCeiling) -> Self {
+        match ceiling {
+            crate::agent_def::AgentCeiling::Auto => Self::Auto,
+            crate::agent_def::AgentCeiling::Proposed => Self::Proposed,
+        }
+    }
+}
+
+impl From<ShapeCeiling> for crate::agent_def::AgentCeiling {
+    fn from(ceiling: ShapeCeiling) -> Self {
+        match ceiling {
+            ShapeCeiling::Auto => Self::Auto,
+            ShapeCeiling::Proposed => Self::Proposed,
+        }
+    }
+}
+
+const fn enabled_by_default() -> bool {
+    true
+}
+
+/// One declared row of the setup plane. Every variant names setup structure
+/// by a stable name; none names memory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ShapeRow {
+    /// A world (ARCH-0022), by name. A missing world is created.
+    World { name: String },
+    /// An installed pack, by name, optionally pinned to a version.
+    Pack {
+        name: String,
+        #[serde(default)]
+        version: Option<String>,
+    },
+    /// An actor on the roster (an agent definition), by agent id, with its
+    /// approval ceiling and whether it may be dispatched.
+    Actor {
+        agent_id: String,
+        ceiling: ShapeCeiling,
+        #[serde(default = "enabled_by_default")]
+        enabled: bool,
+    },
+    /// A registered skill, by skill id, optionally pinned to a version.
+    Skill {
+        skill_id: String,
+        #[serde(default)]
+        version: Option<String>,
+    },
+    /// A channel identity (ARCH-0063), by channel and address or handle.
+    Channel { channel: String, address: String },
+    /// A standing grant (DEC-0006), by its registry reference: the bound's
+    /// digest. Every grant row is a widening.
+    Grant { grant_ref: String },
+    /// A sync declaration: whether one entity kind is on the wire. A shape
+    /// can propose a federation; it never effects one.
+    Sync { entity_kind: String, on_wire: bool },
+    /// Removal, stated: the named structure leaves. Always a widening,
+    /// receipted and stamped, never automatic.
+    Retire { target: ShapeTarget },
+}
+
+/// The name a row speaks about: its kind and key, without its values.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ShapeTarget {
+    World { name: String },
+    Pack { name: String },
+    Actor { agent_id: String },
+    Skill { skill_id: String },
+    Channel { channel: String, address: String },
+    Grant { grant_ref: String },
+    Sync { entity_kind: String },
+}
+
+impl ShapeTarget {
+    /// Landing order: structure before what lives in it, grants after the
+    /// actors they bound.
+    const fn rank(&self) -> u8 {
+        match self {
+            Self::World { .. } => 0,
+            Self::Pack { .. } => 1,
+            Self::Actor { .. } => 2,
+            Self::Skill { .. } => 3,
+            Self::Channel { .. } => 4,
+            Self::Grant { .. } => 5,
+            Self::Sync { .. } => 6,
+        }
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        match self {
+            Self::World { name } | Self::Pack { name } => vec![name],
+            Self::Actor { agent_id } => vec![agent_id],
+            Self::Skill { skill_id } => vec![skill_id],
+            Self::Channel { channel, address } => vec![channel, address],
+            Self::Grant { grant_ref } => vec![grant_ref],
+            Self::Sync { entity_kind } => vec![entity_kind],
+        }
+    }
+}
+
+impl ShapeRow {
+    /// The structure this row speaks about. A retire line speaks about the
+    /// structure it retires.
+    #[must_use]
+    pub fn target(&self) -> ShapeTarget {
+        match self {
+            Self::World { name } => ShapeTarget::World { name: name.clone() },
+            Self::Pack { name, .. } => ShapeTarget::Pack { name: name.clone() },
+            Self::Actor { agent_id, .. } => ShapeTarget::Actor {
+                agent_id: agent_id.clone(),
+            },
+            Self::Skill { skill_id, .. } => ShapeTarget::Skill {
+                skill_id: skill_id.clone(),
+            },
+            Self::Channel { channel, address } => ShapeTarget::Channel {
+                channel: channel.clone(),
+                address: address.clone(),
+            },
+            Self::Grant { grant_ref } => ShapeTarget::Grant {
+                grant_ref: grant_ref.clone(),
+            },
+            Self::Sync { entity_kind, .. } => ShapeTarget::Sync {
+                entity_kind: entity_kind.clone(),
+            },
+            Self::Retire { target } => target.clone(),
+        }
+    }
+
+    /// Whether `live` already is what this declaration says. An unpinned
+    /// version accepts any installed one.
+    fn satisfied_by(&self, live: &Self) -> bool {
+        match (self, live) {
+            (
+                Self::Pack {
+                    version: Some(want),
+                    ..
+                },
+                Self::Pack { version: have, .. },
+            )
+            | (
+                Self::Skill {
+                    version: Some(want),
+                    ..
+                },
+                Self::Skill { version: have, .. },
+            ) => have.as_ref() == Some(want),
+            (Self::Pack { version: None, .. }, Self::Pack { .. })
+            | (Self::Skill { version: None, .. }, Self::Skill { .. }) => true,
+            _ => self == live,
+        }
+    }
+}
+
+/// A seed: the setup plane as it should be, one row per declared name.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeSeed {
+    pub rows: Vec<ShapeRow>,
+}
+
+impl ShapeSeed {
+    /// Refuses a seed a plan cannot read as one statement: too many rows, an
+    /// empty or oversized name, or two rows about the same structure.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] naming the first fault.
+    pub fn validate(&self) -> Result<()> {
+        if self.rows.len() > SHAPE_SEED_MAX_ROWS {
+            return Err(invalid(format!(
+                "a seed carries at most {SHAPE_SEED_MAX_ROWS} rows"
+            )));
+        }
+        let mut seen = BTreeSet::new();
+        for row in &self.rows {
+            let target = row.target();
+            for key in target.keys() {
+                if key.trim().is_empty() || key.len() > SHAPE_NAME_MAX_BYTES {
+                    return Err(invalid(format!(
+                        "a seed name is 1 to {SHAPE_NAME_MAX_BYTES} bytes and not blank"
+                    )));
+                }
+            }
+            if !seen.insert(target) {
+                return Err(invalid(
+                    "a seed names each structure once; two rows speak about the same one",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `vault.shape.read`'s answer: the stored seed, the editable source, and
+/// the live arrangement held as one document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ShapeRead {
+    /// The newest seed revision; none until a seed is first stored.
+    pub seed: Option<StoredShapeSeed>,
+    /// The setup plane as it stands, as rows a seed could declare. Adopting
+    /// it folds the live arrangement into the seed.
+    pub live: ShapeSeed,
+}
+
+/// `vault.shape.plan`'s input.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShapePlanRequest {
+    /// The seed to plan; the stored seed when absent.
+    #[serde(default)]
+    pub seed: Option<ShapeSeed>,
+}
+
+fn invalid(message: impl Into<String>) -> Error {
+    Error::InvalidConfig(message.into())
+}

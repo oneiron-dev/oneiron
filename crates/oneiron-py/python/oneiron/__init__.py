@@ -339,6 +339,9 @@ class Oneiron:
         @property
         def people(self) -> "Oneiron._VaultPeopleVerbs":
             return Oneiron._VaultPeopleVerbs(self._client)
+        @property
+        def shape(self) -> "Oneiron._VaultShapeVerbs":
+            return Oneiron._VaultShapeVerbs(self._client)
         def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
             """Witnesses one conversational turn.
 
@@ -494,6 +497,15 @@ class Oneiron:
         def get(self, spec):
             """One person the vault knows, by their pr handle."""
             return json.loads(_translate(lambda: self._client.vault_people_get(json.dumps(spec))))
+    class _VaultShapeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec=None):
+            """The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."""
+            return json.loads(_translate(lambda: self._client.vault_shape_read(json.dumps({} if spec is None else spec))))
+        def plan(self, spec):
+            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_shape_plan(json.dumps(spec))))
     class _VaultClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

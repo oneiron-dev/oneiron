@@ -40,6 +40,8 @@ selfInboxConcernOutcome(input: unknown): unknown
 selfInboxConcernMove(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
+vaultShapeRead(input: unknown): unknown
+vaultShapePlan(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown

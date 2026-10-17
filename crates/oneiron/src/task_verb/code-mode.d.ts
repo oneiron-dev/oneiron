@@ -343,6 +343,10 @@ declare const vault: {
       put(input: { key: string; mode: "seed" | "pin"; value: number; weight_runs?: number | null; why: string; project?: string | null; task_type?: string | null }): Promise<unknown>;
     };
   };
+  shape: {
+    plan(input: { seed?: object | null }): Promise<unknown>;
+    read(input: object): Promise<unknown>;
+  };
   shared: {
     deletion(input: object): Promise<unknown>;
     execute(input: { act_id: string }): Promise<unknown>;

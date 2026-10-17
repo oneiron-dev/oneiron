@@ -191,6 +191,8 @@ pub mod skill_scan;
 pub mod training_pack;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
+// ARCH-0070 vault shape as code: the seed, plan and apply over the setup plane.
+pub mod vault_shape;
 // ===== Code, artifacts & custody ===== code memory, git wire, build cache, artifacts, secrets
 pub mod anchored_annotation;
 pub mod artifact_hosting;
