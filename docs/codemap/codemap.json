@@ -13089,7 +13089,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -31728,7 +31728,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ServedChannelSink"
@@ -31736,7 +31736,7 @@
      "path": "src/outbound/served_sink.rs",
      "purpose": "The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -54468,7 +54468,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EngineLimit",
@@ -54854,7 +54854,7 @@
     "limit_ask": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)"
     },
@@ -65496,6 +65496,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LineConfig"
+     ],
+     "path": "src/config/line.rs",
+     "purpose": "`[line]`: the plan of the LINE Official Account the built-in LINE pack serves (OF-519)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/config/lookup.rs",
      "purpose": "Leaf config helpers: env lookups, value parsing, and secret redaction",
@@ -65526,7 +65540,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 13,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -69372,7 +69386,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69640,7 +69654,7 @@
    },
    "over_bar": 35,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 541,
+   "source_files": 542,
    "test_files": 182
   },
   "oneiron-spawn": {

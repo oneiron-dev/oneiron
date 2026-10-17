@@ -1051,7 +1051,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/accounting.rs` | src | m | 1 enum · 6 fn · 1 const · 2 crate-vis | ConnectorKeySendAdmission | — |
 | `src/connector_key/charter.rs` | src | m | 2 struct · 1 fn · 6 crate-vis | CompiledCharter, ConnectorCharterCompileIssue | — |
 | `src/connector_key/codec.rs` | src | m | 2 fn · 2 const · 1 crate-vis | — | — |
-| `src/connector_key/events.rs` | src | m | 4 struct · 1 enum · 6 fn · 2 crate-vis | ConnectorEvent, ConnectorEventFilter, ConnectorSubscription, ConnectorWakeDecision, ConnectorWakeStatus | Durable, revocable connector-event subscriptions and atomic wake decisions |
+| `src/connector_key/events.rs` | src | m | 4 struct · 1 enum · 7 fn · 2 crate-vis | ConnectorEvent, ConnectorEventFilter, ConnectorSubscription, ConnectorWakeDecision, ConnectorWakeStatus | Durable, revocable connector-event subscriptions and atomic wake decisions |
 | `src/connector_key/events/tests.rs` | test | m | — | — | — |
 | `src/connector_key/lifecycle/budgets.rs` | src | s | 3 fn | — | Owner budget-row ops: append active row, stage suggestion, accept suggestion |
 | `src/connector_key/lifecycle/catalog_views.rs` | src | s | 2 struct · 5 fn | ConnectorCallRoute, ConnectorDescription | Read lenses: HISTORY/EXECUTION/DISCOVERY views over the catalog plus key lookups |
@@ -2502,7 +2502,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/mod.rs` | src | s | 1 fn · 9 re-export · 6 crate-vis | — | Outbound action capability manifests and dispatch spine for OF-327 |
 | `src/outbound/receipt_fields.rs` | src | m | 8 crate-vis | — | — |
 | `src/outbound/retry_audit.rs` | src | m | 7 crate-vis | — | Atomic send-receipt retry and terminal settlement |
-| `src/outbound/served_sink.rs` | src | s | 1 struct · 2 fn | ServedChannelSink | The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine… |
+| `src/outbound/served_sink.rs` | src | m | 1 struct · 3 fn | ServedChannelSink | The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine… |
 | `src/outbound/tests/connector_qualification.rs` | test | L | — | — | Per-rail outbound SOW contract and local qualification probes |
 | `src/outbound/tests/connector_schedule.rs` | test | XL | 1 crate-vis | — | Connector send-task scheduling, executor idempotency, idempotency keys and schedule gates |
 | `src/outbound/tests/dispatch_budget.rs` | test | s | — | — | Dispatch budget debit, exhaustion/suspend/resume, ladders, wrap window and charter drift |
