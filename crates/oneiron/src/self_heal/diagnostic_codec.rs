@@ -6,9 +6,8 @@ use rmpv::Value;
 
 use super::admission::validate_detector_id;
 use super::event::{
-    DIAGNOSTIC_ACTOR_CLASSES, DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION,
-    AgentHealthSignal, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass,
-    DiagnosticReplayCoordinate,
+    AgentHealthSignal, DIAGNOSTIC_ACTOR_CLASSES, DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION,
+    DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, MAX_EVIDENCE_REFS, MAX_REF_LEN, MAX_TOKEN_LEN, invalid_diagnostic,
 };
 use super::invariant_canonical::{canonical_invariant_value, stored_invariant_field};
@@ -258,7 +257,9 @@ fn validate_signal(class: DiagnosticEventClass, signal: Option<AgentHealthSignal
     if (class == DiagnosticEventClass::AgentHealth) == signal.is_some() {
         Ok(())
     } else {
-        Err(invalid_diagnostic("a signal rides exactly the agent-health class"))
+        Err(invalid_diagnostic(
+            "a signal rides exactly the agent-health class",
+        ))
     }
 }
 

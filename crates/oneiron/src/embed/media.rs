@@ -130,7 +130,8 @@ impl Vault {
                     "no kind slot is bound or moving to embedding space {space_id}"
                 )));
             }
-            let pending = self.media_backlog_in_txn(&rtxn, &space, &kinds, max_items, &mut report)?;
+            let pending =
+                self.media_backlog_in_txn(&rtxn, &space, &kinds, max_items, &mut report)?;
             (space, kinds, pending)
         };
         if pending.is_empty() {
