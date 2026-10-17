@@ -42,6 +42,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"gate_pending:critical_confirm_list_cursor:v1",
                 b"outbound:authorized_recovery_lease:v1",
                 b"vault_archived:v1",
+                // A repair's staged authority rows are this device's own
+                // progress, never an image's (OF-469).
+                b"authority.history.stage.v1:",
                 // Host orders and the host-only log never enter an owner's
                 // image (OF-470 C2).
                 HOST_HOLD_PREFIX,
