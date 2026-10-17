@@ -726,6 +726,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/notes/tombstones",
+        summary: "Note tombstone review.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/notes/tombstones/accept",
+        summary: "Accept note tombstone.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/notes/tombstones/decline",
+        summary: "Decline note tombstone.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/off-record",
         summary: "Off record session.",
         row: None,
