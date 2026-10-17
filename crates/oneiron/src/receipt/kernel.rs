@@ -321,6 +321,12 @@ pub enum ReceiptKind {
     /// RECEIPT_RECORD; it never holds the ref or any other content of the
     /// attempt.
     ReferenceRefusal,
+    /// One mutating task-highway call (OF-220, ARCH-0079): post, accept or
+    /// report, what it asked and resolved, and why. The highway assembles
+    /// the call's `TaskLifecycleRecord`; the call's own write transaction
+    /// keeps it, projected once, in its own store under a stable receipt id
+    /// its `receipt_ref` names. A status read keeps none.
+    TaskLifecycle,
 }
 
 impl ReceiptKind {
@@ -340,6 +346,7 @@ impl ReceiptKind {
             Self::ServedForm => "served_form",
             Self::Hook => "hook",
             Self::ReferenceRefusal => "reference_refusal",
+            Self::TaskLifecycle => "task_lifecycle",
         }
     }
 
@@ -359,6 +366,7 @@ impl ReceiptKind {
             "served_form" => Some(Self::ServedForm),
             "hook" => Some(Self::Hook),
             "reference_refusal" => Some(Self::ReferenceRefusal),
+            "task_lifecycle" => Some(Self::TaskLifecycle),
             _ => None,
         }
     }
@@ -373,13 +381,12 @@ impl ReceiptKind {
         matches!(self, Self::Outbound)
     }
 
-    /// OF-543: spawn and task receipts require a `typeRef`. Today those
-    /// receipts project through the attempt pack receipt on the `Outbound`
-    /// kind, so that kind is where the stamp is required and stamped;
-    /// future dedicated spawn/task kinds extend this match.
+    /// OF-543: spawn and task receipts require a `typeRef`. The attempt pack
+    /// receipt projects on the `Outbound` kind, and a task-highway call's
+    /// lifecycle on `TaskLifecycle`; each stamps the type its brief placed.
     #[must_use]
     pub const fn is_spawn_or_task_receipt(self) -> bool {
-        matches!(self, Self::Outbound)
+        matches!(self, Self::Outbound | Self::TaskLifecycle)
     }
 }
 

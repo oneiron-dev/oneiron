@@ -48,9 +48,26 @@ The section is file-only: no environment variable or flag sets it.
   on without the connection.
 - `device sync` warnings for connection errors. The connection retries with backoff up to a
   minute.
+- `mesh model catalog kept the vault's own routes`, with the model ids, when another node
+  offers a model that this vault already routes another way (a pack or a local row). That row
+  wins.
+- `mesh model catalog refresh failed` or `unavailable` when a row could not be read or written.
 - At stop, serve closes the connection before the mesh listener.
 
 Lines carry machine ids, never a slip or a key.
+
+## The owner's other models
+
+While the connection is synced, the machine asks each of the owner's other nodes whose MACHINE
+grant admits model calls (`oneiron/llm/1`) which models they serve. It asks each time the
+connection syncs and then every 30 seconds while it stays synced: no mesh signal says that a
+node's offer changed. Each model a node serves on its own compute becomes an own-server row in
+the vault registry, routed to that node. A row the vault already holds another way is kept, and
+the node's offer is skipped. A node that does not answer keeps the rows it had. Nothing is
+deleted when a node stops offering a model.
+
+The rows feed the own-server backend. The configured model router is built from `[models]` at
+start, so serve does not route a discovered model by itself yet.
 
 ## How it fits
 
