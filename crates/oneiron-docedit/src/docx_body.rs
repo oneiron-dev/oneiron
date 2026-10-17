@@ -516,7 +516,10 @@ fn kept_marks(block: &BlockView, runs: &[DocxRun]) -> Result<Option<Vec<(u8, u8)
             }
         }
     }
-    Ok(patch.iter().any(|change| *change != (0, 0)).then_some(patch))
+    Ok(patch
+        .iter()
+        .any(|change| *change != (0, 0))
+        .then_some(patch))
 }
 
 /// Stemma's replace lays a new run's marks over its neighbour's Word

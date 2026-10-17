@@ -13672,7 +13672,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 18,
+      "crate-vis": 21,
       "struct": 5
      }
     },
@@ -50618,7 +50618,9 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "EscrowRetirement",
       "NewVaultKeyWrap",
+      "ResealedEscrowCapsule",
       "VaultKeyEscrowCapsule",
       "VaultKeyStatus",
       "VaultKeyUnlock",
@@ -50630,8 +50632,8 @@
      "surface": {
       "crate-vis": 19,
       "enum": 4,
-      "fn": 24,
-      "struct": 2
+      "fn": 27,
+      "struct": 4
      }
     },
     {
@@ -65584,7 +65586,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/connector_admission_routes.rs",
@@ -66927,13 +66929,14 @@
       "VaultKeyArgs",
       "VaultKeyCommand",
       "VaultKeyNamedArgs",
+      "VaultKeyResealArgs",
       "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
       "enum": 14,
-      "struct": 43
+      "struct": 44
      }
     },
     {
@@ -67662,12 +67665,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BigReply",
       "BigSettings",
       "BookingParseSettings",
+      "ConnectorSlateSettings",
       "DecisionsSettings",
       "ImagePickSettings",
       "SeatPickSettings",
@@ -67678,7 +67682,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -68069,7 +68073,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 22,
+      "fn": 23,
       "struct": 1
      }
     },
@@ -70342,7 +70346,7 @@
      "path": "src/owner/vault_key.rs",
      "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -71967,7 +71971,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 48,
+   "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 585,
    "test_files": 182
