@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 197 facade rows, 703 declarations.
-Inputs: 172 of 197 fully typed, 24 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 163 of 197 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 204 facade rows, 710 declarations.
+Inputs: 179 of 204 fully typed, 24 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 170 of 204 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 40; unread shapes: 1.
 """
 
@@ -1569,6 +1569,46 @@ class SharedInvitationWithdrawRequest(TypedDict):
     vault_id: int
     member: str
     invitation: str
+class PendingActStarted(TypedDict):
+    act_id: str
+    vault_id: int
+    act: str
+    recipient: str
+    deadline: int
+class PendingActMatured(TypedDict):
+    act_id: str
+    vault_id: int
+    act: str
+    recipient: str
+    deadline: int
+    noticed_at: int
+class SharedEraseAskRequest(TypedDict):
+    vault_id: int
+    record: str
+EraseAskKind = Literal["request", "proposal"]
+class EraseAskStatusErasedBody(TypedDict):
+    by: str
+    act: NotRequired[str | None]
+class EraseAskStatusErased(TypedDict):
+    erased: EraseAskStatusErasedBody
+class EraseAskStatusDeclinedBody(TypedDict):
+    by: str
+class EraseAskStatusDeclined(TypedDict):
+    declined: EraseAskStatusDeclinedBody
+EraseAskStatus = Literal["open"] | EraseAskStatusErased | EraseAskStatusDeclined
+class SharedEraseAsk(TypedDict):
+    id: str
+    vault_id: int
+    kind: EraseAskKind
+    asker: str
+    record: str
+    asked_at: int
+    status: EraseAskStatus
+    closed_at: NotRequired[int | None]
+class SharedEraseAskCloseRequest(TypedDict):
+    ask_id: str
+    erased: bool
+    act_id: NotRequired[str | None]
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
 GuestPactStanding = Literal["unpacted", "active", "suspended", "promoted", "disconnected", "dissolved"]

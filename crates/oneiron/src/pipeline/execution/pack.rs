@@ -763,5 +763,7 @@ fn validate_access_factor_overrides(overrides: Option<&HashMap<EntityId, f32>>) 
 /// one-space preset's text slot reads only the latter), so the pack is not sparse.
 fn dense_completed(diagnostics: &RetrievalDiagnostics) -> bool {
     diagnostics.succeeded.contains(&RetrievalSignal::Vector)
-        || diagnostics.succeeded.contains(&RetrievalSignal::MediaVector)
+        || diagnostics
+            .succeeded
+            .contains(&RetrievalSignal::MediaVector)
 }

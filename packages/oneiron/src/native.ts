@@ -88,6 +88,13 @@ vaultMembersInvitations(input: unknown): unknown
 vaultMembersAccept(input: unknown): unknown
 vaultMembersDecline(input: unknown): unknown
 vaultMembersWithdrawInvitation(input: unknown): unknown
+vaultSharedObject(input: unknown): unknown
+vaultSharedWithdrawObjection(input: unknown): unknown
+vaultSharedStarted(input: unknown): unknown
+vaultSharedMatured(input: unknown): unknown
+vaultSharedEraseAsk(input: unknown): unknown
+vaultSharedEraseAsks(input: unknown): unknown
+vaultSharedCloseEraseAsk(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
@@ -228,6 +235,7 @@ vaultNotesEdit(input: unknown): unknown
 
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
+  lastReceiptRef(): string | null
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

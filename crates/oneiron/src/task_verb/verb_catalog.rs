@@ -65,6 +65,13 @@ pub enum AgentVerb {
     VaultMembersAccept,
     VaultMembersDecline,
     VaultMembersWithdrawInvitation,
+    VaultSharedObject,
+    VaultSharedWithdrawObjection,
+    VaultSharedStarted,
+    VaultSharedMatured,
+    VaultSharedEraseAsk,
+    VaultSharedEraseAsks,
+    VaultSharedCloseEraseAsk,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
     VaultAuthorityHandoffAlarms,
@@ -304,6 +311,13 @@ impl AgentVerb {
         Self::VaultMembersAccept,
         Self::VaultMembersDecline,
         Self::VaultMembersWithdrawInvitation,
+        Self::VaultSharedObject,
+        Self::VaultSharedWithdrawObjection,
+        Self::VaultSharedStarted,
+        Self::VaultSharedMatured,
+        Self::VaultSharedEraseAsk,
+        Self::VaultSharedEraseAsks,
+        Self::VaultSharedCloseEraseAsk,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
         Self::VaultAuthorityHandoffAlarms,
@@ -546,6 +560,13 @@ impl AgentVerb {
             Self::VaultMembersAccept => "vault.members.accept",
             Self::VaultMembersDecline => "vault.members.decline",
             Self::VaultMembersWithdrawInvitation => "vault.members.withdraw_invitation",
+            Self::VaultSharedObject => "vault.shared.object",
+            Self::VaultSharedWithdrawObjection => "vault.shared.withdraw_objection",
+            Self::VaultSharedStarted => "vault.shared.started",
+            Self::VaultSharedMatured => "vault.shared.matured",
+            Self::VaultSharedEraseAsk => "vault.shared.erase_ask",
+            Self::VaultSharedEraseAsks => "vault.shared.erase_asks",
+            Self::VaultSharedCloseEraseAsk => "vault.shared.close_erase_ask",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
@@ -786,6 +807,13 @@ impl AgentVerb {
                 | Self::VaultMembersAccept
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
+                | Self::VaultSharedObject
+                | Self::VaultSharedWithdrawObjection
+                | Self::VaultSharedStarted
+                | Self::VaultSharedMatured
+                | Self::VaultSharedEraseAsk
+                | Self::VaultSharedEraseAsks
+                | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
@@ -1032,6 +1060,13 @@ impl AgentVerb {
                 | Self::VaultMembersAccept
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
+                | Self::VaultSharedObject
+                | Self::VaultSharedWithdrawObjection
+                | Self::VaultSharedStarted
+                | Self::VaultSharedMatured
+                | Self::VaultSharedEraseAsk
+                | Self::VaultSharedEraseAsks
+                | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
@@ -1196,6 +1231,9 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultSharedOutcomes
                 | Self::VaultMembersInvitations
+                | Self::VaultSharedStarted
+                | Self::VaultSharedMatured
+                | Self::VaultSharedEraseAsks
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
@@ -1300,6 +1338,13 @@ impl AgentVerb {
                 | Self::VaultMembersAccept
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
+                | Self::VaultSharedObject
+                | Self::VaultSharedWithdrawObjection
+                | Self::VaultSharedStarted
+                | Self::VaultSharedMatured
+                | Self::VaultSharedEraseAsk
+                | Self::VaultSharedEraseAsks
+                | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
@@ -1505,6 +1550,10 @@ impl AgentVerb {
                 | Self::VaultMembersAccept
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
+                | Self::VaultSharedObject
+                | Self::VaultSharedWithdrawObjection
+                | Self::VaultSharedEraseAsk
+                | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
@@ -1686,6 +1735,13 @@ impl AgentVerb {
             Self::VaultMembersAccept => &["spec"],
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
+            Self::VaultSharedObject => &["spec"],
+            Self::VaultSharedWithdrawObjection => &["spec"],
+            Self::VaultSharedStarted => &["spec"],
+            Self::VaultSharedMatured => &["spec"],
+            Self::VaultSharedEraseAsk => &["spec"],
+            Self::VaultSharedEraseAsks => &["spec"],
+            Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
@@ -1926,6 +1982,13 @@ impl AgentVerb {
             Self::VaultMembersAccept => &["spec"],
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
+            Self::VaultSharedObject => &["spec"],
+            Self::VaultSharedWithdrawObjection => &["spec"],
+            Self::VaultSharedStarted => &["spec"],
+            Self::VaultSharedMatured => &["spec"],
+            Self::VaultSharedEraseAsk => &["spec"],
+            Self::VaultSharedEraseAsks => &["spec"],
+            Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
@@ -2272,6 +2335,27 @@ impl AgentVerb {
             }
             Self::VaultMembersWithdrawInvitation => {
                 "An Admin with the add_member power takes back a pending invitation."
+            }
+            Self::VaultSharedObject => {
+                "A holder of a pending shared act's objector role objects inside its veto window."
+            }
+            Self::VaultSharedWithdrawObjection => {
+                "The holder withdraws their objection; past the deadline the last withdrawal releases the act."
+            }
+            Self::VaultSharedStarted => {
+                "The caller's own notices of shared acts started in the vault."
+            }
+            Self::VaultSharedMatured => {
+                "The caller's own notices of shared acts whose veto window has passed."
+            }
+            Self::VaultSharedEraseAsk => {
+                "A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing."
+            }
+            Self::VaultSharedEraseAsks => {
+                "The erase asks the caller may see: every ask for an Owner, their own for anyone else."
+            }
+            Self::VaultSharedCloseEraseAsk => {
+                "An Owner closes an open erase ask, as erased (naming its erase act) or declined."
             }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
