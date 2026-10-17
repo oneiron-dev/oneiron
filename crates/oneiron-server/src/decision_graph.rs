@@ -339,9 +339,13 @@ pub(crate) fn ladder_located(server: &SyncServer, call: LadderCall<'_>) -> Resul
 
 /// Starts the standing pump. It sleeps until the next standing question
 /// falls due or a committed write changes the vault's due work, then runs
-/// one pass on a blocking thread: the ladder's model rungs block on the
-/// server's runtime.
-pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
+/// one pass on a blocking thread, held by `admit` (a managed vault frozen
+/// for reap skips it): the ladder's model rungs block on the server's
+/// runtime.
+pub(crate) fn spawn(
+    server: &Arc<SyncServer>,
+    admit: crate::server::HousekeepingAdmission,
+) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
     // Subscribed before the first read, so no change between them is lost.
     let mut changes = server.vault().subscribe_proactivity_changes();
@@ -350,13 +354,19 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
             let Some(server) = weak.upgrade() else {
                 break;
             };
-            let next = tokio::task::spawn_blocking(move || {
-                pump_due(&server, oneiron_vault_contract::now_ts())?;
-                let question = server.vault().next_question_refresh_at()?;
-                let wake = server.vault().next_answer_wake_at()?;
-                Ok::<_, oneiron::Error>(question.into_iter().chain(wake).min())
-            })
-            .await;
+            let next = match admit() {
+                Some(pass) => {
+                    tokio::task::spawn_blocking(move || {
+                        let _pass = pass;
+                        pump_due(&server, oneiron_vault_contract::now_ts())?;
+                        let question = server.vault().next_question_refresh_at()?;
+                        let wake = server.vault().next_answer_wake_at()?;
+                        Ok::<_, oneiron::Error>(question.into_iter().chain(wake).min())
+                    })
+                    .await
+                }
+                None => Ok(Ok(None)),
+            };
             let next = match next {
                 Ok(Ok(next)) => next,
                 Ok(Err(error)) => {
@@ -401,7 +411,7 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             runner,
             to,
             record.definition.dial,
-            record.definition.deadline(),
+            record.definition.deadline(server.vault())?,
         )
         .with_criteria(record.definition.criteria.clone()))
     })?;

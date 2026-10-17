@@ -104,6 +104,14 @@ impl WithheldKey {
     ///
     /// Storage errors as they occur.
     pub fn for_destination(vault: &crate::Vault, destination: &[u8]) -> Result<Self> {
+        // Only the first call writes: once the secret exists, a read serves.
+        let secret = {
+            let txn = vault.store.env.read_txn()?;
+            WITHHELD_SECRET.get(&vault.store, &txn, &())?
+        };
+        if let Some(secret) = secret {
+            return Ok(Self::keyed(&secret, destination));
+        }
         vault.with_write_txn_grouped(|txn| {
             Self::for_destination_in_txn(&vault.store, txn, destination)
         })
@@ -122,10 +130,14 @@ impl WithheldKey {
             WITHHELD_SECRET.put(store, txn, &(), &secret)?;
             secret
         };
-        let mut hasher = blake3::Hasher::new_keyed(&secret);
+        Ok(Self::keyed(&secret, destination))
+    }
+
+    fn keyed(secret: &[u8; 32], destination: &[u8]) -> Self {
+        let mut hasher = blake3::Hasher::new_keyed(secret);
         hasher.update(b"oneiron.provenance.withheld.destination.v1\0");
         hasher.update(destination);
-        Ok(Self(*hasher.finalize().as_bytes()))
+        Self(*hasher.finalize().as_bytes())
     }
 
     fn handle(&self, row: &EntityId) -> String {
