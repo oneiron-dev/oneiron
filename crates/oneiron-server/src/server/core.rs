@@ -582,8 +582,18 @@ impl SyncServer {
         self.decisions = self
             .decisions
             .clone()
-            .with_house_read(self.decision_read.as_ref());
+            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
         self
+    }
+
+    /// What admits the ladder's house reads: this server's decision-read
+    /// pool, host account and run receipts.
+    fn house_read_admission(&self) -> crate::decision_host::ReadAdmission {
+        crate::decision_host::ReadAdmission {
+            turns: self.decision_reads.clone(),
+            host: self.host_account(),
+            receipts: self.run_receipts(),
+        }
     }
 
     /// The live allocation shared by all this vault's served runs. The
@@ -650,7 +660,7 @@ impl SyncServer {
         self.decisions = self
             .decisions
             .clone()
-            .with_house_read(self.decision_read.as_ref());
+            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
         self.ai = ai;
         self
     }

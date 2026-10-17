@@ -3,6 +3,8 @@
 //! packets between the owner's machines that may. A relay takes the home's
 //! new packets in first, so a replacement this machine puts next carries what
 //! the others put, then puts each window that changed here since its last put.
+//! Both cursors belong to one home: after a re-home the relay takes the new
+//! home's shelf from its start and puts every window there whole again.
 //! A packet past one request is put in parts the home stages and then shelves
 //! whole, and every packet is read back in slices. An update whose base this
 //! machine lacks asks the home for a replacement of its window, which another
@@ -16,7 +18,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
-use crate::authority::{Destination, WorldPrivacyView};
+use crate::authority::{Destination, PeerMachine, WorldPrivacyView};
+use crate::side_table::{self, Raw, SideTable};
 use crate::sync::client::SyncClientConfig;
 use crate::sync::manager::WindowManager;
 use crate::sync::residence::{
@@ -29,8 +32,21 @@ use crate::{EntityId, Vault};
 
 /// The encoded version vector of this machine's last put of one window.
 const PUT_PREFIX: &str = "rsp:";
-/// The last home arrival this machine took in (u64be).
+/// Every window's last put, dropped when the home changes.
+const PUTS: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_SEALED_PUT);
+/// The home this machine relays through (its machine id, 16 bytes) and the
+/// last arrival it took in there (u64be).
 const TAKEN_KEY: &str = "rst";
+
+/// The id the taken cursor names `home` by: its proven machine, or zeros for
+/// a home that proved none.
+fn home_id(home: PeerMachine) -> [u8; 16] {
+    match home {
+        PeerMachine::Proven { machine, .. } => *machine.as_bytes(),
+        PeerMachine::Unknown => [0; 16],
+    }
+}
 
 /// What one relay moved.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -178,8 +194,23 @@ impl Relayer<'_> {
         rpc: &mut ResidenceRpc,
         relay: &mut SealedRelay,
     ) -> Result<u64, TransportError> {
+        let home = home_id(rpc.home);
         let mut after = match self.vault.sync_state_get(TAKEN_KEY).map_err(storage)? {
-            Some(raw) => u64::from_be_bytes(raw.as_slice().try_into().map_err(|_| refused())?),
+            Some(raw) if raw.get(..16) == Some(home.as_slice()) => u64::from_be_bytes(
+                raw.get(16..)
+                    .and_then(|tail| tail.try_into().ok())
+                    .ok_or_else(refused)?,
+            ),
+            // Another home's cursor: a re-home. This shelf starts over, and
+            // the puts there begin again from whole windows.
+            Some(_) => {
+                self.vault
+                    .with_write_txn_grouped(|txn| {
+                        PUTS.delete_from(&self.vault.store, txn, &[]).map(drop)
+                    })
+                    .map_err(storage)?;
+                0
+            }
             None => 0,
         };
         let mut wanted: BTreeSet<String> = BTreeSet::new();
@@ -217,10 +248,11 @@ impl Relayer<'_> {
             }
             self.vault
                 .with_write_txn_grouped(|txn| {
-                    self.vault
-                        .store
-                        .sync_state
-                        .put(txn, TAKEN_KEY, &after.to_be_bytes())
+                    self.vault.store.sync_state.put(
+                        txn,
+                        TAKEN_KEY,
+                        &[home.as_slice(), &after.to_be_bytes()].concat(),
+                    )
                 })
                 .map_err(storage)?;
             if page < SEALED_SHELF_PAGE_MAX {

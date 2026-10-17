@@ -291,6 +291,7 @@ pub enum AgentVerb {
     VaultArtifactsBodyDeckExport,
     VaultArtifactsBodyDeckGate,
     VaultArtifactsBodyDeckOracle,
+    VaultArtifactsBodyDeckPreview,
     VaultArtifactsAppend,
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
@@ -595,6 +596,7 @@ impl AgentVerb {
         Self::VaultArtifactsBodyDeckExport,
         Self::VaultArtifactsBodyDeckGate,
         Self::VaultArtifactsBodyDeckOracle,
+        Self::VaultArtifactsBodyDeckPreview,
         Self::VaultArtifactsAppend,
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
@@ -906,6 +908,7 @@ impl AgentVerb {
             Self::VaultArtifactsBodyDeckExport => "vault.artifacts.body.deck.export",
             Self::VaultArtifactsBodyDeckGate => "vault.artifacts.body.deck.gate",
             Self::VaultArtifactsBodyDeckOracle => "vault.artifacts.body.deck.oracle",
+            Self::VaultArtifactsBodyDeckPreview => "vault.artifacts.body.deck.preview",
             Self::VaultArtifactsAppend => "vault.artifacts.append",
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
@@ -1172,6 +1175,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckExport
                 | Self::VaultArtifactsBodyDeckGate
                 | Self::VaultArtifactsBodyDeckOracle
+                | Self::VaultArtifactsBodyDeckPreview
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1483,6 +1487,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckExport
                 | Self::VaultArtifactsBodyDeckGate
                 | Self::VaultArtifactsBodyDeckOracle
+                | Self::VaultArtifactsBodyDeckPreview
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1848,6 +1853,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckExport
                 | Self::VaultArtifactsBodyDeckGate
                 | Self::VaultArtifactsBodyDeckOracle
+                | Self::VaultArtifactsBodyDeckPreview
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -2353,6 +2359,7 @@ impl AgentVerb {
             Self::VaultArtifactsBodyDeckExport => &["spec"],
             Self::VaultArtifactsBodyDeckGate => &["spec"],
             Self::VaultArtifactsBodyDeckOracle => &["spec"],
+            Self::VaultArtifactsBodyDeckPreview => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
@@ -2658,6 +2665,7 @@ impl AgentVerb {
             Self::VaultArtifactsBodyDeckExport => &["spec"],
             Self::VaultArtifactsBodyDeckGate => &["spec"],
             Self::VaultArtifactsBodyDeckOracle => &["spec"],
+            Self::VaultArtifactsBodyDeckPreview => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
@@ -3425,6 +3433,9 @@ impl AgentVerb {
             }
             Self::VaultArtifactsBodyDeckOracle => {
                 "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened."
+            }
+            Self::VaultArtifactsBodyDeckPreview => {
+                "The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed."
             }
             Self::VaultArtifactsAppend => {
                 "Appends one version of bytes to a blob artifact's append-only chain."

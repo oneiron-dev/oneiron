@@ -45,8 +45,8 @@ pub use oneiron_docedit::xlsx_body::{XlsxArea, XlsxBook, XlsxLock, XlsxStyle, Xl
 pub(crate) use pptx::live_refused;
 pub use pptx::{
     DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest,
-    DeckGateView, DeckNodeView, DeckOracleRequest, DeckReviewView, PptxBody, PptxExport,
-    PptxReview,
+    DeckGateView, DeckNodeView, DeckOracleRequest, DeckPreview, DeckPreviewRequest,
+    DeckPreviewSlide, DeckReviewView, PptxBody, PptxExport, PptxReview,
 };
 pub use verbs::{
     DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyEditRequest,
