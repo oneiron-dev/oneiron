@@ -269,6 +269,62 @@ pub struct DescribeRequest {
     /// holds. Only the run that folded it answers this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fold: Option<String>,
+    /// A task highway handle (OF-220): describe answers its status, the
+    /// highway's own `TaskCallReceipt`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<super::TaskHandle>,
+    /// The digest of the last status observed for `handle`: describe then
+    /// polls, and an unchanged answer is `unchanged`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "super::brief::hex32::option"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub after: Option<[u8; 32]>,
+}
+
+/// `describe({handle, after})` (OF-220): the status of one highway handle,
+/// or a poll when `after` names the last observation, as the highway answers
+/// it. A handle names the described thing whole, so a task ref beside it, or
+/// an `after` with no handle, is refused.
+pub fn describe_handle_status(
+    memory: &Memory<'_>,
+    input: &DescribeRequest,
+) -> MemoryResult<super::TaskDescription> {
+    let Some(handle) = input.handle else {
+        return Err(MemoryError::bad_request(
+            "describe(after) polls a handle: name the handle it observed",
+        ));
+    };
+    if input.task_ref.is_some() {
+        return Err(MemoryError::bad_request(
+            "describe names a task_ref or a handle, not both",
+        ));
+    }
+    let receipt = memory.tasks_status(super::TaskStatusQuery {
+        handle,
+        after: input.after,
+    })?;
+    Ok(super::TaskDescription::Status { receipt })
+}
+
+/// The rows one describe names by id: its task, else its handle's truth
+/// row (the tray row, the TASK or the ask group). A continuation of its
+/// answer is released only while they may leave.
+#[must_use]
+pub fn describe_named_rows(input: &DescribeRequest) -> Vec<crate::EntityId> {
+    let task = input
+        .task_ref
+        .as_deref()
+        .and_then(|id| crate::EntityId::from_hex(id).ok());
+    let handle = input.handle.map(|handle| match handle {
+        super::TaskHandle::Proposed { proposal_ref } => proposal_ref,
+        super::TaskHandle::Task { task_ref }
+        | super::TaskHandle::Attempt(super::AttemptHandle { task_ref, .. }) => task_ref,
+        super::TaskHandle::Ask { group_ref } => group_ref,
+    });
+    task.into_iter().chain(handle).collect()
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -281,10 +337,22 @@ pub struct TaskCreateRequest {
     /// binding (OF-532).
     #[serde(default)]
     pub assignee: Option<super::TaskAssignee>,
+    /// The caller's idempotency key for a briefed create (OF-220): with
+    /// `brief`, the create is a post through the task highway, and one
+    /// actor and key name one post.
+    #[serde(default)]
+    pub intent_key: Option<String>,
+    /// The typed brief a post carries (OF-220).
+    #[serde(default)]
+    pub brief: Option<super::QueueTaskBrief>,
+    /// The TASK's absolute expiry.
+    #[serde(default)]
+    pub ttl: Option<super::TaskTtl>,
 }
 
 /// The create spec one `tasks.create` request names, owned by the
-/// surface's actor.
+/// surface's actor. A request naming an intent key and a brief is a post
+/// (OF-220); one naming only one of them is refused.
 pub fn task_create_spec(
     memory: &Memory<'_>,
     input: TaskCreateRequest,
@@ -295,10 +363,21 @@ pub fn task_create_spec(
         Some(memory.actor()),
         Some(memory.vault().now_recorded_at()),
     );
-    Ok(match input.assignee {
+    let spec = match input.assignee {
         Some(assignee) => spec.with_assignee(assignee),
         None => spec,
-    })
+    };
+    let spec = match input.ttl {
+        Some(ttl) => spec.with_ttl(ttl),
+        None => spec,
+    };
+    match (input.intent_key, input.brief) {
+        (Some(intent_key), Some(brief)) => Ok(spec.with_brief(intent_key, brief)),
+        (None, None) => Ok(spec),
+        _ => Err(MemoryError::bad_request(
+            "a briefed create names both its intent key and its brief",
+        )),
+    }
 }
 /// `tasks.wave` (OF-427, ARCH-0068 RC5): an epic TASK cut into a wave of
 /// TASKs by a planner agent, queued as one planning attempt. Who asks, and
@@ -434,6 +513,7 @@ pub use super::sdk_host::*;
 pub use super::sdk_legal_hold::*;
 pub use super::sdk_mesh::*;
 pub use super::sdk_record_erase::*;
+pub use super::sdk_research::*;
 pub use super::sdk_scratchpad::*;
 pub use super::sdk_secret::*;
 pub use super::sdk_secret_use::*;

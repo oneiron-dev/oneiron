@@ -557,19 +557,21 @@ impl Vault {
     /// passed on the store clock with no live objection, while its starter
     /// is still a live Owner. The claim, the effect, the receipt and every
     /// recipient's notice commit in one writer, so the act takes effect at
-    /// most once; running it again returns the same receipt. With `slips`,
+    /// most once; running it again returns the same receipt, to a reader
+    /// that receipt told and no one else (FIX 3216). With `slips`,
     /// the capability slips of anyone who lost a role are revoked with it,
     /// and the host signs an ownership change into the authority log as an
     /// `OwnerHandover` naming the act and its receipt.
-    /// An export-first removal exports what its target could read before
-    /// the writer opens, records that export's digest in the receipt, and
-    /// delivers the archive to the removed Owner alone, retrievable by them
-    /// for [`REMOVAL_EXPORT_RETAIN_SECS`] (FIX 1300); the answer names that
-    /// delivery, never the archive. A remaining live Owner's re-run of an
-    /// executed export-first removal answers the same receipt and delivers
-    /// the stored archive to the removed Owner again for a full term; the
-    /// removal never runs twice, and an archive already purged past its term
-    /// is not rebuilt.
+    /// An export-first removal, once its executor and starter stand as live
+    /// Owners holding the act's verb (FIX 3217), exports what its target
+    /// could read before the writer opens, records that export's digest in
+    /// the receipt, and delivers the archive to the removed Owner alone,
+    /// retrievable by them for [`REMOVAL_EXPORT_RETAIN_SECS`] (FIX 1300);
+    /// the answer names that delivery, never the archive. A remaining live
+    /// Owner's re-run of an executed export-first removal answers the same
+    /// receipt and delivers the stored archive to the removed Owner again
+    /// for a full term; the removal never runs twice, and an archive already
+    /// purged past its term is not rebuilt.
     pub fn execute_completed_shared_act(
         &self,
         executor: &AuthenticatedOwner,
@@ -577,7 +579,7 @@ impl Vault {
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecution> {
         let mut export = self
-            .removal_export(act_id)?
+            .removal_export(executor, act_id)?
             .map(|(member, records)| {
                 let ids = records.iter().map(|record| record.id).collect();
                 // Its diary reads are the removed owner's, who receives it.
@@ -607,6 +609,9 @@ impl Vault {
                 .transpose()?
                 .flatten()
                 .ok_or(Error::ConcurrentWrite("authority act already executed"))?;
+            if !self.reader_was_told_in_txn(&txn, actor, &receipt.id)? {
+                return Err(invalid());
+            }
             let delivery = match &receipt.export {
                 Some(summary) => self.redeliver_removal_export_in_txn(
                     &mut txn,
@@ -622,11 +627,7 @@ impl Vault {
         }
         let creation = check_vault(self, &txn, act.vault_id)?;
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
-        let holders = self.live_act_holders(&txn, act.vault_id, now)?;
-        let owners = live_owners(&holders, Some(&act.required_verb));
-        if !owners.contains(&actor) || !owners.contains(&hex_id(&act.starter)?) {
-            return Err(invalid());
-        }
+        let owners = self.act_executors_in_txn(&txn, &act, actor, now)?;
         let receipt_id = self.store.clock.entity_id()?.to_hex();
         let request_id = self.store.clock.entity_id()?.to_hex();
         self.claim_completed_authority_act_in_txn(
@@ -802,6 +803,23 @@ impl Vault {
         };
         txn.commit()?;
         Ok(SharedActExecution { receipt, delivery })
+    }
+
+    /// The live Owners holding `act`'s verb at `now`, refused unless both
+    /// `actor` and the act's starter stand among them.
+    fn act_executors_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        act: &PendingAuthorityAct,
+        actor: EntityId,
+        now: u64,
+    ) -> Result<BTreeSet<EntityId>> {
+        let holders = self.live_act_holders(txn, act.vault_id, now)?;
+        let owners = live_owners(&holders, Some(&act.required_verb));
+        if !owners.contains(&actor) || !owners.contains(&hex_id(&act.starter)?) {
+            return Err(invalid());
+        }
+        Ok(owners)
     }
 
     /// A re-run of the executed export-first removal `act` by `actor`, who
@@ -1046,12 +1064,22 @@ impl Vault {
         // Person tier: a holder reads the receipts they were told about.
         let reader = reader.revalidate_person_in_txn(self, &txn)?;
         let receipt_id = EntityId::from_hex(receipt_id)?.to_hex();
-        let notice = key(OUTCOME_PREFIX, &format!("{}:{receipt_id}", reader.to_hex()));
-        if self.store.vault_meta.get(&txn, &notice)?.is_none() {
+        if !self.reader_was_told_in_txn(&txn, reader, &receipt_id)? {
             return Err(invalid());
         }
         self.shared_act_receipt_in_txn(&txn, &receipt_id)?
             .ok_or_else(invalid)
+    }
+    /// Whether `reader` holds a notice of the receipt `receipt_id`. The one
+    /// rule for who reads a receipt back, here or by re-running its act.
+    fn reader_was_told_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reader: EntityId,
+        receipt_id: &str,
+    ) -> Result<bool> {
+        let notice = key(OUTCOME_PREFIX, &format!("{}:{receipt_id}", reader.to_hex()));
+        Ok(self.store.vault_meta.get(txn, &notice)?.is_some())
     }
     /// The reader's own outcome notices for `vault_id`. A holder a change
     /// removed still reads the notice of that change.

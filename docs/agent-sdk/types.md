@@ -51,8 +51,20 @@ export type WitnessTurn = {
   messages: WitnessMessage[]
   /** Unix seconds; omitted is stamped at the call boundary. */
   occurredAt?: number
+  /** A quote on a project room's thread reply: a span of one MESSAGE in the room. */
+  quote?: QuoteSpan
   /** A new project room thread root's audience (32-hex ids); fixed once set. */
   threadAudience?: string[]
+}
+
+/** The quoted span of one MESSAGE: half-open Unicode scalar indices, never UTF-16 units. */
+export type QuoteSpan = {
+  /** The quoted MESSAGE (not the TURN that holds it), as 32 hex. */
+  message: string
+  /** First quoted scalar. */
+  start: number
+  /** One past the last quoted scalar. */
+  end: number
 }
 
 /** Receipt for one witnessed turn. */
@@ -370,12 +382,21 @@ class WitnessMessage(TypedDict):
     is_visible: NotRequired[bool]
     order: int
 
+class QuoteSpan(TypedDict):
+    # The quoted MESSAGE (not the TURN that holds it), as 32 hex.
+    message: str
+    # Half-open Unicode scalar indices into its text.
+    start: int
+    end: int
+
 class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
     messages: list[WitnessMessage]
     # Unix seconds; omitted is stamped at the call boundary.
     occurred_at: NotRequired[int]
+    # A quote on a project room's thread reply: a span of one MESSAGE in the room.
+    quote: NotRequired[QuoteSpan | None]
     # A new project room thread root's audience; fixed once set.
     thread_audience: NotRequired[list[str] | None]
 
@@ -588,7 +609,11 @@ LensFrameToolReply = TypedDict(
     "LensFrameToolReply",
     {"outcome": Any, "readReceipt": Facade.ScopedReadReceipt},
 )
-LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply
+LensFrameCallbackReply = TypedDict(
+    "LensFrameCallbackReply",
+    {"queued": bool, "callbackId": str},
+)
+LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply | LensFrameCallbackReply
 
 class CloseLensFrameReply(TypedDict):
     closed: bool
@@ -768,6 +793,8 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
         @property
         def records(self) -> "Oneiron._VaultRecordsVerbs": ...
+        @property
+        def research(self) -> "Oneiron._VaultResearchVerbs": ...
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
@@ -1033,6 +1060,37 @@ class Oneiron:
             """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
         def erase_confirm(self, spec: Facade.RecordEraseConfirmRequest) -> Facade.RecordEraseOutcome:
             """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
+    class _VaultResearchVerbs:
+        def bind(self, spec: Facade.ResearchBindWire) -> Facade.ResearchBinding:
+            """Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."""
+        def fork(self, spec: Facade.ResearchForkWire) -> Facade.ExperimentNode:
+            """Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent."""
+        def weave(self, spec: Facade.ResearchWeaveWire) -> Facade.ExperimentNode:
+            """Records a crossover child of several parents whose candidate landed as a claim through the gate, once a held-out win turned merge crossover on."""
+        def measure_search(self, spec: Facade.ResearchSearchWire) -> Facade.ExperimentNode:
+            """Records a node's search-split evidence, its selection signal, once."""
+        def measure_held_out(self, spec: Facade.ResearchHeldOutWire) -> Facade.ExperimentNode:
+            """Records a node's held-out evidence, once; only the promotion basis reads it."""
+        def mark_invalid(self, spec: Facade.ResearchInvalidWire) -> Facade.ExperimentNode:
+            """Marks a node buggy: it stays as evidence and takes debug children."""
+        def prune(self, spec: Facade.ResearchPruneWire) -> Facade.ExperimentNode:
+            """Stops exploring a branch for a stated cause; its attempts, claims and outputs stay. A stop names the caller."""
+        def select(self, spec: Facade.ResearchSelectWire) -> Facade.SelectionReceipt:
+            """Runs one selection round through the trusted selection floor and records it; only the owner can say the goal is met."""
+        def promotion_basis(self, spec: Facade.ResearchBasisWire) -> Facade.PromotionBasis:
+            """Decides a candidate's held-out promotion basis against the incumbent, once."""
+        def reserve_confirmation(self, spec: Facade.ResearchCandidateWire) -> Facade.EvalRelease:
+            """Spends a Promote candidate's one sealed confirmation and releases the campaign's sealed cohort to the controller's referee, counted as a serving."""
+        def promote(self, spec: Facade.ResearchPromoteWire) -> Facade.CampaignPromotionReceipt:
+            """Settles a candidate on the sealed referee's scores of it and the incumbent: a strict win, a not-worse sufficiency card and, for a skill, the gate's accepted verdict make it the incumbent."""
+        def reserve_work(self, spec: Facade.ResearchWorkWire) -> Facade.EntityId:
+            """Reserves token work for the campaign on the RSI line under its share, and returns the reservation's id."""
+        def settle_work(self, spec: Facade.ResearchSettleWire) -> Facade.ResearchReservation:
+            """Settles a work reservation at its actual spend."""
+        def refund_work(self, spec: Facade.ResearchRefundWire) -> Facade.ResearchReservation:
+            """Refunds a work reservation nothing was spent on."""
+        def record_benchmark(self, spec: Facade.ResearchBenchmarkWire) -> Facade.SelectionBenchmark:
+            """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""
@@ -1312,7 +1370,7 @@ class Oneiron:
         def get(self, spec: Facade.WorkspaceRefRequest) -> Facade.WorkCompanionPolicy:
             """A workspace's work_companion policy, readable by every member it governs."""
         def set(self, spec: Facade.WorkCompanionSetRequest) -> Facade.WorkCompanionPolicy:
-            """The owner sets a workspace's work_companion policy in person."""
+            """The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."""
     class _VaultGraphVerbs:
         def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
     class _VaultQuestionsVerbs:
@@ -1337,7 +1395,7 @@ class Oneiron:
         def resolve(self, spec: Facade.ResolveRecordRefRequest) -> Facade.ScopedReadResult[Facade.RecordRefPreview]:
             """The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same."""
         def links(self, spec: Facade.RecordLinksRequest) -> Facade.RecordLinks:
-            """A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
+            """A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
     class _VaultSearchVerbs:
         def bm25(self, input: Facade.QueryBm25Request) -> Facade.ScopedReadResult[list[Facade.LexicalHit]]:
             """BM25 text search over the engine index; surfaceable claims only."""
@@ -1363,11 +1421,13 @@ class Oneiron:
         def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
-            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
+            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""
         def wave(self, spec: Facade.TaskWaveRequest) -> Facade.TaskWaveReceipt:
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
         def update(self, spec: Facade.TaskUpdateRequest) -> Facade.TaskUpdateReceipt:
             """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
+        def accept(self, spec: Facade.TaskAccept) -> Facade.TaskCallReceipt:
+            """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
@@ -1381,7 +1441,7 @@ class Oneiron:
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
     class _AiVerbs:
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
-            """The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left."""
+            """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
             """One image out of the host's image model; reference images make it an edit."""
         def speech(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
@@ -1393,7 +1453,7 @@ class Oneiron:
         @property
         def video(self) -> "Oneiron._AiVideoVerbs": ...
         def verdict(self, spec: Facade.AiVerdictRequest) -> Facade.AiVerdict:
-            """The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt."""
+            """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
     class _AiVideoVerbs:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
             """Starts a video render as a provider job and answers with its ticket."""
