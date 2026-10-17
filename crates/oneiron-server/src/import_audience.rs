@@ -93,9 +93,13 @@ fn sweep(server: &SyncServer) -> anyhow::Result<()> {
     let vault = server.vault();
     for topic in vault.asked_import_audience_topics()? {
         match vault.settle_import_audience(&topic) {
-            Ok(Some(rule)) => tracing::info!(%topic, %rule, "import audience topic settled"),
+            Ok(Some(rule)) => {
+                tracing::info!(topic = %topic.to_hex(), rule = %rule.to_hex(), "import audience topic settled")
+            }
             Ok(None) => {}
-            Err(error) => tracing::warn!(%error, %topic, "import audience answer did not settle"),
+            Err(error) => {
+                tracing::warn!(%error, topic = %topic.to_hex(), "import audience answer did not settle")
+            }
         }
     }
     let reviews: Vec<String> = vault
@@ -128,7 +132,7 @@ fn sweep(server: &SyncServer) -> anyhow::Result<()> {
                 )?;
             }
             Err(error) => {
-                tracing::warn!(%error, %topic, "import audience topic stays unasked for the next tick");
+                tracing::warn!(%error, topic = %topic.to_hex(), "import audience topic stays unasked for the next tick");
             }
         }
     }
@@ -189,7 +193,7 @@ fn open(
             .collect::<Vec<_>>(),
     });
     let sensitive = IMPORT_AUDIENCE_SENSITIVE.question(
-        &[topic.as_bytes()],
+        &[topic.as_bytes().as_slice()],
         worded(&settings.sensitive_wording, &found.label),
         AnswerContract::Noul,
     )?;
@@ -208,7 +212,7 @@ fn open(
     }
     let options = vault.import_audience_options()?;
     let question = IMPORT_AUDIENCE_ASK.question(
-        &[topic.as_bytes()],
+        &[topic.as_bytes().as_slice()],
         worded(&settings.audience_wording, &found.label),
         AnswerContract::Choice {
             options: options.iter().map(|option| option.label.clone()).collect(),
