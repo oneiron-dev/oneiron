@@ -571,9 +571,10 @@ impl HostUnlock {
             hex(&unlocks.commitment)
         );
         let secret = match recovery_box(source) {
-            Some((recovery_box, _)) => oneiron::world_keys::escrow_recipient(
-                &recovery_box.release(&report.vault_id, &report.label)?,
-            )?,
+            Some((recovery_box, _)) => {
+                let seed = recovery_box.release(&report.vault_id, &report.label)?;
+                oneiron::world_keys::escrow_recipient(&seed)?
+            }
             None => view::escrow_secret(&read_secret(source, "the escrow recipient's secret")?)?,
         };
         Ok(Self::EscrowCapsule {
