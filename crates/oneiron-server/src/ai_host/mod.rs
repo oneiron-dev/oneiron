@@ -34,6 +34,7 @@ pub(crate) mod coach_heal;
 mod coach_health;
 mod code_fix;
 mod dreamer;
+pub(crate) mod failure_signals;
 mod harness;
 pub(crate) mod identity;
 mod local_vision;

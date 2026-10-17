@@ -9,10 +9,10 @@ substitutes it for the registry copy with
 heed = { path = "crates/heed/vendor/heed-0.20.5" }
 ```
 
-and excludes it from the workspace. The dependency graph is otherwise
-untouched: the package keeps name `heed`, version `0.20.5`, edition 2021, and
-every upstream dependency requirement — including `lmdb-master-sys` at the
-already-locked `0.2.6` — so no version moves and no dependency is added.
+and excludes it from the workspace. The package keeps name `heed`, version
+`0.20.5` and edition 2021. ONE-218 kept every upstream dependency requirement;
+OF-570 then moved the C library to `lmdb-master3-sys` and added the page
+cipher's crates (see "OF-570: mdb.master3 and sealed pages").
 
 ## Why this fork exists
 
@@ -44,7 +44,8 @@ separate, and changes nothing else.
 | crates.io checksum (unpatched lock entry) | `7d4f449bab7320c56003d37732a917e18798e2f1709d80263face2b4f9436ddb` |
 | Upstream `src/env.rs` SHA-256 | `cfca096b00d446431092c897f9939ff79834d9a8984208e21d8274b7d6a5d343` |
 | Upstream VCS commit (`.cargo_vcs_info.json`) | `947c3aa814b9a5eab764a95f84242fe1756cf61a`, `path_in_vcs = "heed"` |
-| Pinned LMDB C source behind it | `lmdb-master-sys-0.2.6/lmdb/libraries/liblmdb/mdb.c`, SHA-256 `56bf21f1d42fe36f42e52cf4dad7c3d910214182cceb46751ee7042fe299ad3a` |
+| Pinned LMDB C source behind it (ONE-218) | `lmdb-master-sys-0.2.6/lmdb/libraries/liblmdb/mdb.c`, SHA-256 `56bf21f1d42fe36f42e52cf4dad7c3d910214182cceb46751ee7042fe299ad3a` |
+| LMDB C source behind it since OF-570 | `lmdb-master3-sys-0.2.6/lmdb/libraries/liblmdb/mdb.c`, SHA-256 `0e7c948b4aa3492b4581ed14fcf187952c90317569c0f6962e8e6e885743f893` |
 
 ## Inventory
 
@@ -68,7 +69,7 @@ src/mdb/mod.rs                src/reserved_space.rs         src/txn.rs
 `crates/oneiron-seal/vendor/pkix-chain-0.4.1` snapshot. It is inert: this
 package is resolved by the Oneiron root lockfile.)
 
-**Changed from upstream — exactly two files:**
+**Changed from upstream** (ONE-218; OF-570 changed more, see below):
 
 - `Cargo.toml` — a provenance comment block and packaging-only exclusions for
   `/.cargo_vcs_info.json` and `/Cargo.toml.orig` (ONE-1441). Package identity,
@@ -87,6 +88,51 @@ package is resolved by the Oneiron root lockfile.)
   convention of `crates/oneiron-seal/vendor/README.md`.
 
 **Deliberately not copied:** the registry extraction marker `.cargo-ok`.
+
+## OF-570: mdb.master3 and sealed pages
+
+Owner ruling 2026-10-09 (E2-HOT B): engine page AEAD is an opt-in "maximum"
+tier ("megalock") that warns it is slower. The pinned `lmdb-master-sys` (LMDB
+0.9.70) has no page hook, so this vendor links **mdb.master3** instead:
+`lmdb-master3-sys` 0.2.6 (LMDB 0.9.90, mdb.c SHA-256
+`0e7c948b4aa3492b4581ed14fcf187952c90317569c0f6962e8e6e885743f893`). Its data
+format is 3 and it refuses format-1 files; the owner's decree ("no existing
+vaults") makes that a clean break, not a migration.
+
+Every environment uses mdb.master3. A plain environment opens exactly as
+before, with no hook and the single read-only map. A sealed one is opened with
+`EnvOpenOptions::page_key`:
+
+- `src/page_seal.rs` (added) is the `MDB_enc_func`: XChaCha20-Poly1305 under
+  the page key, a fresh random 24-byte nonce for every seal, the nonce and the
+  16-byte tag in the 40-byte per-page authentication area, and the clear page
+  number and txn id as associated data. It never unwinds into C. This avoids
+  the defects canon RESEARCH-1223 records for heed3's own sealing: a nonce
+  built from page number and txn id, reused on a spill or a restarted txn.
+- `src/env.rs`: the `page_key` option (never printed or serialized, wiped on
+  drop); the cipher installed right after `mdb_env_create`; `WRITE_MAP` and
+  `FIXEDMAP` refused with a key; a read of the main tree's first page before a
+  sealed env is published, since meta pages are clear and a wrong key would
+  otherwise open; `Env::is_sealed`; `Env::flags` masking mdb.master3's
+  encryption and chunk-remap bits; `copy_to_file` and `copy_to_fd` refused for
+  a sealed env (mdb.master3's compacting copy writes decrypted pages unsealed
+  and its plain copy reads past the meta-only map).
+- `src/txn.rs`, `src/cursor.rs`, `src/database.rs`: mdb.master3 may unmap a
+  decrypted page chunk while its transaction lives, so heed's "valid for the
+  whole transaction" borrow would dangle. A sealed env's returned keys and
+  values are copied into a per-transaction stash (wiped on drop) and live
+  until the transaction ends. A plain env stays zero-copy.
+- `src/mdb/lmdb_ffi.rs`, `lmdb_error.rs`, `lmdb_flags.rs`, `src/lib.rs`: the
+  FFI alias points at `lmdb_master3_sys`, and the module is registered.
+- `Cargo.toml`: `lmdb-master3-sys` replaces `lmdb-master-sys`, every LMDB
+  feature forwards to it, and `chacha20poly1305` 0.11, `getrandom` 0.4 and
+  `zeroize` 1.9 are added (all already in the lock).
+
+The descriptor seam's audit holds for mdb.master3: `me_path` is still only
+declared, assigned, null-checked, freed and returned by `mdb_env_get_path`
+(mdb.master3 `mdb.c:1659, 6248, 6252, 6362, 11646`), and every file open goes
+through `mdb_fname_init` (`mdb.c:5228`). The line numbers in the audit below
+are the earlier library's.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 
