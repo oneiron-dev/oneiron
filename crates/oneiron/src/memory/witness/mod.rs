@@ -15,7 +15,9 @@ pub(crate) use stream::{
 };
 mod validation;
 
-pub use self::types::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
+pub use self::types::{
+    WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+};
 
 pub(crate) use self::codec::{
     IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
