@@ -476,6 +476,10 @@ export class Oneiron {
       diff: (request: Facade.CodeDiffRequest): Facade.CodeDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeDiff(keyedJson(request))) as Facade.CodeDiffView | null; return result === null ? null : result }),
       /** Every unit of one tested code file state, blamed by the operations that wrote it. */
       blame: (request: Facade.CodeStateRequest): Facade.CodeBlameView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeBlame(keyedJson(request))) as Facade.CodeBlameView | null; return result === null ? null : result }),
+      /** One repo proposal's semantic change from its base, under the provenance it was proposed with. */
+      proposal_view: (request: Facade.CodeProposalViewRequest): Facade.CodeProposalView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeProposalView(keyedJson(request))) as Facade.CodeProposalView | null; return result === null ? null : result }),
+      /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
+      repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
     },
     rooms: {
       /** The caller's rooms its own grants admit; inside a room turn, only that room. */

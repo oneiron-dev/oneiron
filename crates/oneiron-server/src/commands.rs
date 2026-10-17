@@ -95,6 +95,8 @@ mod reembed;
 pub use reembed::reembed;
 mod serve;
 use self::serve::serve_with_config;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(crate) use self::serve::spawn_fact_hooks;
 pub(crate) use self::serve::stop_requested;
 mod dreamer;
 pub use self::dreamer::dreamer_grant;

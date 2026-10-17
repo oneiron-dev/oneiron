@@ -428,7 +428,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/vector_apply.rs` | src | s | 3 crate-vis | — | — |
 | `src/batch/verified_claim_transition.rs` | src | m | 13 crate-vis | — | Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the… |
 | `src/blob_artifact/body.rs` | src | s | 1 struct · 4 fn · 4 const · 2 crate-vis | BlobArtifactBody | Blob artifact body: pinned body keys, body type, MessagePack codec, and validators |
-| `src/blob_artifact/born_from.rs` | src | s | 1 struct · 1 enum · 3 fn · 1 crate-vis | BornFromArtifact, BornFromSource | Born-from (ARCH-0078 section 4): every artifact answers "born from what" the same way |
+| `src/blob_artifact/born_from.rs` | src | s | 1 struct · 1 enum · 3 fn · 2 crate-vis | BornFromArtifact, BornFromSource | Born-from (ARCH-0078 section 4): every artifact answers "born from what" the same way |
 | `src/blob_artifact/create.rs` | src | s | 1 struct · 1 fn | ArtifactCreateRequest | `vault.artifacts.create` (OF-181): one artifact with its first version, the composite `POST… |
 | `src/blob_artifact/esign/artifact_actor.rs` | src | s | 1 crate-vis | — | Vault-local machine identity for capability uploads and verified seal output |
 | `src/blob_artifact/esign/capability.rs` | src | s | 1 struct · 4 fn · 4 crate-vis | EsignCapability | Session-less, high-entropy capabilities |
@@ -834,12 +834,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_artifact.rs` | src | m | 1 struct · 1 enum · 7 fn · 4 const · 1 crate-vis | CodeArtifactBody, CodeArtifactClass | — |
 | `src/code_document/blame.rs` | src | s | 3 fn · 1 type | — | Per-operation blame over tested file states: which operation wrote each surviving character, and which… |
 | `src/code_document/codec.rs` | src | s | 9 crate-vis | — | Strict durable document rows and canonical operation folds |
-| `src/code_document/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | Base-mode live code files: actor-stamped Loro operations and verified tested frontiers |
+| `src/code_document/mod.rs` | src | s | 5 re-export · 1 crate-vis | — | Base-mode live code files: actor-stamped Loro operations and verified tested frontiers |
+| `src/code_document/review_views.rs` | src | m | 7 struct · 1 enum · 2 fn | CodeFileChange, CodeFileDiffView, CodeProposalView, CodeProposalViewRequest, CodeProposedStamp, CodeRepoDiffRequest, CodeRepoDiffView, CodeTreeRequest | The code review views (OF-323) |
 | `src/code_document/session.rs` | src | s | 1 struct · 10 fn | CodeDocumentSession | Private Loro forks and persistent cursor-anchored symbol spans |
 | `src/code_document/storage.rs` | src | m | 9 fn · 14 crate-vis | — | Atomic merge-before-persist of live file edits and immutable tested snapshots |
 | `src/code_document/tests.rs` | test | m | — | — | — |
 | `src/code_document/types.rs` | src | s | 8 struct · 1 enum · 3 fn · 1 crate-vis | CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeOpAttribution, CodeOpProvenance, CodeRangeChange, CodeSpanAnchor, CodeSpanBlame +1 | File edit verbs, cursor spans, operation receipts and tested frontiers |
-| `src/code_document/verbs.rs` | src | s | 10 struct · 2 fn | CodeBlameView, CodeChangeView, CodeDiffRequest, CodeDiffView, CodeOperationView, CodeSpanView, CodeStateRequest, CodeStateView +2 | The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff between two tested states of one… |
+| `src/code_document/verbs.rs` | src | s | 10 struct · 2 fn · 3 crate-vis | CodeBlameView, CodeChangeView, CodeDiffRequest, CodeDiffView, CodeOperationView, CodeSpanView, CodeStateRequest, CodeStateView +2 | The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff between two tested states of one… |
 | `src/code_memory.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
 | `src/code_memory/implementation.rs` | src | s | — | — | ARCH-0050 R6 L2 memory-over-code attachment mechanics (ONE-1608) |
 | `src/code_memory/parts/lifecycle-and-tests.rs` | src | m | 1 crate-vis | — | — |
@@ -882,7 +883,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/team_verbs.rs` | src | s | 1 crate-vis | — | `self.team.start` and `self.team.record` (OF-540): a pattern-skill run's own team, bound to the running… |
 | `src/code_run/dispatcher/verb_hooks.rs` | src | L | 8 crate-vis | — | Attach point 2 (ARCH-0080 §3): the verb hooks of each call a run serves itself |
 | `src/code_run/dispatcher/wake_policy.rs` | src | s | 1 crate-vis | — | Owner-authorized Dreamer wake-policy action; off-record never writes base |
-| `src/code_run/mod.rs` | src | s | 4 mod · 10 re-export · 12 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
+| `src/code_run/mod.rs` | src | s | 4 mod · 11 re-export · 12 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
 | `src/code_run/payload.rs` | src | m | 8 crate-vis | — | — |
 | `src/code_run/reader.rs` | src | m | 19 struct · 4 enum · 1 trait · 8 fn · 1 const · 10 crate-vis | ClaimOutcome, DelegatedSource, ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobRunner, ReaderJobState, ReaderJobWake +16 | Reader forks (ARCH-0079 #reader-forks): a code run hands one of its results to a child run that reads it and… |
 | `src/code_run/replay.rs` | src | L | 12 struct · 1 enum · 22 fn · 8 const · 11 crate-vis | CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor +5 | — |
@@ -893,7 +894,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/result_read/shape.rs` | src | s | 1 crate-vis | — | The shape a result's head shows of its format, for its card and for the way `query` reads it |
 | `src/code_run/result_read/slice.rs` | src | s | 1 crate-vis | — | `slice`: one range of a result's body, by bytes or by lines, at most one reply of it, with where to go on from |
 | `src/code_run/run_verb_call.rs` | src | s | 2 crate-vis | — | The four memory run rows as typed calls, outside the sandbox (OF-181) |
-| `src/code_run/run_verbs.rs` | src | m | 12 struct · 4 enum · 1 fn · 1 const | AgentSpawnInput, LeaderAdviceInput, LeaderPatternInput, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange +8 | The inputs of the verb-table rows a code run answers itself (`context: "run"` in… |
+| `src/code_run/run_verbs.rs` | src | m | 19 struct · 6 enum · 1 fn · 1 const | AgentSpawnInput, AgentSpawnKind, AgentSpawnOutput, LeaderAdviceInput, LeaderPatternFile, LeaderPatternInput, LeaderPatternOutput, MemoryClaimInput +17 | The inputs and outputs of the verb-table rows a code run answers itself (`context: "run"` in… |
 | `src/code_run/storage/compaction.rs` | src | m | 17 crate-vis | — | Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY |
 | `src/code_run/storage/compaction/tests.rs` | test | s | — | — | — |
 | `src/code_run/storage/folds.rs` | src | s | 3 crate-vis | — | One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's… |
@@ -1027,7 +1028,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/compaction/driver/mod.rs` | src | L | 8 struct · 3 enum · 1 trait · 24 fn · 2 const · 5 crate-vis | CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver, CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass +4 | RT-05 in-engine compaction backend, margin law, and single-flight driver |
 | `src/compaction/epoch.rs` | src | L | 1 struct · 2 fn · 5 const · 20 crate-vis | EpochSummaryBody | Epoch-summary codec and transactional lineage mint |
 | `src/compaction/fold_words.rs` | src | s | 5 crate-vis | — | Where a fold's words go when a record they came from is withdrawn (Docs Q23, Q24) |
-| `src/compaction/folds.rs` | src | m | 9 struct · 1 enum · 12 fn · 1 crate-vis | FoldCompactAsk, FoldCompactInput, FoldLedger, FoldMark, FoldMarkInput, FoldRecord, FoldUnfold, FoldUnfoldInput +2 | Folds (ARCH-0067 §2.2): an agent marks spans of its own run's log at any time, `self.compact` folds every… |
+| `src/compaction/folds.rs` | src | m | 15 struct · 3 enum · 12 fn · 1 crate-vis | FoldCompactAsk, FoldCompactAsked, FoldCompactInput, FoldDescription, FoldLedger, FoldList, FoldMark, FoldMarkInput +10 | Folds (ARCH-0067 §2.2): an agent marks spans of its own run's log at any time, `self.compact` folds every… |
 | `src/compaction/gate.rs` | src | m | 4 struct · 3 enum · 8 fn · 4 crate-vis | CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal, CompactionSuppression, GatedCompaction | The deterministic pre-swap gate (agent-runtime-v1 §d7) |
 | `src/compaction/hooks.rs` | src | s | 1 struct · 3 fn · 1 const | CompactHooks | `host.compact` (ARCH-0080 §5) around one compaction pass |
 | `src/compaction/output.rs` | src | m | 5 struct · 2 enum · 15 fn · 1 crate-vis | OutputAffordance, OutputContextEntry, OutputContextView, OutputDecayPolicy, OutputRef, OutputTier, OutputWorkingContext | Recoverable output references and local derived summaries (ARCH-0026) |
@@ -1309,6 +1310,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/delivery_window/validate.rs` | src | s | 1 fn · 8 crate-vis | — | Claim-body structural validation and map-extraction helpers |
 | `src/delivery_window/window.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | DeliveryWindowTimeWindow | Quiet-window time arithmetic and time-window decoding |
 | `src/disclosure/attendee_ask.rs` | src | m | 2 struct · 1 enum · 6 fn · 1 const · 5 crate-vis | AttendeeIdentityChoice, AttendeeIdentityResolution, UnknownAttendeeAsk | The unknown-attendee ask (OF-365, ILDF2 P4): a speaker the vault cannot place raises "who is this?" to the… |
+| `src/disclosure/clearance_use.rs` | src | s | 1 fn | — | The quiet receipt of a disclosure under standing clearance (OF-365, DEC-0006: "the owner sees a post-hoc… |
 | `src/disclosure/disclosable_set.rs` | src | s | 1 struct · 5 fn · 1 re-export · 2 crate-vis | DisclosableSet | The ILDF2 room rule (ONE-1592, ratified 2026-09-23): `disclosable_set = public ∪ (∩ clearances of all… |
 | `src/disclosure/mod.rs` | src | s | 6 re-export · 5 crate-vis | — | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
 | `src/disclosure/room_party.rs` | src | s | 1 enum · 1 fn · 3 crate-vis | RoomParty | The term one room member brings to the room's meet (ARCH-0067 §8: "the grants behind the people and agents… |
@@ -1488,7 +1490,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/tests.rs` | test | L | 1 crate-vis | — | — |
 | `src/dreamer_wake/tests/cleanup_lane.rs` | test | s | — | — | — |
 | `src/dreamer_wake/tests/coach_tune.rs` | test | s | — | — | The Coach's nightly retrieval tune (owner ruling 2026-10-16): a Timer wake runs it on the Dreamer's runner… |
-| `src/dreamer_wake/types.rs` | src | s | 6 struct · 3 enum · 1 trait · 2 fn · 2 crate-vis | DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequestNotice, RunWakePass, WakeAttemptContext, WakeMilestoneAuthor, WakePassReport, WakePassStop +2 | Wake request and outcome vocabulary plus the executor contract |
+| `src/dreamer_wake/types.rs` | src | m | 6 struct · 3 enum · 1 trait · 2 fn · 2 crate-vis | DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequestNotice, RunWakePass, WakeAttemptContext, WakeMilestoneAuthor, WakePassReport, WakePassStop +2 | Wake request and outcome vocabulary plus the executor contract |
 | `src/edge.rs` | src | m | 3 struct · 2 enum · 2 fn · 2 re-export · 15 crate-vis | DecodedEdgeValue, EdgeConfirmationStatus, EdgeInfo, EdgeProvenanceFlags, EdgeValueLayout | Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo` |
 | `src/edge/kind.rs` | src | s | 1 enum · 4 fn · 1 const | EdgeKind | The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and… |
 | `src/edge/tests.rs` | test | s | — | — | — |
@@ -2947,7 +2949,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime_hooks/read.rs` | src | m | 6 crate-vis | — | The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through the reader's `ScopedRead` lane… |
 | `src/runtime_hooks/regen.rs` | src | m | 6 struct · 2 enum · 1 trait · 7 fn · 1 crate-vis | HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure, HookRegenFailurePhase, HookRegenOutcome, HookRegenRecord, HookRegenRequest +1 | Hook regen (ARCH-0080 §8, slice 3): the shape of lens regen (OF-321), with records typed for hooks |
 | `src/runtime_hooks/replay.rs` | src | s | 1 struct · 1 enum · 1 fn · 2 crate-vis | HookReplayEntry, HookReplayResult | `hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome |
-| `src/runtime_hooks/runner.rs` | src | m | 2 struct · 4 fn · 2 const · 5 crate-vis | FactHookRunner, HookPassReport | The fact-hook runner (ARCH-0080 §4 Delivery) |
+| `src/runtime_hooks/runner.rs` | src | L | 2 struct · 4 fn · 1 type · 2 const · 5 crate-vis | FactHookRunner, HookPassReport | The fact-hook runner (ARCH-0080 §4 Delivery) |
 | `src/runtime_hooks/sandbox/mod.rs` | src | m | 1 struct · 3 fn · 2 const · 1 mod | HookSandbox | The pinned QuickJS sandbox a hook body runs in |
 | `src/runtime_hooks/scope.rs` | src | s | 4 crate-vis | — | A hook's scope (ARCH-0080 §3): a world, facet, room or project, named `<axis>:<32 hex>` |
 | `src/runtime_hooks/source.rs` | src | m | 4 struct · 5 enum · 7 fn · 1 const · 10 crate-vis | ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SettledFact, SettledOutcome, SettlementKind +1 | Fact sources and their typed positions (ARCH-0080 §4 Sources and cursors) |
@@ -3627,7 +3629,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_diary.rs` | src | s | 2 struct · 1 enum · 3 fn | DiaryQueryEntry, DiaryQueryOutcome, DiaryQueryRequest | `self.memory.diary.query`: the caller reads an agent's private diary, stating a reason the agent sees in its… |
 | `src/task_verb/sdk_disclosure.rs` | src | s | 2 struct · 1 fn | DisclosureOfferRequest, DisclosureOffered | `vault.disclosure.offer`: an agent OFFERS the owner a contact clearance (OF-365, the ILDF2 consent channel) |
 | `src/task_verb/sdk_embedding_space.rs` | src | m | 12 struct · 1 enum · 13 fn | EmbeddingSpaceBindRequest, EmbeddingSpaceCandidateRequest, EmbeddingSpaceDeclareRequest, EmbeddingSpaceMoveChecked, EmbeddingSpaceMoveOutcome, EmbeddingSpaceMoveRequest, EmbeddingSpaceProbe, EmbeddingSpaceProbeDeleteRequest +5 | The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 258 fn · 2 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 260 fn · 2 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 20 struct · 5 enum · 16 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +17 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and… |
 | `src/task_verb/sdk_legal_hold.rs` | src | s | 5 struct · 1 enum · 5 fn | LegalHoldEraseState, LegalHoldErasedRecord, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest | The inputs and answers of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`… |
