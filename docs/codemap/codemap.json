@@ -8412,7 +8412,7 @@
      "path": "src/channel_identity/assignment.rs",
      "purpose": "Two-slot channel assignment index",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
      }
     },
     {
@@ -8473,7 +8473,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelIdentityFacts"
@@ -8481,8 +8481,8 @@
      "path": "src/channel_identity/facts.rs",
      "purpose": "Channel facts as claims (OF-272): every write of a ChannelIdentity row moves its `channel_identity.*` heads…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 1,
+      "crate-vis": 3,
+      "fn": 2,
       "struct": 1
      }
     },
