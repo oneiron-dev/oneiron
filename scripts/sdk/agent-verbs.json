@@ -2179,6 +2179,36 @@
       "section": false
     },
     {
+      "name": "self.browser.library.find",
+      "input": "oneiron_browser::LibraryFindInput",
+      "output": "oneiron_browser::LibraryFindOutput",
+      "call": "driver.library_find(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.propose",
+      "input": "oneiron_browser::ProposeInput",
+      "output": "oneiron_browser::ProposeOutput",
+      "call": "driver.library_propose(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.run",
+      "input": "oneiron_browser::LibraryRunInput",
+      "output": "oneiron_browser::LibraryRunOutput",
+      "call": "driver.library_run(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "vault.commit",
       "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
