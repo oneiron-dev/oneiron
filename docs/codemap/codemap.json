@@ -65224,7 +65224,7 @@
      "path": "src/ai_host/weave_lens.rs",
      "purpose": "The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
