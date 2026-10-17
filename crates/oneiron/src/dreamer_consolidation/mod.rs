@@ -82,7 +82,7 @@ pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub use provenance::*;
 pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,
-    encode_consolidation_evidence_with_locators,
+    encode_consolidation_evidence_with_locators, kept_decisions_value,
 };
 pub use resident_dream::{
     RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS, ResidentDreamModel, ResidentDreamProgress,
