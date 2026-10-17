@@ -20679,10 +20679,10 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 8,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 4,
       "trait": 2
      }
@@ -20775,8 +20775,8 @@
      "path": "src/embed/space.rs",
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
-      "const": 3,
-      "crate-vis": 22,
+      "const": 4,
+      "crate-vis": 27,
       "enum": 1,
       "fn": 16,
       "struct": 3
@@ -36441,7 +36441,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -54817,7 +54817,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 42,
+      "const": 43,
       "crate-vis": 1
      }
     },
@@ -55192,7 +55192,7 @@
      "path": "src/registry/mod.rs",
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
      "surface": {
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -55233,7 +55233,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 49
+      "const": 50
      }
     },
     {
