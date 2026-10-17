@@ -68,6 +68,7 @@ mod rate_limit;
 mod reconciliation;
 mod refusal;
 mod report_journal;
+pub(crate) use report_journal::erase_in_txn as erase_report_journal_in_txn;
 mod room_thread;
 mod route_receipts;
 mod runner_done;
