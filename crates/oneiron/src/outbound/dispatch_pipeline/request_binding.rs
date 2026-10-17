@@ -45,6 +45,9 @@ pub(super) struct PreparedOutboundDispatch {
     pub(super) step_binding: Option<crate::llm::StepEffectBinding>,
     pub(super) payload: Option<Vec<u8>>,
     pub(super) native_mail_recipient: bool,
+    /// A second actor the mutation speaks for, admitted beside the primary
+    /// (OF-427).
+    pub(super) co_actor: Option<crate::outbound_chokepoint::CoActorAdmission>,
 }
 impl PreparedOutboundDispatch {
     pub(super) fn prepare(
@@ -167,6 +170,7 @@ impl PreparedOutboundDispatch {
             step_binding,
             payload: None,
             native_mail_recipient,
+            co_actor: None,
         })
     }
     /// The same freeze and replay proof runs for every normal call and every

@@ -3,7 +3,9 @@
 use super::super::held::{cut_text, fit_state};
 use super::super::types::paired_valid;
 use super::{records::AnswerRecord, store::encode};
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey,
+};
 use crate::llm::decision::{
     DecisionAnswer, DecisionAudio, DecisionBand, DecisionImage, DecisionQuestion, DecisionReceipt,
     DecisionRung, EvidenceVersion, MAX_DECISION_AUDIO, MAX_DECISION_AUDIO_BYTES,

@@ -138,11 +138,8 @@ pub(super) fn fail_once_in_txn(
     // A launch that fails for good settles its spend lease (OF-532) in the
     // commit that fails it, like `complete` does. A retry shares the launch's
     // one lease, so `retry_once` leaves it open.
-    crate::agent_dispatch::AgentDispatcher::new(vault).settle_child_in_txn(
-        txn,
-        &failed.id,
-        input.now,
-    )?;
+    crate::agent_dispatch::AgentDispatcher::new(vault)
+        .settle_child_in_txn(txn, &failed.id, input.now)?;
     Ok(failed)
 }
 
