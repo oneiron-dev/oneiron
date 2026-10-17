@@ -17,6 +17,7 @@ pub(crate) use fanout::{
     FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink, FanoutWidthCheck, FanoutWidthClass,
     PeerRateSnapshot, admit_fanout_with_history, answer_fanout_width_check,
     approve_and_resume_fanout, fanout_estimate, fanout_history_pathology, fanout_plan_digest,
+    fanout_width_check_row,
 };
 
 pub(crate) use self::admission::execute_outbound_effect;

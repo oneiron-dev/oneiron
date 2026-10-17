@@ -446,6 +446,27 @@ pub(crate) fn admit_fanout_plan(
     Ok(FanoutAdmission::Proceed { estimate })
 }
 
+/// The width-question row of a plan that went out with no hold, for a
+/// caller that classified the check itself: bound to the plan digest,
+/// offering only `Ack` and `AckAndRemember`, and named by the caller's
+/// durable `row_ref`, which the caller persists.
+///
+/// # Errors
+///
+/// The same malformed-plan cases as [`fanout_plan_digest`], and a blank
+/// `row_ref`.
+pub(crate) fn fanout_width_check_row(
+    plan: &FanoutPlan,
+    row_ref: String,
+    now_ms: u64,
+) -> Result<FanoutApprovalRow> {
+    let canonical = canonicalize(plan)?;
+    let estimate = estimate_of(&canonical);
+    let mut row = surfaced_row(&canonical, &estimate, None, RowFamily::WidthCheck, now_ms);
+    row.row_ref = durable_ref(row_ref, "fan-out width check row ref is blank")?;
+    Ok(row)
+}
+
 /// Records one human answer to a surfaced width-question row.
 ///
 /// The same exact-digest binding as a pause: the digest is recomputed from

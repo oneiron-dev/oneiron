@@ -36,6 +36,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agent_dispatch::FanoutStatement;
@@ -103,7 +104,7 @@ pub struct WavePlanRequest {
 /// `blocked_by` is expressed in LOCAL keys because the plan is validated
 /// before any TASK row exists: entity ids only appear once the
 /// [`WaveTaskPort`] has landed the rows.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlannedTask {
     /// Plan-local identity, unique within one [`WavePlan`].
     pub local_key: String,
@@ -117,8 +118,9 @@ pub struct PlannedTask {
     pub blocked_by: Vec<String>,
 }
 
-/// The typed task cut a [`WavePlanner`] returns, before validation.
-#[derive(Debug, Clone, PartialEq)]
+/// The typed task cut a [`WavePlanner`] returns, before validation. A cut
+/// held for a launch approval is frozen in this form.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WavePlan {
     /// Must equal [`WAVE_PLAN_SCHEMA_VERSION`].
     pub schema_version: u8,
@@ -221,6 +223,26 @@ pub struct WaveTaskWrite {
     pub blocker_refs: Vec<EntityId>,
 }
 
+/// What a port's gated apply of a cut did: landed every row, or held the
+/// cut for a launch approval with nothing written. A hold is never an
+/// empty write list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
+pub enum WaveTaskApplyOutcome {
+    Applied(Vec<WaveTaskWrite>),
+    Paused(crate::task_verb::FanoutLaunchReceipt),
+}
+
+/// What a gated apply of a validated plan did (OF-393): applied, with the
+/// receipt [`WaveOrchestrator::apply`] returns, or held for the owner's
+/// launch approval. A held cut minted no TASK, sealed nothing and left its
+/// planning attempt parked, not completed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WaveApplyOutcome {
+    Applied(WavePlanReceipt),
+    Paused(crate::task_verb::FanoutLaunchReceipt),
+}
+
 /// The durable side of a wave: TASK rows, `blocked_by` edges, and the two
 /// reads readiness is computed from.
 ///
@@ -240,6 +262,23 @@ pub trait WaveTaskPort {
         plan: &ValidatedWavePlan,
         now: u64,
     ) -> WaveResult<Vec<WaveTaskWrite>>;
+
+    /// [`Self::apply_validated_plan`] under a launch gate: a port that
+    /// holds the cut for an approval writes nothing and returns the durable
+    /// hold. A port with no gate applies the cut as the ungated door does.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::apply_validated_plan`], and a hold that cannot
+    /// be recorded.
+    fn apply_validated_plan_gated(
+        &mut self,
+        plan: &ValidatedWavePlan,
+        now: u64,
+    ) -> WaveResult<WaveTaskApplyOutcome> {
+        self.apply_validated_plan(plan, now)
+            .map(WaveTaskApplyOutcome::Applied)
+    }
 
     /// What applying `plan` mints and spends (OF-393): its task, agent and
     /// consult counts, expected spend, cap or none, and any width check. A
@@ -459,8 +498,38 @@ impl<P: WaveTaskPort> WaveOrchestrator<P> {
     /// writes do not match the plan.
     pub fn apply(&mut self, plan: ValidatedWavePlan, now: u64) -> WaveResult<WavePlanReceipt> {
         let writes = self.tasks.apply_validated_plan(&plan, now)?;
+        self.reconcile(plan, &writes, now)
+    }
+
+    /// [`Self::apply`] through the port's launch gate (OF-393). A held cut
+    /// returns its durable hold before any reconciliation: it wrote no row
+    /// to reconcile. An applied cut is reconciled as [`Self::apply`] does.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::apply`].
+    pub fn apply_gated(
+        &mut self,
+        plan: ValidatedWavePlan,
+        now: u64,
+    ) -> WaveResult<WaveApplyOutcome> {
+        match self.tasks.apply_validated_plan_gated(&plan, now)? {
+            WaveTaskApplyOutcome::Applied(writes) => self
+                .reconcile(plan, &writes, now)
+                .map(WaveApplyOutcome::Applied),
+            WaveTaskApplyOutcome::Paused(launch) => Ok(WaveApplyOutcome::Paused(launch)),
+        }
+    }
+
+    /// The proof that `writes` match the cut, and the receipt they make.
+    fn reconcile(
+        &self,
+        plan: ValidatedWavePlan,
+        writes: &[WaveTaskWrite],
+        now: u64,
+    ) -> WaveResult<WavePlanReceipt> {
         let mut task_refs: BTreeMap<String, EntityId> = BTreeMap::new();
-        for write in &writes {
+        for write in writes {
             if !plan.tasks.contains_key(&write.local_key) {
                 return Err(invariant(ERR_WRITE_UNKNOWN_KEY));
             }
@@ -476,7 +545,7 @@ impl<P: WaveTaskPort> WaveOrchestrator<P> {
         }
 
         let mut edges: BTreeSet<(EntityId, EntityId)> = BTreeSet::new();
-        for write in &writes {
+        for write in writes {
             let planned = plan
                 .tasks
                 .get(&write.local_key)

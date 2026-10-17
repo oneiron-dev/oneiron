@@ -176,16 +176,15 @@ impl Memory<'_> {
             &work,
             now,
         )?;
-        super::fanout_check::raise_unheld_width_check(
+        let question = effective.what.reference.short_ref();
+        let (check_scope, check_row) =
+            super::fanout_launch::ask_check_keys(self.actor(), group_ref, &question);
+        let width_asked = super::fanout_check::raise_unheld_width_check(
             self.vault(),
             txn,
             &mut statement,
-            &format!(
-                "ask:{}:{}",
-                self.actor().to_hex(),
-                effective.what.reference.short_ref()
-            ),
-            format!("fanout_check_row:ask:{}", group_ref.to_hex()),
+            &check_scope,
+            check_row,
         )?;
         let question_digest =
             super::ask_settlement::question_digest(self.vault(), txn, &effective.what)?
@@ -241,6 +240,30 @@ impl Memory<'_> {
             statement,
         };
         ask_record::put_group(self.vault(), txn, group_ref, &group)?;
+        // An asked width check names a durable row the owner acknowledges;
+        // it holds nothing and touches no member TASK.
+        if width_asked {
+            super::fanout_launch::record_ask_check_in(
+                self.vault(),
+                txn,
+                super::fanout_launch::AskCheck {
+                    group_ref,
+                    actor: self.actor(),
+                    actor_class: self.actor_class(),
+                    request_digest: digest,
+                    question,
+                    recipients: &holders,
+                    task_refs: group
+                        .members
+                        .iter()
+                        .map(|member| ask_record::entity(&member.task))
+                        .collect::<crate::Result<_>>()?,
+                    statement: &group.statement,
+                    scope: check_scope,
+                    now,
+                },
+            )?;
+        }
         for (member, (entry, _)) in group.members.iter().zip(&validated) {
             if matches!(entry.assignee, Some(TaskAssignee::Human { .. })) {
                 crate::human_task::register_human_followup_in_txn(

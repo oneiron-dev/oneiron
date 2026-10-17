@@ -264,30 +264,51 @@ impl FanoutSurfaceSink for TxnSurface<'_, '_> {
     }
 
     fn persist_choice_receipt(&mut self, receipt: &ReceiptRecord) -> Result<String> {
-        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, self.txn)?;
-        let mut decision = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: GateDecisionId::from_bytes(*self.vault.new_entity_id()?.as_bytes()),
-            created_at: receipt.occurred_at / 1000,
-            outcome: receipt.outcome.clone(),
-            reason_codes: vec!["gate.fanout.human_ruling".to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: "human".to_owned(),
-            actor_ref: receipt.actor.clone(),
-            content_kind: "consult_fanout".to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: Some(self.run.correlation.clone()),
-            diff_handle: self.run.estimate.plan_digest.to_vec(),
-            read_frontier_hash: policy.read_frontier_hash()?,
-            redacted_at: None,
-        };
-        self.vault
-            .store
-            .append_fresh_gate_decision_in_txn(self.txn, &mut decision)?;
-        let receipt_ref = format!("gate:{}", decision.decision_id.to_hex());
+        let receipt_ref = append_human_ruling(
+            self.vault,
+            self.txn,
+            receipt,
+            "consult_fanout",
+            self.run.correlation.clone(),
+            self.run.estimate.plan_digest,
+        )?;
         self.run.choice_receipt_ref = Some(receipt_ref.clone());
         Ok(receipt_ref)
     }
+}
+
+/// Appends a human fan-out ruling to the gate decision ledger in the
+/// caller's transaction and returns its `gate:` ref. `grant_ref` names the
+/// ruled run, `plan_digest` the exact plan the human saw.
+pub(super) fn append_human_ruling(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &ReceiptRecord,
+    content_kind: &str,
+    grant_ref: String,
+    plan_digest: [u8; 32],
+) -> Result<String> {
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    let mut decision = GateDecisionRecord {
+        version: GATE_DECISION_LEDGER_VERSION,
+        decision_id: GateDecisionId::from_bytes(*vault.new_entity_id()?.as_bytes()),
+        created_at: receipt.occurred_at / 1000,
+        outcome: receipt.outcome.clone(),
+        reason_codes: vec!["gate.fanout.human_ruling".to_owned()],
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: "human".to_owned(),
+        actor_ref: receipt.actor.clone(),
+        content_kind: content_kind.to_owned(),
+        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+        claim_id: None,
+        grant_ref: Some(grant_ref),
+        diff_handle: plan_digest.to_vec(),
+        read_frontier_hash: policy.read_frontier_hash()?,
+        redacted_at: None,
+    };
+    vault
+        .store
+        .append_fresh_gate_decision_in_txn(txn, &mut decision)?;
+    Ok(format!("gate:{}", decision.decision_id.to_hex()))
 }

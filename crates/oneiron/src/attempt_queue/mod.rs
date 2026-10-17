@@ -19,6 +19,7 @@ mod completion;
 mod encoding;
 mod engine;
 mod executor;
+mod fanout_hold;
 mod observe;
 mod ports;
 mod result;
@@ -49,6 +50,7 @@ pub use cancel::{
     WarnExpiringAttemptLeases,
 };
 pub use engine::AttemptQueue;
+pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
 pub use types::{
