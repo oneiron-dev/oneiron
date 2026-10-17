@@ -735,6 +735,51 @@ pub(in crate::workspace_roster) fn require_reader(
     Ok(record)
 }
 
+/// The read entry for one thread `thread` of `room` (OF-529): a person reads
+/// it as [`require_reader`] reads the room, and an agent from its seat or a
+/// Ready receipt for that thread or for the room. A thread's receipt opens
+/// that thread's read alone, never the room's or another thread's. Returns
+/// the room as its project vouches for it.
+pub(super) fn require_thread_reader(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+    actor: EntityId,
+) -> Result<ProjectRoom> {
+    let record = room_in(vault, txn, room)?;
+    let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
+    let reads = match subject {
+        Some(JoinSubject::Agent(agent)) => {
+            agent_standing_in_txn(vault, txn, room, Some(thread), agent, None)?.is_some()
+        }
+        subject => reads_room_in_txn(vault, txn, room, &record, actor, subject)?,
+    };
+    if !reads {
+        return Err(invalid());
+    }
+    Ok(record)
+}
+
+/// Whether `actor` is an agent with no standing in `room` itself: no seat
+/// and no Ready receipt for the room. Only such an agent reads a thread on
+/// that thread's own receipt ([`require_thread_reader`]). Every other actor,
+/// and a room this cannot vouch for, keeps the room read, which refuses or
+/// serves as before.
+pub(super) fn agent_off_room_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    actor: EntityId,
+) -> Result<bool> {
+    let Ok(record) = room_in(vault, txn, room) else {
+        return Ok(false);
+    };
+    let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
+    Ok(matches!(subject, Some(JoinSubject::Agent(_)))
+        && !reads_room_in_txn(vault, txn, room, &record, actor, subject)?)
+}
+
 /// The speech precheck before a witness (OF-529): for a person, its seat or
 /// a Ready receipt for the thread its reply lands in, or for the room
 /// (OF-417); for an agent, the same on its own receipt. The witness
