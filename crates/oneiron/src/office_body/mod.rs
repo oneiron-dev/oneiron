@@ -3,8 +3,10 @@
 //! the file an export.
 //!
 //! People edit the live body. Machine work runs on a fork and lands as a
-//! three-way diff that someone other than its opener merges. Every commit keeps
-//! a MadeBy receipt over its exact operations. An export projects the body onto
+//! three-way diff. A DOCX or XLSX fork joins a proposal when it is opened, and
+//! lands on a person's word from outside its opener's lineage or on a standing
+//! grant ([`consent`]). Every commit keeps a MadeBy receipt over its exact
+//! operations. An export projects the body onto
 //! the imported package and lands it as a new version of the artifact, recorded
 //! with the body frontier it projects.
 //!
@@ -23,12 +25,19 @@
 //! proposal artifact until the deck export gate opens. Erasing the artifact
 //! erases its office rows ([`erase_in_txn`]).
 
+mod consent;
 mod docx;
 mod fork;
 mod pptx;
 mod verbs;
 mod xlsx;
 
+pub(crate) use consent::MergeAdmission;
+pub use consent::{
+    AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OFFICE_BODY_EDIT_CLASS,
+    OfficeBodyProposal, ProposalHeader, ProposalMember, ProposalSettleRequest, ProposalSettlement,
+    ReviewedFork, SettleVerdict,
+};
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 pub use oneiron_docedit::live::LandingReceipt;
@@ -43,8 +52,9 @@ pub use verbs::{
     DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyEditRequest,
     OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest,
     OfficeBodyForkMergeRequest, OfficeBodyForkOpenRequest, OfficeBodyForkRequest,
-    OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyReadRequest, OfficeBodyView, XlsxBodyView,
-    XlsxSheetView,
+    OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyProposalRequest,
+    OfficeBodyProposalSettleRequest, OfficeBodyReadRequest, OfficeBodyReviewedFork, OfficeBodyView,
+    XlsxBodyView, XlsxSheetView,
 };
 pub use xlsx::{BodyCell, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
 
@@ -62,12 +72,11 @@ use crate::temporal::TimeRange;
 use crate::typed_body::{
     TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState, birth_typed_body_in_txn,
     discard_typed_body_fork_in_txn, edit_typed_body_fork_in_txn, edit_typed_body_in_txn,
-    merge_typed_body_fork_in_txn, open_typed_body_fork_in_txn, typed_body_fork_in_txn,
-    typed_body_in_txn,
+    open_typed_body_fork_in_txn, typed_body_fork_in_txn, typed_body_in_txn,
 };
 use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
-use loro::{ExportMode, LoroDoc};
+use loro::LoroDoc;
 use oneiron_docedit::ArchiveLimits;
 use oneiron_docedit::docx_body::{DocxRevision, project_docx, read_docx_blocks};
 use oneiron_docedit::retained_opc::Limits;
@@ -162,7 +171,7 @@ pub struct OfficeBodyFork {
     pub commits: u64,
     pub opened_at: u64,
     pub state: ForkState,
-    /// The run a deck fork belongs to, whose approve-all scope covers it.
+    /// The run the fork belongs to, whose approve-all scope covers it.
     #[serde(default)]
     pub run_root: Option<EntityId>,
 }
@@ -392,24 +401,30 @@ impl Vault {
     }
 
     /// Open a fork of the live body at its head for `actor`'s machine work in
-    /// the run `run_root`. A deck fork carries the root, so that run's
-    /// approve-all scope covers it; DOCX and XLSX forks merge through the
-    /// opener-excluded merge door, which takes no approve scope.
+    /// the run `run_root`, whose approve-all scope then covers it. A DOCX or
+    /// XLSX fork joins `proposal`, an unsettled proposal on this artifact, or
+    /// opens its own under the fork's id. A deck fork joins no proposal; it
+    /// lands through the deck merge door.
     pub fn open_office_body_fork(
         &self,
         artifact: &EntityId,
         actor: WriteActor,
         run_root: Option<&EntityId>,
+        proposal: Option<&EntityId>,
     ) -> Result<OfficeBodyFork> {
         self.with_write_txn_grouped(|wtxn| match source(&self.store, wtxn, artifact)?.kind {
+            OfficeBodyKind::Pptx if proposal.is_some() => Err(invalid(
+                "a deck fork joins no proposal; its run's approve scope covers it",
+            )),
             OfficeBodyKind::Pptx => self.open_deck_fork(wtxn, artifact, actor, run_root),
-            kind => Ok(fork_view(open_typed_body_fork_in_txn(
-                self,
-                wtxn,
-                artifact,
-                kind.schema(),
-                actor,
-            )?)),
+            kind => {
+                let record =
+                    open_typed_body_fork_in_txn(self, wtxn, artifact, kind.schema(), actor)?;
+                consent::join_in_txn(&self.store, wtxn, &record, run_root, proposal)?;
+                let mut fork = fork_view(record);
+                fork.run_root = run_root.copied();
+                Ok(fork)
+            }
         })
     }
 
@@ -422,8 +437,12 @@ impl Vault {
         if source(&self.store, &txn, artifact)?.kind == OfficeBodyKind::Pptx {
             return FORKS.get(&self.store, &txn, &(*artifact, *fork));
         }
-        Ok(typed_body_fork_in_txn(&self.store, &txn, artifact, fork)?
-            .map(|(record, _)| fork_view(record)))
+        let Some((record, _)) = typed_body_fork_in_txn(&self.store, &txn, artifact, fork)? else {
+            return Ok(None);
+        };
+        let mut view = fork_view(record);
+        view.run_root = consent::member_run_root(&self.store, &txn, artifact, fork)?;
+        Ok(Some(view))
     }
 
     /// The opener's operations on its open fork of a DOCX body.
@@ -501,44 +520,41 @@ impl Vault {
         three_way(kind, &live, &proposal, &record.base, &head.frontier)
     }
 
-    /// Land a reviewed fork. The reviewer names the head it read; a moved head,
-    /// a blocking conflict, the opener as merger, or a merged body that no longer
-    /// reads refuses the merge. The fork's actual operations are imported into a
-    /// scratch copy first; nothing is cherry-picked or rewritten. The fork's
-    /// receipts join the body's.
+    /// Land one reviewed fork: its proposal settled for that one item
+    /// ([`Self::settle_office_body_proposal`]). The reviewer names the live
+    /// head and the fork head it read; a moved head, a fork edited since, a
+    /// blocking conflict, or a merged body that no longer reads refuses. A
+    /// fork nothing answers (a caller in the opener's lineage with no grant
+    /// that covers it) refuses and keeps waiting.
     pub fn merge_office_body_fork(
         &self,
         artifact: &EntityId,
         fork: &EntityId,
-        expected_head: &[u8],
+        (expected_head, expected_fork): (&[u8], &[u8]),
         actor: WriteActor,
     ) -> Result<OfficeBodyDiff> {
         self.with_write_txn_grouped(|wtxn| {
-            let kind = loro_kind(&self.store, wtxn, artifact)?;
-            let (record, proposal) = open_fork(&self.store, wtxn, artifact, fork)?;
-            if record.opener == actor.entity_ref() {
-                return Err(invalid("a fork's opener cannot merge it"));
-            }
-            let (head, live) = self.loro_body(wtxn, artifact, kind, None)?;
-            if head.frontier != expected_head {
-                return Err(invalid(
-                    "the body moved since the review; read the diff again",
-                ));
-            }
-            let diff = three_way(kind, &live, &proposal, &record.base, &head.frontier)?;
-            if diff.blocking() {
-                return Err(invalid("the fork conflicts with the live body"));
-            }
-            let updates = proposal
-                .export(ExportMode::updates(&live.oplog_vv()))
-                .map_err(|_| invalid("office body fork export"))?;
-            let scratch = live.fork();
-            scratch
-                .import(&updates)
-                .map_err(|_| invalid("office body fork import"))?;
-            validate(kind, &scratch)?;
-            merge_typed_body_fork_in_txn(self, wtxn, artifact, fork, expected_head, actor)?;
-            Ok(diff)
+            loro_kind(&self.store, wtxn, artifact)?;
+            let proposal = consent::proposal_of(&self.store, wtxn, artifact, fork)?;
+            let reviewed = [ReviewedFork {
+                fork: *fork,
+                fork_head: expected_fork.to_vec(),
+            }];
+            let request = ProposalSettleRequest {
+                verdict: SettleVerdict::Accept,
+                scope: None,
+                head: expected_head,
+                reviewed: &reviewed,
+                reason: None,
+            };
+            let (_, landed) =
+                consent::settle_in_txn(self, wtxn, artifact, &proposal, &request, actor)?;
+            landed.into_iter().next().map(|(_, diff)| diff).ok_or_else(|| {
+                Error::InvalidConfig(format!(
+                    "the fork waits in proposal {} for a person outside its opener's lineage; no grant covers it",
+                    proposal.to_hex()
+                ))
+            })
         })
     }
 
@@ -553,7 +569,8 @@ impl Vault {
             if source(&self.store, wtxn, artifact)?.kind == OfficeBodyKind::Pptx {
                 return self.discard_deck_fork(wtxn, artifact, fork, actor);
             }
-            discard_typed_body_fork_in_txn(self, wtxn, artifact, fork, actor).map(drop)
+            discard_typed_body_fork_in_txn(self, wtxn, artifact, fork, actor)?;
+            consent::let_go_in_txn(&self.store, wtxn, artifact, fork, self.now_recorded_at())
         })
     }
 
@@ -780,11 +797,12 @@ impl Vault {
 }
 
 /// Removes `artifact`'s office rows: its format record, its deck forks'
-/// office records and its export records. The body itself, a Loro document in
+/// office records, its proposals and its export records. The body itself, a Loro document in
 /// every format, goes with its forks in the typed body's own eraser.
 /// Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     FORKS.delete_from(store, txn, entity.as_bytes())?;
+    consent::erase_in_txn(store, txn, entity)?;
     EXPORTS.delete_from(store, txn, entity.as_bytes())?;
     SOURCES.delete(store, txn, entity)?;
     Ok(())
@@ -905,7 +923,11 @@ fn three_way(
     let before = live
         .fork_at(&frontier)
         .map_err(|_| invalid("unknown body frontier"))?;
-    let frontiers = (base.to_vec(), head.to_vec());
+    let frontiers = (
+        base.to_vec(),
+        head.to_vec(),
+        proposal.oplog_frontiers().encode(),
+    );
     Ok(match kind {
         OfficeBodyKind::Docx => fork::diff(
             &docx::read(&before)?,

@@ -13,11 +13,12 @@
 //! import-then-export check passes on the oracle ([`deck_export::Gate`]),
 //! blob versions remain authoritative and this body is a proposal surface.
 pub mod deck_export;
+mod held;
 pub mod pptx;
 
 pub use deck_export::{
     ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport,
-    StepOutcome, attach_evidence, project, relationship_changes, roundtrip_check,
+    StepOutcome, attach_evidence, check_picture, project, relationship_changes, roundtrip_check,
 };
 pub use pptx::{
     ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, Conflict, ConnectorEnd,

@@ -463,7 +463,7 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None, media_json=None))]
+    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None, media_json=None, query_affect_json=None))]
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -478,6 +478,7 @@ impl NativeClient {
         as_of: Option<u64>,
         deadline_ms: Option<u64>,
         media_json: Option<&str>,
+        query_affect_json: Option<&str>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
         let scope_json = match scope_json {
@@ -488,6 +489,9 @@ impl NativeClient {
 
         let media_json: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = media_json
             .map(|value| decode(value, "recall media"))
+            .transpose()?;
+        let query_affect_json: Option<oneiron::task_verb::sdk::QueryAffect> = query_affect_json
+            .map(|value| decode(value, "recall query affect"))
             .transpose()?;
         let inner = &slf.inner;
         let py = slf.py();
@@ -502,6 +506,7 @@ impl NativeClient {
                     as_of,
                     deadline_ms,
                     media_json,
+                    query_affect_json,
                 )
             })
             .map_err(raise)?;
@@ -2194,6 +2199,35 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.artifacts.body.fork.discard", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_body_proposal_read(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.body.proposal.read")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.proposal.read", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_body_proposal_settle(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(request_json, "vault.artifacts.body.proposal.settle")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.proposal.settle", input)
             })
             .map_err(raise)?;
         encode(&output)
