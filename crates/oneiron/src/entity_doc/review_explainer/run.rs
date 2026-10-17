@@ -216,7 +216,13 @@ async fn generate(
     let request = vault
         .authorize_raw_inference(request, &route.inference)?
         .into_request();
-    let lease = execution.guard.admit_for_request(&request)?.lease;
+    let lease = execution
+        .guard
+        .admit_for_request(&request)
+        .inspect_err(|denied| {
+            vault.budget_denied_hooks(denied, execution.guard, request.model.as_str(), None);
+        })?
+        .lease;
     let mut charge = CallCharge {
         guard: execution.guard,
         lease: &lease,
