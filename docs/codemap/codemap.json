@@ -26007,7 +26007,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -56431,6 +56431,7 @@
      "kind": "src",
      "notable": [
       "LinearHostEgress",
+      "LinearMutation",
       "LinearOutboundDoor"
      ],
      "path": "src/egress.rs",
@@ -56438,7 +56439,7 @@
      "surface": {
       "crate-vis": 2,
       "fn": 2,
-      "struct": 1,
+      "struct": 2,
       "trait": 1
      }
     },
@@ -60436,7 +60437,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
       "crate-vis": 17,
-      "fn": 19,
+      "fn": 20,
       "re-export": 1,
       "struct": 2
      }
@@ -65687,7 +65688,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OfferCooldowns",
@@ -65698,7 +65699,7 @@
      "path": "src/models/cooldown.rs",
      "purpose": "Offers a provider refused for a quota or a limit (OF-305)",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 27,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -65811,7 +65812,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 7,
       "struct": 1
      }
@@ -65827,7 +65828,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 14,
       "struct": 3
      }
@@ -65843,7 +65844,7 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 5,
-      "fn": 17,
+      "fn": 18,
       "re-export": 13,
       "struct": 2
      }
@@ -65992,8 +65993,11 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "HealthState",
+      "LimitHold",
       "ModelsStatus",
       "ProviderStatus",
+      "RungHealth",
       "RungStatus",
       "SeatState",
       "SeatStatus"
@@ -66001,9 +66005,9 @@
      "path": "src/models/status.rs",
      "purpose": "What the model runtime built, for the owner-facing status route",
      "surface": {
-      "crate-vis": 6,
-      "enum": 1,
-      "struct": 4
+      "crate-vis": 7,
+      "enum": 2,
+      "struct": 6
      }
     },
     {
@@ -66037,13 +66041,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/walk.rs",
      "purpose": "What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -67798,7 +67802,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 29,
+   "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 492,
    "test_files": 182
