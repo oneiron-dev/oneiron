@@ -196,6 +196,14 @@ export class Oneiron {
       /** One person the vault knows, by their pr handle. */
       get: (input: Facade.PersonRequest): Facade.PersonRow => this.#call(() => this.#client.vaultPeopleGet(input) as Facade.PersonRow),
     },
+    shape: {
+      /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+      read: (input: Facade.EmptyRequest = {}): Facade.ShapeRead => this.#call(() => this.#client.vaultShapeRead(input) as Facade.ShapeRead),
+      /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+      plan: (input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan),
+      /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
+      apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
+    },
     /**
    * Witnesses one conversational turn.
    *
@@ -344,6 +352,12 @@ export class Oneiron {
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
+    records: {
+      /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
+      erase_preview: (input: Facade.RecordEraseRequest): Facade.RecordErasePreview => this.#call(() => this.#client.vaultRecordsErasePreview(input) as Facade.RecordErasePreview),
+      /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
+      erase_confirm: (input: Facade.RecordEraseConfirmRequest): Facade.RecordEraseOutcome => this.#call(() => this.#client.vaultRecordsEraseConfirm(input) as Facade.RecordEraseOutcome),
+    },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
       place: (input: Facade.LegalHoldPlaceRequest): Facade.LegalHold => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as Facade.LegalHold),
@@ -418,7 +432,7 @@ export class Oneiron {
       activate: (input: Facade.LensActivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesActivate(input) as Facade.LensActivationReceipt),
       /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
       deactivate: (input: Facade.LensDeactivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesDeactivate(input) as Facade.LensActivationReceipt),
-      /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. */
+      /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
       list: (input: Facade.LensListRequest): Facade.LensListPage => this.#call(() => this.#client.vaultLensesList(input) as Facade.LensListPage),
       /** Composes the default vault lens from the named sources, read under the caller's own scope. */
       default: (input: Facade.LensDefaultRequest): Facade.ScopedReadResult<Facade.GeneratedLens> => this.#call(() => this.#client.vaultLensesDefault(input) as Facade.ScopedReadResult<Facade.GeneratedLens>),

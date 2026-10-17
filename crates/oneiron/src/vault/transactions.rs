@@ -552,7 +552,7 @@ impl Vault {
     pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
         check_generic_sync_state_key(key)?;
         self.with_write_txn_grouped(|wtxn| {
-            crate::side_table::host_sync_state_put(&self.store, wtxn, key, value)
+            crate::side_table::host_sync_state_put(self, wtxn, key, value)
         })
     }
 
@@ -566,7 +566,7 @@ impl Vault {
         value: &[u8],
     ) -> Result<()> {
         check_generic_sync_state_key(key)?;
-        crate::side_table::host_sync_state_put(&self.store, wtxn, key, value)
+        crate::side_table::host_sync_state_put(self, wtxn, key, value)
     }
 
     /// Deletes a key from the sync_state database for diagnostics and

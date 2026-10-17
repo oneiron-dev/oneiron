@@ -44,6 +44,7 @@ mod shared_act_doors;
 mod shared_member_doors;
 #[cfg(test)]
 pub(super) mod tests;
+mod vault_shape_doors;
 mod wave_doors;
 mod weave_doors;
 mod widen_proposal_doors;
@@ -310,7 +311,11 @@ async fn facade_call_receipt(
     let Ok(auth) = CoreAuth::from_request_parts(&mut parts, &server).await else {
         return next.run(Request::from_parts(parts, body)).await;
     };
-    let anonymous = call_receipt::in_anonymous_session(&server, &parts.headers);
+    // OF-063: the no-record exception serves only a caller verified in the
+    // session, judged on arrival and again before the receipt is written.
+    let principal = call_receipt::request_principal(&auth);
+    let session_headers = parts.headers.clone();
+    let anonymous = call_receipt::in_anonymous_session(&server, &session_headers, principal);
     let verb = parts.uri.path().trim_start_matches('/').to_owned();
     // The handler reads these same bytes. A body past the facade's limit
     // reaches it empty and is refused there as malformed, as it was before.
@@ -369,6 +374,8 @@ async fn facade_call_receipt(
             code: format!("HTTP_{}", status.as_u16()),
         },
     };
+    let anonymous =
+        anonymous || call_receipt::in_anonymous_session(&server, &session_headers, principal);
     let (actor_ref, actor_class) = call_receipt::call_actor(&auth);
     let stamp = call_receipt::record(
         &server,
@@ -1079,6 +1086,35 @@ struct FacadeErrorBody {
     /// on an ask with the invocation and the ask, or hidden.
     #[serde(skip_serializing_if = "Option::is_none")]
     hook: Option<Box<VerbHookStop>>,
+}
+
+/// The OpenAPI mirror of a facade refusal's body ([`FacadeErrorEnvelope`]):
+/// the engine's `MemoryError` as the wire carries it, `code` spelled as the
+/// engine spells it. A route that answers with [`FacadeApiError`] names it as
+/// that refusal's body.
+#[derive(utoipa::ToSchema)]
+#[expect(
+    dead_code,
+    reason = "OpenAPI schema mirror; a refusal serializes FacadeErrorEnvelope"
+)]
+pub(crate) struct MemoryErrorEnvelopeSchema {
+    error: MemoryErrorBodySchema,
+    narrowing: Option<crate::api::read_receipt::ReadReceiptSchema>,
+}
+
+/// The OpenAPI mirror of [`FacadeErrorBody`].
+#[derive(utoipa::ToSchema)]
+#[expect(
+    dead_code,
+    reason = "OpenAPI schema mirror; a refusal serializes FacadeErrorBody"
+)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MemoryErrorBodySchema {
+    code: String,
+    message: String,
+    request_id: String,
+    suggestions: Vec<String>,
+    receipt_ref: Option<String>,
 }
 
 impl FacadeApiError {

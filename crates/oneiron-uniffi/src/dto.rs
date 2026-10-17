@@ -651,12 +651,16 @@ pub struct MemoryItem {
 }
 
 /// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct CitedMessage {
     /// The message's short ref, the one its witness receipt returned.
     pub short_id: String,
     /// The message's text (capped), as the turn's text revision pins it.
     pub value_text: String,
+    /// The message as a typed record ref, the one the reader's read of it
+    /// admitted (OF-063): the generated facade record. It carries no
+    /// revision pin.
+    pub record: Option<crate::RecordRef>,
 }
 
 /// What the requested scope excluded.

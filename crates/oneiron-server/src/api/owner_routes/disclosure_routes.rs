@@ -4,7 +4,10 @@
 //! frozen offer with the exact canonical delta it was shown, and answers it
 //! once, standing or deny. The owner also narrows or revokes a standing
 //! clearance, pre-clears a named trusted set, turns the disclosure-mode knob,
-//! and answers the unknown-attendee "who is this?" ask. Each act is the
+//! and answers the unknown-attendee "who is this?" ask. At a person's or
+//! speaker's first entry into a chat or room (ILDF2 P5), the owner reads the
+//! entry and answers it once: a standing clearance with the history the
+//! entry sees, or no. Each act is the
 //! engine's own under the proof `owner` hands it, and the engine writes every
 //! receipt. A contact clearance's registry row is
 //! `contact_clearance:<contact hex>`, revoked by
@@ -21,6 +24,7 @@ use oneiron::consent::{
     CONTACT_CLEARANCE_REVOKE_COMMAND, ContactClearanceAct, ContactDisclosureOutcome,
     DisclosureConfirmationReceipt, DisclosureOfferMode, contact_clearance_ref,
 };
+use oneiron::conversation::{ContainerAttendee, HistoryChoice};
 use oneiron::disclosure::AttendeeIdentityChoice;
 use oneiron::federation::Scope;
 use serde::{Deserialize, Serialize};
@@ -41,6 +45,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/disclosure/preclear", post(preclear))
         .route("/disclosure/mode", get(mode).put(set_mode))
         .route("/disclosure/attendee", post(attendee))
+        .route("/disclosure/entry", get(entry))
+        .route("/disclosure/entry/confirm", post(confirm_entry))
+        .route("/disclosure/entry/decline", post(decline_entry))
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +162,58 @@ struct AttendeeResolved {
     choice: String,
     /// The private `disclosure.attendee_identity` CLAIM that records it.
     identity_ref: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EntryQuery {
+    /// The chat or room, as 32 hex.
+    container: String,
+    /// The PERSON who entered, as 32 hex; else the unplaced speaker's keys.
+    #[serde(default)]
+    person: Option<String>,
+    #[serde(default)]
+    session_key: Option<String>,
+    #[serde(default)]
+    speaker_key: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct EntryView {
+    entry_ref: String,
+    container: String,
+    attendee: ContainerAttendee,
+    roster_revision: u64,
+    /// Engine time of the first entry: the attendee's history cut.
+    entered_at: u64,
+    /// Who the owner said an unplaced speaker is, as 32 hex or `unknown`;
+    /// absent while unanswered and for a person.
+    identity: Option<String>,
+    /// The owner already answered this entry.
+    decided: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfirmEntry {
+    /// The entry fact, as 32 hex.
+    entry_ref: String,
+    /// The frozen offer for the entry's contact.
+    proposal_ref: String,
+    /// Lowercase hex of the canonical delta the owner was shown.
+    expected_delta: String,
+    /// `inherit` (the room's rule, from now when it sets none), `share` or
+    /// `none`.
+    #[serde(default)]
+    history: HistoryChoice,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclineEntry {
+    entry_ref: String,
+    proposal_ref: String,
+    expected_delta: String,
 }
 
 /// One clearance act's receipt, as the Gate receipt family records it.
@@ -425,4 +484,101 @@ async fn attendee(
     })
     .await?;
     Ok(Json(resolved))
+}
+
+/// `GET /v1/owner/disclosure/entry?container=..&person=..` (or
+/// `&session_key=..&speaker_key=..`): one attendee's first entry into a chat
+/// or room, the P5 question the owner answers once.
+async fn entry(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<EntryQuery>, QueryRejection>,
+) -> OwnerReply<EntryView> {
+    owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let view = blocking(move || -> OwnerResult<EntryView> {
+        let container = entity_id("container", &query.container)?;
+        let attendee = match (&query.person, query.session_key, query.speaker_key) {
+            (Some(person), None, None) => ContainerAttendee::Person(entity_id("person", person)?),
+            (None, Some(session_key), Some(speaker_key)) => ContainerAttendee::Speaker {
+                session_key,
+                speaker_key,
+            },
+            _ => {
+                return Err(OwnerError::Invalid(
+                    "name either person or both session_key and speaker_key".to_owned(),
+                ));
+            }
+        };
+        let entry = server
+            .vault()
+            .container_attendee_entry(container, &attendee)?
+            .ok_or_else(|| OwnerError::NotFound("attendee entry", query.container.clone()))?;
+        Ok(EntryView {
+            entry_ref: entry.entry_ref.to_hex(),
+            container: entry.container.to_hex(),
+            attendee: entry.attendee,
+            roster_revision: entry.roster_revision,
+            entered_at: entry.entered_at,
+            identity: entry.identity.map(|choice| match choice {
+                AttendeeIdentityChoice::Contact(contact) => contact.to_hex(),
+                AttendeeIdentityChoice::Unknown => {
+                    oneiron::disclosure::ATTENDEE_UNKNOWN_OPTION.to_owned()
+                }
+            }),
+            decided: entry.decided,
+        })
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+/// `POST /v1/owner/disclosure/entry/confirm`: the owner's yes to one entry's
+/// P5 question: the entry's contact is cleared standing under the frozen
+/// offer, the entry sees the history chosen, and the entry is decided once.
+async fn confirm_entry(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ConfirmEntry>, JsonRejection>,
+) -> OwnerReply<ClearanceReceipt> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
+        let entry_ref = entity_id("entry_ref", &request.entry_ref)?;
+        let delta = delta_bytes(&request.expected_delta)?;
+        Ok(server
+            .vault()
+            .confirm_container_attendee(
+                &owner,
+                &entry_ref,
+                &request.proposal_ref,
+                &delta,
+                request.history,
+            )?
+            .into())
+    })
+    .await?;
+    Ok(Json(receipt))
+}
+
+/// `POST /v1/owner/disclosure/entry/decline`: the owner's no to one entry's
+/// P5 question: the offer settles denied, nothing widens, and the entry is
+/// decided once.
+async fn decline_entry(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<DeclineEntry>, JsonRejection>,
+) -> OwnerReply<ClearanceReceipt> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
+        let entry_ref = entity_id("entry_ref", &request.entry_ref)?;
+        let delta = delta_bytes(&request.expected_delta)?;
+        Ok(server
+            .vault()
+            .deny_container_attendee(&owner, &entry_ref, &request.proposal_ref, &delta)?
+            .into())
+    })
+    .await?;
+    Ok(Json(receipt))
 }
