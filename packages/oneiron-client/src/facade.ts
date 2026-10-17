@@ -947,12 +947,12 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         }),
         wake_policy: {
           /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
-          set: (input: Facade.WakePolicySetRequest, options?: O): FacadeReturns<"vault.settings.wake_policy.set">[K] => invoke("vault.settings.wake_policy.set", input, options),
+          set: (input: Facade.WakePolicySetRequest, options?: O): FacadeReturns<"vault.settings.wake_policy.set">[K] => invoke("vault.settings.wake_policy.set", input, options, newInvocation()),
         },
         /** Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling. */
-        inference_defaults: Object.assign((input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.settings.inference_defaults">[K] => invoke("vault.settings.inference_defaults", input, options), {
+        inference_defaults: Object.assign((input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.settings.inference_defaults">[K] => invoke("vault.settings.inference_defaults", input, options, newInvocation()), {
           /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
-          replace: (input: Facade.InferenceDefaultsReplaceRequest, options?: O): FacadeReturns<"vault.settings.inference_defaults.replace">[K] => invoke("vault.settings.inference_defaults.replace", input, options),
+          replace: (input: Facade.InferenceDefaultsReplaceRequest, options?: O): FacadeReturns<"vault.settings.inference_defaults.replace">[K] => invoke("vault.settings.inference_defaults.replace", input, options, newInvocation()),
         }),
       },
       lenses: {
