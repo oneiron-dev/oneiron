@@ -9,6 +9,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub(crate) const LIVEQUERY_RING_CAPACITY: usize = 1024;
+/// The local path every notification view follows: notification puts and
+/// marks commit to LMDB, so the refresh re-derives these views on its local
+/// cadence, as it does the owner feed.
+pub(crate) const NOTIFICATIONS_PATH: &str = "notifications";
 const MAX_RING_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) struct DerivedView {
@@ -817,6 +821,13 @@ impl LiveQueries {
                     // The synthetic local-LMDB poll is not a Loro change.
                     // It must never re-derive unrelated recall/receipt subs.
                     if path == "owner-feed" && state.subs[id].channel != Channel::OwnerFeed {
+                        continue;
+                    }
+                    // Likewise the local notification poll re-derives only
+                    // notification views.
+                    if path == NOTIFICATIONS_PATH
+                        && state.subs[id].channel != Channel::Notifications
+                    {
                         continue;
                     }
                     if !relevant

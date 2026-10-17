@@ -132,6 +132,17 @@ impl Memory<'_> {
         let now = self.vault.store.clock.now_recorded_at();
         let occurred_at = input.occurred_at.unwrap_or(now);
         let learned_at = input.learned_at.unwrap_or(now);
+        let key = MemoryKey {
+            subject,
+            input,
+            world,
+            relationship,
+        };
+        // OF-023: a want derived from behaviour is minted beside the stated
+        // one, never over it. Only the replacing doors (commit, upsert) take
+        // this path; the seed and proposal doors replace nothing.
+        let beside_stated =
+            auto_supersede && crate::claim::is_observed_preference(Some(source), &input.predicate);
 
         // ADVISORY only (ONE-1936): this lookup runs outside the transaction,
         // so the prior it names may already be closed by the time the write
@@ -139,7 +150,7 @@ impl Memory<'_> {
         // that txn — and a refusal there rolls the staged replacement back
         // with it.
         let prior = if auto_supersede {
-            self.find_prior_claim(&subject, input, &id)?
+            self.find_prior_claim(&key, &id, beside_stated)?
         } else {
             None
         };
@@ -234,6 +245,14 @@ impl Memory<'_> {
                             "memory.claim.supersede",
                         )?;
                     }
+                    // OF-023: every standing stated peer on this key, read in
+                    // this transaction rather than taken from the advisory
+                    // lookup. Each one whose answer differs opens a conflict.
+                    let stated_conflicts = if beside_stated {
+                        self.stated_preference_conflicts_in_txn(content.read(), &key, id, &value)?
+                    } else {
+                        Vec::new()
+                    };
                     let publication_write =
                         input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
                     // OF-187: a promise recorded here owes its reminders, so a
@@ -286,6 +305,15 @@ impl Memory<'_> {
                                 learned_at,
                             )
                         })?;
+                    }
+                    if !stated_conflicts.is_empty() {
+                        self.open_preference_conflicts_in_txn(
+                            content,
+                            id,
+                            &stated_conflicts,
+                            &closure_envelope,
+                            learned_at,
+                        )?;
                     }
                     if commitment_write {
                         content.finish_claim_support(id, |txn| {
@@ -365,33 +393,17 @@ impl Memory<'_> {
         })
     }
 
-    /// Prior-claim match for auto-supersede: `subject+scope+predicate`,
-    /// extended with `value.question_id` for declared multi-cardinality
-    /// predicates (B1c). Deterministic when multiple actives match: the
-    /// newest id (UUIDv7 order) wins.
+    /// Prior-claim match for auto-supersede: the standing head on `key`.
+    /// Deterministic when multiple actives match: the newest id (UUIDv7
+    /// order) wins. A write held `beside_stated` (OF-023) never replaces a
+    /// `UserStated` head, so those are passed over.
     fn find_prior_claim(
         &self,
-        subject: &EntityId,
-        input: &ClaimInput,
+        key: &MemoryKey<'_>,
         exclude: &EntityId,
+        beside_stated: bool,
     ) -> MemoryResult<Option<EntityId>> {
-        let multi_key = if MULTI_CARDINALITY_PREDICATES.contains(&input.predicate.as_str()) {
-            Some(input.value.get(MULTI_CARDINALITY_VALUE_KEY).cloned())
-        } else {
-            None
-        };
-        let new_scope = input.scope.clone();
-        let world = input
-            .world_ref
-            .as_deref()
-            .map(|r| self.resolve_ref(r))
-            .transpose()?;
-        let relationship = input
-            .relationship_ref
-            .as_deref()
-            .map(|r| self.resolve_ref(r))
-            .transpose()?;
-        let ids = self.vault.claims_for_subject(subject)?;
+        let ids = self.vault.claims_for_subject(&key.subject)?;
         let mut best: Option<EntityId> = None;
         for id in ids {
             if id == *exclude {
@@ -400,26 +412,9 @@ impl Memory<'_> {
             let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
-            if body.lifecycle != ClaimLifecycleStatus::Active
-                || !matches!(
-                    body.approval,
-                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                )
-                || body.predicate != input.predicate
-                || body.world != world
+            if !key.stands(&body) || (beside_stated && body.source == Some(ClaimSource::UserStated))
             {
                 continue;
-            }
-            let prior_scope = body.scope.as_ref().map(msgpack_value_to_json);
-            if prior_scope != new_scope || body.world != world || body.rel != relationship {
-                continue;
-            }
-            if let Some(new_qid) = &multi_key {
-                let prior_value = msgpack_value_to_json(&body.value);
-                let prior_qid = prior_value.get(MULTI_CARDINALITY_VALUE_KEY).cloned();
-                if prior_qid != *new_qid {
-                    continue;
-                }
             }
             best = match best {
                 Some(current) if current.to_hex() >= id.to_hex() => Some(current),
@@ -428,6 +423,164 @@ impl Memory<'_> {
         }
         Ok(best)
     }
+
+    /// OF-023: the standing `UserStated` peers on `key` whose answer differs
+    /// from the observed `value`, read in the write transaction. Every peer
+    /// counts, not one advisory newest prior. An incoming id that already
+    /// names a stated claim is refused: holding the pair takes two ids.
+    fn stated_preference_conflicts_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        key: &MemoryKey<'_>,
+        id: EntityId,
+        value: &Value,
+    ) -> crate::Result<Vec<EntityId>> {
+        if self
+            .vault
+            .get_claim_in_txn(rtxn, &id)?
+            .is_some_and(|existing| existing.source == Some(ClaimSource::UserStated))
+        {
+            return Err(Error::InvalidClaimBody(
+                "an observed preference cannot reuse a user-stated claim's id",
+            ));
+        }
+        let mut conflicts = Vec::new();
+        for peer in self.vault.claims_for_subject_in_txn(rtxn, &key.subject)? {
+            let Some(body) = self.vault.get_claim_in_txn(rtxn, &peer)? else {
+                continue;
+            };
+            if body.source == Some(ClaimSource::UserStated)
+                && key.stands(&body)
+                && !answers_agree(value, &body.value)
+            {
+                conflicts.push(peer);
+            }
+        }
+        Ok(conflicts)
+    }
+
+    /// OF-023: one `core.conflict.open` marker per disagreeing stated peer,
+    /// naming `[observed, stated]` under the pair's deterministic id, so a
+    /// replay finds its marker and writes nothing. The marker is signed on
+    /// its own and lands through this actor's content transaction.
+    fn open_preference_conflicts_in_txn(
+        &self,
+        content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
+        observed: EntityId,
+        stated: &[EntityId],
+        envelope: &crate::WriteEnvelope,
+        now: u64,
+    ) -> crate::Result<()> {
+        let body = self
+            .vault
+            .get_claim_in_txn(content.read(), &observed)?
+            .ok_or(Error::EntityNotFound)?;
+        for old in stated {
+            let marker = crate::claim::conflict_marker(&observed, old, &body, envelope)?;
+            if marker.landed_in_txn(self.vault, content.read())? {
+                continue;
+            }
+            let crate::claim::ConflictMarker {
+                id,
+                candidate,
+                mut envelope,
+            } = marker;
+            // The facade's own signer first; a host-retained one otherwise,
+            // as the supersession coaching writer signs its marker.
+            self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
+            self.vault.sign_retained_machine_claim_in_txn(
+                content.read(),
+                &id,
+                &candidate,
+                &mut envelope,
+            )?;
+            content.apply_claim_ops(
+                vec![BatchOp::ClaimCandidate {
+                    id,
+                    candidate: Box::new(candidate),
+                    envelope,
+                    occurred: TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    learned_at: now,
+                    internal_lexical_query_hint: false,
+                }],
+                self.vault.text_index_trusted.load(Ordering::Acquire),
+                ApplyOpsGateMode::new(true, true),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// The memory key a prior claim shares with an incoming one: subject,
+/// predicate, world, relationship and exact scope, extended with
+/// `value.question_id` for declared multi-cardinality predicates (B1c).
+struct MemoryKey<'a> {
+    subject: EntityId,
+    input: &'a ClaimInput,
+    world: Option<EntityId>,
+    relationship: Option<EntityId>,
+}
+
+impl MemoryKey<'_> {
+    /// Whether `body` is a standing head on this key: Active, and Auto or
+    /// Approved. The caller enumerates `subject`'s claims.
+    fn stands(&self, body: &ClaimBody) -> bool {
+        if body.lifecycle != ClaimLifecycleStatus::Active
+            || !matches!(
+                body.approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
+            || body.predicate != self.input.predicate
+            || body.world != self.world
+            || body.rel != self.relationship
+            || body.scope.as_ref().map(msgpack_value_to_json) != self.input.scope
+        {
+            return false;
+        }
+        if !MULTI_CARDINALITY_PREDICATES.contains(&self.input.predicate.as_str()) {
+            return true;
+        }
+        let question = |value: &serde_json::Value| value.get(MULTI_CARDINALITY_VALUE_KEY).cloned();
+        question(&msgpack_value_to_json(&body.value)) == question(&self.input.value)
+    }
+}
+
+/// OF-023: whether an observed preference gives the stated one's answer.
+/// Canon names a normalized answer key without pinning it, so this is the
+/// one place that decides: text compares blind to case and spacing (the
+/// Dreamer's `normalize_text` rule), maps compare whatever their key order,
+/// and every other value, structured qualifiers included, must match.
+fn answers_agree(observed: &Value, stated: &Value) -> bool {
+    match (observed, stated) {
+        (Value::String(a), Value::String(b)) => match (a.as_str(), b.as_str()) {
+            (Some(a), Some(b)) => fold_answer_text(a) == fold_answer_text(b),
+            _ => a == b,
+        },
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| answers_agree(a, b))
+        }
+        (Value::Map(a), Value::Map(b)) => {
+            a.len() == b.len() && a.iter().all(|(k, v)| entry_agrees(b, k, v))
+        }
+        _ => observed == stated,
+    }
+}
+
+/// Whether `map` holds `key` with an answer that agrees with `value`.
+fn entry_agrees(map: &[(Value, Value)], key: &Value, value: &Value) -> bool {
+    map.iter()
+        .find(|(k, _)| k == key)
+        .is_some_and(|(_, v)| answers_agree(v, value))
+}
+
+fn fold_answer_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// Extracts the write-envelope actor stamped into a claim's evidence

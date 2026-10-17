@@ -10,8 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use oneiron::llm::media::{
-    AiMediaDoor, AiOperation, MediaBackend, MediaCaps, MediaFuture, MediaJobState, MediaRequest,
-    MediaResponse, Modality,
+    AiOperation, MediaBackend, MediaCaps, MediaJobState, MediaRequest, MediaResponse, Modality,
 };
 use oneiron::llm::run_admission::{HostAccount, MediaGate, RunPermit, RunReceiptSink};
 use oneiron::llm::{SingleRouteBackend, SingleSend, VoiceBackendBinding};
@@ -260,9 +259,14 @@ pub struct MediaTicket {
     pub operation: AiOperation,
 }
 
-/// A job a poll or a cancel reaches: held here, or ended and kept.
+/// A job a poll or a cancel reaches: held here running, held here ended
+/// with an end the vault has not kept yet, or ended and kept.
+#[derive(Clone)]
 enum Held {
     Running(Arc<tokio::sync::Mutex<HeldJob>>),
+    /// Its end, answered from here while each poll writes it again: its
+    /// permit is spent, so it is never polled or paid for again.
+    Unkept(MediaJobState),
     Ended(MediaJobState),
 }
 
@@ -272,7 +276,8 @@ pub struct MediaRuntime {
     meter: Option<BudgetGuard>,
     receipts: Arc<dyn RunReceiptSink>,
     host: Option<Arc<HostAccount>>,
-    jobs: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>>,
+    /// The jobs held here: running, or ended and not kept yet.
+    jobs: Mutex<BTreeMap<String, Held>>,
     /// Where the jobs are kept, so a restart loses none (FIX-LIST 465).
     store: Option<JobStore>,
     /// Each job seat's rungs, by engine id: the rung a kept job is taken up
@@ -300,6 +305,9 @@ impl Drop for MediaRuntime {
             return;
         }
         for job in self.lock_jobs().values() {
+            let Held::Running(job) = job else {
+                continue;
+            };
             let Ok(mut job) = job.try_lock() else {
                 continue;
             };
@@ -651,8 +659,8 @@ impl MediaRuntime {
             model: job.model.to_string(),
             operation,
         };
-        if let (Some(store), Some(request)) = (&self.store, sent) {
-            store.put(
+        if let (Some(store), Some(request)) = (&self.store, sent)
+            && let Err(error) = store.put(
                 &id,
                 JobRow {
                     model: job.model.clone(),
@@ -662,20 +670,28 @@ impl MediaRuntime {
                     ended: None,
                     receipt: job.receipt.clone(),
                 },
-            );
+            )
+        {
+            tracing::error!(%error, ticket = %id, "a media job was not kept: it runs held here");
         }
         self.lock_jobs()
-            .insert(id, Arc::new(tokio::sync::Mutex::new(job)));
+            .insert(id, Held::Running(Arc::new(tokio::sync::Mutex::new(job))));
         Ok(ticket)
     }
 
     /// Where job `id` stands. A job that ended keeps its end, and every poll
     /// answers it until its caller deletes the job; without a vault it is
-    /// answered once. A job a restart left running is taken up again on a
+    /// answered once. An end the vault refuses is held here and answered
+    /// from here, and each poll writes it again; the job is never polled or
+    /// paid for again. A job a restart left running is taken up again on a
     /// fresh permit, and nothing is sent again.
     pub async fn poll(&self, id: &str) -> LlmResult<MediaJobState> {
         let job = match self.held(id)? {
             Held::Running(job) => job,
+            Held::Unkept(state) => {
+                self.keep_end(id, &state);
+                return Ok(state);
+            }
             Held::Ended(state) => return Ok(state),
         };
         let mut held = job.lock().await;
@@ -688,15 +704,41 @@ impl MediaRuntime {
         if let Ok(state) = &state
             && state.ended()
         {
-            if let Some(store) = &self.store
-                && let Some(mut row) = store.get(id)
-            {
-                row.ended = Some(state.clone());
-                store.put(id, row);
-            }
-            self.lock_jobs().remove(id);
+            self.keep_end(id, state);
         }
         state
+    }
+
+    /// Keeps job `id`'s end `state` in its row, the row and its clips in one
+    /// write, and lets the job go from here. An end the vault refuses, or a
+    /// job whose row was never kept, stays held here with its end, for the
+    /// next poll to answer and write again. A job dropped meanwhile stays
+    /// dropped.
+    fn keep_end(&self, id: &str, state: &MediaJobState) {
+        let kept = self
+            .store
+            .as_ref()
+            .map_or(Ok(()), |store| -> Result<(), String> {
+                let mut row = store
+                    .get(id)
+                    .ok_or_else(|| "its row is not kept".to_owned())?;
+                row.ended = Some(state.clone());
+                store.put(id, row)
+            });
+        let mut jobs = self.lock_jobs();
+        match kept {
+            Ok(()) => {
+                jobs.remove(id);
+            }
+            Err(error) => {
+                tracing::error!(%error, ticket = id, "a media job's end is held, not kept");
+                if let Some(held) = jobs.get_mut(id)
+                    && matches!(held, Held::Running(_))
+                {
+                    *held = Held::Unkept(state.clone());
+                }
+            }
+        }
     }
 
     /// Stops job `id` at its provider and drops it, its kept row with it.
@@ -709,7 +751,7 @@ impl MediaRuntime {
         }
         let job = match held? {
             Held::Running(job) => job,
-            Held::Ended(_) => return Ok(()),
+            Held::Unkept(_) | Held::Ended(_) => return Ok(()),
         };
         let stopped = job.lock().await.cancel().await;
         stopped
@@ -719,8 +761,8 @@ impl MediaRuntime {
     /// ended is taken up again here, once: a poll racing this one finds it
     /// held.
     fn held(&self, id: &str) -> LlmResult<Held> {
-        if let Some(job) = self.lock_jobs().get(id) {
-            return Ok(Held::Running(Arc::clone(job)));
+        if let Some(held) = self.lock_jobs().get(id) {
+            return Ok(held.clone());
         }
         let row = self
             .store
@@ -731,12 +773,12 @@ impl MediaRuntime {
             return Ok(Held::Ended(state));
         }
         let mut jobs = self.lock_jobs();
-        if let Some(job) = jobs.get(id) {
-            return Ok(Held::Running(Arc::clone(job)));
+        if let Some(held) = jobs.get(id) {
+            return Ok(held.clone());
         }
-        let job = Arc::new(tokio::sync::Mutex::new(self.take_up(&row)?));
-        jobs.insert(id.to_owned(), Arc::clone(&job));
-        Ok(Held::Running(job))
+        let job = Held::Running(Arc::new(tokio::sync::Mutex::new(self.take_up(&row)?)));
+        jobs.insert(id.to_owned(), job.clone());
+        Ok(job)
     }
 
     /// Takes up every kept job a restart left running, so each one's
@@ -753,8 +795,11 @@ impl MediaRuntime {
         }
     }
 
-    /// The end job `id`'s row keeps.
+    /// The end job `id` holds here, or its row keeps.
     fn ended(&self, id: &str) -> LlmResult<MediaJobState> {
+        if let Some(Held::Unkept(state)) = self.lock_jobs().get(id) {
+            return Ok(state.clone());
+        }
         self.store
             .as_ref()
             .and_then(|store| store.get(id))
@@ -807,9 +852,7 @@ impl MediaRuntime {
         })
     }
 
-    fn lock_jobs(
-        &self,
-    ) -> std::sync::MutexGuard<'_, BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>> {
+    fn lock_jobs(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Held>> {
         self.jobs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -874,14 +917,6 @@ impl super::ModelRuntime {
         }
         rows.extend(self.media.options(operation, inputs));
         rows
-    }
-}
-
-/// Engine code's media door (an image asset's generation): each call is a
-/// run of its own on the media meter, rung by rung through the media gate.
-impl AiMediaDoor for MediaRuntime {
-    fn call<'a>(&'a self, request: MediaRequest) -> MediaFuture<'a, MediaResponse> {
-        Box::pin(self.run(request))
     }
 }
 

@@ -1361,7 +1361,8 @@ effect leaves the vault: at a cut it abstains and goes up.
 A computer step runs on the run's own desktop guest, a Linux desktop the
 `[desktop]` section names (`runtime`, a digest-pinned `image` built from
 `crates/oneiron-container/guest/desktop`, and the same bounds as
-`[browser]`). The section is refused on macOS: the guest never runs on, or
+`[browser]`). Its `build.sh` builds the image on a Linux host, pushes it
+nowhere, and prints the local image id to pin (its README.md). The section is refused on macOS: the guest never runs on, or
 drives, the owner's own desktop. A program drives it with `self.desktop.*`:
 the browser's verbs over one window's accessibility tree (`open` takes
 `app:<name>` from the guest's app set), plus `key`, `hotkey`, `scroll`,
