@@ -36,6 +36,15 @@ qualification passes.
    followed by `/v1/hooks/line/webhook`), and turn webhooks on, so messages
    reach the agent. Each delivery is verified
    with the channel secret before it is kept.
+6. Tell the owner how the agent's messages go out once the send permission
+   is allowed. An answer to a message that just arrived goes as a free reply.
+   A later message goes as a push, and pushes count against the account
+   plan's monthly message allowance. A free account needs nothing more. For
+   a paid or enterprise plan, the host's operator names the plan and its
+   monthly allowance in the host's config (`[line]`: `plan` and
+   `monthly_push_allowance`). Past the allowance the agent asks whether
+   everything is okay and still sends; LINE itself refuses a free plan's
+   pushes past it.
 
 ## When the check fails
 

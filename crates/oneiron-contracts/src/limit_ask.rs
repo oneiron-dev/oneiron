@@ -76,11 +76,17 @@ pub enum EngineLimit {
     /// step keys external `tasks.wait` calls bind, or the waiting steps of
     /// one run branch.
     AskWaitIdentities,
+    /// Messages a LINE Official Account has sent this month, as LINE counts
+    /// them (`totalUsage`), read before each push. The bound is the account
+    /// plan's monthly push allowance (`[line]`), told at the send itself.
+    /// Past it the push still goes: a paid plan bills the overage, and LINE
+    /// itself refuses a free plan's.
+    LinePushMonthly,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -97,6 +103,7 @@ impl EngineLimit {
         Self::AskReminders,
         Self::AnswerProvenanceRefs,
         Self::AskWaitIdentities,
+        Self::LinePushMonthly,
     ];
 
     /// The config key that sets the row.
@@ -118,6 +125,7 @@ impl EngineLimit {
             Self::AskReminders => "limits.ask_reminders",
             Self::AnswerProvenanceRefs => "limits.answer_provenance_refs",
             Self::AskWaitIdentities => "limits.ask_wait_identities",
+            Self::LinePushMonthly => "line.monthly_push_allowance",
         }
     }
 
@@ -140,6 +148,8 @@ impl EngineLimit {
             Self::AskReminders => 65_536,
             Self::AnswerProvenanceRefs => 65_536,
             Self::AskWaitIdentities => 1 << 20,
+            // LINE's free plan allowance, as the plan row defaults.
+            Self::LinePushMonthly => 200,
         }
     }
 }

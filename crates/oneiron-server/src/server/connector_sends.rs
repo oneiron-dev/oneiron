@@ -49,9 +49,10 @@ impl SyncServer {
                 continue;
             };
             let vault = Arc::clone(self.vault());
+            let line_push_allowance = self.config.line.monthly_push_allowance();
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                send_pass(&vault)
+                send_pass(&vault, line_push_allowance)
             })
             .await;
             let wait = match pass {
@@ -85,8 +86,9 @@ impl SyncServer {
 }
 
 /// One pass: every claimable send, then the instant the next one is ready.
-fn send_pass(vault: &Vault) -> oneiron::Result<Option<u64>> {
-    let mut sink = ServedChannelSink::new(vault)?;
+/// A LINE push is counted against the account plan's monthly allowance.
+fn send_pass(vault: &Vault, line_push_allowance: u32) -> oneiron::Result<Option<u64>> {
+    let mut sink = ServedChannelSink::new(vault)?.with_line_push_allowance(line_push_allowance);
     let delivered = vault
         .run_connector_task_executor(&mut sink, unix_now())
         .map_err(|error| oneiron::Error::InvalidConfig(error.to_string()))?;

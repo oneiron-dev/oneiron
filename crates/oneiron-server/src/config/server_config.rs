@@ -11,6 +11,7 @@ use super::failure_signals::FailureSignalsConfig;
 use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
 use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
+use super::line::LineConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
@@ -116,6 +117,9 @@ pub struct SyncServerConfig {
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
+    /// `[line]`: the plan of the LINE Official Account the built-in LINE
+    /// pack serves, and the pushes it includes each month.
+    pub line: LineConfig,
 }
 
 impl Default for SyncServerConfig {
@@ -150,6 +154,7 @@ impl Default for SyncServerConfig {
             limits: LimitsConfig::default(),
             feedback_inbox: FeedbackInboxConfig::default(),
             runtime: RuntimeConfig::default(),
+            line: LineConfig::default(),
         }
     }
 }
@@ -225,6 +230,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("limits", &self.limits)
             .field("feedback_inbox", &self.feedback_inbox)
             .field("runtime", &self.runtime)
+            .field("line", &self.line)
             .finish()
     }
 }
@@ -326,6 +332,9 @@ pub struct ServeConfig {
     /// The `[embedding]` section: spaces and kind slots seeded at start,
     /// absent until the config file names it.
     pub embedding: Option<super::EmbeddingConfig>,
+    /// The `[line]` section: the LINE Official Account's plan, a free
+    /// account unless the config file names one.
+    pub line: LineConfig,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -396,6 +405,7 @@ impl Default for ServeConfig {
             native_mail: None,
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
+            line: server.line,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -471,6 +481,7 @@ impl fmt::Debug for ServeConfig {
             .field("native_mail", &self.native_mail)
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
+            .field("line", &self.line)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -519,6 +530,7 @@ impl ServeConfig {
             limits: self.limits.clone(),
             feedback_inbox: self.feedback.inbox,
             runtime: self.runtime.clone(),
+            line: self.line,
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
             tracing::warn!(

@@ -40,9 +40,10 @@ pub(crate) fn spawn(
                 let vault = Arc::clone(server.vault());
                 let handles = Arc::clone(&server.builtin_handles);
                 let base = server.config.oauth_resource_indicator.clone();
+                let line = server.config.line;
                 let pass = tokio::task::spawn_blocking(move || {
                     let _admission = admission;
-                    handles.reconcile(&vault, base.as_deref());
+                    handles.reconcile(&vault, base.as_deref(), &line);
                 })
                 .await;
                 if let Err(error) = pass {
