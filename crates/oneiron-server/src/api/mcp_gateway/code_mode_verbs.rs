@@ -31,7 +31,14 @@
 //! desktop guest, a Linux desktop the `[desktop]` section names, under the
 //! same pack, grants and decider. Its screenshots answer an `ai.verdict`
 //! as the browser's do.
+//!
+//! An effect's receipt screenshot is kept for the call's own caller as a
+//! blob artifact version when the receipt is made ([`ReceiptWriter`]), so it
+//! outlives the guest's image queue and the guest.
 
+mod receipt_evidence;
+
+use self::receipt_evidence::ReceiptWriter;
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
 use super::admission::{
     mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
@@ -454,6 +461,7 @@ impl RunBrowser {
         input: Value,
         decider: LadderDecider,
         library: VaultLibrary,
+        writer: ReceiptWriter,
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
@@ -472,6 +480,7 @@ impl RunBrowser {
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
         driver.set_decider(Box::new(decider));
         driver.set_library(Box::new(library));
+        driver.set_receipt_sink(Box::new(writer));
         drive_run_guest(&self.vault, self.run_id, driver, verb, input)
     }
 }
@@ -495,6 +504,7 @@ impl RunDesktop {
         verb: AgentVerb,
         input: Value,
         decider: LadderDecider,
+        writer: ReceiptWriter,
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
@@ -513,6 +523,7 @@ impl RunDesktop {
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
         driver.set_decider(Box::new(decider));
+        driver.set_receipt_sink(Box::new(writer));
         drive_run_guest(&self.vault, self.run_id, driver, verb, input)
     }
 }
@@ -589,6 +600,7 @@ impl RunGuests {
                 Ok(hooks) => hooks,
                 Err(error) => return refused(super::mcp_facade_error(error)),
             };
+        let writer = ReceiptWriter::new(server, asker.clone(), origin, memory.invocation(), run_id);
         let decider = LadderDecider {
             server: Arc::clone(server),
             asker,
@@ -597,13 +609,13 @@ impl RunGuests {
             run_id,
         };
         let called = match (&self.desktop, &self.browser) {
-            (Some(run), _) if desktop => run.call(call.verb, hooks.args.clone(), decider),
+            (Some(run), _) if desktop => run.call(call.verb, hooks.args.clone(), decider, writer),
             (_, Some(run)) if !desktop => {
                 let library = VaultLibrary {
                     server: Arc::clone(server),
                     by,
                 };
-                run.call(call.verb, hooks.args.clone(), decider, library)
+                run.call(call.verb, hooks.args.clone(), decider, library, writer)
             }
             _ => Err(BrowserError::Unbound),
         };

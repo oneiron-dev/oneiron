@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 319 code-mode rows (301 host rows, 18 run rows), 1092 declarations.
+// Census: 319 code-mode rows (301 host rows, 18 run rows), 1093 declarations.
 // Replies: 259 fully typed, 47 typed down to an opaque serde_json::Value leaf, 12 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
@@ -855,7 +855,8 @@ declare namespace Sdk {
   type ConnectorSchemaReply = { source: string; foreign: boolean; input_schema?: unknown | null; destructive?: boolean | null; reasons?: string[] };
   type OpenInput = { url: string };
   type Row = { ref: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null };
+  type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null };
   type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number };
   type Observation = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean };
   type ObserveInput = { since?: number | null };
