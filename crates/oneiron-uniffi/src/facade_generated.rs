@@ -1120,6 +1120,66 @@ export_facade! {
     let output = client.vault_artifacts_put(&input)?;
     Lift::lift(output)
 };
+"vault.artifacts.body.import" => fn vault_artifacts_body_import(&self, input: OfficeBodyImportRequest) -> OfficeBodyHead = |client| {
+    let input: oneiron::office_body::OfficeBodyImportRequest = crate::codec::lower_record("vault.artifacts.body.import", input)?;
+    let output = client.vault_artifacts_body_import(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.import", &output)
+};
+"vault.artifacts.body.head" => fn vault_artifacts_body_head(&self, input: OfficeBodyArtifactRequest) -> Option<OfficeBodyHead> = |client| {
+    let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.head", input)?;
+    let output = client.vault_artifacts_body_head(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.head", &output)
+};
+"vault.artifacts.body.read" => fn vault_artifacts_body_read(&self, input: OfficeBodyReadRequest) -> OfficeBodyView = |client| {
+    let input: oneiron::office_body::OfficeBodyReadRequest = crate::codec::lower_record("vault.artifacts.body.read", input)?;
+    let output = client.vault_artifacts_body_read(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.read", &output)
+};
+"vault.artifacts.body.commits" => fn vault_artifacts_body_commits(&self, input: OfficeBodyArtifactRequest) -> Vec<TextCommitReceipt> = |client| {
+    let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.commits", input)?;
+    let output = client.vault_artifacts_body_commits(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.commits", &output)
+};
+"vault.artifacts.body.edit" => fn vault_artifacts_body_edit(&self, input: OfficeBodyEditRequest) -> OfficeBodyEdit = |client| {
+    let input: oneiron::office_body::OfficeBodyEditRequest = crate::codec::lower_record("vault.artifacts.body.edit", input)?;
+    let output = client.vault_artifacts_body_edit(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.edit", &output)
+};
+"vault.artifacts.body.fork.open" => fn vault_artifacts_body_fork_open(&self, input: OfficeBodyForkOpenRequest) -> OfficeBodyFork = |client| {
+    let input: oneiron::office_body::OfficeBodyForkOpenRequest = crate::codec::lower_record("vault.artifacts.body.fork.open", input)?;
+    let output = client.vault_artifacts_body_fork_open(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.fork.open", &output)
+};
+"vault.artifacts.body.fork.edit" => fn vault_artifacts_body_fork_edit(&self, input: OfficeBodyForkEditRequest) -> OfficeBodyEdit = |client| {
+    let input: oneiron::office_body::OfficeBodyForkEditRequest = crate::codec::lower_record("vault.artifacts.body.fork.edit", input)?;
+    let output = client.vault_artifacts_body_fork_edit(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.fork.edit", &output)
+};
+"vault.artifacts.body.fork.diff" => fn vault_artifacts_body_fork_diff(&self, input: OfficeBodyForkRequest) -> OfficeBodyDiff = |client| {
+    let input: oneiron::office_body::OfficeBodyForkRequest = crate::codec::lower_record("vault.artifacts.body.fork.diff", input)?;
+    let output = client.vault_artifacts_body_fork_diff(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.fork.diff", &output)
+};
+"vault.artifacts.body.fork.merge" => fn vault_artifacts_body_fork_merge(&self, input: OfficeBodyForkMergeRequest) -> OfficeBodyDiff = |client| {
+    let input: oneiron::office_body::OfficeBodyForkMergeRequest = crate::codec::lower_record("vault.artifacts.body.fork.merge", input)?;
+    let output = client.vault_artifacts_body_fork_merge(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.fork.merge", &output)
+};
+"vault.artifacts.body.fork.discard" => fn vault_artifacts_body_fork_discard(&self, input: OfficeBodyForkRequest) -> OfficeBodyFork = |client| {
+    let input: oneiron::office_body::OfficeBodyForkRequest = crate::codec::lower_record("vault.artifacts.body.fork.discard", input)?;
+    let output = client.vault_artifacts_body_fork_discard(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.fork.discard", &output)
+};
+"vault.artifacts.body.export" => fn vault_artifacts_body_export(&self, input: OfficeBodyExportVerbRequest) -> OfficeBodyExportView = |client| {
+    let input: oneiron::office_body::OfficeBodyExportVerbRequest = crate::codec::lower_record("vault.artifacts.body.export", input)?;
+    let output = client.vault_artifacts_body_export(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.export", &output)
+};
+"vault.artifacts.body.preview" => fn vault_artifacts_body_preview(&self, input: OfficeBodyArtifactRequest) -> XlsxPreview = |client| {
+    let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.preview", input)?;
+    let output = client.vault_artifacts_body_preview(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.preview", &output)
+};
 "vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionView = |client| {
     let input: oneiron::task_verb::sdk::AppendBlobVersionRequest = (artifact_ref, content, run_ref, occurred_at, learned_at).lower()?;
     let output = client.vault_artifacts_append(&input)?;
@@ -1164,5 +1224,15 @@ export_facade! {
     let input: oneiron::task_verb::sdk::EditNoteRequest = crate::codec::lower_record("vault.notes.edit", input)?;
     let output = client.vault_notes_edit(&input)?;
     crate::codec::lift_record("vault.notes.edit", &output)
+};
+"vault.notes.seal" => fn vault_notes_seal(&self, input: NoteRefRequest) -> NoteSeal = |client| {
+    let input: oneiron::note::NoteRefRequest = crate::codec::lower_record("vault.notes.seal", input)?;
+    let output = client.vault_notes_seal(&input)?;
+    crate::codec::lift_record("vault.notes.seal", &output)
+};
+"vault.notes.lifecycle" => fn vault_notes_lifecycle(&self, input: NoteRefRequest) -> NoteLifecycleView = |client| {
+    let input: oneiron::note::NoteRefRequest = crate::codec::lower_record("vault.notes.lifecycle", input)?;
+    let output = client.vault_notes_lifecycle(&input)?;
+    crate::codec::lift_record("vault.notes.lifecycle", &output)
 };
 }
