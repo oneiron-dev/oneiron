@@ -103,6 +103,17 @@ impl SessionHintCarrier {
     }
 }
 
+/// One timer lane a tick source arms, as [`TickSource::note_armed`] names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArmedLane {
+    /// The attempt-queue deadline [`HybridTick`](crate::HybridTick) sleeps toward.
+    Queue,
+    /// The wake policy's one quiet timer ([`WakePolicyTicks`](crate::WakePolicyTicks)).
+    Policy,
+    /// The open session's expiry ([`SessionTicks`](crate::SessionTicks)).
+    Session,
+}
+
 /// Source of wakeups for the supervisor. Signature pinned by the
 /// agent-runtime design doc: `async fn next_tick(&mut self) -> Option<Tick>`.
 /// `None` means the source is exhausted — nothing can ever wake the driver
@@ -139,6 +150,14 @@ pub trait TickSource {
     fn take_delivered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
         None
     }
+
+    /// Records the wall-clock instant (unix milliseconds) `lane` is armed
+    /// for now, `None` when it arms nothing. A decorator passes it to its
+    /// inner source; the push lane keeps the earliest across lanes for
+    /// [`HintPusher::next_wake`](crate::HintPusher::next_wake), so a host
+    /// that suspends the process can arm its own timer for it. Sources
+    /// without a push lane keep the default: nothing is recorded.
+    fn note_armed(&mut self, _lane: ArmedLane, _at_ms: Option<u64>) {}
 }
 
 // ---------------------------------------------------------------------------

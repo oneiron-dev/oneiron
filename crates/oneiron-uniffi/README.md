@@ -107,8 +107,11 @@ omitted write time is stamped with the current Unix second at the call.
 
 Host-door rows are exported like every other row. An embedded handle answers
 them with the row's own embedded `call`; the ones only a server's state can
-answer (its model seats, the owner proof) refuse there, typed. Running the
-full server inside an app over `EmbeddedHost` is not wired yet.
+answer (its model seats, the owner proof) refuse there, typed. The full
+server runs inside an app through `oneiron_server::embedded::serve_embedded`
+over `EmbeddedHost` (one duplex stream per connection), sharing the app's one
+open vault with SDK handles through `OneironClient::attach`; this binding
+does not call it yet.
 
 ## Toolchain pin
 

@@ -21,8 +21,10 @@ use crate::error::{bad_request, sdk_error, transport_error, vault_locked};
 
 /// One native vault and the options it was opened with. The engine Vault
 /// itself owns the lease, so server and embedded Arc holders obey one lifetime.
+/// It is shared by `Arc`, so an embedded server and the SDK handles over it
+/// hold one opened vault ([`attach_shared`]).
 pub(crate) struct SharedVault {
-    vault: Vault,
+    vault: Arc<Vault>,
     options: OpenOptions,
 }
 
@@ -214,9 +216,82 @@ fn open_uncontended(canonical: &Path, options: &OpenOptions) -> Result<SharedVau
     vault.install_default_keystore(canonical);
     STORE_OPEN_COUNT.fetch_add(1, Ordering::Relaxed);
     Ok(SharedVault {
-        vault,
+        vault: Arc::new(vault),
         options: options.clone(),
     })
+}
+
+/// Joins the shared registry with a vault the host already opened at
+/// `path` (an embedded server's), so SDK handles and that server hold ONE
+/// opened vault and no second `Vault::open*` of the path ever runs.
+///
+/// The host's vault must hold its writer lease in this process, as
+/// `Vault::open_owned` takes it, on this directory. `options` are what an
+/// SDK `open` of this vault would name: a later same-PID `open` of the path
+/// joins under the I9 rule, comparing against them. A path already in the
+/// registry joins only when it is this same vault; the host's keystore is
+/// left as the host installed it.
+pub(crate) fn attach_shared(
+    path: &Path,
+    vault: Arc<Vault>,
+    options: &OpenOptions,
+) -> Result<Arc<SharedVault>, MemoryError> {
+    REGISTRY.check_pid()?;
+    if let Some(dimensions) = options.dimensions {
+        check_dimensions(dimensions)?;
+    }
+    let canonical = path.canonicalize().map_err(|error| {
+        sdk_error(
+            MEMORY_CODE_INTERNAL,
+            format!(
+                "could not resolve vault directory {}: {error}",
+                path.display()
+            ),
+            &["Attach at the directory the host opened."],
+        )
+    })?;
+    let Some(lease) = vault.writer_lease() else {
+        return Err(bad_request(
+            format!(
+                "the vault at {} was not opened as this process's owner",
+                canonical.display()
+            ),
+            &["Open the vault with Vault::open_owned before attaching to it."],
+        ));
+    };
+    if !lease.held_by_current_process() {
+        return Err(vault_locked());
+    }
+    lease
+        .validate_directory(&canonical)
+        .map_err(MemoryError::from)?;
+
+    let mut registry = REGISTRY.guard()?;
+    if let Some(existing) = registry.get(&canonical).and_then(Weak::upgrade) {
+        if !Arc::ptr_eq(&existing.vault, &vault) {
+            return Err(bad_request(
+                format!(
+                    "{} is already open in this process as another vault",
+                    canonical.display()
+                ),
+                &["Attach the SDK to the vault this process already opened."],
+            ));
+        }
+        if existing.options != *options {
+            return Err(divergent_options_error(
+                &canonical,
+                &existing.options,
+                options,
+            ));
+        }
+        return Ok(existing);
+    }
+    let shared = Arc::new(SharedVault {
+        vault,
+        options: options.clone(),
+    });
+    registry.insert(canonical, Arc::downgrade(&shared));
+    Ok(shared)
 }
 
 /// Maps a lease refusal, and ONLY lease contention, to the single-writer code.
@@ -278,6 +353,23 @@ impl EmbeddedClient {
     /// own identity.
     pub(crate) fn open(path: Option<&Path>, options: &OpenOptions) -> Result<Self, MemoryError> {
         let shared = open_shared(path, options)?;
+        let actor = shared.vault().ensure_embedded_owner_actor()?;
+        Ok(Self {
+            shared,
+            actor,
+            actor_class: EdgeActorClass::Human,
+            room_turn: None,
+        })
+    }
+
+    /// [`Self::open`] over a vault the host already opened at `path`
+    /// ([`attach_shared`]), bound to the same generic embedded owner actor.
+    pub(crate) fn attach(
+        path: &Path,
+        vault: Arc<Vault>,
+        options: &OpenOptions,
+    ) -> Result<Self, MemoryError> {
+        let shared = attach_shared(path, vault, options)?;
         let actor = shared.vault().ensure_embedded_owner_actor()?;
         Ok(Self {
             shared,

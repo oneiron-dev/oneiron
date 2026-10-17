@@ -453,6 +453,16 @@ impl AiHost {
         let _ = self.pass_admission.set(admit);
     }
 
+    /// The running Dreamer's next wake: the earliest instant (unix
+    /// milliseconds) its queue, wake-policy and session-expiry lanes are
+    /// armed for, `None` while none is, updated as they re-arm. `None` when
+    /// no Dreamer runs. A host that may suspend the process arms its own
+    /// timer for it and wakes the Dreamer through
+    /// [`AiHandle::attempt_queued`].
+    pub(crate) fn next_wake(&self) -> Option<tokio::sync::watch::Receiver<Option<u64>>> {
+        self.handle.hints.as_ref().map(|hints| hints.next_wake())
+    }
+
     /// Builds every seat from `models` and starts the workers those seats can
     /// serve. Every model call they make is admitted as a run whose receipts
     /// are written to the log.
