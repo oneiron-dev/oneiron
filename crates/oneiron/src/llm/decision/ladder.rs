@@ -352,6 +352,8 @@ pub struct HumanDecisionRequest {
     pub queue_pin: ProviderPin,
     /// Who the ask goes to, as the caller bound it ([`DecisionLadder::ask_to`]).
     pub to: AskTo,
+    /// The work the ask decides, as the caller named it ([`DecisionLadder::correlation`]).
+    pub correlation: Option<EntityId>,
 }
 
 impl HumanDecisionRequest {
@@ -536,6 +538,10 @@ pub struct DecisionLadder<'a> {
     /// Who the person rung's ask goes to; none is the vault's owners ([`AskTo::owner`]).
     /// The caller binds it from trusted context, never the model.
     pub ask_to: Option<&'a AskTo>,
+    /// The host's versioned paired question ("does this need more thinking?"). A provider
+    /// that reads it jointly (the house read) holds its own; a generated read asks it
+    /// beside each of the call's questions in the same generation.
+    pub paired: Option<&'a DecisionQuestion>,
     /// The host's versioned person question ("ask a person?"). When the dial reaches the
     /// person and the policy has a person row, every read asks it beside the call's
     /// questions as its own typed question.
@@ -543,6 +549,11 @@ pub struct DecisionLadder<'a> {
     /// The host's versioned presence question ("is the target in the image?"). A Box or
     /// Point call through [`Self::run_located`] asks it first.
     pub presence: Option<&'a DecisionQuestion>,
+    /// The work this call decides, as the caller names it (one conflict, one correction
+    /// pack). The ask its person rung queues carries it, so two calls over the same
+    /// question, principal and evidence that decide different work keep apart asks. The
+    /// caller binds it from trusted context, never the model.
+    pub correlation: Option<EntityId>,
 }
 
 impl DecisionLadder<'_> {
@@ -832,6 +843,15 @@ impl DecisionLadder<'_> {
                 return Err(invalid("invalid person question"));
             }
         }
+        if let Some(paired) = self.paired {
+            paired.validate()?;
+            if paired.contract != AnswerContract::Noul
+                || questions.iter().any(|question| question.id == paired.id)
+                || person.is_some_and(|person| person.id == paired.id)
+            {
+                return Err(invalid("invalid paired question"));
+            }
+        }
         let rows = questions
             .iter()
             .map(|question| policy.resolve(question, reversibility, dial.band))
@@ -846,6 +866,7 @@ impl DecisionLadder<'_> {
             dial,
             rows,
             person_row,
+            paired: self.paired,
             person,
             policy,
             reversibility,
@@ -1033,6 +1054,7 @@ impl DecisionLadder<'_> {
                 prior,
                 queue_pin: self.human_pin.clone(),
                 to: self.ask_to.cloned().unwrap_or_else(AskTo::owner),
+                correlation: self.correlation,
             })?;
             readings.pins.push(self.human_pin.clone());
             human_ask = Some(reason);
@@ -1358,6 +1380,8 @@ pub(super) struct OpenPack<'a> {
     dial: DecisionDial,
     rows: Vec<LearnedBand>,
     person_row: Option<PersonThreshold>,
+    /// The paired question, asked beside each of the pack's by a generated read.
+    pub(super) paired: Option<&'a DecisionQuestion>,
     /// The person question, asked beside the pack's when the dial reaches the person.
     pub(super) person: Option<&'a DecisionQuestion>,
     policy: &'a DecisionBandPolicy,

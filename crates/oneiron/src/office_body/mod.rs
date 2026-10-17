@@ -26,6 +26,7 @@
 mod docx;
 mod fork;
 mod pptx;
+mod verbs;
 mod xlsx;
 
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
@@ -33,10 +34,17 @@ pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDi
 pub use oneiron_docedit::xlsx_body::{XlsxArea, XlsxBook, XlsxLock, XlsxStyle, XlsxValue};
 pub(crate) use pptx::live_refused;
 pub use pptx::{PptxBody, PptxExport, PptxReview};
+pub use verbs::{
+    DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyEditRequest,
+    OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest,
+    OfficeBodyForkMergeRequest, OfficeBodyForkOpenRequest, OfficeBodyForkRequest,
+    OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyReadRequest, OfficeBodyView, XlsxBodyView,
+    XlsxSheetView,
+};
 pub use xlsx::{BodyCell, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
 
 use crate::Vault;
-use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance};
+use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance, CalcEngineStamp};
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
@@ -116,7 +124,7 @@ pub struct OfficeBodyHead {
 
 /// One call's commit: the new frontier, the ids it minted in operation order
 /// (paragraphs, deck nodes; none for a workbook), and its receipt.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeBodyEdit {
     pub frontier: Vec<u8>,
     pub minted: Vec<String>,
@@ -159,6 +167,9 @@ pub struct OfficeBodyExportRequest<'a> {
     /// The revision author a DOCX export shows; recorded for every export.
     pub author: &'a str,
     pub run_ref: &'a str,
+    /// The envelope the export version carries; `None` gives it the
+    /// exporter's own.
+    pub made_by: Option<&'a MadeBy>,
 }
 
 /// An export version and the exact body it projects. The version keeps a
@@ -188,7 +199,7 @@ pub struct OfficeBodyExport {
 }
 
 /// The workbook an XLSX export would land now, recalculated, read back.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct XlsxPreview {
     pub frontier: Vec<u8>,
     pub book: XlsxBook,
@@ -583,14 +594,20 @@ impl Vault {
             if self.head_in_txn(wtxn, artifact)?.frontier != head.frontier {
                 return Err(invalid("the body moved during the export; export again"));
             }
-            let version = self.append_blob_artifact_version_in_txn(
+            // The version carries the calculator that computed its cached
+            // values and the export's envelope (ARCH-0075 calculation;
+            // ARCH-0078 made_by).
+            let version = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
                 wtxn,
                 artifact,
                 &bytes,
                 &provenance,
+                recalc.as_ref(),
                 request.actor,
                 TimeRange { start: at, end: at },
                 at,
+                None,
+                request.made_by,
             )?;
             let record = OfficeBodyExportRecord {
                 artifact: *artifact,
@@ -601,7 +618,7 @@ impl Vault {
                 author: request.author.to_owned(),
                 at,
                 changes: changes as u64,
-                recalc,
+                recalc: recalc.as_ref().map(recalc_label),
             };
             EXPORTS.put(
                 &self.store,
@@ -637,7 +654,7 @@ impl Vault {
         Ok(XlsxPreview {
             frontier: head.frontier,
             book,
-            recalc,
+            recalc: recalc.as_ref().map(recalc_label),
         })
     }
 
@@ -660,7 +677,7 @@ impl Vault {
         head: &OfficeBodyHead,
         author: &str,
         at: u64,
-    ) -> Result<Option<(Vec<u8>, usize, Option<String>)>> {
+    ) -> Result<Option<(Vec<u8>, usize, Option<CalcEngineStamp>)>> {
         if head.kind == OfficeBodyKind::Pptx {
             return Err(invalid(
                 "a deck export is a proposal until its export gate opens: use export_pptx_body",
@@ -909,7 +926,11 @@ fn three_way(
 /// projected package, so the result is deterministic in both and no vault
 /// frontier reaches the file (OF-491). A workbook the engine refuses is marked
 /// to recalculate when it is opened instead.
-fn recalc_xlsx(bytes: &[u8], limits: Limits, at: u64) -> Result<(Vec<u8>, Option<String>)> {
+fn recalc_xlsx(
+    bytes: &[u8],
+    limits: Limits,
+    at: u64,
+) -> Result<(Vec<u8>, Option<CalcEngineStamp>)> {
     let mut seed = [0u8; 8];
     seed.copy_from_slice(&blake3::hash(bytes).as_bytes()[..8]);
     let clock = RecalcClock::new(timestamp(at)?, 0, u64::from_le_bytes(seed))
@@ -917,10 +938,10 @@ fn recalc_xlsx(bytes: &[u8], limits: Limits, at: u64) -> Result<(Vec<u8>, Option
     match FormualizerEngine::new().recalculate_xlsx(bytes, limits, &clock, None) {
         Ok(report) => Ok((
             report.bytes,
-            Some(format!(
-                "{} {}",
-                report.engine.engine, report.engine.version
-            )),
+            Some(CalcEngineStamp::new(
+                report.engine.engine,
+                report.engine.version,
+            )?),
         )),
         Err(_) => Ok((
             mark_full_calc(bytes, limits).map_err(|_| {
@@ -929,6 +950,11 @@ fn recalc_xlsx(bytes: &[u8], limits: Limits, at: u64) -> Result<(Vec<u8>, Option
             None,
         )),
     }
+}
+
+/// The calculator as the export record and the preview name it.
+fn recalc_label(stamp: &CalcEngineStamp) -> String {
+    format!("{} {}", stamp.engine(), stamp.version())
 }
 
 fn timestamp(at: u64) -> Result<chrono::DateTime<chrono::Utc>> {
