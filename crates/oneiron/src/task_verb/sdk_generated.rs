@@ -1273,6 +1273,78 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::BlobArtifactInput>(),
             ),
             (
+                "vault.artifacts.body.import",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyImportRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.head",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyArtifactRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyReadRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.commits",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyArtifactRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.edit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyEditRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.fork.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyForkOpenRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.fork.edit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyForkEditRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.fork.diff",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyForkRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.fork.merge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyForkMergeRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.fork.discard",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyForkRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyExportVerbRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyArtifactRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.append",
                 crate::code_run::vault_read::request_schema::<AppendBlobVersionRequest>(),
             ),
@@ -2979,6 +3051,90 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.body.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.head" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.commits" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.edit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.fork.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.fork.edit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.fork.diff" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.fork.merge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.fork.discard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.append" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3889,6 +4045,42 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.put" => {
             let _input: crate::memory::BlobArtifactInput = decode(value.clone())?;
         }
+        "vault.artifacts.body.import" => {
+            let _input: crate::office_body::OfficeBodyImportRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.head" => {
+            let _input: crate::office_body::OfficeBodyArtifactRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.read" => {
+            let _input: crate::office_body::OfficeBodyReadRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.commits" => {
+            let _input: crate::office_body::OfficeBodyArtifactRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.edit" => {
+            let _input: crate::office_body::OfficeBodyEditRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.fork.open" => {
+            let _input: crate::office_body::OfficeBodyForkOpenRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.fork.edit" => {
+            let _input: crate::office_body::OfficeBodyForkEditRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.fork.diff" => {
+            let _input: crate::office_body::OfficeBodyForkRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.fork.merge" => {
+            let _input: crate::office_body::OfficeBodyForkMergeRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.fork.discard" => {
+            let _input: crate::office_body::OfficeBodyForkRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.export" => {
+            let _input: crate::office_body::OfficeBodyExportVerbRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.preview" => {
+            let _input: crate::office_body::OfficeBodyArtifactRequest = decode(value.clone())?;
+        }
         "vault.artifacts.append" => {
             let input: AppendBlobVersionRequest = decode(value.clone())?;
             if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
@@ -4267,6 +4459,36 @@ pub fn invoke(
         }
         "vault.batch" => encode(vault_batch(memory, decode(value)?)?),
         "vault.artifacts.put" => encode(vault_artifacts_put(memory, decode(value)?)?),
+        "vault.artifacts.body.import" => {
+            encode(vault_artifacts_body_import(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.head" => encode(vault_artifacts_body_head(memory, decode(value)?)?),
+        "vault.artifacts.body.read" => encode(vault_artifacts_body_read(memory, decode(value)?)?),
+        "vault.artifacts.body.commits" => {
+            encode(vault_artifacts_body_commits(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.edit" => encode(vault_artifacts_body_edit(memory, decode(value)?)?),
+        "vault.artifacts.body.fork.open" => {
+            encode(vault_artifacts_body_fork_open(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.fork.edit" => {
+            encode(vault_artifacts_body_fork_edit(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.fork.diff" => {
+            encode(vault_artifacts_body_fork_diff(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.fork.merge" => {
+            encode(vault_artifacts_body_fork_merge(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.fork.discard" => {
+            encode(vault_artifacts_body_fork_discard(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.export" => {
+            encode(vault_artifacts_body_export(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.preview" => {
+            encode(vault_artifacts_body_preview(memory, decode(value)?)?)
+        }
         "vault.artifacts.append" => encode(vault_artifacts_append(memory, decode(value)?)?),
         "vault.artifacts.read" => encode(vault_artifacts_read(memory, decode(value)?)?),
         "vault.consolidation.enqueue" => {
@@ -6487,6 +6709,175 @@ pub fn vault_artifacts_put(
     input: crate::memory::BlobArtifactInput,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
     memory.put_blob_artifact(&input)
+}
+pub fn vault_artifacts_body_import(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyImportRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyHead> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.import",
+        &input,
+        &[
+            "/artifact_ref",
+            "/made_by/inputs/*/row",
+            "/made_by/trigger/task",
+            "/made_by/trigger/ask",
+            "/made_by/trigger/skill",
+        ],
+    )?;
+    memory.artifacts_body_import(&input)
+}
+pub fn vault_artifacts_body_head(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyArtifactRequest,
+) -> MemoryResult<Option<crate::office_body::OfficeBodyHead>> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.head",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_body_head(&input)
+}
+pub fn vault_artifacts_body_read(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyReadRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.read",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_body_read(&input)
+}
+pub fn vault_artifacts_body_commits(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyArtifactRequest,
+) -> MemoryResult<Vec<crate::provenance::text_commit::TextCommitReceipt>> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.commits",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_body_commits(&input)
+}
+pub fn vault_artifacts_body_edit(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyEditRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyEdit> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.edit",
+        &input,
+        &[
+            "/artifact_ref",
+            "/made_by/inputs/*/row",
+            "/made_by/trigger/task",
+            "/made_by/trigger/ask",
+            "/made_by/trigger/skill",
+        ],
+    )?;
+    memory.artifacts_body_edit(&input)
+}
+pub fn vault_artifacts_body_fork_open(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyForkOpenRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyFork> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.fork.open",
+        &input,
+        &["/artifact_ref", "/run_root_ref"],
+    )?;
+    memory.artifacts_body_fork_open(&input)
+}
+pub fn vault_artifacts_body_fork_edit(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyForkEditRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyEdit> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.fork.edit",
+        &input,
+        &[
+            "/artifact_ref",
+            "/fork_ref",
+            "/made_by/inputs/*/row",
+            "/made_by/trigger/task",
+            "/made_by/trigger/ask",
+            "/made_by/trigger/skill",
+        ],
+    )?;
+    memory.artifacts_body_fork_edit(&input)
+}
+pub fn vault_artifacts_body_fork_diff(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyForkRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyDiff> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.fork.diff",
+        &input,
+        &["/artifact_ref", "/fork_ref"],
+    )?;
+    memory.artifacts_body_fork_diff(&input)
+}
+pub fn vault_artifacts_body_fork_merge(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyForkMergeRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyDiff> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.fork.merge",
+        &input,
+        &["/artifact_ref", "/fork_ref"],
+    )?;
+    memory.artifacts_body_fork_merge(&input)
+}
+pub fn vault_artifacts_body_fork_discard(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyForkRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyFork> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.fork.discard",
+        &input,
+        &["/artifact_ref", "/fork_ref"],
+    )?;
+    memory.artifacts_body_fork_discard(&input)
+}
+pub fn vault_artifacts_body_export(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyExportVerbRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyExportView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.export",
+        &input,
+        &[
+            "/artifact_ref",
+            "/made_by/inputs/*/row",
+            "/made_by/trigger/task",
+            "/made_by/trigger/ask",
+            "/made_by/trigger/skill",
+        ],
+    )?;
+    memory.artifacts_body_export(&input)
+}
+pub fn vault_artifacts_body_preview(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyArtifactRequest,
+) -> MemoryResult<crate::office_body::XlsxPreview> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.preview",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_body_preview(&input)
 }
 pub fn vault_artifacts_append(
     memory: &Memory<'_>,
