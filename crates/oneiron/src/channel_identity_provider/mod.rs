@@ -25,8 +25,8 @@ pub use self::email_adapter::{
 };
 pub use self::inbound_types::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
-    ChannelIdentityProviderProvision, EmailProviderInbound, EmailThreadHeaders,
-    LineOfficialAccountInbound, SlackProviderInbound,
+    ChannelIdentityProviderProvision, EmailProviderInbound, EmailThreadHeaders, LineChat,
+    LineChatKind, LineOfficialAccountInbound, SlackProviderInbound,
 };
 pub use self::line_adapter::{
     LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier,

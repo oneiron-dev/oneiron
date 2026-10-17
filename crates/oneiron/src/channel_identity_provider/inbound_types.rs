@@ -171,8 +171,15 @@ pub struct LineOfficialAccountInbound {
     pub provider_event_id: String,
     /// LINE webhook `destination` value for the product OA.
     pub destination: String,
-    /// Provider-native LINE user id from the event source.
-    pub source_user_id: String,
+    /// Provider-native LINE user id from the event source. LINE leaves it
+    /// out of some group and room messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_user_id: Option<String>,
+    /// The group or room this message routes by: set when it goes to that
+    /// chat's own identity rather than its sender's. `None` routes per
+    /// sender, as a 1:1 message does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<LineChat>,
     #[serde(default, skip_serializing)]
     pub reply_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,6 +193,7 @@ impl fmt::Debug for LineOfficialAccountInbound {
             .field("provider_event_id", &self.provider_event_id)
             .field("destination", &self.destination)
             .field("source_user_id", &self.source_user_id)
+            .field("chat", &self.chat)
             .field(
                 "reply_token",
                 &self.reply_token.as_ref().map(|_| "[redacted]"),
@@ -208,7 +216,8 @@ impl LineOfficialAccountInbound {
         Self {
             provider_event_id: provider_event_id.into(),
             destination: destination.into(),
-            source_user_id: source_user_id.into(),
+            source_user_id: Some(source_user_id.into()),
+            chat: None,
             reply_token: None,
             payload_ref: None,
             received_at,
@@ -227,6 +236,78 @@ impl LineOfficialAccountInbound {
     pub fn with_payload_ref(mut self, payload_ref: impl Into<String>) -> Self {
         self.payload_ref = Some(payload_ref.into());
         self
+    }
+
+    /// Routes the message by its group or room's own identity.
+    #[must_use]
+    pub fn with_chat(mut self, chat: LineChat) -> Self {
+        self.chat = Some(chat);
+        self
+    }
+}
+
+/// The kind of LINE chat a shared message came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineChatKind {
+    /// A LINE group (`source.groupId`, `C…`).
+    Group,
+    /// A multi-person room (`source.roomId`, `R…`).
+    Room,
+}
+
+impl LineChatKind {
+    /// The `source.type` LINE names this kind by, and the address segment.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Group => "group",
+            Self::Room => "room",
+        }
+    }
+
+    /// Parses a LINE `source.type`; `None` for a 1:1 `user` or anything else.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "group" => Some(Self::Group),
+            "room" => Some(Self::Room),
+            _ => None,
+        }
+    }
+
+    /// The `source` field that names a chat of this kind.
+    #[must_use]
+    pub const fn id_field(self) -> &'static str {
+        match self {
+            Self::Group => "groupId",
+            Self::Room => "roomId",
+        }
+    }
+
+    /// The leading byte of a LINE id of this kind.
+    pub(super) const fn id_lead(self) -> u8 {
+        match self {
+            Self::Group => b'C',
+            Self::Room => b'R',
+        }
+    }
+}
+
+/// One LINE group or room, by its provider id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineChat {
+    pub kind: LineChatKind,
+    pub id: String,
+}
+
+impl LineChat {
+    #[must_use]
+    pub fn new(kind: LineChatKind, id: impl Into<String>) -> Self {
+        Self {
+            kind,
+            id: id.into(),
+        }
     }
 }
 

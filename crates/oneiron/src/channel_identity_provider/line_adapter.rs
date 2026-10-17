@@ -6,12 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use super::inbound_types::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
-    ChannelIdentityProviderProvision,
+    ChannelIdentityProviderProvision, LineChat,
 };
 use super::shared_validate::{
     DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, LINE_OFFICIAL_ACCOUNT_PROVIDER_KEY,
-    MAX_LINE_COMPONENT_BYTES, expect_line_inbound, line_shared_presence_address,
-    normalize_line_user_like_id, validate_line_inbound_metadata, validate_line_provision_intent,
+    MAX_LINE_COMPONENT_BYTES, expect_line_inbound, line_chat_address, line_shared_presence_address,
+    normalize_line_chat_id, normalize_line_user_like_id, validate_line_inbound_metadata,
+    validate_line_provision_intent,
 };
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, SelfHeldShape,
@@ -172,6 +173,35 @@ impl LineOfficialAccountAdapter {
         ))
     }
 
+    /// Builds a group or room's own shared_presence route key: every member's
+    /// message in that chat routes to the one agent bound to it.
+    pub fn address_for_line_chat(&self, chat: &LineChat) -> Result<String> {
+        let chat_id = normalize_line_chat_id(&chat.id, chat.kind)?;
+        Ok(line_chat_address(
+            &self.config.messaging_api_destination,
+            chat.kind,
+            &chat_id,
+        ))
+    }
+
+    /// Builds a requested chat-level persona identity on the shared product
+    /// OA, for the owner to bind a group or room to one agent.
+    pub fn requested_chat_identity(
+        &self,
+        agent_ref: EntityId,
+        chat: &LineChat,
+        requested_at: u64,
+    ) -> Result<ChannelIdentity> {
+        let address_or_handle = self.address_for_line_chat(chat)?;
+        Ok(ChannelIdentity::requested(
+            LINE_CHANNEL,
+            address_or_handle,
+            SelfHeldShape::SharedPresence,
+            ChannelIdentityBinding::agent(agent_ref),
+            requested_at,
+        ))
+    }
+
     fn provider_identity_ref(&self) -> String {
         format!("line-oa:{}", self.config.messaging_api_destination)
     }
@@ -229,18 +259,38 @@ impl ChannelIdentityProviderAdapter for LineOfficialAccountAdapter {
                 "LINE inbound destination is not managed by this adapter".to_owned(),
             ));
         }
-        let source_user_id = normalize_line_user_like_id(
-            &line.source_user_id,
-            "LINE source user id",
-            MAX_LINE_COMPONENT_BYTES,
-        )?;
-        let receiving_address_or_handle =
-            line_shared_presence_address(&destination, &source_user_id);
+        let source_user_id = line
+            .source_user_id
+            .as_deref()
+            .map(|user| {
+                normalize_line_user_like_id(user, "LINE source user id", MAX_LINE_COMPONENT_BYTES)
+            })
+            .transpose()?;
+        // A chat-routed message's party is the chat it is answered in, so a
+        // reply is admitted on that audience, not on whoever wrote.
+        let (receiving_address_or_handle, counterparty_key) = match (&line.chat, source_user_id) {
+            (Some(chat), _) => {
+                let chat_id = normalize_line_chat_id(&chat.id, chat.kind)?;
+                (
+                    line_chat_address(&destination, chat.kind, &chat_id),
+                    format!("line:{}:{chat_id}", chat.kind.as_str()),
+                )
+            }
+            (None, Some(user)) => (
+                line_shared_presence_address(&destination, &user),
+                format!("line:user:{user}"),
+            ),
+            (None, None) => {
+                return Err(Error::InvalidConfig(
+                    "LINE inbound names neither its sender nor a group or room".to_owned(),
+                ));
+            }
+        };
         let mut input = InboundSurfaceEventInput::new(
             line.provider_event_id,
             LINE_CHANNEL,
             receiving_address_or_handle,
-            SurfaceCounterpartyStamp::unknown(format!("line:user:{source_user_id}")),
+            SurfaceCounterpartyStamp::unknown(counterparty_key),
             line.received_at,
             true,
         );
