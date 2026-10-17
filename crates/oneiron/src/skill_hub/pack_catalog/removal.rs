@@ -5,8 +5,10 @@
 //! writes and its predicates lose their owner. The source, its CODE entities,
 //! its skill revisions and its history stay, so the pack installs again
 //! through the ordinary door, which brings back the skills removal retired.
-//! A built-in goes back to its seeded Candidate and qualifies again on its
-//! checked setup.
+//! Its setup sessions end too: the grants their permissions minted are
+//! revoked with the owner's receipts, while stored credentials stay in
+//! custody. A built-in goes back to its seeded Candidate and qualifies again
+//! on a fresh checked setup.
 use super::{PackInstallReceipt, admission, invalid};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Raw, SideTable};
@@ -32,6 +34,7 @@ impl Vault {
             self.disable_pack_hooks_in_txn(txn, owner, pack)?;
             self.retire_pack_skills_in_txn(txn, &receipt, at)?;
             self.uninstall_pack_kinds_in_txn(txn, &receipt.kinds)?;
+            self.end_pack_setup_sessions_in_txn(txn, Some(owner), pack, &receipt.content_hash)?;
             for predicate in &receipt.predicates {
                 // Only a row still naming this pack is its own; an update
                 // that moved the predicate already rewrote it.

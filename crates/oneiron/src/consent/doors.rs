@@ -711,6 +711,27 @@ impl Vault {
         Ok(receipt)
     }
 
+    /// [`Self::revoke_consent_grant`] as one step of a larger owner act in
+    /// the caller's write transaction (a pack's removal ends its setup
+    /// grants). A row that is missing or no longer live writes nothing and
+    /// returns `None`.
+    pub(crate) fn revoke_consent_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        grant_ref: &str,
+    ) -> Result<Option<ConsentReceipt>> {
+        if !revoke_standing_grant_in_txn(&self.store, wtxn, grant_ref)? {
+            return Ok(None);
+        }
+        let receipt = ConsentReceipt::Revoked {
+            decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
+            grant_ref: grant_ref.to_owned(),
+        };
+        self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
+        Ok(Some(receipt))
+    }
+
     /// Records quiet in-bound standing reuse — the post-hoc receipt an owner
     /// sees for an auto-shared facet or an auto-run action.
     ///
