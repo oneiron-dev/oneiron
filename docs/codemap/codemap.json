@@ -34505,7 +34505,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 18,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -34543,6 +34543,30 @@
       "crate-vis": 8,
       "fn": 3,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphAskDeclined",
+      "GraphAskOutcome",
+      "GraphAskRequest",
+      "GraphAskSelection",
+      "QuestionAnswersRequest",
+      "QuestionCreateRequest",
+      "QuestionEditRequest",
+      "QuestionPauseRequest",
+      "QuestionPaused",
+      "QuestionReadRequest"
+     ],
+     "path": "src/receipt/questions.rs",
+     "purpose": "OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 9
      }
     },
     {
@@ -44165,7 +44189,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 179
+      "fn": 185
      }
     },
     {
@@ -49574,7 +49598,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50038,7 +50062,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3022,
+   "source_files": 3023,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57712,7 +57736,7 @@
      "path": "src/facade/boundary.rs",
      "purpose": "JS-boundary guards: error constructors, timestamp/number narrowing, blob ceiling",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -57752,7 +57776,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 153
+      "fn": 159
      }
     },
     {
@@ -57803,6 +57827,7 @@
       "NapiMemoryItem",
       "NapiMemoryPack",
       "NapiMemoryProvenance",
+      "NapiMentionProvenance",
       "NapiNeighborHit",
       "NapiNeighborHits",
       "NapiNeighborOpts",
@@ -57825,7 +57850,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 52
+      "struct": 53
      }
     },
     {
@@ -58765,7 +58790,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 154
+      "fn": 160
      }
     },
     {
@@ -61238,13 +61263,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/graph_ask_doors.rs",
+     "purpose": "OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -67126,7 +67161,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 253,
+     "files": 254,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67436,7 +67471,7 @@
    },
    "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 481,
+   "source_files": 482,
    "test_files": 182
   },
   "oneiron-spawn": {
