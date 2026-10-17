@@ -365,10 +365,12 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Result<SelfDispatchOutcome> {
         // A hook's view of an earlier call is never this call's.
         *self.hook_view.borrow_mut() = None;
-        // The descriptor bridge answers before the policy probe: that probe is
-        // itself a vault read, and `self.context` must perform none.
+        // The descriptor bridge answers before the policy probe and the door:
+        // a descriptor is no effect, so neither rules on it. Its own verb
+        // hooks run around it on canonical storage, reading as the run's
+        // actor; with none bound to it, it performs no read.
         if matches!(call, SelfCall::Context(_)) {
-            return self.dispatch_effect(call, site, None);
+            return self.dispatch_hooked(call, site, None);
         }
         // The halt rule and the door rule inside the bracket: a run whose
         // participant left the room hears `NotInRoom`, never their verdict.

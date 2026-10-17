@@ -169,6 +169,15 @@ A `key_secret` provider answers whole chat replies only for now: a streamed chat
 call to it is refused before it starts. Its media calls go through the same
 broker (§10).
 
+A managed vault (`serve --managed-by-hypnos`) reads no config file and no
+environment. Its supervisor passes the models table as `--models-file <path>`.
+The path is absolute and names a TOML file that holds only the `[models]`
+table, written as above. Relative `prompt_file` paths resolve beside it. Every
+provider there names its key with `key_secret`; a `key_env` provider or a
+`[models.decisions.system_one]` seat (whose bearer is an environment variable)
+stops the vault at start. Without the flag a managed vault runs with no model
+seats: its ladder is the rule table and the owner's asks.
+
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
