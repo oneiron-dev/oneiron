@@ -45431,7 +45431,7 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 35
      }
     },
@@ -45529,7 +45529,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 260
+      "fn": 262
      }
     },
     {
@@ -45631,6 +45631,26 @@
       "crate-vis": 6,
       "enum": 1,
       "struct": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EraseHeldBytes",
+      "EraseLfsChunk",
+      "EraseSameBytesRow",
+      "EraseShare",
+      "RecordEraseConfirmRequest",
+      "RecordEraseOutcome",
+      "RecordErasePreview",
+      "RecordEraseRequest"
+     ],
+     "path": "src/task_verb/sdk_record_erase.rs",
+     "purpose": "The served erase of one record (OF-150 / OF-163): `vault.records.erase_preview` shows what an erase would…",
+     "surface": {
+      "fn": 3,
+      "struct": 8
      }
     },
     {
@@ -51401,7 +51421,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 117,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51557,7 +51577,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3116,
+   "source_files": 3117,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59428,7 +59448,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 215
+      "fn": 217
      }
     },
     {
@@ -60444,7 +60464,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 216
+      "fn": 218
      }
     },
     {
@@ -63171,7 +63191,7 @@
      "path": "src/api/facade/shared_member_doors.rs",
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -70295,6 +70315,10 @@
       "EmbeddingSpaceRequest",
       "EraseAskKind",
       "EraseAskStatus",
+      "EraseHeldBytes",
+      "EraseLfsChunk",
+      "EraseSameBytesRow",
+      "EraseShare",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
       "ExpectedSpend",
@@ -70538,6 +70562,10 @@
       "ReasoningCause",
       "ReceiptKind",
       "ReceiptRecord",
+      "RecordEraseConfirmRequest",
+      "RecordEraseOutcome",
+      "RecordErasePreview",
+      "RecordEraseRequest",
       "RecordLinks",
       "RecordLinksRequest",
       "RecordRef",
@@ -70736,6 +70764,7 @@
       "WidthCheckClass",
       "WireClaimView",
       "WireCommitReceipt",
+      "WireDeleteReceipt",
       "WireEntityView",
       "WireMentionProvenance",
       "WireReadScope",
@@ -70748,7 +70777,7 @@
      "purpose": "—",
      "surface": {
       "enum": 173,
-      "struct": 434
+      "struct": 443
      }
     },
     {
