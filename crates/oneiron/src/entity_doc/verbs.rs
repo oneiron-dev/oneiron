@@ -2,7 +2,9 @@
 
 use super::document::{BODY, decode_frontier};
 use super::{DocAuthorization, EntityDoc, ForkRequest, ForkStatus, SettleVerb, invalid, storage};
-use crate::batch::secret_scan::{SecretScanMode, scan_content_in_txn, secret_scan_mode_in_txn};
+use crate::batch::secret_scan::{
+    LiftedKeys, SecretScanMode, scan_content_in_txn, secret_scan_mode_in_txn,
+};
 use crate::error::Result;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -117,6 +119,7 @@ impl Vault {
         let out = self.with_write_txn_grouped(|txn| {
             let mut h = storage::head(&self.store, txn, entity)?;
             let mut doc = storage::load(&self.store, txn, &h)?;
+            let lifted = lifted_keys_for(&self.store, txn, &h, edits)?;
             let before = doc.doc.oplog_vv();
             for edit in edits {
                 let actor = edit
@@ -133,6 +136,7 @@ impl Vault {
                     edit,
                     at,
                     secret_scan_mode_in_txn(&self.store, txn)?,
+                    &lifted,
                 )?;
             }
             storage::persist(self, txn, entity, &mut h, &doc, Some(&before))?;
@@ -161,6 +165,14 @@ impl Vault {
             let live = storage::load(&self.store, txn, &h)?;
             let mut fork = live.fork(&request.base)?;
             scan_content_in_txn(&self.store, txn, request.text.as_bytes())?;
+            // A handle of a key the live text's lift marked writes its value
+            // again (OF-067).
+            let resolved = if LiftedKeys::names_a_handle(&request.text) {
+                super::lift::lifted_keys_in_txn(&self.store, txn, &h)?.resolved(&request.text)
+            } else {
+                None
+            };
+            let text = resolved.as_deref().unwrap_or(&request.text);
             super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
             let before = live.doc.oplog_vv();
             let timed_out = request.timeout_ms == 0
@@ -168,7 +180,7 @@ impl Vault {
                     .doc
                     .get_text(BODY)
                     .update(
-                        &request.text,
+                        text,
                         UpdateOptions {
                             timeout_ms: Some(f64::from(request.timeout_ms)),
                             ..Default::default()
@@ -183,8 +195,7 @@ impl Vault {
                 fork.edit_as(request.actor, request.at, |body| {
                     body.delete(0, body.len_unicode())
                         .map_err(|_| invalid("rewrite delete"))?;
-                    body.insert(0, &request.text)
-                        .map_err(|_| invalid("rewrite insert"))
+                    body.insert(0, text).map_err(|_| invalid("rewrite insert"))
                 })?;
                 let id = EntityId::now();
                 let req = ForkRequest {
@@ -355,6 +366,7 @@ pub(super) fn apply(
     edit: &AnchoredEdit,
     at: u64,
     secrets: SecretScanMode,
+    lifted: &LiftedKeys,
 ) -> Result<()> {
     let actor = edit
         .actor
@@ -367,6 +379,10 @@ pub(super) fn apply(
     if secrets == SecretScanMode::On {
         crate::batch::secret_scan::scan_write_payload(replacement.as_bytes())?;
     }
+    // A handle of a key the document's lifted text holds writes its value
+    // again (OF-067).
+    let resolved = lifted.resolved(replacement);
+    let replacement = resolved.as_deref().unwrap_or(replacement);
     let (start, end) = resolve(doc, entity, anchor)?;
     let replacing = matches!(edit.verb, EditVerb::ReplaceQuotedSpan { .. });
     if replacing {
@@ -383,4 +399,23 @@ pub(super) fn apply(
         body.insert(if replacing { start } else { end }, replacement)
             .map_err(|_| invalid("anchored insert"))
     })
+}
+
+/// The keys the lifted text of the document `h` heads holds, when one of
+/// `edits` names a handle: an edit that carries one back writes its value.
+fn lifted_keys_for(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    h: &storage::Head,
+    edits: &[AnchoredEdit],
+) -> Result<LiftedKeys> {
+    let names = edits.iter().any(|edit| match &edit.verb {
+        EditVerb::AppendToSection { text, .. }
+        | EditVerb::ReplaceQuotedSpan { text, .. }
+        | EditVerb::InsertAfterAnchor { text, .. } => LiftedKeys::names_a_handle(text),
+    });
+    if !names {
+        return Ok(LiftedKeys::default());
+    }
+    super::lift::lifted_keys_in_txn(store, txn, h)
 }

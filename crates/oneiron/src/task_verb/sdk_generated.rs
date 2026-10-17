@@ -1813,6 +1813,10 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/self")?.clone(),
             );
             properties.insert(
+                "vault".to_owned(),
+                schema.pointer("/properties/vault")?.clone(),
+            );
+            properties.insert(
                 "session_id".to_owned(),
                 schema.pointer("/properties/session_id")?.clone(),
             );
@@ -5355,6 +5359,8 @@ pub fn describe(
         Err(MemoryError::bad_request(
             "describe(self) requires a bound run session",
         ))?
+    } else if input.vault {
+        memory.describe_vault(&input)?
     } else if input.key.is_some() {
         Err(MemoryError::bad_request(
             "describe(card key) expands a board card, which only a live board session holds",
