@@ -16657,7 +16657,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 1,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 4
      }
     },
@@ -16714,6 +16714,21 @@
       "crate-vis": 2,
       "struct": 4,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CriticBinding",
+      "CriticReviewOutcome",
+      "CriticReviewSubmit"
+     ],
+     "path": "src/critic/review/submit.rs",
+     "purpose": "One critic review through a host's door (`vault.critic.review`): what the caller binds and what the review…",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -47021,7 +47036,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 316
+      "fn": 317
      }
     },
     {
@@ -52349,7 +52364,7 @@
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning"
     },
     "critic": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -53422,7 +53437,7 @@
    },
    "over_bar": 172,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3243,
+   "source_files": 3244,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61459,7 +61474,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 270
+      "fn": 271
      }
     },
     {
@@ -62476,7 +62491,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 271
+      "fn": 272
      }
     },
     {
@@ -65223,6 +65238,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/critic_review_doors.rs",
+     "purpose": "The host door of one critic review (`vault.critic.review`, OF-352): the caller binds a target, a session, a…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/decision_ask_doors.rs",
      "purpose": "OF-493's role-holder doors (Q3 by role) as SDK verbs: a person or a bound agent that holds the role a…",
      "surface": {
@@ -65296,7 +65321,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 44
+      "crate-vis": 45
      }
     },
     {
@@ -68600,7 +68625,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 18,
       "fn": 23,
       "struct": 1
      }
@@ -72151,7 +72176,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 300,
+     "files": 301,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72538,7 +72563,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 593,
+   "source_files": 594,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -72824,6 +72849,7 @@
       "CampaignProgramStepSpec",
       "CancelRejectionPathology",
       "Care",
+      "CellTypeRef",
       "ChangeKind",
       "ChartKind",
       "ChartSeries",
@@ -72898,6 +72924,16 @@
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
       "Criterion",
+      "CriticBinding",
+      "CriticPrediction",
+      "CriticReviewOutcome",
+      "CriticReviewSubmit",
+      "CritiqueArtifact",
+      "CritiqueProvenance",
+      "CritiqueSeverity",
+      "CritiqueTriage",
+      "CritiqueTriageScores",
+      "CritiqueVerdict",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
       "DecisionAnswer",
@@ -73060,6 +73096,8 @@
       "LadderTerminalDisposition",
       "Landing",
       "LandingReceipt",
+      "LearningCell",
+      "LearningPredicate",
       "LearningSettingClear",
       "LearningSettingMode",
       "LearningSettingPut",
@@ -73116,6 +73154,7 @@
       "MemberVerdict",
       "MembershipConsent",
       "MemoryExport",
+      "MergedFinding",
       "MessagePersonReceipt",
       "MessagePersonRequest",
       "MessageReactionExternal",
@@ -73590,8 +73629,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 246,
-      "struct": 613
+      "enum": 249,
+      "struct": 624
      }
     },
     {
