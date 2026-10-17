@@ -39,6 +39,9 @@ pub(super) struct PackCommit<'a> {
     pub(super) verdict: PackFitVerdict,
     pub(super) permissions: &'a PackPermissions,
     pub(super) qualification: Option<&'a PackQualification>,
+    /// The local world the owner picked for a travelling agent's World
+    /// scope; its name binds when unset.
+    pub(super) world: Option<EntityId>,
 }
 
 impl Vault {
@@ -165,6 +168,7 @@ impl Vault {
                     verdict: ask.verdict,
                     permissions: &ask.permissions,
                     qualification: ask.qualification.as_ref(),
+                    world: None,
                 },
             )
         })
@@ -204,6 +208,7 @@ impl Vault {
                         InstallHoldReason::QualificationRequired
                     }
                     PackCandidateReason::Advisories => InstallHoldReason::Advisories,
+                    PackCandidateReason::NeedsWorld => InstallHoldReason::LocalApproval,
                 }),
             );
             let result = self.execute_hub_install_plan_in_txn(
@@ -246,6 +251,7 @@ impl Vault {
             validate_qualification(source, qualification)?;
         }
         let at = crate::unix_seconds_now();
+        let travel = self.travel_agent_in_txn(&*txn, source, commit.world)?;
         let candidate_reason = if commit.verdict.rules_hit {
             Some(PackCandidateReason::RulesHit)
         } else if commit.foreign.is_some()
@@ -256,6 +262,11 @@ impl Vault {
             Some(PackCandidateReason::CodeAutoInstallOff)
         } else if source.manifest.kind == PackKind::Connector && commit.qualification.is_none() {
             Some(PackCandidateReason::QualificationRequired)
+        } else if travel
+            .as_ref()
+            .is_some_and(super::agent_admission::TravelAgent::needs_world)
+        {
+            Some(PackCandidateReason::NeedsWorld)
         } else {
             None
         };
@@ -325,9 +336,13 @@ impl Vault {
         // An active travelling AgentPack mints its inert agent here, after its
         // skills went through the common door (FIX 2041, 3168).
         let receipt = PackInstallReceipt {
-            agent: self
-                .admit_travel_agent_in_txn(txn, source, at)?
-                .map(|agent| agent.to_hex()),
+            agent: match travel {
+                Some(travel) => Some(
+                    self.admit_travel_agent_in_txn(txn, source, travel, at)?
+                        .to_hex(),
+                ),
+                None => None,
+            },
             ..receipt
         };
         let identities = source.kind_identities()?;
