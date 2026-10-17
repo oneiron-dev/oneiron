@@ -117,8 +117,9 @@ omitted write time is stamped with the current Unix second at the call.
 Host-door rows are exported like every other row. An embedded handle answers
 them with the row's own embedded `call`; the ones only a server's state can
 answer (its model seats, the owner proof) refuse there, typed, on a handle
-from `EmbeddedEngine.client()` too. The server itself answers them through
-`EmbeddedEngine.request`.
+from `EmbeddedEngine.localClient()` too. A handle from
+`EmbeddedEngine.client(key:)` answers them as any server does: every verb
+crosses the engine's own Router in process, under the caller's credential.
 
 ## Embedded engine
 
@@ -133,8 +134,10 @@ neither.
 | Rust | generated Swift | what it does |
 |---|---|---|
 | `start(path, options, config_file, host, limits)` | `EmbeddedEngine.start(path:options:configFile:host:limits:)` | opens the vault at `path` the way `oneiron serve --config <config_file>` does (that config for this path, with `options.dimensions` when given), serves it, and returns once `host.ready()` has run. Refuses a relay host's config. Absent `limits` fields are unbounded |
-| `client() -> Oneiron` | `engine.client()` | a NEW handle attached to the engine's own vault, never a second open; ask again for each handle. Every handle keeps the engine alive |
+| `client(key) -> Oneiron` | `engine.client(key:)` | a NEW handle the engine's server serves in process under `key`, the caller's own credential (the one `pair` returned, or the host secret as a bare bearer): every verb, `retry` and lens-frame call POSTs the facade route through the server's Router with that credential, a fresh holder proof, the room turn and the invocation, as a connected handle does over the network, host doors included. `asActor` refuses on it, as on a connected handle. It keeps the engine alive |
+| `local_client() -> Oneiron` | `engine.localClient()` | a NEW handle attached to the engine's own vault, bound to the embedded owner actor, never a second open; its verbs answer through the vault, not the server. Ask again for each handle. Every handle keeps the engine alive |
 | `request(EngineRequest) -> EngineReply` | `engine.request(request:)` | one buffered HTTP/1.1 exchange over a fresh in-process stream; headers pass through (bring your own auth); a 4xx/5xx is a reply. A reply body over 64 MiB, `/ws` and other upgrades are refused |
+| `open_connection() -> EngineConnection` | `engine.openConnection()` | a connection the app holds: one in-process stream the server serves as a socket's connection, HTTP/1.1 with upgrades. `send(bytes:)` writes the request (a `GET /ws` with its upgrade headers holds `/ws`; after the `101`, the upgraded protocol's frames), `receive()` returns the next bytes the server wrote (at most 64 KiB; empty once it ended), `close()` ends the app's side and returns a blocked `receive`. Refused while stopped; a stop drains it, so after `wake` open another. It keeps the engine alive |
 | `wake()` | `engine.wake()` | the app's timer fired: run what is due; a stopped engine serves again first, over the same vault |
 | `stop()` | `engine.stop()` | the app backgrounds: drain, stop every worker, keep the vault open |
 | `close()` | `engine.close()` | the ordered stop, then the runtime goes; later calls refuse |
