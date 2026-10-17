@@ -44,6 +44,9 @@ const PINNED_FULL: usize = 16;
 const FOLDED_SHOWN: usize = 16;
 /// The words an older line folds to.
 const FOLD_WORDS: usize = 6;
+/// The newest matching lines one recall returns in full; the rest are
+/// counted.
+pub const SCRATCHPAD_RECALL_LINES: usize = 16;
 
 /// Every line header, brackets excluded, with the mark and pin it stands for.
 /// The write door stamps one; nothing outside this list is a header.
@@ -144,6 +147,28 @@ pub struct ScratchpadBoard {
     /// The pad NOTE the section was read from.
     pub pad: EntityId,
     pub section: BoardSection,
+}
+
+/// One pad line a recall matched, in full, folded or not on the board.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScratchpadRecallLine {
+    /// The line's place in the pad, from 0 for the oldest.
+    pub index: usize,
+    pub mark: Option<ScratchpadMark>,
+    pub pin: bool,
+    pub text: String,
+}
+
+/// What a recall over one session's pad found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScratchpadRecall {
+    /// The pad NOTE searched.
+    pub pad: EntityId,
+    pub sealed: bool,
+    /// How many lines matched; `lines` holds the newest
+    /// [`SCRATCHPAD_RECALL_LINES`] of them, newest first.
+    pub matched: usize,
+    pub lines: Vec<ScratchpadRecallLine>,
 }
 
 /// One stored pad line.
@@ -248,6 +273,22 @@ fn pad_section(pad: EntityId, text: &str) -> Result<BoardSection, BoardFrameErro
             shed_rank: Some(ShedRank::PluginSections),
         },
     )
+}
+
+/// The words a recall query asks for: case-folded, each once.
+fn recall_words(query: &str) -> Vec<String> {
+    let mut words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    words.sort();
+    words.dedup();
+    words
+}
+
+/// Whether a pad line answers a recall: its text holds every query word,
+/// case-folded. The one match rule, so a later ruling (ranked, any-word)
+/// changes it here.
+fn recall_matches(text: &str, words: &[String]) -> bool {
+    let text = text.to_lowercase();
+    words.iter().all(|word| text.contains(word.as_str()))
 }
 
 fn validate_session(session: &str) -> MemoryResult<()> {
@@ -491,18 +532,10 @@ impl Memory<'_> {
         let Some((pad, false)) = self.scratchpad_pointer(session)? else {
             return Ok(None);
         };
-        let Some(view) = self.get_entity(&pad.to_hex())?.value else {
+        let Some(text) = self.pad_markdown(pad)? else {
             return Ok(None);
         };
-        let Some(text) = view
-            .body
-            .as_ref()
-            .filter(|body| body["kind"] == PAD_KIND)
-            .and_then(|body| body["markdown"].as_str())
-        else {
-            return Ok(None);
-        };
-        let section = pad_section(pad, text).map_err(|error| {
+        let section = pad_section(pad, &text).map_err(|error| {
             MemoryError::new(
                 MEMORY_CODE_INTERNAL,
                 error.to_string(),
@@ -510,5 +543,69 @@ impl Memory<'_> {
             )
         })?;
         Ok(Some(ScratchpadBoard { pad, section }))
+    }
+
+    /// Searches the whole of this session's pad, folded lines included, for
+    /// the lines that hold every word of `query` (ARCH-0032
+    /// #scratchpad-marks: a recall searches the whole pad), read through the
+    /// actor's own scoped read. A sealed pad is still its session's to
+    /// search. `None` when the session has no pad or the read withholds it.
+    pub fn scratchpad_recall(
+        &self,
+        session: &str,
+        query: &str,
+    ) -> MemoryResult<Option<ScratchpadRecall>> {
+        validate_session(session)?;
+        let words = recall_words(query);
+        if words.is_empty() || query.len() > SCRATCHPAD_LINE_MAX_BYTES {
+            return Err(MemoryError::bad_request(format!(
+                "scratchpad recall query must be 1 to {SCRATCHPAD_LINE_MAX_BYTES} bytes of words"
+            )));
+        }
+        let Some((pad, sealed)) = self.scratchpad_pointer(session)? else {
+            return Ok(None);
+        };
+        let Some(text) = self.pad_markdown(pad)? else {
+            return Ok(None);
+        };
+        let matching: Vec<(usize, PadLine<'_>)> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(parse_line)
+            .enumerate()
+            .filter(|(_, line)| recall_matches(line.text, &words))
+            .collect();
+        let lines = matching
+            .iter()
+            .rev()
+            .take(SCRATCHPAD_RECALL_LINES)
+            .map(|(index, line)| ScratchpadRecallLine {
+                index: *index,
+                mark: line.mark,
+                pin: line.pin,
+                text: line.text.to_owned(),
+            })
+            .collect();
+        Ok(Some(ScratchpadRecall {
+            pad,
+            sealed,
+            matched: matching.len(),
+            lines,
+        }))
+    }
+
+    /// The markdown of pad `pad`, read as this actor, which admits a pad to
+    /// its exact author only. `None` when the read withholds it or the NOTE
+    /// is not a pad.
+    fn pad_markdown(&self, pad: EntityId) -> MemoryResult<Option<String>> {
+        let Some(view) = self.get_entity(&pad.to_hex())?.value else {
+            return Ok(None);
+        };
+        Ok(view
+            .body
+            .as_ref()
+            .filter(|body| body["kind"] == PAD_KIND)
+            .and_then(|body| body["markdown"].as_str())
+            .map(str::to_owned))
     }
 }

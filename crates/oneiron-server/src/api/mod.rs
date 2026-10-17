@@ -279,6 +279,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/explain/memory/{entity}", get(core_explain_memory))
         .route("/explain/gate/{receipt}", get(core_explain_gate))
         .route("/context-board/scratchpad", post(context_board_scratchpad))
+        .route(
+            "/context-board/scratchpad/recall",
+            post(context_board_scratchpad_recall),
+        )
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))
