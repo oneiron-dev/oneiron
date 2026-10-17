@@ -1,16 +1,25 @@
 //! The broker's one send: verified TLS, no redirect, no retry, no proxy, and
 //! no content encoding, so the reply it strips is the reply the daemon reads.
+//! The one exception to "no redirect" is a shape row's own: one hop, to the
+//! path the row names under the same origin, without the key.
 
+use std::future::Future;
+use std::io;
 use std::time::Duration;
 
 use reqwest::header::{
-    ACCEPT_ENCODING, CONTENT_ENCODING, HeaderMap, HeaderValue, TRANSFER_ENCODING,
+    ACCEPT_ENCODING, CONTENT_ENCODING, HeaderMap, HeaderValue, LOCATION, TRANSFER_ENCODING,
 };
 use reqwest::{Certificate, Client, Method, Url};
+use tokio::io::AsyncWrite;
 use zeroize::Zeroizing;
 
-use crate::strip::{admits, contains_key, strip};
-use crate::{CallHeader, Failure, MAX_BODY, MAX_SECRET, Outcome, Refusal};
+use crate::frame::{STREAM_CHUNK, write_chunk, write_stream_end, write_stream_header};
+use crate::strip::{KeyWatch, admits, contains_key, strip};
+use crate::{
+    CallHeader, Failure, MAX_BODY, MAX_SECRET, MAX_STREAM, Outcome, PROTOCOL_VERSION, Refusal,
+    ReplyHeader,
+};
 
 /// The shortest key the broker injects. Stripping a shorter one would redact
 /// ordinary text, and no provider issues one.
@@ -71,31 +80,10 @@ impl Sender {
         secret: &[u8],
     ) -> (Outcome, Zeroizing<Vec<u8>>) {
         let empty = Zeroizing::new(Vec::new());
-        let request = match self.request(call, url, body, secret) {
-            Ok(request) => request,
-            Err(refusal) => return (Outcome::Refused { reason: refusal }, empty),
-        };
-        let mut response = match self.client.execute(request).await {
+        let mut response = match self.reach(call, url, body, secret).await {
             Ok(response) => response,
-            // A connect error comes before any request byte is written.
-            Err(error) if error.is_connect() => {
-                return (
-                    Outcome::Refused {
-                        reason: Refusal::Connect,
-                    },
-                    empty,
-                );
-            }
-            Err(error) => return (failed(&error), empty),
+            Err(outcome) => return (outcome, empty),
         };
-        if encoded(response.headers()) {
-            return (
-                Outcome::Failed {
-                    reason: Failure::ReplyEncoded,
-                },
-                empty,
-            );
-        }
         let mut raw = Zeroizing::new(Vec::new());
         loop {
             match response.chunk().await {
@@ -118,6 +106,157 @@ impl Sender {
         let body = strip(secret, &raw);
         let status = response.status().as_u16();
         (Outcome::Answered { status, headers }, body)
+    }
+
+    /// Sends a call whose shape streams ([`crate::Shape::streams`]) and
+    /// writes its reply to `writer` as it comes: the header, then the body in
+    /// chunks [`KeyWatch`] has cleared, then the end. The body is never
+    /// changed: one that holds a form of the key is cut, never stripped. So
+    /// the key stays until the last chunk is checked. `checked` is the call's
+    /// [`CallHeader::check`]. Each write has `deadline`; a daemon that takes
+    /// longer is gone, and the reply is dropped.
+    pub(crate) async fn stream<W: AsyncWrite + Unpin>(
+        &self,
+        call: &CallHeader,
+        checked: Result<Url, Refusal>,
+        body: &[u8],
+        secret: &[u8],
+        writer: &mut W,
+        deadline: Duration,
+    ) {
+        let _ = self
+            .stream_to(call, checked, body, secret, writer, deadline)
+            .await;
+    }
+
+    async fn stream_to<W: AsyncWrite + Unpin>(
+        &self,
+        call: &CallHeader,
+        checked: Result<Url, Refusal>,
+        body: &[u8],
+        secret: &[u8],
+        writer: &mut W,
+        deadline: Duration,
+    ) -> io::Result<()> {
+        let header = |outcome| ReplyHeader {
+            version: PROTOCOL_VERSION,
+            call: call.call.clone(),
+            digest: call.digest.clone(),
+            outcome,
+        };
+        let reached = match checked {
+            Ok(url) => self.reach(call, url, body, secret).await,
+            Err(reason) => Err(Outcome::Refused { reason }),
+        };
+        let mut response = match reached {
+            Ok(response) => response,
+            Err(outcome) => {
+                within(deadline, write_stream_header(writer, &header(outcome))).await?;
+                return within(deadline, write_stream_end(writer, None)).await;
+            }
+        };
+        let answered = Outcome::Answered {
+            status: response.status().as_u16(),
+            headers: reply_headers(response.headers(), secret),
+        };
+        within(deadline, write_stream_header(writer, &header(answered))).await?;
+        let mut watch = KeyWatch::new(secret);
+        let mut cleared = Zeroizing::new(Vec::new());
+        let mut read = 0_usize;
+        let cut = loop {
+            let (next, last) = match response.chunk().await {
+                Ok(Some(chunk)) if read + chunk.len() > MAX_STREAM => {
+                    break Some(Failure::ReplyTooLarge);
+                }
+                Ok(Some(chunk)) => {
+                    read += chunk.len();
+                    (watch.push(&chunk), false)
+                }
+                Ok(None) => (watch.finish(), true),
+                Err(error) => break Some(failure(&error)),
+            };
+            let Ok(passed) = next else {
+                break Some(Failure::ReplyHoldsKey);
+            };
+            push_wiped(&mut cleared, &passed);
+            // Whole chunks as they fill; at the end, the rest too.
+            let mut sent = 0;
+            while cleared.len() - sent >= STREAM_CHUNK || (last && sent < cleared.len()) {
+                let end = cleared.len().min(sent + STREAM_CHUNK);
+                within(deadline, write_chunk(writer, &cleared[sent..end])).await?;
+                sent = end;
+            }
+            if last {
+                break None;
+            }
+            if sent > 0 {
+                cleared = Zeroizing::new(cleared[sent..].to_vec());
+            }
+        };
+        within(deadline, write_stream_end(writer, cut)).await
+    }
+
+    /// Sends the request once with the key, and for a shape that follows one
+    /// redirect, follows it once: only to the row's path under the call's own
+    /// origin, and without the key or the call's headers. Returns the
+    /// response whose body is the reply, or the outcome that ends the call
+    /// before one.
+    async fn reach(
+        &self,
+        call: &CallHeader,
+        url: Url,
+        body: &[u8],
+        secret: &[u8],
+    ) -> Result<reqwest::Response, Outcome> {
+        let request = self
+            .request(call, url.clone(), body, secret)
+            .map_err(|reason| Outcome::Refused { reason })?;
+        let mut response = match self.client.execute(request).await {
+            Ok(response) => response,
+            // A connect error comes before any request byte is written.
+            Err(error) if error.is_connect() => {
+                return Err(Outcome::Refused {
+                    reason: Refusal::Connect,
+                });
+            }
+            Err(error) => return Err(failed(&error)),
+        };
+        if let Some(prefix) = call.shape.redirect()
+            && response.status().is_redirection()
+        {
+            let redirected = Outcome::Failed {
+                reason: Failure::Redirect,
+            };
+            let expected = format!("{}{prefix}{}", call.origin, call.path);
+            let target = response
+                .headers()
+                .get(LOCATION)
+                .and_then(|location| location.to_str().ok())
+                .and_then(|location| url.join(location).ok())
+                .filter(|target| target.as_str() == expected)
+                .ok_or_else(|| redirected.clone())?;
+            drop(response);
+            let follow = self
+                .client
+                .get(target)
+                .header(ACCEPT_ENCODING, "identity")
+                .build()
+                .map_err(|_| redirected.clone())?;
+            response = self
+                .client
+                .execute(follow)
+                .await
+                .map_err(|error| failed(&error))?;
+            if response.status().is_redirection() {
+                return Err(redirected);
+            }
+        }
+        if encoded(response.headers()) {
+            return Err(Outcome::Failed {
+                reason: Failure::ReplyEncoded,
+            });
+        }
+        Ok(response)
     }
 
     fn request(
@@ -145,10 +284,11 @@ impl Sender {
         for (name, value) in &call.headers {
             builder = builder.header(name.as_str(), value.as_str());
         }
-        builder
-            .body(body.to_vec())
-            .build()
-            .map_err(|_| Refusal::Header)
+        // A bodyless read or removal sends no body, not an empty one.
+        if !body.is_empty() {
+            builder = builder.body(body.to_vec());
+        }
+        builder.build().map_err(|_| Refusal::Header)
     }
 }
 
@@ -172,17 +312,28 @@ fn encoded(headers: &HeaderMap) -> bool {
 
 fn failed(error: &reqwest::Error) -> Outcome {
     Outcome::Failed {
-        reason: if error.is_timeout() {
-            Failure::Timeout
-        } else {
-            Failure::Send
-        },
+        reason: failure(error),
     }
+}
+
+fn failure(error: &reqwest::Error) -> Failure {
+    if error.is_timeout() {
+        Failure::Timeout
+    } else {
+        Failure::Send
+    }
+}
+
+/// One write to the daemon, within `deadline`.
+async fn within(deadline: Duration, write: impl Future<Output = io::Result<()>>) -> io::Result<()> {
+    tokio::time::timeout(deadline, write)
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
 }
 
 /// Appends `chunk`, growing into a fresh buffer when full so the old one is
 /// wiped as it drops instead of freed with reply bytes in it.
-fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) {
+pub(crate) fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) {
     let needed = buffer.len() + chunk.len();
     if needed > buffer.capacity() {
         let mut grown = Zeroizing::new(Vec::with_capacity(needed.max(buffer.capacity() * 2)));

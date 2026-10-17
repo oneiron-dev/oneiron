@@ -44,11 +44,14 @@ pub struct CallHeader {
     pub origin: String,
     /// The shape's method.
     pub method: String,
-    /// The path under the origin, ending in the shape's endpoint.
+    /// The path under the origin, ending in the shape's endpoint (and its
+    /// one query, for a shape that takes one).
     pub path: String,
     /// The request's headers, lowercase names, no auth.
     pub headers: Vec<(String, String)>,
-    /// The offer's wire model: the selector the body must carry.
+    /// The offer's wire model: the selector the body or the path must carry.
+    /// A shape that names no model on the wire (a bodyless read of a job or a
+    /// file) is bound to it here alone.
     pub wire_model: String,
     /// [`request_digest`] of the method, path, headers and body.
     pub digest: String,
@@ -101,7 +104,8 @@ impl CallHeader {
         self.shape.check_path(&self.path)?;
         let url = exact_url(&self.origin, &self.path)?;
         check_headers(&self.headers)?;
-        if self.shape.read_selector(body)? != self.wire_model {
+        let named = self.shape.read_model(&self.path, &self.headers, body)?;
+        if named.map_or(self.wire_model.is_empty(), |model| model != self.wire_model) {
             return Err(Refusal::WireModel);
         }
         if request_digest(&self.method, &self.path, &self.headers, body) != self.digest {
@@ -112,7 +116,7 @@ impl CallHeader {
 }
 
 /// The origin must be one `https` origin in its canonical spelling, and the
-/// joined URL must keep that origin and that exact path.
+/// joined URL must keep that origin and that exact path and query.
 fn exact_url(origin: &str, path: &str) -> Result<Url, Refusal> {
     let base = Url::parse(origin).map_err(|_| Refusal::Origin)?;
     let canonical = base.scheme() == "https"
@@ -124,7 +128,15 @@ fn exact_url(origin: &str, path: &str) -> Result<Url, Refusal> {
         return Err(Refusal::Origin);
     }
     let url = Url::parse(&format!("{origin}{path}")).map_err(|_| Refusal::Path)?;
-    if url.origin() != base.origin() || url.path() != path || url.query().is_some() {
+    let (plain, query) = match path.split_once('?') {
+        Some((plain, query)) => (plain, Some(query)),
+        None => (path, None),
+    };
+    if url.origin() != base.origin()
+        || url.path() != plain
+        || url.query() != query
+        || url.fragment().is_some()
+    {
         return Err(Refusal::Path);
     }
     Ok(url)
@@ -154,8 +166,9 @@ fn check_headers(headers: &[(String, String)]) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// The broker's answer to one call. The reply body follows as its own segment;
-/// it is empty unless the call was answered.
+/// The broker's answer to one call. The reply body follows as its own segment,
+/// or as chunks for a shape that streams (see `frame`); it is empty unless
+/// the call was answered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplyHeader {
@@ -173,7 +186,8 @@ pub struct ReplyHeader {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Outcome {
-    /// The provider answered (any status). The headers and body are stripped.
+    /// The provider answered (any status). The headers are stripped, and so
+    /// is a buffered body; a streamed body is checked and passed unchanged.
     Answered {
         /// The HTTP status.
         status: u16,

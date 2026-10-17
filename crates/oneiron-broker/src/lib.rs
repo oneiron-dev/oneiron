@@ -4,7 +4,9 @@
 //! admits the call under its run, frames the exact request it wants sent and
 //! hands over the key on a private channel. The broker re-checks the request
 //! against its digest and its shape row, adds the auth header, sends once over
-//! verified TLS, strips every form of the key from the reply and answers.
+//! verified TLS, strips every form of the key from the reply and answers. A
+//! binary reply ([`Shape::streams`]) streams back in chunks instead, checked
+//! for the key and passed unchanged, or cut.
 //!
 //! It runs no model and no generated code, and it does not link the engine.
 //! The daemon side ([`BrokerClient`]) and the broker side ([`serve`]) share the
@@ -15,6 +17,7 @@ mod call;
 pub mod cli;
 mod digest;
 mod error;
+mod form;
 mod frame;
 mod send;
 mod shape;
@@ -34,7 +37,8 @@ mod serve;
 pub use call::{CallHeader, Outcome, ReplyHeader};
 pub use digest::{is_auth_header, request_digest};
 pub use error::{BrokerError, Failure, Refusal};
-pub use frame::{MAX_BODY, MAX_SECRET, PROTOCOL_VERSION};
+pub use form::FormData;
+pub use frame::{MAX_BODY, MAX_SECRET, MAX_STREAM, PROTOCOL_VERSION};
 pub use send::SendPolicy;
 pub use shape::Shape;
 pub use strip::{MARKER, strip};
@@ -42,7 +46,7 @@ pub use strip::{MARKER, strip};
 #[cfg(unix)]
 pub use child::ChildBroker;
 #[cfg(unix)]
-pub use client::{BrokerClient, BrokerConnection, BrokerReply};
+pub use client::{BrokerClient, BrokerConnection, BrokerReply, BrokerStream, StreamPart};
 #[cfg(unix)]
 pub use serve::{LISTENING, ServeConfig, serve};
 
