@@ -452,12 +452,12 @@ impl CdpDriver {
         self.observation(Some(since))
     }
 
-    fn matching(&self, find: &FindInput) -> Result<Vec<Row>, BrowserError> {
+    fn matching(&self, keep: impl Fn(&Row) -> bool) -> Result<Vec<Row>, BrowserError> {
         Ok(self
             .lines()?
             .into_iter()
             .map(|line| line.row)
-            .filter(|row| find.matches(row))
+            .filter(keep)
             .collect())
     }
 }
@@ -493,7 +493,7 @@ impl BrowserDriver for CdpDriver {
 
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError> {
         Ok(FindOutput {
-            rows: self.matching(&input)?,
+            rows: self.matching(|row| input.matches(row))?,
         })
     }
 
@@ -576,10 +576,9 @@ impl BrowserDriver for CdpDriver {
             .timeout_ms
             .map_or(WAIT_DEFAULT, |ms| Duration::from_millis(ms.into()));
         let bound = wanted.min(self.wait_cap);
-        let query = input.query();
         let start = Instant::now();
         loop {
-            let rows = self.matching(&query)?;
+            let rows = self.matching(|row| input.matches(row))?;
             let waited = start.elapsed();
             if !rows.is_empty() || waited >= bound {
                 let timed_out = rows.is_empty();
