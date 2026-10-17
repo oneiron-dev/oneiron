@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 258 facade rows, 947 declarations.
+Census: 258 facade rows, 949 declarations.
 Inputs: 214 of 258 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 210 of 258 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
@@ -4394,6 +4394,10 @@ class OfficeBodyReadRequest(TypedDict):
 class BodyBlockKindHeading(TypedDict):
     heading: int
 BodyBlockKind = Literal["paragraph", "table", "opaque"] | BodyBlockKindHeading
+DocxMark = Literal["bold", "italic", "underline", "strike", "subscript", "superscript"]
+class DocxRun(TypedDict):
+    text: str
+    marks: NotRequired[list[DocxMark]]
 class DocxCellView(TypedDict):
     row: int
     col: int
@@ -4405,6 +4409,7 @@ class DocxBlockView(TypedDict):
     imported: bool
     locked: bool
     text: str
+    runs: list[DocxRun]
     cells: list[DocxCellView]
 class DocxBodyView(TypedDict):
     blocks: list[DocxBlockView]
@@ -4565,7 +4570,14 @@ class DocxBodyOpMove(TypedDict):
     op: Literal["move"]
     block: str
     after: NotRequired[str | None]
-DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove
+class DocxBodyOpMark(TypedDict):
+    op: Literal["mark"]
+    block: str
+    at: int
+    len: int
+    mark: DocxMark
+    on: bool
+DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove | DocxBodyOpMark
 class XlsxBodyOpSetValue(TypedDict):
     op: Literal["set_value"]
     sheet: str
