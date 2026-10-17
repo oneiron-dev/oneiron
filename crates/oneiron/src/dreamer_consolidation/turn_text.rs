@@ -259,35 +259,6 @@ pub(crate) fn projected_turn_text_in(
     Ok(text.into_text())
 }
 
-/// The whole projected text of one stored TURN read as `reader`, in the
-/// caller's transaction. `None` when the TURN is gone, has no text, or
-/// `reader` may not read it or any MESSAGE it joins: a caller comparing
-/// against these words treats a partial read as no read.
-pub(crate) fn whole_turn_text_as_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    reader: WriteActor,
-    turn: &EntityId,
-) -> Result<Option<String>> {
-    use crate::ports::EntityStore;
-    let Some(row) = vault.port_entity_get(txn, turn)? else {
-        return Ok(None);
-    };
-    if row.entity_type != ENTITY_TYPE_TURN {
-        return Ok(None);
-    }
-    let read = vault.scoped_read(reader_key(reader)?);
-    if read.entities_readable_in_txn(txn, std::slice::from_ref(turn))? != [true] {
-        return Ok(None);
-    }
-    let mut withheld = 0;
-    match collect_in(&read, txn, turn, &row.body, &mut withheld) {
-        Ok(text) => Ok(text.into_text()),
-        Err(_) if withheld != 0 => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
 /// Which of `messages` the Dreamer may read in the caller's transaction,
 /// through the gate a branch reads MESSAGE rows by: a private row, or a
 /// relationship row without the Dreamer's live grant, is withheld. It asks

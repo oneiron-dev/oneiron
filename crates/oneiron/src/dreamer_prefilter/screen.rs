@@ -192,10 +192,13 @@ pub(crate) fn prefilter_partition_input_in_txn(
     let mut inputs = Vec::with_capacity(turns.len());
     for turn in turns {
         // A withdrawn TURN's words are gone, as `Vault::get_raw` reads them.
-        let raw = if crate::ports::withdrawn_in_txn(&vault.store, txn, &turn.turn_id)? {
-            None
-        } else {
-            vault.get_raw_in(txn, &turn.turn_id)?
+        let raw = match vault.get_raw_in(txn, &turn.turn_id)? {
+            Some(raw)
+                if crate::ports::raw_readable_in_txn(&vault.store, txn, &turn.turn_id, &raw)? =>
+            {
+                Some(raw)
+            }
+            _ => None,
         };
         let text = match raw {
             Some(raw) => screen_text_from_raw(&raw, &vault.config.assistant_display_names)
