@@ -39,10 +39,10 @@ pub use dto::{
     FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
     MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
     OpenOptions, OutboundDraftInput, OutboundIntentReceipt, Paired, PendingWrite, QuoteSpan,
-    ReadReceipt, ReadScope, RecallMedia, RecallScope, RerankReport, RerankSkip, RetrievalDegradation,
-    RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec,
-    StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor, WitnessMessage,
-    WitnessReceipt, WitnessTurn,
+    ReadReceipt, ReadScope, RecallMedia, RecallScope, RerankReport, RerankSkip,
+    RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty,
+    StructuralEdgeSpec, StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 pub use error::OneironError;
 pub use facade_types_generated::*;

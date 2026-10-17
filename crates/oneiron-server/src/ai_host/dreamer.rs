@@ -22,15 +22,16 @@ use oneiron::dreamer_consolidation::{
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
+use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
     DreamerClaimAuthoringStrategy, DreamerRunnerStore, Vault, WakeAttemptContext, WriteActor,
 };
 use oneiron_driver::{
-    AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher, HybridTick, IdleSample,
-    PassExecutorFactory, PushTick, SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks,
-    ShutdownHandle, TimerTick, WakePolicyTicks, WakeSupervisor, WakeSupervisorConfig,
-    WakeSupervisorReport,
+    AttachedPassFuture, AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher,
+    HybridTick, IdleSample, PassAttachment, PassExecutorFactory, PushTick, SessionLifecycleConfig,
+    SessionLifecycleDriver, SessionTicks, ShutdownHandle, TimerTick, WakePassFuture,
+    WakePolicyTicks, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
 };
 
 use super::policy::extraction_egress;
@@ -56,6 +57,20 @@ pub(super) struct DreamerHost {
 pub(super) type QuestionTimer =
     Arc<std::sync::OnceLock<std::sync::Weak<crate::server::SyncServer>>>;
 
+/// The host's gate on each Dreamer pass, its home-timer pump and its
+/// stewardship drafts, bound once serve has it: managed serve's reap freeze.
+/// Unbound, everything is admitted.
+pub(super) type PassAdmission = Arc<std::sync::OnceLock<crate::server::HousekeepingAdmission>>;
+
+/// What the gate returns for one pass, held until that pass ends; `None`
+/// when the gate refuses.
+pub(super) fn admit(admission: &PassAdmission) -> Option<Box<dyn Send>> {
+    match admission.get() {
+        Some(admit) => admit(),
+        None => Some(Box::new(())),
+    }
+}
+
 pub(super) struct DreamerStart {
     pub(super) vault: Arc<Vault>,
     pub(super) runtime: Arc<ModelRuntime>,
@@ -71,6 +86,7 @@ pub(super) struct DreamerStart {
     /// The server's decision host, once it is staffed.
     pub(super) decisions: Arc<std::sync::OnceLock<DecisionHost>>,
     pub(super) question_timer: QuestionTimer,
+    pub(super) admission: PassAdmission,
 }
 
 /// The input each model a role's rungs name may fill: its provider's context
@@ -171,12 +187,14 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
         windows,
         decisions,
         question_timer,
+        admission,
     } = start;
     // Stewardship follow-up drafts ride this thread and stop with it.
     tokio::spawn(super::stewardship::draft_loop(
         Arc::clone(&vault),
         Arc::clone(&runtime),
         settings.pass_budget_units,
+        Arc::clone(&admission),
     ));
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault)?;
@@ -210,6 +228,7 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
             status: Arc::clone(&status),
             decisions,
             question_timer,
+            admission,
         };
         let lifecycle = SessionLifecycleDriver::new(
             &vault,
@@ -332,6 +351,19 @@ struct ObservedFactory {
     /// it, a pass runs on the shipped, unstaffed ladder.
     decisions: Arc<std::sync::OnceLock<DecisionHost>>,
     question_timer: QuestionTimer,
+    admission: PassAdmission,
+}
+
+/// A pass's admission, held while the pass runs.
+struct AdmittedPass(Box<dyn Send>);
+
+impl PassAttachment for AdmittedPass {
+    fn serve<'p>(self: Box<Self>, pass: WakePassFuture<'p>) -> AttachedPassFuture<'p> {
+        Box::pin(async move {
+            let Self(_held) = *self;
+            (pass.await, Ok(()))
+        })
+    }
 }
 
 impl ObservedFactory {
@@ -469,6 +501,7 @@ impl PassExecutorFactory for ObservedFactory {
             status: &self.status,
             resident,
             task,
+            decisions: &self.decisions,
         })
     }
 
@@ -479,6 +512,7 @@ impl PassExecutorFactory for ObservedFactory {
     ) -> oneiron::Result<Vec<Self::Exec<'p>>> {
         self.prepare(guard)?;
         let status = self.status.as_ref();
+        let decisions = &self.decisions;
         let resident = match (
             &self.weaver,
             &self.line,
@@ -516,6 +550,7 @@ impl PassExecutorFactory for ObservedFactory {
                         status,
                         resident,
                         task,
+                        decisions,
                     })
                     .collect()
             })
@@ -525,9 +560,26 @@ impl PassExecutorFactory for ObservedFactory {
         Some(self.actor)
     }
 
-    /// The standing-question pump, once serve has bound the server. Its
-    /// model rungs block on the server's runtime, so it runs on a thread of
-    /// its own, off this pass's runtime; the pass waits for it.
+    /// The host's gate, asked as each pass starts and held until it ends. A
+    /// refusal (a vault frozen for reap) stops the pass before any attempt
+    /// is admitted; the supervisor backs off and re-drives its tick.
+    fn pass_attachment(
+        &self,
+        _vault: &Vault,
+        _guard: &oneiron::BudgetGuard,
+    ) -> oneiron::Result<Option<Box<dyn PassAttachment>>> {
+        match admit(&self.admission) {
+            Some(held) => Ok(Some(Box::new(AdmittedPass(held)))),
+            None => Err(oneiron::Error::InvalidConfig(
+                "dreamer pass not admitted: the vault is frozen or not yet served".into(),
+            )),
+        }
+    }
+
+    /// The standing-question pump, once serve has bound the server, under
+    /// the host's gate. Its model rungs block on the server's runtime, so it
+    /// runs on a thread of its own, off this pass's runtime; the pass waits
+    /// for it.
     fn run_home_timer(
         &mut self,
         _vault: &Vault,
@@ -535,6 +587,9 @@ impl PassExecutorFactory for ObservedFactory {
         _local_node_id: u64,
     ) -> oneiron::Result<()> {
         let Some(server) = self.question_timer.get().and_then(std::sync::Weak::upgrade) else {
+            return Ok(());
+        };
+        let Some(_pass) = admit(&self.admission) else {
             return Ok(());
         };
         std::thread::scope(|scope| {
@@ -558,6 +613,8 @@ struct ObservedExecutor<'p, E> {
     /// What a Dreamer-lane TASK's realization borrows; none without a route.
     /// A weave lens render borrows the same route.
     task: Option<TaskLend<'p>>,
+    /// The server's decision host, which judges a completed TASK try's Done.
+    decisions: &'p Arc<std::sync::OnceLock<DecisionHost>>,
 }
 
 /// The host's loan to a Dreamer-lane TASK's realization: the pass's route
@@ -767,5 +824,25 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             }
         });
         outcome
+    }
+
+    /// Asks the Done question on the server's task ladder, as the resident
+    /// pump does. Its rungs block on the server's runtime, so it runs on a
+    /// blocking thread, off this pass's; unstaffed, invalid or panicked, the
+    /// Done asks up.
+    async fn judge_done(&self, question: RunnerDoneQuestion) -> Option<RunnerDoneAnswer> {
+        let decisions = Arc::clone(self.decisions);
+        tokio::task::spawn_blocking(move || match decisions.get()?.task_decisions() {
+            Ok(decisions) => Some(question.decide(&decisions)),
+            Err(error) => {
+                tracing::warn!(%error, "the task surface's questions are invalid; Done asks up");
+                None
+            }
+        })
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "the Done judge panicked; Done asks up");
+            None
+        })
     }
 }

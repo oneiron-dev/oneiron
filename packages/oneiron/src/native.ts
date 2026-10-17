@@ -48,6 +48,7 @@ cancel(input: unknown): unknown
 steer(input: unknown): unknown
 describe(input: unknown): unknown
 tasksCreate(input: unknown): unknown
+tasksWave(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
@@ -138,6 +139,8 @@ vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultCodeDiff(requestJson: string): string
 vaultCodeBlame(requestJson: string): string
+vaultCodeProposalView(requestJson: string): string
+vaultCodeRepoDiff(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string

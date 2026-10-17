@@ -121,6 +121,7 @@ declare namespace self {
   const unfold: (input: { fold: string }) => Promise<unknown>;
 }
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
+declare function summarize(input: { ref: string; effort?: "low" | "medium" | "high"; group?: string[]; defer?: true }): Promise<unknown>;
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;
   create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;
@@ -128,6 +129,7 @@ declare const tasks: {
   refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
   update(input: { resultRef?: string | null; task_ref: string }): Promise<unknown>;
   wait(input: { all?: boolean | null; n_of?: number | null; step_key: string; tasks: string[]; until?: number | null }): Promise<unknown>;
+  wave(input: { constraints?: unknown; epic_task_ref: string; objective: string; planner_ref: string }): Promise<unknown>;
 };
 declare const vault: {
   artifacts: {
@@ -167,6 +169,8 @@ declare const vault: {
   code: {
     blame(input: { path: string; repo: string; revision_ref?: string | null }): Promise<unknown>;
     diff(input: { after: { path: string; repo: string; revision_ref?: string | null }; before: { path: string; repo: string; revision_ref?: string | null } }): Promise<unknown>;
+    proposal_view(input: { proposal_ref: string }): Promise<unknown>;
+    repo_diff(input: { after: { repo?: string | null; revision_ref?: string | null; snapshot_ref?: string | null }; before: { repo?: string | null; revision_ref?: string | null; snapshot_ref?: string | null } }): Promise<unknown>;
   };
   commit(input: { claims: object[] }): Promise<unknown>;
   companions: {
@@ -261,7 +265,7 @@ declare const vault: {
   };
   members: {
     accept(input: { invitation: string; vault_id: number }): Promise<unknown>;
-    add(input: { member: string; role?: string | null; vault_id: number }): Promise<unknown>;
+    add(input: { holder_key?: string | null; member: string; role?: string | null; vault_id: number }): Promise<unknown>;
     change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
     decline(input: { invitation: string; vault_id: number }): Promise<unknown>;
     invitations(input: { vault_id: number }): Promise<unknown>;

@@ -359,6 +359,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn tasks_wave(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.wave")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.wave", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn tasks_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "tasks.update")?;
         let output = py
@@ -1157,6 +1164,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(request_json, "vault.code.blame")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.blame", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_proposal_view(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.code.proposal_view")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.proposal_view", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_repo_diff(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.code.repo_diff")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.repo_diff", input))
             .map_err(raise)?;
         encode(&output)
     }

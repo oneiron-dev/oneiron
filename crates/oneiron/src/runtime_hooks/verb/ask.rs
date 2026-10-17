@@ -257,7 +257,7 @@ pub(super) fn open(
 ) -> Result<std::result::Result<VerbHookStop, String>> {
     let (binding_id, binding) = hook;
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Claim(binding_id));
-    what.label = Some(cut(label, crate::context_board::TASK_LABEL_MAX_BYTES));
+    what.label = Some(label.to_owned());
     for (option, text) in [
         (PROCEED, format!("Run {}", cut(&call.verb, 200))),
         (HOLD, "Do not run it".to_owned()),

@@ -130,7 +130,13 @@ pub(super) async fn bind(
     let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
         Ok(provider) => provider
             .with_clock_from_first_start()
-            .with_reader_meter(reader_meter),
+            .with_reader_meter(reader_meter)
+            .with_reader_window_tokens(
+                super::dreamer::dream_windows(models)
+                    .get(&seat.model)
+                    .copied()
+                    .unwrap_or(0),
+            ),
         Err(error) => {
             tracing::error!(%error, "code mode's executor config is invalid");
             return server;
@@ -144,6 +150,12 @@ pub(super) async fn bind(
     let provider = match server.seat_router(models) {
         Some((decisions, facet)) => provider.with_model_seat_router(decisions, facet),
         None => provider,
+    };
+    // Leased agent runs plan their spawns over the host's seats, if any.
+    let provider = if models.planner.seats.is_empty() {
+        provider
+    } else {
+        provider.with_planner(models.planner.clone())
     };
     let runs = crate::mcp::CodeRunLimits {
         total: models.code_mode.max_runs,

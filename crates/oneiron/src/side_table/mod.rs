@@ -21,6 +21,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
+use crate::secret_custody::CustodyWrite;
 use crate::store::ManifestDbs;
 
 pub(crate) use codec::{
@@ -39,6 +40,13 @@ pub(crate) trait SideTableDbs {
         self.side_sync_state_opt().ok_or(Error::InvariantViolation(
             "a sync_state side table needs a target that holds sync_state",
         ))
+    }
+
+    /// The custody door a mask on write mints through (OF-067): a vault's. A
+    /// bare store, a session view or an open gate holds none, so a hit the
+    /// side-row wall finds in a row written there refuses the write.
+    fn side_custody(&self) -> Option<CustodyWrite<'_>> {
+        None
     }
 }
 
@@ -76,6 +84,22 @@ impl SideTableDbs for RoutedDbs<'_> {
     }
 }
 
+/// A vault writes its own store's side tables, and holds the custody door the side-row wall
+/// mints through.
+impl SideTableDbs for crate::Vault {
+    fn side_vault_meta(&self) -> &OverlayDb {
+        self.store.side_vault_meta()
+    }
+
+    fn side_sync_state_opt(&self) -> Option<&OverlayStrDb> {
+        self.store.side_sync_state_opt()
+    }
+
+    fn side_custody(&self) -> Option<CustodyWrite<'_>> {
+        Some(CustodyWrite::of(self))
+    }
+}
+
 /// The bare `vault_meta` handle, for the open gates that read declared rows before a store exists.
 impl SideTableDbs for OverlayDb {
     fn side_vault_meta(&self) -> &OverlayDb {
@@ -94,16 +118,22 @@ pub(crate) struct StagedRow {
     decl: &'static SideTableDecl,
     key: Vec<u8>,
     value: Vec<u8>,
+    /// The table's codec over a masked copy of `value`.
+    decodes: fn(&[u8]) -> bool,
 }
 
 impl StagedRow {
     pub(crate) fn put(&self, dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>) -> Result<()> {
+        let admitted = self
+            .decl
+            .admit(dbs, txn, &self.key, &self.value, self.decodes)?;
+        let value = admitted.as_deref().unwrap_or(&self.value);
         match self.decl.db {
-            SideDb::VaultMeta => dbs.side_vault_meta().put(txn, &self.key, &self.value),
+            SideDb::VaultMeta => dbs.side_vault_meta().put(txn, &self.key, value),
             SideDb::SyncState => {
                 let key = std::str::from_utf8(&self.key)
                     .map_err(|_| self.decl.row_error(SideTableRowProblem::KeyNotUtf8))?;
-                dbs.side_sync_state()?.put(txn, key, &self.value)
+                dbs.side_sync_state()?.put(txn, key, value)
             }
         }
     }
@@ -133,13 +163,39 @@ pub(crate) enum CodecName {
     Raw,
 }
 
-/// One entry of the declaration list: where a table lives and how its rows are encoded.
+/// What a table's rows carry, for the side-row wall (OF-067; ARCH-0069 #mask-on-write). Only an
+/// `Authored` table's writes are admitted: read by the batch door's rules, each secret the mask
+/// places lifted into custody with its handle left in the row, any other hit refused. Every other
+/// class, and a table the catalog does not class, is written as given; the class says why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidePayload {
+    /// Not classed: written as given, as before the wall.
+    Unclassed,
+    /// Text or fields a person, a model or a provider wrote. A writer whose target holds no
+    /// custody door (a bare store) refuses a hit instead of masking it: one does on purpose
+    /// where the row's content names its own key or is compared on a replay, since a fresh
+    /// handle would change it on every write.
+    Authored,
+    /// A copy of a value another door already admitted.
+    Admitted,
+    /// Ids, counts, hashes, states and times the engine writes.
+    Engine,
+    /// Sealed bytes.
+    Ciphertext,
+    /// The custody plane a mask writes: the value's home, or a row that names one and holds no
+    /// value. Never read again.
+    Custody,
+}
+
+/// One entry of the declaration list: where a table lives, how its rows are encoded and what
+/// they carry.
 #[derive(Debug)]
 pub(crate) struct SideTableDecl {
     pub(crate) name: &'static str,
     pub(crate) db: SideDb,
     pub(crate) prefix: &'static [u8],
     pub(crate) codec: CodecName,
+    pub(crate) payload: SidePayload,
 }
 
 impl SideTableDecl {
@@ -162,6 +218,27 @@ impl SideTableDecl {
             CodecError::Value(error) => error,
         }
     }
+
+    /// The side-row wall at one write: an `Authored` table's row as admitted, `None` to write
+    /// it as given. `decodes` is the table's codec over a masked copy.
+    fn admit(
+        &'static self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        full: &[u8],
+        bytes: &[u8],
+        decodes: impl Fn(&[u8]) -> bool,
+    ) -> Result<Option<Vec<u8>>> {
+        if self.payload != SidePayload::Authored {
+            return Ok(None);
+        }
+        crate::batch::secret_scan::admit_side_row(dbs, txn, self, full, bytes, decodes)
+    }
+}
+
+/// Whether `bytes` decode as a table's value, for the wall's check of a masked copy.
+fn decodes<V, C: SideCodec<V>>(bytes: &[u8]) -> bool {
+    C::decode(bytes).is_ok()
 }
 
 type RawRows<'txn> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + 'txn>;
@@ -241,6 +318,7 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
             decl: self.decl,
             key: self.key_bytes(key),
             value: self.encode_value(value)?,
+            decodes: decodes::<V, C>,
         })
     }
 
@@ -323,6 +401,46 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
     ) -> Result<()> {
         let bytes = self.encode_value(value)?;
         self.put_raw(dbs, txn, &self.key_bytes(key), &bytes)
+    }
+
+    /// [`Self::put`], returning the bytes the row holds now, as the side-row wall stored them,
+    /// for a writer that keeps its own copy of what it wrote.
+    pub(crate) fn put_as_stored(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key: &K,
+        value: &V,
+    ) -> Result<Vec<u8>> {
+        let bytes = self.encode_value(value)?;
+        let full = self.key_bytes(key);
+        let stored = self
+            .decl
+            .admit(dbs, txn, &full, &bytes, decodes::<V, C>)?
+            .unwrap_or(bytes);
+        self.write_raw(dbs, txn, &full, &stored)?;
+        Ok(stored)
+    }
+
+    /// Reads `value` as the side-row wall will store it, before the writer derives anything
+    /// from it (an id, a hash, a copy it hands back): each secret the wall places becomes its
+    /// handle in `value` too, and the later [`Self::put`] finds the row clean. A table the
+    /// catalog does not class as authored leaves `value` as it is.
+    pub(crate) fn admit(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key: &K,
+        value: &mut V,
+    ) -> Result<()> {
+        let bytes = self.encode_value(value)?;
+        if let Some(masked) =
+            self.decl
+                .admit(dbs, txn, &self.key_bytes(key), &bytes, decodes::<V, C>)?
+        {
+            *value = self.decode_value(&masked)?;
+        }
+        Ok(())
     }
 
     /// Deletes one row; `true` when a row was present.
@@ -600,7 +718,19 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         }
     }
 
+    /// Writes one row through the side-row wall.
     fn put_raw(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        full: &[u8],
+        bytes: &[u8],
+    ) -> Result<()> {
+        let admitted = self.decl.admit(dbs, txn, full, bytes, decodes::<V, C>)?;
+        self.write_raw(dbs, txn, full, admitted.as_deref().unwrap_or(bytes))
+    }
+
+    fn write_raw(
         &self,
         dbs: &impl SideTableDbs,
         txn: &mut RwTxn<'_>,
@@ -678,7 +808,14 @@ pub(crate) fn host_sync_state_put(
     value: &[u8],
 ) -> Result<()> {
     host_declared_sync_state(key)?;
-    dbs.side_sync_state()?.put(txn, key, value)
+    // A host row has no typed shape in this crate: its masked copy keeps the declared encoding,
+    // and the host reads it back.
+    let admitted = match declared_for(SideDb::SyncState, key.as_bytes()) {
+        Some(decl) => decl.admit(dbs, txn, key.as_bytes(), value, |_| true)?,
+        None => None,
+    };
+    dbs.side_sync_state()?
+        .put(txn, key, admitted.as_deref().unwrap_or(value))
 }
 
 /// The delete half of the generic host door: checks [`host_declared_sync_state`],

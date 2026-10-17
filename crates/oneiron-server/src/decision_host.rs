@@ -44,7 +44,8 @@ use oneiron::{
 };
 
 use crate::config::models::{
-    BigSettings, ImagePickSettings, ModelsConfig, SeatPickSettings, SystemOneSettings,
+    BigSettings, BookingParseSettings, ImagePickSettings, ModelsConfig, SeatPickSettings,
+    SystemOneSettings,
 };
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
@@ -67,6 +68,11 @@ const PLACEMENT_WORDING: &str = "Which node of the task-type tree is this task? 
 specific live node whose kind fits the task's subgoal and site, or the root when none fits.";
 /// How long one placement may take before the rule rung's reading stands.
 pub(crate) const PLACEMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+/// The planner's shape question (OF-541, OF-389): this host's wording.
+const PLANNER_WORDING: &str = "Which team shape should take this need? Pick the option whose \
+model, pattern and width fit the need and its care level at the least expected spend.";
+/// How long one shape pick may take before the planner's deterministic pick stands.
+const PLANNER_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
@@ -86,6 +92,7 @@ pub struct DecisionHost {
     person_refresh: Arc<std::sync::Mutex<()>>,
     auto_checker: Option<BoundedAutoChecker>,
     image_pick: Option<ImagePickSettings>,
+    booking_parse: Option<BookingParseSettings>,
     /// The owner's explicit opt-in to send unit text off the host,
     /// `[models.decisions.system_one].remote_opt_in`.
     remote_opt_in: bool,
@@ -116,6 +123,7 @@ impl DecisionHost {
             person_refresh: Arc::default(),
             auto_checker: None,
             image_pick: None,
+            booking_parse: None,
             remote_opt_in: false,
         }
     }
@@ -260,6 +268,19 @@ impl DecisionHost {
         self
     }
 
+    /// The cheap seat a booking page's free text is parsed on.
+    fn with_booking_parse(mut self, settings: Option<BookingParseSettings>) -> Self {
+        self.booking_parse = settings;
+        self
+    }
+
+    /// The seat `[models.decisions.booking_parse]` names for a booking's
+    /// free text; `None` refuses free text.
+    #[must_use]
+    pub fn booking_parse(&self) -> Option<&BookingParseSettings> {
+        self.booking_parse.as_ref()
+    }
+
     /// The ladder every typed decision on this host goes through.
     #[must_use]
     pub fn ladder(&self) -> &HeldLadder {
@@ -375,6 +396,25 @@ impl DecisionHost {
             bands: self.bands.clone(),
             wording: PLACEMENT_WORDING.to_owned(),
             deadline,
+        }
+    }
+
+    /// A leased agent run's planner ladder (OF-541, OF-389): the shape pick
+    /// and the type placement for `principal`, up to the Big rung, each call
+    /// on its own fresh clock.
+    pub(crate) fn host_planner_decisions(
+        &self,
+        principal: EntityId,
+    ) -> oneiron::code_run::HostPlannerDecisions<'_> {
+        oneiron::code_run::HostPlannerDecisions {
+            ladder: &self.ladder,
+            principal,
+            bands: self.bands.clone(),
+            planner_wording: PLANNER_WORDING.to_owned(),
+            planner_budget: PLANNER_BUDGET,
+            placement_dial: self.dial(DecisionRung::Big),
+            placement_wording: PLACEMENT_WORDING.to_owned(),
+            placement_budget: PLACEMENT_BUDGET,
         }
     }
 
@@ -600,7 +640,8 @@ impl SyncServer {
                 tokio::runtime::Handle::current(),
             )
             .with_auto_check(models.decisions.auto_check.as_deref(), principal)
-            .with_image_pick(models.decisions.image_pick.as_ref());
+            .with_image_pick(models.decisions.image_pick.as_ref())
+            .with_booking_parse(models.decisions.booking_parse.clone());
         self
     }
 

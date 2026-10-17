@@ -1,7 +1,7 @@
 //! Transactional point-claim and retry lineage reads for ordered host composition.
 
 use super::AttemptQueue;
-use crate::attempt_queue::encoding::{decode_record, encode_record, ready_at};
+use crate::attempt_queue::encoding::{decode_record, ready_at};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::validate::{lease_claimed_record, validate_lease_owner};
 use crate::attempt_queue::{AttemptId, AttemptRecord, ClaimAttempt, ClaimOutcome};
@@ -67,9 +67,10 @@ impl AttemptQueue<'_> {
         )?;
         self.delete_ready_entry_for_record(txn, &row)?;
         lease_claimed_record(&mut row, &input.lease_owner, input.now)?;
+        let encoded = self.encode_in_txn(txn, &mut row)?;
         self.store
             .attempt_records
-            .put(txn, id.as_bytes(), &encode_record(&row)?)?;
+            .put(txn, id.as_bytes(), &encoded)?;
         Ok(ClaimOutcome::Claimed(row))
     }
 

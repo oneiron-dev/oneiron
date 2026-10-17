@@ -99,6 +99,7 @@ impl Vault {
             policy.read_frontier_hash()?,
             at,
         )?;
+        self.retire_derived_tool_grants_in_txn(&mut wtxn, &revoked, at)?;
         wtxn.commit()?;
         Ok(revoked)
     }
@@ -135,6 +136,7 @@ impl Vault {
             policy.read_frontier_hash()?,
             at,
         )?;
+        self.retire_derived_tool_grants_in_txn(&mut wtxn, &removed, at)?;
         wtxn.commit()?;
         Ok(removed)
     }

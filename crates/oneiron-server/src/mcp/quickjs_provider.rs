@@ -68,6 +68,8 @@ pub struct McpQuickJsProvider {
     /// Builds each run's compaction seat; none keeps every window raw.
     compaction: Option<RunCompactionSeat>,
     seat_router: Option<(SeatDecisions, String)>,
+    /// The seats a leased agent's planned spawns choose among.
+    planner: Option<crate::config::models::PlannerSettings>,
     /// Each run's clock is frozen at its first start, and a resumed run keeps
     /// it; otherwise every run shares the configured frozen clock.
     clock_from_first_start: bool,
@@ -81,6 +83,9 @@ pub struct McpQuickJsProvider {
     /// The runtime reader children are made fresh from, compiled once at
     /// the first child.
     reader_template: Mutex<Option<WasmtimeComponentRuntime>>,
+    /// The input window of the model reader children and summaries run
+    /// on, in tokens, when the host knows it.
+    reader_window_tokens: Option<u64>,
 }
 
 /// A reader child's backend over the host-injected model: its calls are
@@ -141,11 +146,13 @@ impl McpQuickJsProvider {
             config,
             compaction: None,
             seat_router: None,
+            planner: None,
             clock_from_first_start: false,
             injected: None,
             code_check: None,
             reader_meter: None,
             reader_template: Mutex::new(None),
+            reader_window_tokens: None,
         })
     }
 
@@ -167,6 +174,14 @@ impl McpQuickJsProvider {
     #[must_use]
     pub(crate) fn with_reader_meter(mut self, meter: ReaderMeter) -> Self {
         self.reader_meter = Some(meter);
+        self
+    }
+
+    /// The input window, in tokens, of the model reader children and
+    /// summaries run on: what `readAll` sizes its chunks and groups by.
+    #[must_use]
+    pub(crate) fn with_reader_window_tokens(mut self, tokens: u64) -> Self {
+        self.reader_window_tokens = (tokens > 0).then_some(tokens);
         self
     }
 
@@ -205,6 +220,13 @@ impl McpQuickJsProvider {
         self.seat_router = Some((decisions, facet.into()));
         self
     }
+
+    /// Lend leased agent runs the host's planner over `planner`'s seats.
+    #[must_use]
+    pub fn with_planner(mut self, planner: crate::config::models::PlannerSettings) -> Self {
+        self.planner = Some(planner);
+        self
+    }
 }
 
 impl McpCodeModeProvider for McpQuickJsProvider {
@@ -216,6 +238,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn seat_facet(&self) -> Option<&str> {
         self.seat_router.as_ref().map(|(_, facet)| facet.as_str())
+    }
+    fn planner(&self) -> Option<&crate::config::models::PlannerSettings> {
+        self.planner.as_ref()
     }
     fn code_check(&self) -> Option<&ShadowCheck> {
         self.code_check.as_deref()
@@ -259,6 +284,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn reader_backend(&self, meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
         self.reader_meter.as_ref().map(|build| build(meter))
+    }
+    fn reader_window_tokens(&self) -> Option<u64> {
+        self.reader_window_tokens
     }
     fn executor_config(
         &self,
