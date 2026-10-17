@@ -51,6 +51,7 @@ pub(crate) use policy::{
 };
 pub(crate) use quote::{
     ProvenRoomQuote, QuotedReply, carries_quote, pin_body_quotes_at_message_birth_in_txn,
+    require_quote_landing_in_txn,
 };
 pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
