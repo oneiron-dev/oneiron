@@ -148,6 +148,20 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
                     .map_err(|_| invalid_code_run_replay("task wait set does not encode"))?,
             ),
         )]),
+        // The guest's call: the members the host bound to it are not the
+        // guest's, and a replay resolves them again.
+        SelfCall::Summarize(call) => request_map(vec![(
+            "call",
+            Value::from(
+                serde_json::json!({
+                    "ref": call.reference,
+                    "effort": call.effort.map(super::SummarizeEffort::as_str),
+                    "group": call.group,
+                    "defer": call.defer,
+                })
+                .to_string(),
+            ),
+        )]),
         SelfCall::Leader(super::SelfLeaderCall::Advice { top }) => request_map(vec![
             ("verb", Value::from("advice")),
             ("top", top.map_or(Value::Nil, Value::from)),
@@ -345,6 +359,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
         SelfDispatchOutcome::ReaderSpawn(receipt) => json_outcome("reader_spawn", receipt)?,
         SelfDispatchOutcome::ReaderReport(receipt) => json_outcome("reader_report", receipt)?,
         SelfDispatchOutcome::TaskWaitSet(result) => json_outcome("task_wait_set", result)?,
+        SelfDispatchOutcome::Summarize(reply) => json_outcome("summarize", reply)?,
         SelfDispatchOutcome::Leader(json) => request_map(vec![
             ("kind", Value::from("leader")),
             ("json", Value::from(json.as_str())),
@@ -390,6 +405,9 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         )?)),
         "team" => Ok(SelfDispatchOutcome::Team(decode_json_outcome(entries)?)),
         "task_wait_set" => Ok(SelfDispatchOutcome::TaskWaitSet(decode_json_outcome(
+            entries,
+        )?)),
+        "summarize" => Ok(SelfDispatchOutcome::Summarize(decode_json_outcome(
             entries,
         )?)),
         "task_refusal" => Ok(SelfDispatchOutcome::TaskRefusal(
@@ -601,6 +619,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.spawn" => Ok(SelfEffect::ReaderSpawn),
         "tasks.update" => Ok(SelfEffect::ReaderReport),
         "tasks.wait_set" => Ok(SelfEffect::TasksWaitSet),
+        "summarize" => Ok(SelfEffect::Summarize),
         "self.leader" => Ok(SelfEffect::Leader),
         "self.team" => Ok(SelfEffect::Team),
         _ => Err(invalid_code_run_replay("unknown self effect")),

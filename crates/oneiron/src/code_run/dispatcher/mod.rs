@@ -7,6 +7,7 @@ mod human_speech;
 mod leader;
 mod memory_verbs;
 mod reader_spawn;
+mod summarize;
 mod team_verbs;
 mod verb_hooks;
 mod wake_policy;
@@ -467,6 +468,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::ReaderSpawn(call) => self.dispatch_reader_spawn(*call, site),
             SelfCall::ReaderReport(call) => self.dispatch_reader_report(call),
             SelfCall::TasksWaitSet(call) => self.dispatch_task_wait_set(call, site),
+            SelfCall::Summarize(call) => self.dispatch_summarize(*call, site),
             SelfCall::Leader(call) => self.dispatch_leader(call),
             SelfCall::Team(call) => self.dispatch_team(call),
         }

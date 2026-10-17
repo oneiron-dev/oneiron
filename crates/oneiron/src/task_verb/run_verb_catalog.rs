@@ -21,6 +21,7 @@ pub enum RunVerb {
     SelfTeamRecord,
     SelfSpawn,
     TasksWait,
+    Summarize,
 }
 impl RunVerb {
     pub const ALL: &[Self] = &[
@@ -41,6 +42,7 @@ impl RunVerb {
         Self::SelfTeamRecord,
         Self::SelfSpawn,
         Self::TasksWait,
+        Self::Summarize,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -64,6 +66,7 @@ impl RunVerb {
             Self::SelfTeamRecord => "self.team.record",
             Self::SelfSpawn => "self.spawn",
             Self::TasksWait => "tasks.wait",
+            Self::Summarize => "summarize",
         }
     }
     pub const fn writes(self) -> bool {
@@ -81,6 +84,7 @@ impl RunVerb {
                 | Self::SelfTeamStart
                 | Self::SelfTeamRecord
                 | Self::SelfSpawn
+                | Self::Summarize
         )
     }
     pub const fn effect(self) -> crate::code_run::SelfEffect {
@@ -102,6 +106,7 @@ impl RunVerb {
             Self::SelfTeamRecord => crate::code_run::SelfEffect::Team,
             Self::SelfSpawn => crate::code_run::SelfEffect::ReaderSpawn,
             Self::TasksWait => crate::code_run::SelfEffect::TasksWaitSet,
+            Self::Summarize => crate::code_run::SelfEffect::Summarize,
         }
     }
 }

@@ -1290,6 +1290,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::TaskWaitSetRequest>(
                 ),
             ),
+            (
+                "summarize",
+                crate::code_run::vault_read::request_schema::<crate::code_run::SummarizeInput>(),
+            ),
         ])
     });
     SCHEMAS.get(verb)

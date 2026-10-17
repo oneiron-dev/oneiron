@@ -110,7 +110,11 @@ impl HostSelfDispatcher<'_> {
             // room, and their spend scopes hold units and ids, no content.
             | SelfEffect::ReaderSpawn
             | SelfEffect::ReaderReport
-            | SelfEffect::TasksWaitSet => Ok(()),
+            | SelfEffect::TasksWaitSet
+            // A summary is one more job row of the run on the same route,
+            // its memo row beside it, and its text a result of the job's run
+            // there: all of it evaporates with the room.
+            | SelfEffect::Summarize => Ok(()),
         }
     }
 

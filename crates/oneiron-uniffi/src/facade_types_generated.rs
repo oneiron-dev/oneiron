@@ -6510,6 +6510,8 @@ pub enum SelfEffect {
     ReaderReport,
     #[serde(rename = "TasksWaitSet")]
     TasksWaitSet,
+    #[serde(rename = "Summarize")]
+    Summarize,
     #[serde(rename = "Leader")]
     Leader,
     #[serde(rename = "Team")]

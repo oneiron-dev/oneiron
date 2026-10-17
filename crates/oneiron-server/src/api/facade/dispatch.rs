@@ -5097,7 +5097,8 @@ pub(crate) async fn call_verb(
         | "self.team.start"
         | "self.team.record"
         | "self.spawn"
-        | "tasks.wait" => Err(context_required(verb, VerbContext::Run)),
+        | "tasks.wait"
+        | "summarize" => Err(context_required(verb, VerbContext::Run)),
         _ => Err(unknown_verb(verb)),
     }
 }

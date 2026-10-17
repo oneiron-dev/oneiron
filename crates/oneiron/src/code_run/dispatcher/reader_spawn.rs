@@ -79,6 +79,11 @@ impl HostSelfDispatcher<'_> {
         Ok(self)
     }
 
+    /// The seat the host lent this run to spawn readers under, if any.
+    pub(crate) fn reader_spawn_seat(&self) -> Option<&SpawnHostSeat> {
+        self.reader_spawn.as_ref()
+    }
+
     /// The reader child this dispatcher is bound to, if any.
     pub(crate) fn reader_child(&self) -> Option<&ReaderChildBinding> {
         self.reader_child.as_ref()
@@ -174,6 +179,7 @@ impl HostSelfDispatcher<'_> {
                 session_ref: self.session_ref().map(str::to_owned),
                 participant: self.participant(),
             },
+            kind: crate::code_run::ReaderJobKind::Read,
             ask: call.ask,
         };
         let (job, replay) =

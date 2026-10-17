@@ -291,6 +291,48 @@ impl SessionBinding<'_> {
         })
     }
 
+    /// [`Vault::inherit_code_run_result_marks`] on the room's route: the
+    /// marks of every occurrence in `from` join those of `owner`'s
+    /// occurrence of `output`.
+    fn inherit_marks(
+        &self,
+        owner: EntityId,
+        output: &CodeRunRawOutput,
+        from: &[(EntityId, CodeRunRawOutput)],
+    ) -> Result<()> {
+        let get_marks = |owner: EntityId, output: &CodeRunRawOutput| {
+            let key = ResultOccurrence::of(Some(owner), output)?.mark_key(&output.handle);
+            let refs = self.answered(|| self.session.side_table_get(&RAW_OUTPUT_TAINTS, &key))?;
+            let secret =
+                self.answered(|| self.session.side_table_get(&RAW_OUTPUT_SECRETS, &key))?;
+            Ok::<_, crate::Error>((key, refs.unwrap_or_default(), secret))
+        };
+        let (key, mut refs, mut secret) = get_marks(owner, output)?;
+        let (own_refs, own_secret) = (refs.len(), secret.is_some());
+        for (source, held) in from {
+            let (_, more, marked) = get_marks(*source, held)?;
+            for taint in more {
+                if !refs.contains(&taint) {
+                    refs.push(taint);
+                }
+            }
+            secret = secret.or(marked);
+        }
+        if refs.len() > own_refs {
+            self.answered(|| {
+                self.session
+                    .side_table_put_routed(&self.route, &RAW_OUTPUT_TAINTS, &key, &refs)
+            })?;
+        }
+        if !own_secret && let Some(reason) = &secret {
+            self.answered(|| {
+                self.session
+                    .side_table_put_routed(&self.route, &RAW_OUTPUT_SECRETS, &key, reason)
+            })?;
+        }
+        Ok(())
+    }
+
     /// The taint of the occurrence of a body that `owner` holds (the bytes'
     /// own, with none), from the room's sidecars: a secret-scan mark is live
     /// taint for good, and so is any taint ref, since a room keeps no view
@@ -648,6 +690,21 @@ impl<'a> ExecutorStorage<'a> {
                 vault.code_run_raw_output_secret(owner, output)?,
             )),
             Self::Session(binding) => binding.result_taint(owner, output),
+        }
+    }
+
+    /// Marks run `owner`'s occurrence of `output` with the taint of every
+    /// occurrence in `from`, on the run's route: a body made from a tainted
+    /// one is tainted as long as it is.
+    pub(crate) fn inherit_code_run_result_marks(
+        &self,
+        owner: EntityId,
+        output: &CodeRunRawOutput,
+        from: &[(EntityId, CodeRunRawOutput)],
+    ) -> Result<()> {
+        match self {
+            Self::Canonical(vault) => vault.inherit_code_run_result_marks(owner, output, from),
+            Self::Session(binding) => binding.inherit_marks(owner, output, from),
         }
     }
 
