@@ -17,6 +17,15 @@ const CHECKPOINT_HEAD: SideTable<(), [u8; 32], Raw> =
 const CHECKPOINT_IMAGE: SideTable<[u8; 32], Vec<u8>, Raw> =
     SideTable::new(&side_table::AUTHORITY_CHECKPOINT_V2_IMAGE);
 
+/// One kept image's canonical bytes, unchecked.
+pub(super) fn checkpoint_image_bytes_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &[u8; 32],
+) -> Result<Option<Vec<u8>>> {
+    CHECKPOINT_IMAGE.get(store, txn, id)
+}
+
 /// The local checkpoint head and the rows its image covers, read without
 /// trusting it: naming a hash as covered history to fetch is not trust.
 pub(super) fn checkpoint_head_coverage_in_txn(

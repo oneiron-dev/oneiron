@@ -161,6 +161,10 @@ pub struct AuthorityCheckpointV2 {
     /// The root policy the image was built under. A verifier takes its
     /// policy from its own pin, never from here.
     pub root_policy: CheckpointRootPolicy,
+    /// The owner-root pin of the install that built the image: its fold
+    /// counted world keys and local reads under that pin. An adopter's own
+    /// pin must equal it.
+    pub building_pin: Option<PinnedRoot>,
     /// The previous image's id in this vault's local chain.
     pub parent: Option<[u8; 32]>,
 }
@@ -598,6 +602,7 @@ impl Vault {
             unresolved,
             archive_manifests: Vec::new(),
             root_policy: self.checkpoint_root_policy_in_txn(txn)?,
+            building_pin: pin,
             parent: None,
         };
         // One serde round trip normalizes what a decoder would (an empty
