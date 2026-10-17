@@ -376,9 +376,13 @@ impl Memory<'_> {
             model: model.to_owned(),
             rendered_at: self.vault().store.clock.now_recorded_at(),
         };
-        Ok(super::weave_lens::compose_weave_lens(
-            &read, &report, &render,
-        )?)
+        let lens = super::weave_lens::compose_weave_lens(&read, &report, &render)?;
+        // The render is kept, and the one before it settles on the skill's
+        // corrections axis; neither gates the lens.
+        if let Err(error) = self.vault().keep_live_weave_lens(reader, &report, &render) {
+            tracing::warn!(?error, "the live weave lens render was not kept");
+        }
+        Ok(lens)
     }
 
     /// The live report for `reader` under the bound actor's read.
