@@ -10109,7 +10109,7 @@
      "surface": {
       "crate-vis": 34,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -38521,7 +38521,8 @@
      "path": "src/runtime_hooks/verb/ask.rs",
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 27
+      "const": 1,
+      "crate-vis": 26
      }
     },
     {
@@ -38575,7 +38576,7 @@
       "crate-vis": 7,
       "enum": 1,
       "fn": 13,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3,
       "type": 1
      }
