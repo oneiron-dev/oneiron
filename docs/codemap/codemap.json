@@ -25513,8 +25513,29 @@
       "const": 12,
       "crate-vis": 4,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LearningSettingClear",
+      "LearningSettingMode",
+      "LearningSettingPut",
+      "LearningSettingRowView",
+      "LearningSettingScope",
+      "LearningSettingSpecView",
+      "LearningSettingsRequest",
+      "LearningSettingsView"
+     ],
+     "path": "src/learning_setting_doors.rs",
+     "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 6
      }
     },
     {
@@ -26218,7 +26239,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 20,
-      "mod": 191,
+      "mod": 192,
       "re-export": 74
      }
     },
@@ -44807,7 +44828,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 216
+      "fn": 219
      }
     },
     {
@@ -50035,6 +50056,13 @@
      "layout": "file",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
+    "learning_setting_doors": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…"
+    },
     "lens": {
      "files": 48,
      "impl_vault": true,
@@ -50766,7 +50794,7 @@
    },
    "over_bar": 134,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3066,
+   "source_files": 3067,
    "test_files": 903
   },
   "oneiron-android": {
@@ -58633,7 +58661,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 171
+      "fn": 174
      }
     },
     {
@@ -59647,7 +59675,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 172
+      "fn": 175
      }
     },
     {
@@ -62206,7 +62234,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -62227,6 +62255,16 @@
      "purpose": "OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/setting_doors.rs",
+     "purpose": "The host doors of the owner's learned-setting rows: `vault.settings.learning`, `.put` and `.clear`",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -62955,6 +62993,16 @@
      "notable": [],
      "path": "src/api/owner_routes/inbox_routes.rs",
      "purpose": "`/v1/owner/inbox`: the owner's view of the agent inbox lens (ARCH-0063 R4, INB-03)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/learning_setting_routes.rs",
+     "purpose": "`/v1/owner/settings/learning`: the owner reads the learned-setting catalog and its own rows, and lays or…",
      "surface": {
       "crate-vis": 1
      }
@@ -63997,7 +64045,7 @@
      "surface": {
       "enum": 9,
       "fn": 3,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 21
      }
     },
@@ -64032,6 +64080,23 @@
       "enum": 3,
       "fn": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LearningSettingClearArgs",
+      "LearningSettingListArgs",
+      "LearningSettingModeArg",
+      "LearningSettingPutArgs",
+      "LearningSettingsCommand"
+     ],
+     "path": "src/cli/learning_setting_args.rs",
+     "purpose": "`oneiron learning-settings`: the owner's learned-setting rows on a stopped vault…",
+     "surface": {
+      "enum": 2,
+      "struct": 3
      }
     },
     {
@@ -64116,7 +64181,7 @@
       "const": 1,
       "crate-vis": 4,
       "fn": 12,
-      "re-export": 16,
+      "re-export": 17,
       "struct": 1
      }
     },
@@ -64373,7 +64438,7 @@
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
       "crate-vis": 4,
-      "fn": 15,
+      "fn": 16,
       "re-export": 1
      }
     },
@@ -68394,7 +68459,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 263,
+     "files": 265,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68436,7 +68501,7 @@
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
     "cli": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -68711,7 +68776,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 515,
+   "source_files": 518,
    "test_files": 182
   },
   "oneiron-spawn": {
