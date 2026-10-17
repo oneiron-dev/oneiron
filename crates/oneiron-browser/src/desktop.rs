@@ -231,6 +231,16 @@ pub struct TakeoverRecord {
     pub inputs: u64,
 }
 
+/// A takeover the desktop's end cut short: still asked, or still held with
+/// its inputs so far, when the run's desktop went away. Its receipt keeps
+/// this, as a returned takeover's keeps its [`TakeoverRecord`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbandonedTakeover {
+    #[serde(flatten)]
+    pub state: Takeover,
+    pub ended_at_ms: u64,
+}
+
 /// One input from the person who holds the desktop, at the pixels of the
 /// whole-display screen they were last shown.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -467,6 +477,13 @@ impl DesktopSession {
         self.receipt_sink = Some(sink);
     }
 
+    /// Sets the press each effect class runs under, as the vault's grants
+    /// stand now: a desktop that outlives one door of its run takes the
+    /// next door's policy.
+    pub fn set_policy(&mut self, policy: SendPolicy) {
+        self.policy = policy;
+    }
+
     /// What the guest's container proved, for the run's receipt.
     #[must_use]
     pub fn manifest(&self) -> &SessionManifest {
@@ -628,6 +645,18 @@ impl DesktopSession {
     /// The takeover that ended since the agent's last answer, once.
     pub fn take_returned(&mut self) -> Option<TakeoverRecord> {
         self.returned.take()
+    }
+
+    /// Ends a takeover still asked or held as the desktop goes away, with
+    /// what it held so far; `None` while the agent has the desktop.
+    pub fn abandon_takeover(&mut self) -> Option<AbandonedTakeover> {
+        match std::mem::replace(&mut self.takeover, Takeover::Agent) {
+            Takeover::Agent => None,
+            state => Some(AbandonedTakeover {
+                state,
+                ended_at_ms: now_ms(),
+            }),
+        }
     }
 
     /// An agent verb's entry: the agent has the desktop and the guest runs.

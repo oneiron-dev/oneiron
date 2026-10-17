@@ -326,6 +326,7 @@ impl SyncServer {
         }) {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
         }
+        self.desktop_seats.run_settled(run, waits);
         false
     }
 }

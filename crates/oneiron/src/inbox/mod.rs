@@ -30,6 +30,7 @@ mod model;
 mod notification;
 mod projection;
 mod resolve;
+mod takeover_ask;
 
 pub use self::list::{
     INBOX_PAGE_DEFAULT, INBOX_PAGE_MAX, NotificationMark, NotificationPage, NotificationRow,
