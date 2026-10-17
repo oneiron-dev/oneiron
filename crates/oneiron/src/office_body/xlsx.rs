@@ -580,9 +580,12 @@ fn shift(doc: &LoroDoc, sheet: &str, edit: XlsxAxisEdit) -> Result<()> {
 /// name `name`: its cells and read-only ranges move or go, and every formula
 /// and defined name that reaches it follows. A deleted reference reads
 /// `#REF!` and a range that loses part of itself shrinks; a formula that
-/// moves loses its cached value. With `check`, refuse what an export could
-/// not write: a shared formula the body cannot write out, a read-only range
-/// the edit would split or cut, a cell pushed off the sheet.
+/// moves loses its cached value. A table's header and totals rows widen and
+/// narrow with the columns inserted or deleted inside the table; the export
+/// adds or removes the table's columns. With `check`, refuse what an export
+/// could not write: a shared formula the body cannot write out, a read-only
+/// range the edit would split or cut, a table's header or totals row or all
+/// of its columns deleted, a cell pushed off the sheet.
 fn axis(
     body: &mut XlsxBody,
     key: &str,
@@ -609,13 +612,19 @@ fn axis(
                 XlsxAxis::Row => (area.first.1, area.last.1),
                 XlsxAxis::Column => (area.first.0, area.last.0),
             };
-            let split = !edit.delete && low < edit.at && edit.at <= high;
-            // A table's header or totals row never goes; other ranges go
-            // only whole.
+            let table = area.lock == XlsxLock::TableRow;
+            let columns = table && edit.axis == XlsxAxis::Column;
+            let split = !edit.delete && low < edit.at && edit.at <= high && !columns;
+            let whole = edit.at <= low && high <= end;
+            // A table's header or totals row never goes, nor all of its
+            // columns; other ranges go only whole.
             let cut = edit.delete
                 && low <= end
                 && edit.at <= high
-                && (area.lock == XlsxLock::TableRow || low < edit.at || high > end);
+                && if columns { whole } else { table || !whole };
+            if check && cut && columns {
+                return Err(invalid("the columns would delete a table"));
+            }
             if check && (split || cut) {
                 return Err(invalid(
                     "the rows or columns would split or cut a read-only range",
