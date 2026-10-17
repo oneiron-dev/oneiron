@@ -112,7 +112,6 @@ fn statement_key(plan: &str) -> [u8; 32] {
 fn wave_statement_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    actor: EntityId,
     plan: &ValidatedWavePlan,
     origin: Option<&TaskCreateOrigin>,
     now: u64,
@@ -159,7 +158,7 @@ fn unheld_wave_statement_in(
     origin: Option<&TaskCreateOrigin>,
     now: u64,
 ) -> Result<(FanoutStatement, bool), MemoryError> {
-    let mut statement = wave_statement_in(vault, txn, actor, plan, origin, now)?;
+    let mut statement = wave_statement_in(vault, txn, plan, origin, now)?;
     let (scope, row_ref) = wave_check_keys(actor, plan)?;
     let asked =
         super::fanout_check::raise_unheld_width_check(vault, txn, &mut statement, &scope, row_ref)?;
@@ -495,14 +494,8 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
         memory
             .with_verified_actor_write_txn(|txn| {
                 let fingerprint = self.check_cut_in(&memory, txn, plan)?;
-                let statement = wave_statement_in(
-                    self.vault,
-                    txn,
-                    self.actor,
-                    plan,
-                    self.origin.as_ref(),
-                    now,
-                )?;
+                let statement =
+                    wave_statement_in(self.vault, txn, plan, self.origin.as_ref(), now)?;
                 let admission = admit_wave_launch_in(
                     self.vault,
                     txn,
