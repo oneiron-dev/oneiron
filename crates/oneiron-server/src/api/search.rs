@@ -111,6 +111,19 @@ pub(crate) struct VectorSearchQuery {
     #[schema(example = 100)]
     #[param(example = 100)]
     pub(crate) deadline_ms: Option<u64>,
+    /// A declared embedding space to search in place of the vault's own text
+    /// index (OF-370), as `GET /v1/owner/embedding-spaces` lists it. The
+    /// vector must come from one of the space's query towers, at its width.
+    #[serde(default)]
+    #[schema(example = "local/clip-vit-b32@2024-01@own-server")]
+    #[param(example = "local/clip-vit-b32@2024-01@own-server")]
+    pub(crate) space: Option<String>,
+    /// The query tower that encoded `query` when `space` is set: `text`
+    /// (the default), `image` or `audio`.
+    #[serde(default, rename = "queryKind")]
+    #[schema(value_type = Option<String>, example = "image")]
+    #[param(value_type = Option<String>, example = "image")]
+    pub(crate) query_kind: Option<InputKind>,
 }
 
 /// Search hit returned by vector and text search endpoints.
@@ -156,7 +169,7 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
         ),
         (
             status = 400,
-            description = "Malformed query vector or invalid query parameters.",
+            description = "Malformed query vector or invalid query parameters, an undeclared `space`, or a vector the space's `queryKind` tower does not take at the space's width.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -231,11 +244,45 @@ pub(crate) async fn search_vector(
             Some("queryText"),
         ));
     }
-    let page = SearchPage {
-        probe: SearchProbe::Vector {
+    let query_text = probe_text(params.query_text.as_deref()).map(str::to_owned);
+    let probe = match params.space {
+        Some(space) => {
+            let query_kind = params.query_kind.unwrap_or(InputKind::Text);
+            let declared = server
+                .vault
+                .embedding_spaces()
+                .map_err(|error| core_engine_error("embedding spaces read failed", error))?
+                .into_iter()
+                .find(|declared| declared.id == space)
+                .ok_or_else(|| {
+                    ApiError::bad_request(
+                        format!("embedding space {space} is not declared"),
+                        Some("space"),
+                    )
+                })?;
+            declared
+                .admit_query(query_kind, &query)
+                .map_err(|error| ApiError::bad_request(error.to_string(), Some("query")))?;
+            SearchProbe::Space {
+                space,
+                query_kind,
+                embedding: query,
+                query_text,
+            }
+        }
+        None if params.query_kind.is_some() => {
+            return Err(ApiError::bad_request(
+                "queryKind names a tower of a declared space; set space too",
+                Some("queryKind"),
+            ));
+        }
+        None => SearchProbe::Vector {
             embedding: query,
-            query_text: probe_text(params.query_text.as_deref()).map(str::to_owned),
+            query_text,
         },
+    };
+    let page = SearchPage {
+        probe,
         depth: params.depth,
         view,
         count_mode,

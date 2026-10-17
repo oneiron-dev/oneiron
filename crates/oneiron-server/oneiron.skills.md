@@ -339,7 +339,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 
 #### search-vector - `GET /api/search/vector`
 
-- when-to-use: Retrieve nearest entities from an embedding vector when the caller already has a numeric query embedding.
+- when-to-use: Retrieve nearest entities from an embedding vector when the caller already has a numeric query embedding. It searches the vault's own text index; with `space` (and `queryKind`: `text`, `image` or `audio`) it searches that declared embedding space, and the vector must come from that tower at the space's width.
 - trigger phrases:
   - "semantic vector search"
   - "nearest memories by embedding"
