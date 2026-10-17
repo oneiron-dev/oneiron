@@ -233,7 +233,7 @@ impl Memory<'_> {
         // A lifted key reads as its handle to all but the owner (OF-067).
         let keys = if self.reads_lifted_keys_masked()? {
             let vault = self.vault();
-            let txn = vault.store.env.read_txn()?;
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
             LiftedKeys::of_in_txn(
                 &vault.store,
                 &txn,
