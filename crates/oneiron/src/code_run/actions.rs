@@ -103,13 +103,19 @@ impl ActionDispatch {
     }
 }
 /// What the host binds onto one action call, never the call's own body: the
-/// door its credential opens onto the SDK verb table and, when the host
-/// authenticated the owner on its own, that proof. Unbound, a verb-table or
-/// run-row action is refused and an owner action asks for the proof.
+/// door its credential opens onto the SDK verb table, when the host
+/// authenticated the owner on its own that proof, and when the call acts for
+/// a live agent run that run's lease. Unbound, a verb-table or run-row action
+/// is refused, a live-run row asks for the lease and an owner action asks
+/// for the proof.
 #[derive(Clone, Default)]
 pub struct ActionHostBinding<'a> {
     pub verb_door: Option<Arc<dyn AgentVerbDoor>>,
     pub owner: Option<&'a AuthenticatedOwner>,
+    /// The live agent run the call acts for, as the host that runs it sealed
+    /// its lease (`HostSelfDispatcher::task_host_binding`). Read live again
+    /// at every call, and before any replay answers.
+    pub live_run: Option<crate::task_verb::HostBinding>,
 }
 #[derive(Debug, Clone, Copy)]
 pub struct ActionBuildContext {
@@ -119,8 +125,8 @@ pub struct ActionBuildContext {
 }
 pub type ActionFactory = fn(ActionBuildContext, &[ActionArgument]) -> Result<SelfCall>;
 /// How a registered verb becomes its call: a host factory, a row of the
-/// SDK verb table at its own name, or a memory run row as the typed call a
-/// code run makes.
+/// SDK verb table at its own name, or a run row as the typed call a code run
+/// makes.
 #[derive(Clone, Copy)]
 enum ActionBuild {
     Factory(ActionFactory),
@@ -167,15 +173,16 @@ impl ActionRegistry {
         Ok(())
     }
     /// The app's whole table: the owner's wake policy, the resident's two
-    /// inference-policy actions, every row of the SDK verb table and the four
-    /// memory run rows. A host serves its buttons and its agents' calls from
-    /// this one table.
+    /// inference-policy actions, every row of the SDK verb table, the four
+    /// memory run rows and the live-run rows. A host serves its buttons and
+    /// its agents' calls from this one table.
     pub fn app() -> Result<Self> {
         let mut registry = Self::default();
         registry.register_dreamer_wake_policy()?;
         registry.register_inference_defaults()?;
         registry.register_sdk_verbs()?;
         registry.register_memory_run_verbs()?;
+        registry.register_live_run_verbs()?;
         Ok(registry)
     }
     /// Offers every row of the SDK verb table a host door answers, under the
@@ -211,10 +218,21 @@ impl ActionRegistry {
     /// the typed call a code run makes, at the action's frozen clock, under
     /// the door the host binds: a search reads, and an edge's target is
     /// checked, with the credential's read key, and claims and edges meet
-    /// their own gates. The other run rows act on their caller's live run,
-    /// which an action has none of; none is offered.
+    /// their own gates.
     pub fn register_memory_run_verbs(&mut self) -> Result<()> {
-        for verb in super::run_verb_call::MEMORY_RUN_VERBS {
+        self.register_run_verbs(&super::run_verb_call::MEMORY_RUN_VERBS)
+    }
+    /// Offers the run rows that act on their caller's live agent run
+    /// (`tasks.refuse`, `self.agents.spawn`, `self.team.start`,
+    /// `self.team.record`) under their own names, as the memory rows are
+    /// offered. Each runs only when the host binds the run's lease
+    /// ([`ActionHostBinding::live_run`]), read live, so the call is the run's
+    /// own: its parent, actor and lease are the run's, never the body's.
+    pub fn register_live_run_verbs(&mut self) -> Result<()> {
+        self.register_run_verbs(&super::run_verb_call::LIVE_RUN_VERBS)
+    }
+    fn register_run_verbs(&mut self, verbs: &[RunVerb]) -> Result<()> {
+        for verb in verbs.iter().copied() {
             self.insert(
                 ActionVerbDefinition {
                     id: SelfUiActionId::new(verb.as_str())?,
@@ -340,6 +358,7 @@ impl ActionRegistry {
         let binding = ActionHostBinding {
             verb_door: None,
             owner: Some(owner),
+            live_run: None,
         };
         self.execute(vault, actor, principal, call, binding)
     }
@@ -351,12 +370,27 @@ impl ActionRegistry {
         request: &AgentActionCall,
         binding: ActionHostBinding<'a>,
     ) -> Result<ActionDispatch> {
-        let ActionHostBinding { verb_door, owner } = binding;
+        let ActionHostBinding {
+            verb_door,
+            owner,
+            live_run,
+        } = binding;
         let registered = self.registered(request.verb_id.as_str())?;
         // Unbound, a run row would read past the caller's own read key.
         if matches!(registered.build, ActionBuild::Run(_)) && verb_door.is_none() {
             return Err(invalid("a run-row action runs only under a host's door"));
         }
+        if let ActionBuild::Run(verb) = registered.build
+            && super::run_verb_call::LIVE_RUN_VERBS.contains(&verb)
+            && live_run.is_none()
+        {
+            return Err(invalid("this run row needs its caller's live run"));
+        }
+        // The run's lease, read live: a lapsed one acts and replays nothing.
+        let leased = live_run
+            .as_ref()
+            .map(|run| run.leased_record(vault))
+            .transpose()?;
         let expected_kind = if actor.actor_class() == EdgeActorClass::Agent {
             LensActingPrincipalKind::AgentTask
         } else {
@@ -403,6 +437,13 @@ impl ActionRegistry {
         ] {
             hash.update(&(part.len() as u64).to_be_bytes());
             hash.update(part);
+        }
+        // A live run's action is that try's own: another try, or another
+        // lease of it, never replays its answer.
+        if let Some(record) = &leased {
+            hash.update(b"live-run");
+            hash.update(record.id.as_bytes());
+            hash.update(&record.attempt_count.to_be_bytes());
         }
         let digest = hash.finalize();
         let run_id = EntityId::from_bytes(
@@ -461,7 +502,12 @@ impl ActionRegistry {
         // caller sees an incomplete record and fails closed, never re-dispatches.
         let mut record = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(frozen, seed));
         let generation = vault.put_code_run_replay_record_if_generation(&record, None)?;
-        let dispatcher = GatedActorWrite::new(vault, actor, run_id.to_hex())?;
+        let dispatcher = match &leased {
+            Some(record) => {
+                GatedActorWrite::for_action_attempt(vault, actor, run_id.to_hex(), record)?
+            }
+            None => GatedActorWrite::new(vault, actor, run_id.to_hex())?,
+        };
         let dispatcher = match owner {
             Some(proof) => dispatcher.with_authenticated_owner(proof),
             None => dispatcher,
@@ -514,16 +560,15 @@ fn build_sdk_verb(verb: AgentVerb, args: &[ActionArgument]) -> Result<SelfCall> 
         .map_err(|_| invalid("verb-table action input is not JSON"))?;
     Ok(SelfCall::AgentVerb(SelfAgentVerbCall { verb, input }))
 }
-/// A memory run row's typed call, its defaults on the action's frozen clock
-/// in unix seconds, as a code run's own clock is.
+/// A run row's typed call, its defaults on the action's frozen clock in unix
+/// seconds, as a code run's own clock is.
 fn build_run_verb(verb: RunVerb, args: &[ActionArgument], frozen_unix_ms: u64) -> Result<SelfCall> {
     let [ActionArgument::Text(input)] = args else {
         return Err(invalid("run-row action takes its JSON input as one text"));
     };
     let input = serde_json::from_str(input.as_str())
         .map_err(|_| invalid("run-row action input is not JSON"))?;
-    super::run_verb_call::memory_run_call(verb, input, frozen_unix_ms / 1000)?
-        .ok_or_else(|| invalid("this run row needs its caller's live run"))
+    super::run_verb_call::run_verb_call(verb, input, frozen_unix_ms / 1000)
 }
 fn build_inference_defaults_read(
     _: ActionBuildContext,

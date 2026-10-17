@@ -96,6 +96,29 @@ impl HostBinding {
     pub(super) const fn run_id(&self) -> Option<EntityId> {
         self.run_id
     }
+
+    /// The try this binding sealed, read live in `vault`: still leased, by
+    /// the same owner, at the same generation. A lapsed lease lends nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::InvalidClaimBody`] for a try that no longer holds this
+    /// lease; storage errors.
+    pub(crate) fn leased_record(
+        &self,
+        vault: &crate::Vault,
+    ) -> crate::Result<crate::attempt_queue::AttemptRecord> {
+        crate::attempt_queue::AttemptQueue::new(vault)
+            .get(self.parent)?
+            .filter(|record| {
+                record.state == crate::attempt_queue::AttemptState::Leased
+                    && record.lease_owner.as_deref() == Some(self.lease_owner.as_str())
+                    && record.attempt_count == self.attempt_count
+            })
+            .ok_or(crate::Error::InvalidClaimBody(
+                "the run's lease no longer holds",
+            ))
+    }
 }
 
 /// One task-domain call. Settlement is not an arm: it is the approval doors'

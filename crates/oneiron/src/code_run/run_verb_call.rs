@@ -1,10 +1,10 @@
-//! The four memory run rows as typed calls, outside the sandbox (OF-181).
+//! The run rows as typed calls (OF-181).
 //!
-//! `vault.search`, `vault.claims.put`, `vault.claims.supersede` and
-//! `vault.edges.put` decode pure input and run on ordinary storage, so the
-//! app's action registry serves them beside a code run. Each arm is the
-//! component bridge's own conversion, with its defaults: a search's limit of
-//! 20 and a claim's run clock.
+//! One decoder turns a run row's JSON input into the typed `self.*` call a
+//! code run makes, for the component bridge and for the app's action
+//! registry alike. The registry serves two sets beside a code run: the four
+//! memory rows, which run on ordinary storage, and the rows that act on a
+//! live agent run, which run only when the host binds that run's lease.
 
 use super::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
@@ -23,10 +23,25 @@ pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
     RunVerb::VaultEdgesPut,
 ];
 
-/// The typed call a memory run row makes, `now` in unix seconds. Any other
-/// run row needs its caller's live run, so it has none here.
-pub(crate) fn memory_run_call(verb: RunVerb, input: Value, now: u64) -> Result<Option<SelfCall>> {
-    Ok(Some(match verb {
+/// The run rows that act on their caller's live agent run and read nothing
+/// else of it: the attempt, its lease and its actor. A host serves them as
+/// actions only under that run's lease. The fold rows need the run's own log
+/// at its step boundary; `self.skills.call`, `self.spawn`, `summarize` and
+/// `tasks.wait` need the running sandbox (its bridge, its results, its park);
+/// and the leader's rows need the host's planner. None of those is here.
+pub(crate) const LIVE_RUN_VERBS: [RunVerb; 4] = [
+    RunVerb::TasksRefuse,
+    RunVerb::SelfAgentsSpawn,
+    RunVerb::SelfTeamStart,
+    RunVerb::SelfTeamRecord,
+];
+
+/// The typed `self.*` call a run row makes, `now` in unix seconds: the call,
+/// effect and gate the row had as a hand-written import. Every row has its
+/// arm here, so a run row is never served undecoded, and the component
+/// bridge and the action registry decode it the same way.
+pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
+    Ok(match verb {
         RunVerb::VaultSearch => {
             let args: MemorySearchInput = decode(input)?;
             SelfCall::MemorySearch(SelfMemorySearchCall::new(
@@ -73,7 +88,7 @@ pub(crate) fn memory_run_call(verb: RunVerb, input: Value, now: u64) -> Result<O
                 EdgeKind::from_name(&args.kind).ok_or_else(|| failure("invalid edge kind"))?;
             let weight = weight
                 .or_else(|| kind.default_weight())
-                .ok_or_else(|| failure("edge weight required"))?;
+                .ok_or(failure("edge weight required"))?;
             SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
                 EntityId::from_hex(&args.src)?,
                 kind,
@@ -81,8 +96,129 @@ pub(crate) fn memory_run_call(verb: RunVerb, input: Value, now: u64) -> Result<O
                 weight,
             ))
         }
-        _ => return Ok(None),
-    }))
+        RunVerb::SelfFold => {
+            let args: crate::compaction::FoldMarkInput = decode(input)?;
+            SelfCall::Fold(crate::compaction::SelfFoldCall::Mark {
+                from: args.from,
+                through: args.through,
+                note: args.note,
+            })
+        }
+        RunVerb::SelfCompact => {
+            let args: crate::compaction::FoldCompactInput = decode(input)?;
+            SelfCall::Fold(crate::compaction::SelfFoldCall::Compact { note: args.note })
+        }
+        RunVerb::SelfUnfold => {
+            let args: crate::compaction::FoldUnfoldInput = decode(input)?;
+            SelfCall::Fold(crate::compaction::SelfFoldCall::Unfold {
+                fold: crate::compaction::parse_fold_handle(&args.fold)?,
+            })
+        }
+        RunVerb::SelfFolds => {
+            let _: crate::compaction::FoldsInput = decode(input)?;
+            SelfCall::Fold(crate::compaction::SelfFoldCall::List)
+        }
+        RunVerb::TasksRefuse => {
+            let args: crate::code_run::TaskRefuseInput = decode(input)?;
+            SelfCall::TasksRefuse(crate::code_run::SelfTaskRefuseCall {
+                task_ref: args
+                    .task_ref
+                    .as_deref()
+                    .map(EntityId::from_hex)
+                    .transpose()?,
+                domain: match args.domain {
+                    crate::code_run::TaskRefuseDomain::Bond => {
+                        crate::agent_def::RefusalDomain::Bond
+                    }
+                    crate::code_run::TaskRefuseDomain::Logistics => {
+                        crate::agent_def::RefusalDomain::Logistics
+                    }
+                },
+                reason_ref: args.reason_ref,
+                at: args.at.map_or(Ok(now), js_time)?,
+            })
+        }
+        RunVerb::SelfSkillsCall => {
+            let args: crate::code_run::SkillCallInput = decode(input)?;
+            SelfCall::SkillsCall(crate::code_run::SelfSkillCall {
+                skill: EntityId::from_hex(&args.skill)?,
+                args: args.args,
+            })
+        }
+        RunVerb::SelfAgentsSpawn => {
+            let args: crate::code_run::AgentSpawnInput = decode(input)?;
+            SelfCall::AgentsSpawn(Box::new(args.into_call()?))
+        }
+        RunVerb::SelfLeaderAdvice => {
+            let args: crate::code_run::LeaderAdviceInput = decode(input)?;
+            SelfCall::Leader(crate::code_run::SelfLeaderCall::Advice { top: args.top })
+        }
+        RunVerb::SelfLeaderPattern => {
+            let args: crate::code_run::LeaderPatternInput = decode(input)?;
+            SelfCall::Leader(crate::code_run::SelfLeaderCall::Pattern {
+                skill: EntityId::from_hex(&args.skill)?,
+            })
+        }
+        RunVerb::SelfSpawn => {
+            let args: crate::code_run::ReaderSpawnInput = decode(input)?;
+            SelfCall::ReaderSpawn(Box::new(crate::code_run::SelfReaderSpawnCall {
+                source: reader_source(args.source)?,
+                ask: args.ask,
+                intent_key: args.intent_key,
+                bound: None,
+            }))
+        }
+        RunVerb::Summarize => {
+            let args: crate::code_run::SummarizeInput = decode(input)?;
+            SelfCall::Summarize(Box::new(crate::code_run::SelfSummarizeCall {
+                reference: args.r#ref,
+                effort: args.effort.map(|effort| match effort {
+                    crate::code_run::SummarizeInputEffort::Low => {
+                        crate::code_run::SummarizeEffort::Low
+                    }
+                    crate::code_run::SummarizeInputEffort::Medium => {
+                        crate::code_run::SummarizeEffort::Medium
+                    }
+                    crate::code_run::SummarizeInputEffort::High => {
+                        crate::code_run::SummarizeEffort::High
+                    }
+                }),
+                group: args.group,
+                defer: args.defer.unwrap_or(false),
+                bound: None,
+            }))
+        }
+        RunVerb::SelfTeamStart => SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?)),
+        RunVerb::SelfTeamRecord => {
+            SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
+        }
+        RunVerb::TasksWait => {
+            let args: crate::code_run::TaskWaitSetRequest = decode(input)?;
+            SelfCall::TasksWaitSet(crate::code_run::TaskWaitSetCall {
+                tasks: args.tasks,
+                all: args.all,
+                n_of: args.n_of,
+                until: args.until.map(js_time).transpose()?,
+                step_key: args.step_key,
+            })
+        }
+    })
+}
+
+/// The result a `self.spawn` source names: its ref as a string, or a card's
+/// `ref` or `handle`.
+fn reader_source(source: Value) -> Result<String> {
+    match source {
+        Value::String(text) => Ok(text),
+        Value::Object(mut fields) => ["ref", "handle"]
+            .into_iter()
+            .find_map(|key| match fields.remove(key) {
+                Some(Value::String(text)) => Some(text),
+                _ => None,
+            })
+            .ok_or_else(|| failure("spawn source must be a result ref or card")),
+        _ => Err(failure("spawn source must be a result ref or card")),
+    }
 }
 
 fn failure(detail: &str) -> Error {
