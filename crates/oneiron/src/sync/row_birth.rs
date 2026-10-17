@@ -49,7 +49,9 @@ fn owner(key: &str) -> Option<EntityId> {
 
 /// Mirrors `id`'s stored birth into `doc`. An equal carrier stays; a
 /// different one is replaced, because the local row is the authority for its
-/// own birth. Returns whether the map changed.
+/// own birth. A document birth is not: it stood in until the origin's birth
+/// landed, so it never goes over a carried birth that decodes (FIX 1180).
+/// Returns whether the map changed.
 pub(in crate::sync) fn mirror_local_birth(
     vault: &Vault,
     doc: &LoroDoc,
@@ -61,7 +63,10 @@ pub(in crate::sync) fn mirror_local_birth(
     let bytes = encode(&birth)?;
     let map = births(doc);
     let key = id.to_hex();
-    if map_get_bytes(&map, &key).as_deref() == Some(bytes.as_slice()) {
+    let carried = map_get_bytes(&map, &key);
+    if carried.as_deref() == Some(bytes.as_slice())
+        || (birth.is_document_birth() && carried.as_deref().and_then(decode).is_some())
+    {
         return Ok(false);
     }
     map_insert_bytes(&map, &key, &bytes)?;
@@ -228,7 +233,8 @@ fn carried_row_lands_in_txn(
 /// transaction admitted. A row with no carried birth stays unknown, and so
 /// does a row the carrier may not lend its birth to. A malformed or
 /// conflicting remote birth is left out with a warning: the row itself
-/// stands, and its stored birth is never replaced.
+/// stands, and its stored birth is never replaced, but for a document birth
+/// that stood in until the carried one landed (FIX 1180).
 pub(in crate::sync) fn stamp_carried_birth_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
