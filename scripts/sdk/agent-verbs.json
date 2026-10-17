@@ -3904,6 +3904,17 @@
       "section": false
     },
     {
+      "name": "self.desktop.handover",
+      "description": "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record.",
+      "input": "oneiron_browser::HandoverInput",
+      "output": "oneiron_browser::HandoverOutput",
+      "call": "driver.handover(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "vault.commit",
       "description": "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist.",
       "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],

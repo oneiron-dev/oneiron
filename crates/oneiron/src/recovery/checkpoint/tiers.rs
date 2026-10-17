@@ -45,6 +45,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // A repair's staged authority rows are this device's own
                 // progress, never an image's (OF-469).
                 b"authority.history.stage.v1:",
+                // So is the checkpoint upkeep's own accounting: its totals,
+                // the head it kept and the adopted rows it awaits (OF-469).
+                b"authority.checkpoint.local.",
                 // Host orders and the host-only log never enter an owner's
                 // image (OF-470 C2).
                 HOST_HOLD_PREFIX,
