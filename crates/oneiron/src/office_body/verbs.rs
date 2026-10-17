@@ -2,10 +2,10 @@
 //! (ARCH-0075, "An agent authors through the SDK"). Each binds the facade's
 //! actor and reads the artifact through the facade's admission. Reads and the
 //! three-way diff take any reader. Live edits stay a person's; machine work
-//! opens a fork, and a fork merges by a person other than its opener (CALLS
-//! "OF-505 body verbs"). A deck reads, edits and forks through these rows
-//! too; its review, merge, export and gate are `vault.artifacts.body.deck.*`
-//! (`pptx::verbs`).
+//! opens a fork, which joins a proposal, and lands on a person's word from
+//! outside its opener's lineage or on a standing grant (CALLS "OF-505 slice
+//! D"). A deck reads, edits and forks through these rows too; its review,
+//! merge, export and gate are `vault.artifacts.body.deck.*` (`pptx::verbs`).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,7 +13,8 @@ use sha2::{Digest, Sha256};
 use super::{
     BodyBlockKind, BodyCell, BodyName, DeckBodyView, DocxBody, DocxBodyOp, OfficeBodyDiff,
     OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork,
-    OfficeBodyHead, OfficeBodyKind, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxStyle,
+    OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, ProposalSettleRequest, ReviewedFork,
+    SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxStyle,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -22,7 +23,7 @@ use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
 use crate::provenance::text_commit::TextCommitReceipt;
 use crate::write_envelope::WriteActor;
 use oneiron_docedit::docx_body::DocxRun;
-use oneiron_docedit::live::DeckOp;
+use oneiron_docedit::live::{ApproveScope, DeckOp};
 
 /// `vault.artifacts.body.head`, `.commits` and `.preview`: the artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -77,13 +78,17 @@ pub struct OfficeBodyEditRequest {
 }
 
 /// `vault.artifacts.body.fork.open`: a fork of the live body for machine work
-/// in the run `run_root_ref`.
+/// in the run `run_root_ref`. A DOCX or XLSX fork joins `proposal_ref`, an
+/// unsettled proposal on the same artifact; absent, it opens its own under
+/// the fork's id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyForkOpenRequest {
     pub artifact_ref: String,
     #[serde(default)]
     pub run_root_ref: Option<String>,
+    #[serde(default)]
+    pub proposal_ref: Option<String>,
 }
 
 /// `vault.artifacts.body.fork.diff` and `.discard`: one fork of the body.
@@ -115,6 +120,40 @@ pub struct OfficeBodyForkMergeRequest {
     pub reviewed_head: Vec<u8>,
     /// The diff's `fork_head`.
     pub reviewed_fork: Vec<u8>,
+}
+
+/// `vault.artifacts.body.proposal.read`: one office proposal on the artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyProposalRequest {
+    pub artifact_ref: String,
+    pub proposal_ref: String,
+}
+
+/// One member fork as the review read it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyReviewedFork {
+    pub fork_ref: String,
+    /// The fork's diff's `fork_head`.
+    pub reviewed_fork: Vec<u8>,
+}
+
+/// `vault.artifacts.body.proposal.settle`: answer the reviewed members of a
+/// proposal that `scope` covers (absent, the proposal itself).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyProposalSettleRequest {
+    pub artifact_ref: String,
+    pub proposal_ref: String,
+    pub verdict: SettleVerdict,
+    #[serde(default)]
+    pub scope: Option<ApproveScope>,
+    /// The live head every reviewed diff was read at.
+    pub reviewed_head: Vec<u8>,
+    pub reviewed: Vec<OfficeBodyReviewedFork>,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// `vault.artifacts.body.export`: project the body onto its imported package
@@ -370,9 +409,17 @@ impl Memory<'_> {
             .as_deref()
             .map(|reference| self.body_ref(reference))
             .transpose()?;
-        Ok(self
-            .vault()
-            .open_office_body_fork(&artifact, self.body_actor(), run_root.as_ref())?)
+        let proposal = input
+            .proposal_ref
+            .as_deref()
+            .map(|reference| self.body_ref(reference))
+            .transpose()?;
+        Ok(self.vault().open_office_body_fork(
+            &artifact,
+            self.body_actor(),
+            run_root.as_ref(),
+            proposal.as_ref(),
+        )?)
     }
 
     /// `vault.artifacts.body.fork.edit`: the opener's operations.
@@ -408,31 +455,65 @@ impl Memory<'_> {
         Ok(self.vault().office_body_fork_diff(&artifact, &fork)?)
     }
 
-    /// `vault.artifacts.body.fork.merge`: a person lands a reviewed fork. A
-    /// machine actor's merge is refused until office forks settle through the
-    /// consent rung.
+    /// `vault.artifacts.body.fork.merge`: lands one reviewed fork, its
+    /// proposal settled for that item: on the caller's word when the caller is
+    /// a person outside the opener's lineage, else on a standing grant.
     pub fn artifacts_body_fork_merge(
         &self,
         input: &OfficeBodyForkMergeRequest,
     ) -> MemoryResult<OfficeBodyDiff> {
-        let actor = self.body_actor();
-        if actor.actor_class() != EdgeActorClass::Human {
-            return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_FORBIDDEN,
-                "a person merges an office body fork",
-                &["Office forks do not settle through the consent rung yet."],
-            ));
-        }
         let artifact = self.body_ref(&input.artifact_ref)?;
         let fork = self.body_ref(&input.fork_ref)?;
-        Ok(self
-            .vault()
-            .merge_office_body_fork(
-                &artifact,
-                &fork,
-                (&input.reviewed_head, &input.reviewed_fork),
-                actor,
-            )?)
+        Ok(self.vault().merge_office_body_fork(
+            &artifact,
+            &fork,
+            (&input.reviewed_head, &input.reviewed_fork),
+            self.body_actor(),
+        )?)
+    }
+
+    /// `vault.artifacts.body.proposal.read`.
+    pub fn artifacts_body_proposal_read(
+        &self,
+        input: &OfficeBodyProposalRequest,
+    ) -> MemoryResult<OfficeBodyProposal> {
+        let artifact = self.body_ref(&input.artifact_ref)?;
+        let proposal = self.body_ref(&input.proposal_ref)?;
+        self.vault()
+            .office_body_proposal(&artifact, &proposal)?
+            .ok_or_else(|| MemoryError::not_found("no such proposal on the artifact"))
+    }
+
+    /// `vault.artifacts.body.proposal.settle`: the proposal after the answer.
+    pub fn artifacts_body_proposal_settle(
+        &self,
+        input: &OfficeBodyProposalSettleRequest,
+    ) -> MemoryResult<OfficeBodyProposal> {
+        let artifact = self.body_ref(&input.artifact_ref)?;
+        let proposal = self.body_ref(&input.proposal_ref)?;
+        let reviewed = input
+            .reviewed
+            .iter()
+            .map(|pin| {
+                Ok(ReviewedFork {
+                    fork: self.body_ref(&pin.fork_ref)?,
+                    fork_head: pin.reviewed_fork.clone(),
+                })
+            })
+            .collect::<MemoryResult<Vec<_>>>()?;
+        let request = ProposalSettleRequest {
+            verdict: input.verdict,
+            scope: input.scope.clone(),
+            head: &input.reviewed_head,
+            reviewed: &reviewed,
+            reason: input.reason.as_deref(),
+        };
+        Ok(self.vault().settle_office_body_proposal(
+            &artifact,
+            &proposal,
+            &request,
+            self.body_actor(),
+        )?)
     }
 
     /// `vault.artifacts.body.fork.discard`: the discarded fork's record.

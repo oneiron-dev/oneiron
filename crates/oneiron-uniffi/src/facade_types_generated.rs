@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 258 facade rows, 811 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 218.
+// UniFFI census: 260 facade rows, 823 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 220.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
 #![allow(
@@ -12476,6 +12476,12 @@ pub struct OfficeBodyForkOpenRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub run_root_ref: Option<String>,
+    #[serde(
+        rename = "proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_ref: Option<String>,
 }
 
 /// `oneiron::office_body::ForkState`.
@@ -12622,6 +12628,183 @@ pub struct OfficeBodyForkMergeRequest {
     pub reviewed_head: Vec<u8>,
     #[serde(rename = "reviewed_fork")]
     pub reviewed_fork: Vec<u8>,
+}
+
+/// `oneiron::office_body::verbs::OfficeBodyProposalRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyProposalRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+}
+
+/// `oneiron::office_body::consent::ProposalHeader`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProposalHeader {
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "opener")]
+    pub opener: String,
+    #[serde(rename = "run_root", default, skip_serializing_if = "Option::is_none")]
+    pub run_root: Option<String>,
+    #[serde(rename = "opened_at")]
+    pub opened_at: u64,
+}
+
+/// `oneiron::office_body::consent::MemberVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MemberVerdict {
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "landed")]
+    Landed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "let_go")]
+    LetGo,
+}
+
+/// `oneiron::office_body::consent::AnsweringAuthority`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum AnsweringAuthority {
+    #[serde(rename = "word")]
+    Word {
+        #[serde(rename = "person")]
+        person: String,
+    },
+    #[serde(rename = "grant")]
+    Grant {
+        #[serde(rename = "grant_ref")]
+        grant_ref: String,
+        #[serde(rename = "decision")]
+        decision: String,
+    },
+}
+
+/// `oneiron::office_body::consent::MemberAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MemberAnswer {
+    #[serde(rename = "by")]
+    pub by: AnsweringAuthority,
+    #[serde(rename = "caller")]
+    pub caller: String,
+    #[serde(rename = "head")]
+    pub head: Vec<u8>,
+    #[serde(rename = "fork_head")]
+    pub fork_head: Vec<u8>,
+    #[serde(rename = "landed", default, skip_serializing_if = "Option::is_none")]
+    pub landed: Option<Vec<u8>>,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::office_body::consent::ProposalMember`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProposalMember {
+    #[serde(rename = "fork")]
+    pub fork: String,
+    #[serde(rename = "opener")]
+    pub opener: String,
+    #[serde(rename = "run_root", default, skip_serializing_if = "Option::is_none")]
+    pub run_root: Option<String>,
+    #[serde(rename = "verdict")]
+    pub verdict: MemberVerdict,
+    #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<MemberAnswer>,
+}
+
+/// `oneiron::office_body::consent::BundleVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BundleVerdict {
+    #[serde(rename = "landed")]
+    Landed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "mixed")]
+    Mixed,
+    #[serde(rename = "let_go")]
+    LetGo,
+}
+
+/// `oneiron::office_body::consent::ProposalSettlement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProposalSettlement {
+    #[serde(rename = "verdict")]
+    pub verdict: BundleVerdict,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `oneiron::office_body::consent::OfficeBodyProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OfficeBodyProposal {
+    #[serde(rename = "header")]
+    pub header: ProposalHeader,
+    #[serde(rename = "members")]
+    pub members: Vec<ProposalMember>,
+    #[serde(
+        rename = "settlement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub settlement: Option<ProposalSettlement>,
+}
+
+/// `oneiron::office_body::consent::SettleVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SettleVerdict {
+    #[serde(rename = "accept")]
+    Accept,
+    #[serde(rename = "reject")]
+    Reject,
+}
+
+/// `oneiron_docedit::live::pptx::ApproveScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ApproveScope {
+    #[serde(rename = "this_actor")]
+    ThisActor(String),
+    #[serde(rename = "this_run_and_children")]
+    ThisRunAndChildren(String),
+    #[serde(rename = "one_item")]
+    OneItem(String),
+}
+
+/// `oneiron::office_body::verbs::OfficeBodyReviewedFork`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyReviewedFork {
+    #[serde(rename = "fork_ref")]
+    pub fork_ref: String,
+    #[serde(rename = "reviewed_fork")]
+    pub reviewed_fork: Vec<u8>,
+}
+
+/// `oneiron::office_body::verbs::OfficeBodyProposalSettleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyProposalSettleRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "verdict")]
+    pub verdict: SettleVerdict,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ApproveScope>,
+    #[serde(rename = "reviewed_head")]
+    pub reviewed_head: Vec<u8>,
+    #[serde(rename = "reviewed")]
+    pub reviewed: Vec<OfficeBodyReviewedFork>,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// `oneiron::office_body::verbs::OfficeBodyExportVerbRequest`.
@@ -12911,17 +13094,6 @@ pub struct DeckReviewView {
         skip_serializing_if = "Option::is_none"
     )]
     pub evidence_refusal: Option<String>,
-}
-
-/// `oneiron_docedit::live::pptx::ApproveScope`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ApproveScope {
-    #[serde(rename = "this_actor")]
-    ThisActor(String),
-    #[serde(rename = "this_run_and_children")]
-    ThisRunAndChildren(String),
-    #[serde(rename = "one_item")]
-    OneItem(String),
 }
 
 /// `oneiron_docedit::live::pptx::Landing`.

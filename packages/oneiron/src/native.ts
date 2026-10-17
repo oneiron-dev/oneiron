@@ -268,6 +268,8 @@ vaultArtifactsBodyForkEdit(requestJson: string): string
 vaultArtifactsBodyForkDiff(requestJson: string): string
 vaultArtifactsBodyForkMerge(requestJson: string): string
 vaultArtifactsBodyForkDiscard(requestJson: string): string
+vaultArtifactsBodyProposalRead(requestJson: string): string
+vaultArtifactsBodyProposalSettle(requestJson: string): string
 vaultArtifactsBodyExport(requestJson: string): string
 vaultArtifactsBodyPreview(requestJson: string): string
 vaultArtifactsBodyDeckReview(requestJson: string): string
