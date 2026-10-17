@@ -139,6 +139,8 @@ vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultCodeDiff(requestJson: string): string
 vaultCodeBlame(requestJson: string): string
+vaultCodeProposalView(requestJson: string): string
+vaultCodeRepoDiff(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string

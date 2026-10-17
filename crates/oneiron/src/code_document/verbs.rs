@@ -137,13 +137,7 @@ impl Memory<'_> {
             None => vault.code_document_frontier(&request.repo, &request.path)?,
         };
         Ok(frontier.map(|frontier| {
-            let view = CodeStateView {
-                document_ref: hash_hex(&frontier.document_id),
-                repo: frontier.repo.clone(),
-                path: frontier.path.clone(),
-                revision_ref: request.revision_ref.clone(),
-                text_hash: hash_hex(&frontier.text_hash),
-            };
+            let view = state_view(&frontier, request.revision_ref.clone());
             (frontier, view)
         }))
     }
@@ -186,7 +180,21 @@ impl Memory<'_> {
     }
 }
 
-fn operation_view(op: &CodeOpAttribution) -> CodeOperationView {
+/// One tested state as a view names it.
+pub(super) fn state_view(
+    frontier: &CodeDocumentFrontier,
+    revision_ref: Option<String>,
+) -> CodeStateView {
+    CodeStateView {
+        document_ref: hash_hex(&frontier.document_id),
+        repo: frontier.repo.clone(),
+        path: frontier.path.clone(),
+        revision_ref,
+        text_hash: hash_hex(&frontier.text_hash),
+    }
+}
+
+pub(super) fn operation_view(op: &CodeOpAttribution) -> CodeOperationView {
     let id = |id: Option<EntityId>| id.map(|id| id.to_hex());
     CodeOperationView {
         operation_ref: op.operation.to_hex(),
@@ -211,7 +219,7 @@ fn version_view(version: CodeContentVersion) -> CodeUnitVersionView {
     }
 }
 
-fn change_view(change: CodeAttributedChange) -> CodeChangeView {
+pub(super) fn change_view(change: CodeAttributedChange) -> CodeChangeView {
     CodeChangeView {
         path: change.change.path,
         symbol: change.change.symbol,
