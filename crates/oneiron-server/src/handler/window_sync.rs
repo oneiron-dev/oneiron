@@ -16,11 +16,6 @@ use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
 use crate::server::SyncServer;
 
-/// Numeric grant-scope ABI for this single-vault selector server path.
-/// Distinct from the lease ABI's internal vault id: federation grants reject
-/// zero as a shared-vault scope, and FED-001 fixtures pin the nonzero scope.
-const SERVER_SELECTOR_VAULT_ID: u64 = 7;
-
 /// Handles a WindowSync message: routes to the correct window LoroDoc.
 pub(super) async fn handle_window_sync(
     server: &SyncServer,
@@ -718,6 +713,9 @@ pub(super) fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
     }
 }
 
+/// The grant scope this single-vault selector server path checks: the one an
+/// owner's own-device grant is minted under (FIX 3134). Distinct from the
+/// lease ABI's internal vault id.
 pub(crate) fn selector_grant_scope() -> oneiron::FederationGrantScope {
-    oneiron::FederationGrantScope::vault(SERVER_SELECTOR_VAULT_ID)
+    oneiron::federation::own_device_residence_scope()
 }
