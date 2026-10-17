@@ -31556,6 +31556,9 @@
       "DocxBodyView",
       "DocxCellView",
       "OfficeBodyArtifactRequest",
+      "OfficeBodyCommitGap",
+      "OfficeBodyCommitView",
+      "OfficeBodyCommitsRequest",
       "OfficeBodyEditRequest",
       "OfficeBodyExportVerbRequest",
       "OfficeBodyExportView",
@@ -31576,10 +31579,10 @@
      "path": "src/office_body/verbs.rs",
      "purpose": "`vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, \"An agent authors through…",
      "surface": {
-      "crate-vis": 3,
-      "enum": 2,
+      "crate-vis": 4,
+      "enum": 3,
       "fn": 14,
-      "struct": 18
+      "struct": 20
      }
     },
     {
@@ -72608,6 +72611,9 @@
       "OffersPage",
       "OffersRequest",
       "OfficeBodyArtifactRequest",
+      "OfficeBodyCommitGap",
+      "OfficeBodyCommitView",
+      "OfficeBodyCommitsRequest",
       "OfficeBodyDiff",
       "OfficeBodyEdit",
       "OfficeBodyEditRequest",
@@ -73037,8 +73043,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 243,
-      "struct": 604
+      "enum": 244,
+      "struct": 606
      }
     },
     {
