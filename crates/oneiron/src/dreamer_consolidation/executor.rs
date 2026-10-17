@@ -18,7 +18,8 @@ use super::failure_rules::{self, Stage};
 use super::gap::{ReflectionGap, ReflectionGapKind};
 use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
 use super::provenance::{
-    ConsolidationProvenanceHop, ConsolidationSink, PromotionCandidate, source_meet,
+    ConsolidationProvenanceHop, ConsolidationSink, KeptDecision, PromotionCandidate,
+    join_decisions, source_meet,
 };
 use super::step_charge::StepChargeTally;
 use super::support::{
@@ -99,6 +100,28 @@ pub(super) enum PartitionRun {
     },
 }
 
+impl PartitionRun {
+    /// This run with work that waits on a role's answer: what it took is kept,
+    /// and the attempt comes back to read the ask again.
+    pub(super) fn waiting_on_ask(self, now_ms: u64) -> Self {
+        let recheck = now_ms.saturating_add(decisions::ASK_RECHECK_MS);
+        match self {
+            Self::Completed { candidates } => Self::Held {
+                candidates,
+                retry_at_ms: recheck,
+            },
+            Self::Held {
+                candidates,
+                retry_at_ms,
+            } => Self::Held {
+                candidates,
+                retry_at_ms: retry_at_ms.min(recheck),
+            },
+            run => run,
+        }
+    }
+}
+
 impl ConsolidationExecutor<'_> {
     /// Scoped merge over conflicting sets — ONLY conflicting sets. One typed
     /// pack per set through the host's ladder, with the pinned outcome
@@ -107,6 +130,9 @@ impl ConsolidationExecutor<'_> {
     /// prior in scope it degrades to merge) | `accumulate` (multi-value
     /// predicates keep all) | `escalate` (drop the set to the gap queue as
     /// `ContradictionLeftStanding`; contradictions never land silently).
+    /// A pack whose question went up the role chain and waits holds its set
+    /// out of the pass, and the attempt comes back for the answer. Every
+    /// output keeps the decisions that shaped it.
     pub(super) async fn resolve_conflicts(
         &mut self,
         candidates: Vec<ExtractedCandidate>,
@@ -138,6 +164,9 @@ impl ConsolidationExecutor<'_> {
         let mut dropped: BTreeSet<usize> = BTreeSet::new();
         let mut merged: Vec<VerifiedCandidate> = Vec::new();
         let mut escalated: Vec<(ReflectionGap, VerifiedEvidenceSet)> = Vec::new();
+        // An accumulated member keeps the pack that kept it.
+        let mut kept_by: BTreeMap<usize, Vec<KeptDecision>> = BTreeMap::new();
+        let mut waiting = false;
 
         for conflict in &conflicts {
             let members: Vec<&VerifiedCandidate> = conflict
@@ -160,6 +189,9 @@ impl ConsolidationExecutor<'_> {
             {
                 let mut candidate = (*members[0]).clone();
                 candidate.proposal.supersedes = conflict.prior_head;
+                for member in &members[1..] {
+                    join_decisions(&mut candidate.proposal.decisions, &member.decisions);
+                }
                 dropped.extend(conflict.candidate_indexes.iter().copied());
                 merged.push(candidate);
                 continue;
@@ -191,7 +223,7 @@ impl ConsolidationExecutor<'_> {
                     conflict,
                     &member_data,
                     &prior_heads,
-                    resources.scope(),
+                    resources,
                     charges,
                 )
                 .await
@@ -212,6 +244,17 @@ impl ConsolidationExecutor<'_> {
             };
             if ctx.deadline.expired() {
                 return Ok(PartitionRun::Checkpoint);
+            }
+            // Asked up and not answered yet: neither resolved nor left
+            // standing. Its members wait out the pass with it.
+            if answers.waiting() {
+                dropped.extend(conflict.candidate_indexes.iter().copied());
+                waiting = true;
+                continue;
+            }
+            let mut decisions = answers.decisions.clone();
+            for member in &members {
+                join_decisions(&mut decisions, &member.decisions);
             }
             let resolution = match answers.resolution.as_deref() {
                 Some(label @ ("merge" | "supersede")) => {
@@ -251,7 +294,12 @@ impl ConsolidationExecutor<'_> {
                 return Ok(PartitionRun::Checkpoint);
             }
             match resolution {
-                MergeResolution::Accumulate => {} // keep every member
+                // Keep every member, each with the pack that kept it.
+                MergeResolution::Accumulate => {
+                    for index in &conflict.candidate_indexes {
+                        join_decisions(kept_by.entry(*index).or_default(), &answers.decisions);
+                    }
+                }
                 MergeResolution::Merge {
                     value,
                     candidate_ref,
@@ -283,6 +331,7 @@ impl ConsolidationExecutor<'_> {
                         &members,
                         &prior_heads,
                         value,
+                        decisions,
                         step_identity.0,
                         ctx.now_ms,
                     )?);
@@ -297,20 +346,12 @@ impl ConsolidationExecutor<'_> {
                         step_identity.0,
                         conflict,
                         &members,
+                        &decisions,
                         &resources.write_fence(),
                         ctx.now_ms,
                     )?;
                     dropped.extend(conflict.candidate_indexes.iter().copied());
                     escalated.push(contradiction_gap(conflict, &members, ctx.now_ms)?);
-                    super::open_conflict::park_open_conflict(
-                        ctx.vault,
-                        self.actor,
-                        step_identity.0,
-                        conflict,
-                        &members,
-                        &resources.write_fence(),
-                        ctx.now_ms,
-                    )?;
                 }
             }
         }
@@ -325,10 +366,16 @@ impl ConsolidationExecutor<'_> {
         let mut surviving: Vec<VerifiedCandidate> = candidates
             .into_iter()
             .enumerate()
-            .filter_map(|(index, candidate)| (!dropped.contains(&index)).then_some(candidate))
+            .filter(|(index, _)| !dropped.contains(index))
+            .map(|(index, mut candidate)| {
+                if let Some(decisions) = kept_by.get(&index) {
+                    join_decisions(&mut candidate.proposal.decisions, decisions);
+                }
+                candidate
+            })
             .collect();
         surviving.extend(merged);
-        Ok(if assembled.held {
+        let run = if assembled.held {
             PartitionRun::Held {
                 candidates: surviving,
                 retry_at_ms: assembled.retry_at_ms,
@@ -337,6 +384,11 @@ impl ConsolidationExecutor<'_> {
             PartitionRun::Completed {
                 candidates: surviving,
             }
+        };
+        Ok(if waiting {
+            run.waiting_on_ask(ctx.now_ms)
+        } else {
+            run
         })
     }
 
@@ -381,12 +433,17 @@ impl ConsolidationExecutor<'_> {
             }
             error => {
                 resources.require_output(resources.scope())?;
+                let mut decisions = Vec::new();
+                for member in members {
+                    join_decisions(&mut decisions, &member.decisions);
+                }
                 super::open_conflict::park_open_conflict(
                     ctx.vault,
                     self.actor,
                     attempt_id,
                     conflict,
                     members,
+                    &decisions,
                     &resources.write_fence(),
                     ctx.now_ms,
                 )?;
@@ -396,11 +453,14 @@ impl ConsolidationExecutor<'_> {
     }
 }
 
+/// The merged head: `decisions` are the pack's that merged it, joined with
+/// every member's.
 fn merged_candidate(
     conflict: &ConflictSet,
     members: &[&VerifiedCandidate],
     priors: &[super::conflict::PriorHead],
     value: Value,
+    decisions: Vec<KeptDecision>,
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
 ) -> Result<VerifiedCandidate> {
@@ -482,6 +542,7 @@ fn merged_candidate(
                 end: now_ms,
             },
             learned_at: now_ms,
+            decisions,
         },
         evidence: combined,
     })
