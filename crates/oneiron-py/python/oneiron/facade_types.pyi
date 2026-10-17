@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 165 facade rows, 615 declarations.
+Census: 165 facade rows, 619 declarations.
 Inputs: 143 of 165 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 139 of 165 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
@@ -2833,6 +2833,14 @@ QuestionActivation = Literal["one_off", "standing"]
 class RefreshPolicy(TypedDict):
     on_arrival: bool
     every_seconds: NotRequired[int | None]
+class QuestionCriteria(TypedDict):
+    yes_if_all: list[str]
+    no_if_any: list[str]
+    not_a_reason_to_say_no: list[str]
+QuestionAudience = Literal["asker"]
+HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
+class QuestionMedia(TypedDict):
+    images: bool
 class QuestionDefinition(TypedDict):
     question: DecisionQuestion
     adapter: str
@@ -2845,6 +2853,11 @@ class QuestionDefinition(TypedDict):
     delivery: str
     learning: bool
     binding: NotRequired[OutcomeBinding | None]
+    criteria: NotRequired[QuestionCriteria]
+    audience: NotRequired[QuestionAudience]
+    posture: NotRequired[HostingPrivacyPosture | None]
+    media: NotRequired[QuestionMedia]
+    deadline_ms: NotRequired[int | None]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinition
 class QuestionRecord(TypedDict):
