@@ -40,7 +40,8 @@ class EmbeddedEngine(
 
     /**
      * One buffered HTTP/1.1 request over a fresh in-process stream. Headers pass through as
-     * given (bring your own auth); `/ws` and other upgrades, and a reply body over 64 MiB, throw.
+     * given (bring your own auth); `/ws` and other upgrades, and a reply body over 64 MiB, throw:
+     * open a connection ([openConnection]) for those.
      */
     fun request(
         method: String,
@@ -64,6 +65,16 @@ class EmbeddedEngine(
     fun stop() {
         check(!closed.get()) { "engine is closed" }
         stopNative()
+    }
+
+    /**
+     * Opens a connection this app holds to the engine's server: one in-process stream it serves
+     * as a socket's connection, HTTP/1.1 with upgrades, so `/ws` and streamed replies ride it.
+     * Close it on its own; a [stop] drains it, so after [wake] open another.
+     */
+    fun openConnection(): EngineConnection {
+        check(!closed.get()) { "engine is closed" }
+        return EngineConnection(this)
     }
 
     /** The engine's own vault, shared rather than opened again; close it on its own. */

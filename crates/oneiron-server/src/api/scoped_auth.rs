@@ -46,6 +46,10 @@ pub(crate) fn credential_read_key(
 /// slip the request was admitted on into the work it queues, and that
 /// slip's exact instrument, which a door that can run the call again names
 /// in a verb hook's ask (ARCH-0080 §3 Ask).
+/// It acts inside the off-record session the request names, bound to the
+/// principal its credential names (OF-063, FIX 1668): host doors, the
+/// context board and every other door that builds its handle here. A
+/// credential that names no principal binds no session (FIX 2271).
 pub(crate) fn credential_memory<'a>(
     vault: &'a oneiron::Vault,
     auth: Option<&CoreAuth>,
@@ -63,6 +67,12 @@ pub(crate) fn credential_memory<'a>(
         // Only this host verifies the credential again, so a verb hook's
         // settlement never runs this caller's call without it.
         memory = memory.for_credential();
+    }
+    if let Some(auth) = auth
+        && let Some(session) = auth.off_record_session()
+        && super::call_receipt::request_principal(auth).is_some()
+    {
+        memory = memory.in_off_record_session(session);
     }
     match auth.and_then(CoreAuth::verified_slip) {
         Some(proof) => memory.with_read_proof(proof),

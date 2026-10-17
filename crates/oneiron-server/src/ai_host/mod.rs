@@ -43,6 +43,7 @@ pub(crate) mod identity;
 mod judge_swap;
 mod lens_callbacks;
 mod local_vision;
+pub(crate) mod payer_funding;
 mod policy;
 pub(crate) mod self_heal_detectors;
 mod skill_author;
@@ -69,7 +70,9 @@ pub(crate) use policy::route_dreamer_extraction;
 pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
 };
-pub(crate) use weave_lens::{WeaveLensCaller, render_live_weave_lens};
+pub(crate) use weave_lens::{
+    WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_listing,
+};
 
 use dreamer::{DreamerHost, DreamerStart};
 use policy::{DreamerRoute, dreamer_role_purpose};

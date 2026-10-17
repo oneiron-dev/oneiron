@@ -137,6 +137,16 @@ impl Vault {
                 _ => Vec::new(),
             };
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
+            // A peer deleted a world: its delete time bounds how long a pin
+            // change here still rewraps the world's keys.
+            if decoded.reason == Some(super::tombstone::TombstoneReason::UserDelete) {
+                crate::world_keys::note_world_deleted_in_txn(
+                    &self.store,
+                    wtxn,
+                    *id,
+                    decoded.deleted_at,
+                )?;
+            }
             // Also for an id with no row here: a peer's later put of it is a
             // withdrawn delete, not a recreation.
             ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
