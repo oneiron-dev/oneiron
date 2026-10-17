@@ -304,6 +304,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.shared.object",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedActRequest,
+                >(),
+            ),
+            (
+                "vault.shared.withdraw_objection",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedActRequest,
+                >(),
+            ),
+            (
+                "vault.shared.started",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.shared.matured",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.shared.erase_ask",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedEraseAskRequest,
+                >(),
+            ),
+            (
+                "vault.shared.erase_asks",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.shared.close_erase_ask",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedEraseAskCloseRequest,
+                >(),
+            ),
+            (
                 "vault.guests.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestRevokeRequest,
@@ -441,6 +483,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.settings.learning.clear",
                 crate::code_run::vault_read::request_schema::<
                     crate::learning_setting_doors::LearningSettingClear,
+                >(),
+            ),
+            (
+                "vault.settings.wake_policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_setting_doors::WakePolicySetRequest,
+                >(),
+            ),
+            (
+                "vault.settings.inference_defaults",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.settings.inference_defaults.replace",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_setting_doors::InferenceDefaultsReplaceRequest,
                 >(),
             ),
             (
@@ -1637,6 +1695,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.shared.object" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.withdraw_objection" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.started" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.matured" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.erase_ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.erase_asks" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.close_erase_ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.guests.revoke" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1776,6 +1883,21 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.settings.learning.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.wake_policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.inference_defaults" => &[],
+        "vault.settings.inference_defaults.replace" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2804,6 +2926,27 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::SharedInvitationWithdrawRequest =
                 decode(value.clone())?;
         }
+        "vault.shared.object" => {
+            let _input: crate::task_verb::sdk::SharedActRequest = decode(value.clone())?;
+        }
+        "vault.shared.withdraw_objection" => {
+            let _input: crate::task_verb::sdk::SharedActRequest = decode(value.clone())?;
+        }
+        "vault.shared.started" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.shared.matured" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.shared.erase_ask" => {
+            let _input: crate::task_verb::sdk::SharedEraseAskRequest = decode(value.clone())?;
+        }
+        "vault.shared.erase_asks" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.shared.close_erase_ask" => {
+            let _input: crate::task_verb::sdk::SharedEraseAskCloseRequest = decode(value.clone())?;
+        }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
@@ -2887,6 +3030,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.settings.learning.clear" => {
             let _input: crate::learning_setting_doors::LearningSettingClear =
+                decode(value.clone())?;
+        }
+        "vault.settings.wake_policy.set" => {
+            let _input: crate::policy_setting_doors::WakePolicySetRequest = decode(value.clone())?;
+        }
+        "vault.settings.inference_defaults" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.settings.inference_defaults.replace" => {
+            let _input: crate::policy_setting_doors::InferenceDefaultsReplaceRequest =
                 decode(value.clone())?;
         }
         "vault.lenses.propose" => {
@@ -3444,6 +3597,17 @@ pub fn invoke(
         "vault.members.withdraw_invitation" => {
             encode(vault_members_withdraw_invitation(memory, decode(value)?)?)
         }
+        "vault.shared.object" => encode(vault_shared_object(memory, decode(value)?)?),
+        "vault.shared.withdraw_objection" => {
+            encode(vault_shared_withdraw_objection(memory, decode(value)?)?)
+        }
+        "vault.shared.started" => encode(vault_shared_started(memory, decode(value)?)?),
+        "vault.shared.matured" => encode(vault_shared_matured(memory, decode(value)?)?),
+        "vault.shared.erase_ask" => encode(vault_shared_erase_ask(memory, decode(value)?)?),
+        "vault.shared.erase_asks" => encode(vault_shared_erase_asks(memory, decode(value)?)?),
+        "vault.shared.close_erase_ask" => {
+            encode(vault_shared_close_erase_ask(memory, decode(value)?)?)
+        }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
         "vault.authority.handoff_alarms" => {
@@ -3506,6 +3670,15 @@ pub fn invoke(
         "vault.settings.learning.clear" => {
             encode(vault_settings_learning_clear(memory, decode(value)?)?)
         }
+        "vault.settings.wake_policy.set" => {
+            encode(vault_settings_wake_policy_set(memory, decode(value)?)?)
+        }
+        "vault.settings.inference_defaults" => {
+            encode(vault_settings_inference_defaults(memory, decode(value)?)?)
+        }
+        "vault.settings.inference_defaults.replace" => encode(
+            vault_settings_inference_defaults_replace(memory, decode(value)?)?,
+        ),
         "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
@@ -4338,6 +4511,76 @@ pub fn vault_members_withdraw_invitation(
         input,
     )
 }
+pub fn vault_shared_object(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedActRequest,
+) -> MemoryResult<crate::federation::PendingAuthorityAct> {
+    crate::task_verb::sdk::object_to_shared_act(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.object")?,
+        input,
+    )
+}
+pub fn vault_shared_withdraw_objection(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedActRequest,
+) -> MemoryResult<crate::federation::PendingAuthorityAct> {
+    crate::task_verb::sdk::withdraw_shared_act_objection(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.withdraw_objection")?,
+        input,
+    )
+}
+pub fn vault_shared_started(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<Vec<crate::federation::PendingActStarted>> {
+    crate::task_verb::sdk::read_shared_act_started(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.started")?,
+        input,
+    )
+}
+pub fn vault_shared_matured(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<Vec<crate::federation::PendingActMatured>> {
+    crate::task_verb::sdk::read_shared_act_matured(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.matured")?,
+        input,
+    )
+}
+pub fn vault_shared_erase_ask(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedEraseAskRequest,
+) -> MemoryResult<crate::federation::SharedEraseAsk> {
+    crate::task_verb::sdk::ask_shared_erase_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.erase_ask")?,
+        input,
+    )
+}
+pub fn vault_shared_erase_asks(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<Vec<crate::federation::SharedEraseAsk>> {
+    crate::task_verb::sdk::read_shared_erase_asks(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.erase_asks")?,
+        input,
+    )
+}
+pub fn vault_shared_close_erase_ask(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedEraseAskCloseRequest,
+) -> MemoryResult<crate::federation::SharedEraseAsk> {
+    crate::task_verb::sdk::close_shared_erase_ask_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.close_erase_ask")?,
+        input,
+    )
+}
 pub fn vault_guests_revoke(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::GuestRevokeRequest,
@@ -4573,6 +4816,24 @@ pub fn vault_settings_learning_clear(
         input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_settings_wake_policy_set(
+    memory: &Memory<'_>,
+    input: crate::policy_setting_doors::WakePolicySetRequest,
+) -> MemoryResult<crate::policy_setting_doors::PolicyActionOutcome> {
+    crate::policy_setting_doors::wake_policy_set_embedded(memory, input)
+}
+pub fn vault_settings_inference_defaults(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_setting_doors::PolicyActionOutcome> {
+    crate::policy_setting_doors::inference_defaults_embedded(memory)
+}
+pub fn vault_settings_inference_defaults_replace(
+    memory: &Memory<'_>,
+    input: crate::policy_setting_doors::InferenceDefaultsReplaceRequest,
+) -> MemoryResult<crate::policy_setting_doors::PolicyActionOutcome> {
+    crate::policy_setting_doors::inference_defaults_replace_embedded(memory, input)
 }
 pub fn vault_lenses_propose(
     memory: &Memory<'_>,

@@ -210,6 +210,14 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
+    /// The lasting call receipt the last verb's reply stated, as
+    /// `call:<32hex>`, whether it answered or refused. `None` for an embedded
+    /// handle, before any call, after a call that reached no server, and for
+    /// an anonymous off-record call.
+    fn last_receipt_ref(&self) -> Option<String> {
+        self.inner.last_receipt_ref()
+    }
+
     // BEGIN GENERATED AGENT VERBS
     fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "report")?;
@@ -676,6 +684,62 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_object(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.object")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.object", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_withdraw_objection(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.withdraw_objection")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.shared.withdraw_objection", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_started(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.started")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.started", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_matured(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.matured")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.matured", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_erase_ask(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.erase_ask")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.erase_ask", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_erase_asks(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.erase_asks")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.erase_asks", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_close_erase_ask(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.close_erase_ask")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.close_erase_ask", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_guests_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.guests.revoke")?;
         let output = py
@@ -930,6 +994,45 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.settings.learning.clear", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_wake_policy_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.wake_policy.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.wake_policy.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_inference_defaults(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.inference_defaults")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.inference_defaults", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_inference_defaults_replace(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.settings.inference_defaults.replace")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.inference_defaults.replace", input)
             })
             .map_err(raise)?;
         encode(&output)

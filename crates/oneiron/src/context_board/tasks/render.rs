@@ -1,6 +1,6 @@
 //! Pure TASKS row rendering: intent rows, folded jobs, cause tokens, expansion detail.
 
-use super::super::one_line_token;
+use super::super::{TASK_LABEL_MAX_BYTES, one_line_token};
 use super::projection::{
     JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow, TasksSection,
     intent_cancel_pathology, ladder_board_projection,
@@ -96,7 +96,7 @@ pub(crate) fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
     let folded_job_count = intent.realizing_jobs.len();
     let mut tokens = vec![one_line_token(&intent.id)];
     if let Some(label) = intent.label.as_deref() {
-        tokens.push(one_line_token(label));
+        tokens.push(label_preview(label));
     }
     if let Some(who) = intent.who_label.as_deref().or(intent.assignee.as_deref()) {
         tokens.push(format!("who={}", single_token(who)));
@@ -135,6 +135,24 @@ pub(crate) fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
         ));
     }
     TaskRow::from_intent(intent, tokens.join(" "))
+}
+
+/// A task's label as its row shows it: on one line, and past
+/// [`TASK_LABEL_MAX_BYTES`] cut at a character boundary and ended with an
+/// ellipsis. Only the row is cut; the stored label stays whole, and the task's
+/// id reads it in full.
+pub(crate) fn label_preview(label: &str) -> String {
+    const ELLIPSIS: char = '\u{2026}';
+    let mut token = one_line_token(label);
+    if token.len() > TASK_LABEL_MAX_BYTES {
+        let mut end = TASK_LABEL_MAX_BYTES - ELLIPSIS.len_utf8();
+        while !token.is_char_boundary(end) {
+            end -= 1;
+        }
+        token.truncate(end);
+        token.push(ELLIPSIS);
+    }
+    token
 }
 
 /// The cause tokens that ride BESIDE the status token, never inside it, and

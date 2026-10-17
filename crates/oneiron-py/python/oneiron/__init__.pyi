@@ -237,6 +237,7 @@ class Oneiron:
     def pair(cls, link: str) -> tuple["Oneiron", str]: ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
     def in_room_turn(self, room_ref: str) -> "Oneiron": ...
+    def last_receipt_ref(self) -> str | None: ...
 # BEGIN GENERATED FACADE VERBS
     def report(self, spec: Facade.ReportRequest) -> Facade.ReportReceipt:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
@@ -487,6 +488,20 @@ class Oneiron:
             """The reader's own outcome notices for a shared vault."""
         def deletion(self, spec: Facade.EmptyRequest | None = None) -> Facade.SharedVaultDeletion | None:
             """The executed delete-the-vault act, if any."""
+        def object(self, spec: Facade.SharedActRequest) -> Facade.PendingAuthorityAct:
+            """A holder of a pending shared act's objector role objects inside its veto window."""
+        def withdraw_objection(self, spec: Facade.SharedActRequest) -> Facade.PendingAuthorityAct:
+            """The holder withdraws their objection; past the deadline the last withdrawal releases the act."""
+        def started(self, spec: Facade.SharedVaultRequest) -> list[Facade.PendingActStarted]:
+            """The caller's own notices of shared acts started in the vault."""
+        def matured(self, spec: Facade.SharedVaultRequest) -> list[Facade.PendingActMatured]:
+            """The caller's own notices of shared acts whose veto window has passed."""
+        def erase_ask(self, spec: Facade.SharedEraseAskRequest) -> Facade.SharedEraseAsk:
+            """A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing."""
+        def erase_asks(self, spec: Facade.SharedVaultRequest) -> list[Facade.SharedEraseAsk]:
+            """The erase asks the caller may see: every ask for an Owner, their own for anyone else."""
+        def close_erase_ask(self, spec: Facade.SharedEraseAskCloseRequest) -> Facade.SharedEraseAsk:
+            """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
     class _VaultMembersVerbs:
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept."""
@@ -552,6 +567,10 @@ class Oneiron:
     class _VaultSettingsVerbs:
         @property
         def learning(self) -> "Oneiron._VaultSettingsLearningVerbs": ...
+        @property
+        def wake_policy(self) -> "Oneiron._VaultSettingsWakePolicyVerbs": ...
+        @property
+        def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs": ...
     class _VaultSettingsLearningVerbs:
         def __call__(self, spec: Facade.LearningSettingsRequest) -> Facade.LearningSettingsView:
             """The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."""
@@ -559,6 +578,14 @@ class Oneiron:
             """The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope."""
         def clear(self, spec: Facade.LearningSettingClear) -> Facade.LearningSettingsView:
             """The owner clears one learned-setting row of a key, mode and scope."""
+    class _VaultSettingsWakePolicyVerbs:
+        def set(self, spec: Facade.WakePolicySetRequest) -> Facade.PolicyActionOutcome:
+            """The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof."""
+    class _VaultSettingsInferenceDefaultsVerbs:
+        def __call__(self, spec: Facade.EmptyRequest | None = None) -> Facade.PolicyActionOutcome:
+            """Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling."""
+        def replace(self, spec: Facade.InferenceDefaultsReplaceRequest) -> Facade.PolicyActionOutcome:
+            """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
     class _VaultLensesVerbs:
         def propose(self, spec: Facade.LensProposeRequest) -> Facade.LensProposalReceipt:
             """Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."""

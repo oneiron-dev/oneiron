@@ -56,6 +56,8 @@ pub(crate) use super::decision_ask_doors::*;
 pub(crate) use super::embedding_space_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
+// The app's policy-action doors (OF-181), likewise.
+pub(crate) use super::policy_doors::*;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
@@ -464,7 +466,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.legal_holds.lift_and_erase"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
-        | "vault.settings.learning.clear" => owner_proof(auth, server, verb).map(drop),
+        | "vault.settings.learning.clear"
+        | "vault.settings.wake_policy.set" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"
@@ -478,7 +481,14 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.members.invitations"
         | "vault.members.accept"
         | "vault.members.decline"
-        | "vault.members.withdraw_invitation" => {
+        | "vault.members.withdraw_invitation"
+        | "vault.shared.object"
+        | "vault.shared.withdraw_objection"
+        | "vault.shared.started"
+        | "vault.shared.matured"
+        | "vault.shared.erase_ask"
+        | "vault.shared.erase_asks"
+        | "vault.shared.close_erase_ask" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),

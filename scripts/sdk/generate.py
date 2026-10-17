@@ -7,6 +7,7 @@ import keyword
 import re
 import subprocess
 from facade_types import Inventory
+from uniffi_types import UniffiTypes
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = json.loads((Path(__file__).with_name('agent-verbs.json')).read_text())
@@ -103,7 +104,7 @@ def long_signature(params):
 def rust_type(value):
     return value.replace('crate::', 'oneiron::') if value.startswith('crate::') else 'oneiron::task_verb::sdk::' + value
 
-SERVER_RECALL_DOC = "/// `POST /v1/core/facade/vault.recall` → `SyncServer::recall_off_runtime`, the\n/// recall door every server transport shares: it embeds the query whenever\n/// the vault's embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n"
+SERVER_RECALL_DOC = "/// `vault.recall` → `SyncServer::recall_off_runtime_listing`, the recall door\n/// every server transport shares (`POST /v1/core/facade/vault.recall`, and\n/// the held socket's `rpc.req`): it embeds the query whenever the vault's\n/// embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n"
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {
@@ -862,6 +863,169 @@ def default_const(row, arg):
     'The engine constant that carries one binding default the manifest states.'
     return f"{row['name'].replace('.', '_')}_{arg['name']}_default".upper()
 
+# OF-489 socket-first: one admission and one typed call per facade row, which
+# every server transport runs. A transport hands the row a `FacadeCall` (the
+# credential it is bound to, and what it carried beside the input) and the
+# input as it decoded it, and the row reads that input where the HTTP handler
+# read its body, so each refusal keeps its order. The HTTP routes all take one
+# adapter (`facade_route`) over `call_verb`, and the held socket's `rpc.req`
+# calls the same `call_verb`. The answer names the rows it was derived from,
+# for the socket's send-time release (DEC-0005); a door that opens handles of
+# its own names none, and says so. Board, browser and run rows are refused by
+# the context each needs: no facade transport carries it.
+DISPATCH_DOC = '''//! The facade's one admission and typed call per verb-table row (OF-489).
+//! Every server transport runs a facade verb here: each HTTP route through
+//! `facade_route`, the held socket's `rpc.req` through [`call_verb`]. A
+//! transport hands a row its [`FacadeCall`] and the input as it decoded it;
+//! the row admits the call and runs it, and its answer names the rows it was
+//! derived from.
+'''
+DISPATCH_SIGNATURE = "server: &Arc<SyncServer>, call: &FacadeCall<'_>, input: Result<serde_json::Value, FacadeApiError>"
+
+def facade_dispatch(facade_rows):
+    'The facade routes, every one onto the shared adapter, and the dispatch both transports run.'
+    # A raw door refuses any narrowed record capability; a door that reads only
+    # through the credential's lane serves a facet narrowing (owner ruling
+    # FACET-READ), which the lane applies row by row.
+    # A door that births records lands them in the credential's landing facet,
+    # which the credential must carry.
+    def record_scope_guard(r):
+        admission = r.get('admission', {})
+        if admission.get('born_record_scope'):
+            return 'let position = facade_landing(server, call)?;'
+        if admission.get('lane_record_scope'):
+            return 'auth.require_lane_record_scope()?;'
+        if admission.get('unrestricted_record_scope'):
+            return 'auth.require_unrestricted_record_scope()?;'
+        # Any other door reads or writes around the lane, so it refuses a facet
+        # narrowing as MCP refuses a narrowed connector there.
+        return 'auth.require_unnarrowed_facets()?;'
+    routes = HEADER + 'use super::*;\npub(super) fn routes() -> Router<Arc<SyncServer>> { Router::new()\n'
+    routes += ''.join(f'.route("/{r["name"]}", post(facade_route))\n' for r in facade_rows) + '}\n'
+    dispatch = HEADER + DISPATCH_DOC + 'use super::*;\n'
+    for r in facade_rows:
+        method, name = r['name'].replace('.', '_'), r['name']
+        head = f"async fn {method}({DISPATCH_SIGNATURE}) -> Result<FacadeCallOutput, FacadeApiError> {{\nlet auth = call.auth();\n"
+        if name == 'vault.recall': dispatch += SERVER_RECALL_DOC
+        if r.get('admission', {}).get('owner_grade'):
+            # A full-vault result must carry verifier-produced owner proof into
+            # same-snapshot engine admission, never generic actor-only invoke.
+            dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;
+                auth.require_unrestricted_record_scope()?;
+                facade_outside_room_turn(call, {json.dumps(name)})?;
+                if !auth.is_owner_grade() {{
+                    return Err(FacadeApiError::forbidden("full-vault export requires owner authority", ["Present a verified, unattenuated owner credential."]));
+                }}
+                let value = input?;
+                oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
+                let proof = auth.verified_slip().ok_or_else(|| FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]))?;
+                let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
+                let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
+                let output = if proof.claims().holder_ref == "host" {{
+                    server.vault.export_with_verified_host_owner(&input, proof, auth.locality())?
+                }} else {{
+                    let (actor, class) = facade_actor(auth)?;
+                    server.vault.memory(actor, class).at(auth.locality()).export_with_verified_owner(&input, proof)?
+                }};
+                let output = serde_json::to_value(output).map_err(|_| FacadeApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
+                    "export result encoding failed", ["Report this SDK response mismatch."]
+                ))?;
+                // The whole vault: no list names the rows it holds.
+                Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))
+            }}\n'''
+            continue
+        if r.get('host_door'):
+            # A host door answers from the server's own state, outside any
+            # room turn, under the credential the call presented. It opens its
+            # own handles, so no list here names the rows it read.
+            dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;
+                {record_scope_guard(r)}
+                facade_outside_room_turn(call, {json.dumps(name)})?;
+                let value = input?;
+                oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
+                let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
+                let output = facade_output(super::host_doors::{method}(server, auth, facade_input(hooks.args.clone())?).await?)?;
+                Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))
+            }}\n'''
+            continue
+        # `readable` names the credential read checks: each caller-named ref is
+        # refused before the engine call, and `rows` filters the typed result.
+        room_guard, ref_guard = '', ''
+        result = f'facade_invoke(server, call, actor, class, "{name}", value, &producers)?'
+        if r.get('admission', {}).get('born_record_scope'):
+            result = f'facade_invoke_born(server, call, actor, class, "{name}", value, position, &producers)?'
+        result += ';'
+        readables = r.get('admission', {}).get('readable', [])
+        # A room turn refuses an unserved verb before any credential lookup,
+        # so the refusal says nothing about the target the lookup would read.
+        if 'rows' in readables:
+            room_guard += f'facade_outside_room_turn(call, "{name}")?;'
+        elif readables:
+            room_guard += f'facade_room_turn_serves(call, "{name}", oneiron::memory::RoomTurnHandle::serves("{name}"))?;'
+        for readable in readables:
+            if readable == 'rows':
+                result = (f'facade_readable_task_rows(&server.vault, auth, oneiron::task_verb::sdk::{method}(&credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()).listing_producers(&producers), facade_input(value)?)?)?;\n'
+                          'let rows = Some(producers.take());')
+            else:
+                ref_guard += f'facade_admit_readable_ref(&server.vault, auth, &value, "{readable}")?;'
+        # A server door runs the verb with the host's execution inputs, off the
+        # runtime, inside the room turn the call names, if any, and lists the
+        # rows its answer is derived from without naming them.
+        if r.get('server_door'):
+            result = (f'let (output, listed) = server.{r["server_door"]}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?).await;\n'
+                      'let output = facade_output(output?)?;\nlet rows = Some(listed);')
+        landed = ''
+        if r.get('lands_turn'):
+            landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
+        # A born door's landing judges its record bounds, so only the grant is
+        # left to check.
+        require = 'require_granted' if r.get('admission', {}).get('born_record_scope') else 'require'
+        head += f'''auth.{require}(CoreScope::{r["scope"]})?;
+        {record_scope_guard(r)}
+        let value = input?;\n'''
+        # A row that runs itself, not through `invoke`, crosses its verb hooks
+        # here (ARCH-0080 §3): after the call's own refusals, before the checks
+        # its args meet, so a rewrite meets them too. `invoke` crosses them for
+        # every other row.
+        if 'rows' in readables or r.get('server_door'):
+            actor = 'let (actor, class) = facade_actor(auth)?;'
+            self_branch = ''
+            if name == 'describe':
+                # describe(self) renders the authenticated run brief, under no actor.
+                self_branch = ('if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) { '
+                               'let output = crate::api::context_board::describe_self_for_auth(server, auth, &value).await?; '
+                               'return Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)); } ' + actor)
+                actor = ''
+            producers = '' if r.get('server_door') else 'let producers = oneiron::memory::ProducerRows::default();\n'
+            output = result if r.get('server_door') else f'let output = {result}'
+            dispatch += head + f'''oneiron::task_verb::sdk::validate_input("{name}", &value)?;
+        {room_guard}{actor}
+        let hooks = facade_hooks_pre(server, call, "{name}", value).await?;
+        let value = hooks.args.clone(); {self_branch}{ref_guard}
+        {producers}{output}{landed}
+        Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows }})
+        }}\n'''
+            continue
+        dispatch += head + f'''let (actor, class) = facade_actor(auth)?;{room_guard}{ref_guard}
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = {result}{landed}
+        Ok(FacadeCallOutput::listed(output, &producers))
+        }}\n'''
+    dispatch += f'''/// Runs facade verb `verb` for `call` over `input`, as its row admits it:
+/// the one verb table every server transport serves. A board, browser or run
+/// row is refused by the context it needs, which no facade call carries; any
+/// other name is refused as an unknown verb, with its correction when it is a
+/// canonical verb under the wrong root.
+pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, verb: &str, input: Result<serde_json::Value, FacadeApiError>) -> Result<FacadeCallOutput, FacadeApiError> {{
+match verb {{
+'''
+    dispatch += ''.join(f'{json.dumps(r["name"])} => {r["name"].replace(".", "_")}(server, call, input).await,\n' for r in facade_rows)
+    for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board']), ('Browser', [r for r in ROWS if r.get('context') == 'browser']), ('Run', RUN_ROWS)]:
+        if rows: dispatch += ' | '.join(json.dumps(r['name']) for r in rows) + f' => Err(context_required(verb, VerbContext::{context})),\n'
+    dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
+    return routes, dispatch
+
 def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"]
     core = HEADER
@@ -931,131 +1095,7 @@ def outputs():
             core += f"pub fn {method}<S: crate::board_verb::LiveBoardSource>(context: &mut crate::board_verb::BoardVerbContext<'_, S>, {binding}: {r['input']}) -> Result<{r['output']}, crate::board_verb::BoardVerbError> {{ {result} }}\n"
         else:
             core += f"pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} {result} }}\n"
-    # A raw door refuses any narrowed record capability; a door that reads only
-    # through the credential's lane serves a facet narrowing (owner ruling
-    # FACET-READ), which the lane applies row by row.
-    # A door that births records lands them in the credential's landing facet,
-    # which the credential must carry.
-    def record_scope_guard(r):
-        admission = r.get('admission', {})
-        if admission.get('born_record_scope'):
-            return 'let position = facade_landing(&server, &headers, &auth)?;'
-        if admission.get('lane_record_scope'):
-            return 'auth.require_lane_record_scope()?;'
-        if admission.get('unrestricted_record_scope'):
-            return 'auth.require_unrestricted_record_scope()?;'
-        # Any other door reads or writes around the lane, so it refuses a facet
-        # narrowing as MCP refuses a narrowed connector there.
-        return 'auth.require_unnarrowed_facets()?;'
-    server = HEADER + 'use super::*;\npub(super) fn routes() -> Router<Arc<SyncServer>> { Router::new()\n'
-    for r in facade_rows:
-        method=r['name'].replace('.','_')
-        server += f'.route("/{r["name"]}", post({method}))\n'
-    server += '}\n'
-    for r in facade_rows:
-        method=r['name'].replace('.','_')
-        if r['name'] == 'vault.recall': server += SERVER_RECALL_DOC
-        if r.get('admission', {}).get('owner_grade'):
-            # A full-vault result must carry verifier-produced owner proof into
-            # same-snapshot engine admission, never generic actor-only invoke.
-            server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
-                auth.require(CoreScope::{r["scope"]})?;
-                auth.require_unrestricted_record_scope()?;
-                facade_outside_room_turn(&headers, {json.dumps(r["name"])})?;
-                if !auth.is_owner_grade() {{
-                    return Err(FacadeApiError::forbidden("full-vault export requires owner authority", ["Present a verified, unattenuated owner credential."]));
-                }}
-                let value = facade_json(payload)?;
-                oneiron::task_verb::sdk::validate_input({json.dumps(r["name"])}, &value)?;
-                let proof = auth.verified_slip().ok_or_else(|| FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]))?;
-                let hooks = facade_hooks_pre(&server, &headers, &auth, {json.dumps(r["name"])}, value).await?;
-                let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
-                let output = if proof.claims().holder_ref == "host" {{
-                    server.vault.export_with_verified_host_owner(&input, proof, auth.locality())?
-                }} else {{
-                    let (actor, class) = facade_actor(&auth)?;
-                    server.vault.memory(actor, class).at(auth.locality()).export_with_verified_owner(&input, proof)?
-                }};
-                let output = serde_json::to_value(output).map_err(|_| FacadeApiError::new(
-                    StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
-                    "export result encoding failed", ["Report this SDK response mismatch."]
-                ))?;
-                Ok(Json(facade_hooks_post(&server, hooks, output).await?))
-            }}\n'''
-            continue
-        if r.get('host_door'):
-            # A host door answers from the server's own state, outside any
-            # room turn, under the credential this request presented.
-            server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
-                auth.require(CoreScope::{r["scope"]})?;
-                {record_scope_guard(r)}
-                facade_outside_room_turn(&headers, {json.dumps(r["name"])})?;
-                let value = facade_json(payload)?;
-                oneiron::task_verb::sdk::validate_input({json.dumps(r["name"])}, &value)?;
-                let hooks = facade_hooks_pre(&server, &headers, &auth, {json.dumps(r["name"])}, value).await?;
-                let output = facade_output(super::host_doors::{method}(&server, &auth, facade_input(hooks.args.clone())?).await?)?;
-                Ok(Json(facade_hooks_post(&server, hooks, output).await?))
-            }}\n'''
-            continue
-        # `readable` names the credential read checks: each caller-named ref is
-        # refused before the engine call, and `rows` filters the typed result.
-        room_guard, ref_guard = '', ''
-        result = f'facade_invoke(&server, &headers, &auth, actor, class, "{r["name"]}", value)?'
-        if r.get('admission', {}).get('born_record_scope'):
-            result = f'facade_invoke_born(&server, &headers, &auth, actor, class, "{r["name"]}", value, position)?'
-        readables = r.get('admission', {}).get('readable', [])
-        # A room turn refuses an unserved verb before any credential lookup,
-        # so the refusal says nothing about the target the lookup would read.
-        if 'rows' in readables:
-            room_guard += f'facade_outside_room_turn(&headers, "{r["name"]}")?;'
-        elif readables:
-            room_guard += f'facade_room_turn_serves(&headers, "{r["name"]}", oneiron::memory::RoomTurnHandle::serves("{r["name"]}"))?;'
-        for readable in readables:
-            if readable == 'rows':
-                result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&credential_memory(&server.vault, Some(&auth), actor, class).at(auth.locality()), facade_input(value)?)?)?'
-            else:
-                ref_guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
-        # A server door runs the verb with the host's execution inputs, off the
-        # runtime, inside the room turn the request names, if any.
-        if r.get('server_door'):
-            result = f'facade_output(server.{r["server_door"]}(actor, class, auth.verified_slip().cloned(), auth.locality(), facade_room_turn(&headers)?, facade_input(value)?).await?)?'
-        landed = ''
-        if r.get('lands_turn'):
-            landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
-        # A born door's landing judges its record bounds, so only the grant is
-        # left to check.
-        require = 'require_granted' if r.get('admission', {}).get('born_record_scope') else 'require'
-        head = f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
-        auth.{require}(CoreScope::{r["scope"]})?;
-        {record_scope_guard(r)}
-        let value = facade_json(payload)?;\n'''
-        # A route that runs its row itself, not through `invoke`, crosses the
-        # row's verb hooks here (ARCH-0080 §3): after the request's own
-        # refusals, before the checks its args meet, so a rewrite meets them
-        # too. `invoke` crosses them for every other route.
-        if 'rows' in readables or r.get('server_door'):
-            actor = 'let (actor, class) = facade_actor(&auth)?;'
-            self_branch = ''
-            if r['name'] == 'describe':
-                # describe(self) renders the authenticated run brief, under no actor.
-                self_branch = ('if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) { '
-                               'let output = crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?; '
-                               'return Ok(Json(facade_hooks_post(&server, hooks, output).await?)); } ' + actor)
-                actor = ''
-            server += head + f'''oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;
-        {room_guard}{actor}
-        let hooks = facade_hooks_pre(&server, &headers, &auth, "{r["name"]}", value).await?;
-        let value = hooks.args.clone(); {self_branch}{ref_guard}
-        let output = {result};{landed}
-        Ok(Json(facade_hooks_post(&server, hooks, output).await?))
-        }}\n'''
-            continue
-        if landed:
-            landed = f'let output = {result}; {landed}'
-            result = 'output'
-        server += head + f'''let (actor, class) = facade_actor(&auth)?;{room_guard}{ref_guard}{landed}
-        Ok(Json({result}))
-        }}\n'''
+    server, dispatch = facade_dispatch(facade_rows)
     remote = HEADER + 'use super::*;\n'
     remote += '''fn remote_agent_verb_output<R: serde::de::DeserializeOwned + serde::Serialize>(
         client: &RemoteClient, verb: &str, input: &serde_json::Value,
@@ -1164,15 +1204,17 @@ def outputs():
     catalog += ''.join('Self::' + variants[r['name']] + ' => ' + json.dumps(r.get('description', '')) + ',\n' for r in ROWS)
     catalog += '} }\n'
     catalog += '}\n'
-    uniffi = uniffi_facade(facade_rows)
+    uniffi, uniffi_types = uniffi_facade(facade_rows)
     http = http_facade()
     files = {
         'packages/oneiron-client/src/facade.ts': http,
         'crates/oneiron/src/task_verb/run_verb_catalog.rs': run_catalog(),
         'crates/oneiron-uniffi/src/facade_generated.rs': uniffi,
+        'crates/oneiron-uniffi/src/facade_types_generated.rs': uniffi_types,
         'crates/oneiron/src/task_verb/sdk_generated.rs':core,
         'crates/oneiron/src/task_verb/verb_catalog.rs':catalog,
         'crates/oneiron-server/src/api/facade/agent_verbs.rs':server,
+        'crates/oneiron-server/src/api/facade/dispatch.rs':dispatch,
         'crates/oneiron-remote/src/agent_verbs.rs':remote,
         'crates/oneiron-napi/src/facade/client/agent_verbs.rs':napi,
         'packages/oneiron/src/agent-verbs.ts':ts,
@@ -1208,11 +1250,14 @@ def outputs():
 # method for the row, so an embedded handle and a connected one answer it the
 # way napi and Python do. A row's `uniffi` block spells its typed foreign
 # signature over the crate's records. A row without one projects by type: an
-# engine type with a UniFFI record crosses as that record, a typed binding
-# argument as its foreign value, and any other input or output as the crate's
-# `WireJson` leaf, parsed into the row's engine input type and written from its
-# typed output on the Rust side. That is one typed call per verb with a JSON
-# body; there is no generic `call`. A definition row with a `uniffi` block
+# engine type with a hand-written UniFFI record (`dto.rs`) crosses as that
+# record, a typed binding argument as its foreign value, and any other input
+# or output as the generated record of its type from the facade type inventory
+# (`uniffi_types.py`, `facade_types_generated.rs`), converted through the
+# shared wire shape. An input record with no fields is no argument at all. Only
+# a type the inventory could not read crosses as the crate's `WireJson` leaf,
+# parsed into the row's engine input type and written from its typed output on
+# the Rust side; there is no generic `call`. A definition row with a `uniffi` block
 # exports its signature and fails closed until the table makes it callable.
 # Codecs are selected by type (`crates/oneiron-uniffi/src/codec.rs`), never by
 # verb name.
@@ -1260,7 +1305,18 @@ def uniffi_record(value, records):
             return inner and f'{container}<{inner}>'
     return records.get(value)
 
-def uniffi_export(row):
+# What a generated UniFFI type may not be named: the crate's hand-written
+# exports, and what the crate root already binds.
+UNIFFI_HAND_WRITTEN = ['crates/oneiron-uniffi/src/dto.rs', 'crates/oneiron-uniffi/src/lib.rs', 'crates/oneiron-uniffi/src/error.rs']
+UNIFFI_ROOT_NAMES = ['Arc', 'Lift', 'Lower', 'UniFfiTag']
+
+def uniffi_taken():
+    names = set(UNIFFI_ROOT_NAMES)
+    for path in UNIFFI_HAND_WRITTEN:
+        names.update(re.findall(r'(?m)^pub (?:struct|enum) (\w+)', (ROOT/path).read_text()))
+    return names
+
+def uniffi_export(row, types, census):
     'One `export_facade!` arm: lower the arguments, call the typed client method, lift.'
     name, method = json.dumps(row['name']), row['name'].replace('.', '_')
     signature = row.get('uniffi')
@@ -1288,32 +1344,69 @@ def uniffi_export(row):
             lowered = next(iter(params)) if len(params) == 1 else '(' + ', '.join(params) + ')'
             setup.append(f'let input: {engine_input} = {lowered}.lower()?;')
             values.append('&input')
+        census.setdefault(('typed', 'typed'), []).append(row['name'])
     else:
         if typed_args:
             unknown = [a['kind'] for a in typed_args if a['kind'] not in UNIFFI_ARGUMENTS]
             if unknown: raise ValueError(f'{row["name"]}: no UniFFI projection for binding argument kinds {unknown}')
             params = {a['name']: UNIFFI_ARGUMENTS[a['kind']][0] for a in typed_args}
             values = [UNIFFI_ARGUMENTS[a['kind']][1].format(name=a['name']) for a in typed_args]
+            sides = ['typed']
         elif uniffi_record(row['input'], UNIFFI_INPUTS):
             params = {'input': uniffi_record(row['input'], UNIFFI_INPUTS)}
             setup.append(f'let input: {engine_input} = input.lower()?;')
             values.append('&input')
+            sides = ['typed']
+        elif types.root_is_empty(row['input']):
+            params = {}
+            setup.append(f'let input: {engine_input} = crate::codec::lower_empty({name})?;')
+            values.append('&input')
+            sides = ['generated']
+        elif mirror := types.root(row['input']):
+            params = {'input': mirror}
+            setup.append(f'let input: {engine_input} = crate::codec::lower_record({name}, input)?;')
+            values.append('&input')
+            sides = ['generated']
         else:
             params = {'input': 'WireJson'}
             setup.append(f'let input: {engine_input} = crate::codec::decode({name}, &input)?;')
             values.append('&input')
+            sides = ['wire']
         record = uniffi_record(row['output'], UNIFFI_RESULTS)
-        output, result = (record, 'Lift::lift(output)') if record else ('WireJson', f'crate::codec::encode({name}, &output)')
+        if record:
+            output, result = record, 'Lift::lift(output)'
+            sides.append('typed')
+        elif mirror := types.root(row['output']):
+            output, result = mirror, f'crate::codec::lift_record({name}, &output)'
+            sides.append('generated')
+        else:
+            output, result = 'WireJson', f'crate::codec::encode({name}, &output)'
+            sides.append('wire')
+        census.setdefault(tuple(sides), []).append(row['name'])
     declaration = ', '.join(arg + ': ' + typ for arg, typ in params.items())
     body = ''.join(f'    {line}\n' for line in setup + [f'let output = client.{method}({", ".join(values)})?;', result])
-    return f'{name} => fn {method}(&self, {declaration}) -> {output} = |client| {{\n{body}}};\n'
+    receiver = f'&self, {declaration}' if declaration else '&self'
+    return f'{name} => fn {method}({receiver}) -> {output} = |client| {{\n{body}}};\n'
 
 def uniffi_facade(facade_rows):
-    'The UniFFI verb surface: every facade row, then the definition rows it still names.'
+    'The UniFFI verb surface (every facade row, then the definition rows it still names) and its generated types.'
     rows = facade_rows + [row for row in DEFINITIONS if 'uniffi' in row]
     if any('uniffi' in row for row in ROWS if row not in facade_rows):
         raise ValueError('only a facade row carries a uniffi signature')
-    return HEADER + 'export_facade! {\n' + ''.join(uniffi_export(row) for row in rows) + '}\n'
+    types, census = UniffiTypes(INVENTORY, uniffi_taken()), {}
+    arms = ''.join(uniffi_export(row, types, census) for row in rows)
+    count = lambda *sides: len(census.get(sides, []))
+    lines = [
+        f'UniFFI census: {len(facade_rows)} facade rows, {len(types.items)} generated types.',
+        f'Hand-written records in and out: {count("typed", "typed")}; typed arguments or a hand-written input with a '
+        f'generated result: {count("typed", "generated")}; a generated input with a hand-written result: {count("generated", "typed")}; '
+        f'generated in and out: {count("generated", "generated")}.',
+        'WireJson rows: ' + (', '.join(f'{name} ({"input" if sides[0] == "wire" else ""}{" and " if sides == ("wire", "wire") else ""}{"result" if sides[1] == "wire" else ""})'
+                                       for sides, names in sorted(census.items()) if 'wire' in sides for name in names) or 'none') + '.',
+        'WireJson leaves inside the generated types, past each serde_json::Value: '
+        + (', '.join(f'{where} ({why})' for where, why in sorted(types.leaves.items())) or 'none') + '.',
+    ]
+    return HEADER + 'export_facade! {\n' + arms + '}\n', types.render(HEADER, lines)
 
 # The code-mode declarations a model is taught and a shadow type check reads.
 # The engine renders each row's signature from its compiled input schema

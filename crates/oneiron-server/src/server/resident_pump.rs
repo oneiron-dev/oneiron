@@ -382,8 +382,7 @@ fn run_bound(
         .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
     let seat = seats.seat(run_id, spend, CallerLocality::OnDevice);
     // One door for the whole run, so its browser lives as long as the run.
-    let door: Arc<dyn AgentVerbDoor> =
-        Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
+    let door: Arc<dyn AgentVerbDoor> = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -577,7 +576,8 @@ fn settle(
                 tier: None,
                 stable_reason: reason.to_owned(),
             },
-            blocked_reports: Vec::new(),
+            blocked_reports: vault
+                .blocked_reports_of_run(EntityId::from_bytes(*attempt.id.as_bytes())?)?,
             pre_fail_checkpoint_ref: EntityId::from_bytes(*attempt.id.as_bytes())?,
             qa_thread_ref: claimed.qa_thread_ref,
             retry_at: now,

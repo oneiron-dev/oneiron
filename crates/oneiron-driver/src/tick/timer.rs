@@ -226,9 +226,13 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     next = Some(due);
                 }
             }
-            // Each standing question's refresh (OF-506) arms the same
-            // home-only cadence; the Deadline pass runs the host's pump.
-            let question = match self.vault.next_question_refresh_at() {
+            // Each standing question's refresh (OF-506) and each held
+            // artifact answer's wake (ARCH-0075 §4) arm the same home-only
+            // cadence; the Deadline pass runs the host's pump for both.
+            let question = match self.vault.next_question_refresh_at().and_then(|question| {
+                let wake = self.vault.next_answer_wake_at()?;
+                Ok(question.into_iter().chain(wake).min())
+            }) {
                 Ok(question) => question,
                 Err(error) if next.is_some() || commitment.is_some() => {
                     tracing::warn!(
