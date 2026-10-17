@@ -571,6 +571,15 @@ impl GrantBound {
         &self.envelope
     }
 
+    /// The actor an action bound names; `None` for a disclosure bound.
+    #[must_use]
+    pub const fn actor(&self) -> Option<&ActorBound> {
+        match &self.subject {
+            BoundSubject::Actor(actor) => Some(actor),
+            BoundSubject::Audience(_) => None,
+        }
+    }
+
     /// The domain this bound belongs to.
     #[must_use]
     pub fn domain(&self) -> ConsentDomain {

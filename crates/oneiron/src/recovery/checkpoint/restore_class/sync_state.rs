@@ -73,6 +73,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::GATE_MANIFEST_RETENTION_HOLDER, LIVE),
     (&t::GATE_MANIFEST_SEEDED_CONFIDENCE, LIVE),
     (&t::GATE_MANIFEST_TRUSTED_ORIGIN, LIVE),
+    (&t::MODEL_MEDIA_JOB, LIVE),
     (&t::SYNC_NC_E, CONTENT),
     (&t::SYNC_NOTE_INBOX, CONTENT),
     (&t::NOTE_PROPOSAL_DOC, CONTENT),
