@@ -614,6 +614,53 @@ impl ExecutorStorage<'_> {
         self.reader_read(|txn, dbs| JOBS.get(&dbs, txn, &task))
     }
 
+    /// The card of the summary `owner` committed at `path` under `handle`,
+    /// made by job `task`: read as a child's finding is, with the task that
+    /// made it. `None` once that record no longer holds it.
+    pub(crate) fn summary_output_card(
+        &self,
+        owner: EntityId,
+        path: &str,
+        handle: &str,
+        task: EntityId,
+    ) -> Result<Option<serde_json::Value>> {
+        let Some(output) = self.get_code_run_replay_record(&owner)?.and_then(|record| {
+            record
+                .outputs
+                .into_iter()
+                .find(|output| output.path == path && output.handle == handle)
+        }) else {
+            return Ok(None);
+        };
+        let mut card = crate::code_run::result_card(self, owner, &output, None)?;
+        card["task"] = serde_json::json!(task.to_hex());
+        Ok(Some(card))
+    }
+
+    /// The reply a parked `summarize` comes back with: a done summary's
+    /// card, as the same call made again answers its memo hit, in place of
+    /// the `{task, state, ref}` its settle delivered. A summary settled
+    /// short, or one whose text is gone, keeps the delivered reply.
+    pub(crate) fn delivered_summary_reply(
+        &self,
+        reply: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let task = reply
+            .get("task")
+            .and_then(serde_json::Value::as_str)
+            .filter(|_| reply.get("state").and_then(serde_json::Value::as_str) == Some("done"))
+            .and_then(|task| EntityId::from_hex(task).ok());
+        let Some(task) = task else {
+            return Ok(reply);
+        };
+        let Some(found) = self.reader_job(task)?.and_then(|job| job.finding) else {
+            return Ok(reply);
+        };
+        Ok(self
+            .summary_output_card(found.owner, &found.path, &found.handle, task)?
+            .unwrap_or(reply))
+    }
+
     pub(crate) fn reader_parent(&self, run: EntityId) -> Result<Option<ReaderParent>> {
         self.reader_read(|txn, dbs| PARENTS.get(&dbs, txn, &run))
     }
@@ -1051,7 +1098,9 @@ impl ExecutorStorage<'_> {
             .map(|member| member.range.1.saturating_sub(member.range.0))
             .fold(0_u64, u64::saturating_add);
         if total > max_bytes {
-            return refused(crate::code_run::SUMMARY_GROUP_EXCEEDS_WINDOW);
+            return refused(&crate::code_run::summary_exceeds_window_bytes(
+                total, max_bytes,
+            ));
         }
         let mut read = Vec::with_capacity(members.len());
         for member in members {
