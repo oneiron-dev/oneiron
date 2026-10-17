@@ -16,9 +16,10 @@ use crate::store::{
 };
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
-/// a pathological prefix scans a very large sync_state database.
+/// a pathological prefix scans a very large sync_state database. Deletion's
+/// window update-key read through the window-row port keeps the same cap.
 #[cfg(feature = "sync")]
-const MAX_SYNC_STATE_KEYS: usize = 10_000;
+pub(crate) const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
 /// Generic sync diagnostics may not edit the inputs to an authority fold.
 /// Authority-owned writers use their own validated doors and advance the

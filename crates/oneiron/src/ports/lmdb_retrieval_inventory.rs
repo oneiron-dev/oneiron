@@ -21,6 +21,28 @@ fn table(dbs: &impl ManifestDbs, rows: IndexRows) -> &OverlayDb {
     }
 }
 
+impl IndexRows {
+    /// The family a manifest database holds, when `name` is a retrieval-index table. The store
+    /// holds a handle to each of these tables, and the open gate refuses a vault missing any
+    /// manifest database (`DbManifestMismatch`), so a reader that walks the manifest by name
+    /// needs no missing-database guard for a table mapped here.
+    pub(crate) fn of_manifest_db(name: &str) -> Option<Self> {
+        Some(match name {
+            "vectors" => Self::Vectors,
+            "hnsw_neighbors" => Self::HnswNeighbors,
+            "hnsw_meta" => Self::HnswMeta,
+            "text_postings" => Self::TextPostings,
+            "text_meta" => Self::TextMeta,
+            "text_forward" => Self::TextForward,
+            "text_bm25_field_stats" => Self::TextBm25FieldStats,
+            "text_doc_field_lengths" => Self::TextDocFieldLengths,
+            "phonetic_index" => Self::PhoneticIndex,
+            "phonetic_forward" => Self::PhoneticForward,
+            _ => return None,
+        })
+    }
+}
+
 fn meta_key(key: IndexMetaKey) -> &'static [u8] {
     match key {
         IndexMetaKey::Count => crate::hnsw::COUNT_KEY,
