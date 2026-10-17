@@ -108,11 +108,24 @@ pub(super) fn index_version_in_txn(
     Ok(())
 }
 
+/// Drops one version's index rows, for the artifact delete path.
+pub(super) fn unindex_version_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    artifact_id: &EntityId,
+    version: &BlobArtifactVersion,
+) -> Result<()> {
+    for source in BornFromSource::of_version(version) {
+        BORN_FROM.delete(store, wtxn, &(source.key(), *artifact_id, version.version))?;
+    }
+    Ok(())
+}
+
 impl Vault {
     /// The artifact versions a task, ask, run or skill produced, in artifact
-    /// then version order. A version that no longer exists (its artifact was
-    /// deleted) is not listed; a run-ref hash collision is filtered by the
-    /// version's own provenance.
+    /// then version order. A deleted artifact's rows go with it; a version
+    /// that no longer exists is still not listed, and a run-ref hash collision
+    /// is filtered by the version's own provenance.
     pub fn artifacts_born_from(&self, source: &BornFromSource) -> Result<Vec<BornFromArtifact>> {
         let rtxn = self.store.env.read_txn()?;
         let mut out = Vec::new();
