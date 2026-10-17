@@ -76,6 +76,7 @@ impl Vault {
         let event = DiagnosticEvent {
             detector_id: format!("self_report.blocked.{}", category.as_str()),
             event_class: DiagnosticEventClass::AgentBlocked,
+            signal: None,
             actor_class: "agent".into(),
             actor_ref: Some(reporter),
             source: DiagnosticSourceKind::SelfReport,

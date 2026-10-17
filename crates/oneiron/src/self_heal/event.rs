@@ -13,10 +13,11 @@ pub const DIAGNOSTIC_SCHEMA_VERSION: u64 = 1;
 /// The order here IS the canonical encode order, and the set is CLOSED: decode
 /// rejects an unknown key, a missing key, a duplicate key, or reordered keys.
 /// This pre-release schema changes in place; no legacy body grammar is admitted.
-pub const DIAGNOSTIC_BODY_KEYS: [&str; 17] = [
+pub const DIAGNOSTIC_BODY_KEYS: [&str; 18] = [
     "schema_version",
     "detector_id",
     "event_class",
+    "signal",
     "actor_class",
     "actor_ref",
     "source",
@@ -106,6 +107,9 @@ pub enum DiagnosticEventClass {
     SyncReplayDivergence,
     /// A conversation degraded without raising any error of its own.
     SilentConversationDegradation,
+    /// The Coach's agent-health review (OF-568) saw a work agent struggle or
+    /// drift. Never a repair input: it yields cards and proposals only.
+    AgentHealth,
     /// An agent reported it could not go on (`self.report_blocked`). The
     /// report is the agent's own word: it feeds the Coach's Issues job and
     /// never a tripwire.
@@ -130,6 +134,7 @@ impl DiagnosticEventClass {
             Self::ChainVerifyFailure => "chain_verify_failure",
             Self::SyncReplayDivergence => "sync_replay_divergence",
             Self::SilentConversationDegradation => "silent_conversation_degradation",
+            Self::AgentHealth => "agent_health",
             Self::AgentBlocked => "agent_blocked",
         }
     }
@@ -151,6 +156,7 @@ impl DiagnosticEventClass {
             "chain_verify_failure" => Self::ChainVerifyFailure,
             "sync_replay_divergence" => Self::SyncReplayDivergence,
             "silent_conversation_degradation" => Self::SilentConversationDegradation,
+            "agent_health" => Self::AgentHealth,
             "agent_blocked" => Self::AgentBlocked,
             _ => return None,
         };
@@ -160,7 +166,7 @@ impl DiagnosticEventClass {
     /// Every class, in declaration order. Census helper for tests and callers
     /// that need to iterate the closed vocabulary.
     #[must_use]
-    pub const fn all() -> [Self; 14] {
+    pub const fn all() -> [Self; 15] {
         [
             Self::TestFailure,
             Self::BeamEvalRegression,
@@ -175,7 +181,71 @@ impl DiagnosticEventClass {
             Self::ChainVerifyFailure,
             Self::SyncReplayDivergence,
             Self::SilentConversationDegradation,
+            Self::AgentHealth,
             Self::AgentBlocked,
+        ]
+    }
+}
+
+/// What an [`DiagnosticEventClass::AgentHealth`] event saw (OF-568). Closed;
+/// an agent-health body names exactly one, every other body none.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentHealthSignal {
+    /// The same call, repeated with no other call between.
+    Loop,
+    /// The same check failed again on the same inputs.
+    FailedCheckRepeat,
+    /// Spend ran far past its task type's usual.
+    CostSpike,
+    /// Most of the run's time went to waiting on another agent.
+    LongWait,
+    /// A leased attempt went quiet, with no blocked report.
+    Silent,
+    /// Two agents did the same work.
+    DuplicateWork,
+    /// A done with no receipt behind it.
+    UnsupportedDone,
+    /// An audit found a flaw the agent's confession did not report.
+    Misalignment,
+}
+
+impl AgentHealthSignal {
+    /// Canonical wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Loop => "loop",
+            Self::FailedCheckRepeat => "failed_check_repeat",
+            Self::CostSpike => "cost_spike",
+            Self::LongWait => "long_wait",
+            Self::Silent => "silent",
+            Self::DuplicateWork => "duplicate_work",
+            Self::UnsupportedDone => "unsupported_done",
+            Self::Misalignment => "misalignment",
+        }
+    }
+
+    /// Parses a wire spelling, rejecting anything outside the closed set.
+    #[must_use]
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        Self::all().into_iter().find(|signal| signal.as_str() == raw)
+    }
+
+    /// Every signal, in declaration order.
+    #[must_use]
+    pub const fn all() -> [Self; 8] {
+        [
+            Self::Loop,
+            Self::FailedCheckRepeat,
+            Self::CostSpike,
+            Self::LongWait,
+            Self::Silent,
+            Self::DuplicateWork,
+            Self::UnsupportedDone,
+            Self::Misalignment,
         ]
     }
 }
@@ -277,6 +347,9 @@ pub struct DiagnosticEvent {
     pub detector_id: String,
     /// Closed event class.
     pub event_class: DiagnosticEventClass,
+    /// The agent-health signal: present exactly when the class is
+    /// [`DiagnosticEventClass::AgentHealth`].
+    pub signal: Option<AgentHealthSignal>,
     /// Actor class that owns the failure, in the Gate vocabulary.
     pub actor_class: String,
     /// Optional concrete actor.

@@ -83,13 +83,14 @@ const HOST_FACETS: [&str; 4] = [
     COACH_TRAINING_OFFER_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 6] = [
+const MAINTENANCE_FACETS: [&str; 7] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
     COACH_TRAINING_OFFERS_FACET,
     COACH_RESEARCH_SELECT_FACET,
     COACH_LEARNING_SWEEP_FACET,
+    super::agent_health::COACH_AGENT_HEALTH_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 const READ_HARDENING_RUNS: usize = 256;
@@ -544,14 +545,9 @@ pub(super) fn run_research_select(vault: &Vault, now: u64) -> Result<()> {
     Ok(())
 }
 
-/// The nightly learning upkeep. A run whose coordination will not derive is
+/// The nightly learning upkeep. A team whose coordination will not derive is
 /// left for the next night; the others still run.
 pub(super) fn run_learning_sweep(vault: &Vault, now: u64) -> Result<()> {
     crate::learning::reproject_all_cells(vault, now)?;
-    for run in crate::learning::coordination_runs(vault)? {
-        if let Err(error) = crate::learning::project_run_coordination(vault, &run, now) {
-            tracing::warn!(kind = ?error.kind(), "run coordination did not derive");
-        }
-    }
-    Ok(())
+    crate::learning::project_all_coordination(vault, now)
 }

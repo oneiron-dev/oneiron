@@ -93,7 +93,8 @@ use self::diagnostic_codec::{
     validate_diagnostic_event_body_bytes, validate_stored_diagnostic_event_body_bytes,
 };
 pub use self::event::{
-    DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION, DeterministicDetector, DiagnosticCriticality,
+    AgentHealthSignal, DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION, DeterministicDetector,
+    DiagnosticCriticality,
     DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, DiagnosticWorkingSet,
 };

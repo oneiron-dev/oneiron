@@ -288,6 +288,9 @@ side_tables! {
     /// Reverse index: the projection-index keys written for one claim, so they can be removed
     /// together. Key: id16.
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
+    /// One agent-health card (OF-568): the Coach's merged evidence, routing and outcome for one
+    /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
+    COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named;
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
@@ -368,6 +371,15 @@ side_tables! {
     CODE_RUN_RAW_OUTPUT: VaultMeta b"code_run:raw_output:v1:" Raw;
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw;
+    /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
+    /// id16(wait) + be64(generation).
+    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw;
+    /// The code runs parked on a wait (`p` + id16(wait) + id16(run), value be64(generation)) and
+    /// the reply the wait settled with (`s` + id16(wait), value JSON). Key: u8 tag + id16 [+ id16].
+    CODE_RUN_WAIT_INDEX: VaultMeta b"code_run:wait_index:v1:" Raw;
+    /// Node-local C9 trap a host bound to one parked code-run wait, woken in the commit that
+    /// delivers it (fixed layout). Key: id16(run) + id16(wait) + be64(generation).
+    CODE_RUN_WAIT_TRAP: VaultMeta b"code_run:wait_trap:v1:" Raw;
     /// Per-code-artifact code-symbol manifest row. Key: id16.
     CODE_SYMBOL_MANIFEST: VaultMeta b"code_symbol:manifest:v1:" Raw;
     /// Index of symbol revisions by repo/path/name/fingerprint, empty marker value. Key:
