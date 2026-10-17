@@ -160,7 +160,8 @@ pub struct DreamerRevertReceipt {
 }
 
 /// The Dreamer's standing changes, newest first, at most `limit`, from the
-/// newest [`DREAMER_CHANGES_SCAN`] rows, with each revertible `about`.
+/// newest [`DREAMER_CHANGES_SCAN`] rows, with each revertible `about`. A
+/// Proposed claim is no change yet: its run tray holds it.
 pub(crate) fn dreamer_changes_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -189,7 +190,11 @@ pub(crate) fn dreamer_changes_in_txn(
         let change = match record.entity_type {
             ENTITY_TYPE_CLAIM => vault
                 .get_claim_in_txn(txn, &entry.id)?
-                .filter(|body| claim_stands(body) && author(body) == Some(dreamer))
+                .filter(|body| {
+                    claim_stands(body)
+                        && body.approval != ClaimApprovalStatus::Proposed
+                        && author(body) == Some(dreamer)
+                })
                 .map(|body| (claim_kind(&body), body.predicate)),
             ENTITY_TYPE_SUMMARY => (summary_by(&record.body, dreamer)
                 && stands_in_txn(vault, txn, &entry.id)?)
