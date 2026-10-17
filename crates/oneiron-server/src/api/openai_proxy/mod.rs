@@ -335,10 +335,10 @@ async fn recall(
 
 /// Proposes the exchange, the newest user text and the settled answer, as
 /// the connector's own claim. It lands Proposed whatever the connector's
-/// ceiling, born at the connector's world and landing facet under the bound
-/// credential, which the writer judges again (FIX 1400). The answer was
-/// already paid for, so a refused proposal is reported in the reply, not
-/// raised.
+/// ceiling. A credential narrowed to the connector's world and landing facet
+/// proposes under those bounds, which the writer judges again (FIX 1400);
+/// any other proposes as it always did. The answer was already paid for, so
+/// a refused proposal is reported in the reply, not raised.
 fn remember(
     server: &SyncServer,
     actor: &McpCallContext,
@@ -375,11 +375,19 @@ fn remember(
         learned_at: None,
         salience: None,
     };
+    let narrowed = actor
+        .auth
+        .as_ref()
+        .is_some_and(|auth| auth.require_unrestricted_record_scope().is_err());
     // Past the claim payload cap the exchange is refused, as any proposal
     // is at the boundary.
-    match oneiron::memory::caps::check_claim_input(&input)
-        .and_then(|()| memory.claim_propose_carried(&input))
-    {
+    match oneiron::memory::caps::check_claim_input(&input).and_then(|()| {
+        if narrowed {
+            memory.claim_propose_carried(&input)
+        } else {
+            memory.claim_propose(&input)
+        }
+    }) {
         Ok(receipt) => json!({"claim": receipt.claim_short_id, "approval": receipt.approval}),
         Err(refused) => json!({"error": {"code": refused.code, "message": refused.message}}),
     }
