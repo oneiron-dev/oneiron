@@ -2248,7 +2248,7 @@
      "purpose": "Signed-history migration and independently authorized per-vault re-root doors",
      "surface": {
       "crate-vis": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -17502,7 +17502,7 @@
      "path": "src/dreamer_promotion/attempt_sink.rs",
      "purpose": "An owned promotion sink for a long-lived host",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -26578,10 +26578,10 @@
       "DecisionAsks"
      ],
      "path": "src/llm/decision/asks.rs",
-     "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an owner ask that the…",
+     "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 12,
+      "crate-vis": 2,
+      "fn": 16,
       "struct": 4
      }
     },
@@ -26606,7 +26606,7 @@
      "path": "src/llm/decision/codec.rs",
      "purpose": "Canonical entity references for typed-decision wire records",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -26644,17 +26644,25 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "AskAct",
+      "AskRole",
+      "AskRoleResolver",
+      "AskTo",
       "DecisionCall",
       "DecisionLadder",
       "DecisionModel",
       "DecisionPack",
       "DecisionProvider",
+      "HolderKind",
       "HumanDecisionQueue",
       "HumanDecisionRequest",
       "ModelDecisionProvider",
       "PairedAnswer",
       "ProviderCapability",
       "ProviderDecision",
+      "ResolvedRole",
+      "RoleHolder",
+      "RoleRank",
       "RuleDecisionProvider"
      ],
      "path": "src/llm/decision/ladder.rs",
@@ -26662,9 +26670,10 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 14,
-      "struct": 9,
-      "trait": 3
+      "enum": 4,
+      "fn": 18,
+      "struct": 12,
+      "trait": 4
      }
     },
     {
@@ -42843,12 +42852,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "AuthorityPageImport"
+     ],
      "path": "src/sync/residence/authority_tail.rs",
      "purpose": "Authority history for a machine that syncs what it opened (OF-469, the delivery half)",
      "surface": {
       "const": 1,
-      "fn": 4
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -64770,7 +64782,7 @@
      "path": "src/decision_host.rs",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 7,
       "struct": 1
      }
