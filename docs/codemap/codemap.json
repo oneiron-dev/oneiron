@@ -17492,10 +17492,28 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 14,
-      "crate-vis": 7,
+      "const": 15,
+      "crate-vis": 8,
       "fn": 7,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HealDecisions",
+      "HealRoute",
+      "IssuesRun"
+     ],
+     "path": "src/dreamer_runner/maintenance/coach_heal.rs",
+     "purpose": "The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -17613,7 +17631,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 7,
+      "mod": 8,
       "re-export": 3
      }
     },
@@ -26131,7 +26149,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 34,
+      "const": 35,
       "fn": 1,
       "struct": 1
      }
@@ -26199,7 +26217,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 10,
+      "fn": 13,
       "struct": 9,
       "trait": 3
      }
@@ -26227,14 +26245,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DecisionAudio",
       "DecisionImage"
      ],
      "path": "src/llm/decision/media.rs",
-     "purpose": "Images a typed decision reads",
+     "purpose": "Images and audio clips a typed decision reads",
      "surface": {
-      "const": 4,
-      "fn": 5,
-      "struct": 1
+      "const": 7,
+      "fn": 10,
+      "struct": 2
      }
     },
     {
@@ -26280,7 +26299,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GraphAnswerer",
@@ -26296,7 +26315,7 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 5,
       "struct": 7,
@@ -27500,7 +27519,7 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 12,
       "struct": 8
@@ -36701,6 +36720,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports.rs",
+     "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/self_heal/canonical_tests.rs",
@@ -36845,7 +36874,7 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 6,
       "re-export": 9
      }
@@ -48833,7 +48862,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49484,7 +49513,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49813,9 +49842,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 112,
+   "over_bar": 113,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3007,
+   "source_files": 3009,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56501,7 +56530,7 @@
      "path": "src/lib/wire.rs",
      "purpose": "Chat-completions protocol mapping: request build, response parse, message/tool codecs, usage, status…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     }
@@ -59842,6 +59871,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/coach_heal.rs",
+     "purpose": "The host Coach (ARCH-0066 #coach, OF-418)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/code_mode.rs",
      "purpose": "MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the…",
      "surface": {
@@ -59918,7 +59957,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 19,
       "re-export": 1,
       "struct": 2
@@ -62553,7 +62592,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/big_rung.rs",
@@ -66796,7 +66835,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66819,7 +66858,7 @@
     "big_rung": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)"
     },
@@ -67099,7 +67138,7 @@
    },
    "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 475,
+   "source_files": 476,
    "test_files": 182
   },
   "oneiron-spawn": {
