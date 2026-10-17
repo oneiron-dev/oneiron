@@ -78,11 +78,11 @@ impl Vault {
                 });
             }
         }
-        // A birth leaves naming only the rows this export carries; one fresh
-        // key per export, so its handles link to no other copy.
+        // A birth leaves naming only the rows this export carries; one key
+        // per export, so its handles link to no other copy.
         let ships: std::collections::BTreeSet<crate::EntityId> =
             out.iter().map(|record| record.id).collect();
-        let key = WithheldKey::fresh();
+        let key = WithheldKey::for_export();
         for record in &mut out {
             record.birth = row_birth_in_txn(&self.store, &txn, &record.id)?
                 .map(|birth| birth.masked(|row| ships.contains(row), &key));

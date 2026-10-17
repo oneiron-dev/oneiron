@@ -255,10 +255,10 @@ impl Vault {
             ));
         }
         // A birth leaves naming only the rows this bundle carries (Q26 = B);
-        // one fresh key per export, so its handles link to no other copy.
+        // one key per export, so its handles link to no other copy.
         let ships: std::collections::BTreeSet<EntityId> =
             records.iter().map(|(id, _)| *id).collect();
-        let key = crate::provenance::birth::WithheldKey::fresh();
+        let key = crate::provenance::birth::WithheldKey::for_export();
         let mut entities = Vec::with_capacity(records.len());
         for (id, mut record) in records {
             if let Some(birth) = crate::provenance::birth::row_birth_in_txn(&self.store, &txn, &id)?
