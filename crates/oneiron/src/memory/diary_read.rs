@@ -21,6 +21,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::authorship::*;
 use super::{Memory, MemoryError, MemoryResult};
+use crate::agent_inbox_lens::{
+    AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
+};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ConsentReceipt, GrantBound,
 };
@@ -38,6 +41,8 @@ pub const DIARY_READ_VERB: &str = "diary.read";
 const REASON_MAX_BYTES: usize = 512;
 const READS_LIMIT_DEFAULT: u32 = 50;
 const READS_LIMIT_MAX: u32 = 500;
+/// A review waiting on its agent ranks with the other rows that wait on it.
+const REVIEW_INBOX_IMPACT: u16 = 100;
 
 const DIARY_READ_REVIEW: SideTable<EntityId, DiaryReadReview, Raw> =
     SideTable::new(&side_table::DIARY_READ_REVIEW);
@@ -302,6 +307,11 @@ impl DiaryReadGate {
     /// Logs each agent's admitted entries as one read stating the reason,
     /// spends the yes that admitted it, and opens a pending review for a
     /// reader whose reason the agent has not answered.
+    ///
+    /// The admissions may come from an earlier snapshot (an export admits in
+    /// its read snapshot), so each agent's standing is read again here: a
+    /// Grant revoked, a review turned on, or a yes another read spent since
+    /// then refuses the whole read before its bytes leave.
     pub fn finish_in_txn(
         self,
         vault: &Vault,
@@ -312,12 +322,35 @@ impl DiaryReadGate {
         let reader_class = self.reader.actor_class().gate_actor_class();
         let mut agents = Vec::with_capacity(self.agents.len());
         for (agent, state) in self.agents {
-            let mut request = state.request;
+            let now = AgentRead::load(vault, txn, self.reader, &self.reason, agent)?;
+            if !state.read.is_empty() {
+                let yes = !now.review
+                    || now
+                        .request
+                        .as_ref()
+                        .is_some_and(|request| request.state == DiaryReviewState::Approved);
+                if !yes {
+                    return Err(authority_denied(
+                        "a diary read's yes was spent or withdrawn before the read finished",
+                    ));
+                }
+                if now.whole.is_none() {
+                    for entry in &state.read {
+                        let bound = action_bound(vault, txn, self.reader, DIARY_READ_VERB, *entry)?;
+                        if delegated_grant(vault, txn, &bound)?.is_none() {
+                            return Err(authority_denied(
+                                "a diary read's Grant was revoked before the read finished",
+                            ));
+                        }
+                    }
+                }
+            }
+            let mut request = now.request;
             let mut read_ref = None;
             if !state.read.is_empty() {
                 let read = vault.store.clock.entity_id()?;
                 let mut spent = None;
-                if state.review
+                if now.review
                     && let Some(yes) = request
                         .as_mut()
                         .filter(|request| request.state == DiaryReviewState::Approved)
@@ -369,7 +402,7 @@ impl DiaryReadGate {
                 request: request
                     .filter(|request| request.state != DiaryReviewState::Used)
                     .map(|request| request.request),
-                whole_diary: state.whole.is_some(),
+                whole_diary: now.whole.is_some(),
             });
         }
         Ok(DiaryReadReceipt {
@@ -478,6 +511,40 @@ impl Vault {
     pub fn agent_diary_read_review(&self, agent: EntityId) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         agent_reviews_diary_reads_in_txn(self, &txn, &agent)
+    }
+
+    /// Each pending review as a row of its agent's INBOX: one unthreaded
+    /// update per request, named by its `diary-read:` handle, until the agent
+    /// answers it. The row says a reader is waiting; the reader and reason
+    /// stay behind `self.memory.diary.reads`, and `self.memory.diary.review`
+    /// answers it.
+    pub(crate) fn diary_read_inbox_items(&self) -> Result<Vec<AgentInboxLensItem>> {
+        let txn = self.store.env.read_txn()?;
+        let mut items = Vec::new();
+        for ((agent, request), row) in DIARY_READ_REQUEST.scan(&self.store, &txn)? {
+            if row.state != DiaryReviewState::Pending {
+                continue;
+            }
+            let handle = format!("diary-read:{}:{}", agent.to_hex(), request.to_hex());
+            items.push(AgentInboxLensItem {
+                item_id: handle.clone(),
+                kind: AgentInboxItemKind::CoordinationUpdate,
+                thread_ref: None,
+                identity_ref: agent,
+                actor_ref: agent,
+                facet_ref: None,
+                participants: vec![AgentInboxParticipant {
+                    identity_ref: agent,
+                    actor_ref: agent,
+                }],
+                impact: InboxImpact(REVIEW_INBOX_IMPACT),
+                occurred_at: row.asked_at,
+                receipt_ref: None,
+                payload_ref: Some(handle),
+                concern: None,
+            });
+        }
+        Ok(items)
     }
 }
 
