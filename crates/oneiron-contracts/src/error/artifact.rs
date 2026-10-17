@@ -122,6 +122,16 @@ pub enum ArtifactError {
     /// or the update-immutability gate. Nothing was written.
     #[error("invalid AGENT_DEF body: {0}")]
     InvalidAgentDefBody(&'static str),
+    /// A replicated EMBEDDING_SETUP row (OF-370) failed its pinned validation,
+    /// or the check its local writer makes. Nothing was written.
+    #[error("invalid EMBEDDING_SETUP row: {0}")]
+    InvalidEmbeddingSetupBody(String),
+    /// A replicated EMBEDDING_SETUP row arrived before the row it rests on: a
+    /// binding before its space's declaration, a retirement before the slot
+    /// that bound the space let go, or a binding of a slot a local move
+    /// carries. Retry once that lands.
+    #[error("EMBEDDING_SETUP row waits: {0}")]
+    EmbeddingSetupDependencyPending(String),
     /// A dispatch named an AGENT_DEF row that does not exist. Nothing was
     /// enqueued.
     #[error("agent definition not found: {}", id.to_hex())]
@@ -243,6 +253,8 @@ impl ArtifactError {
             }
             Self::SkillPackageUnavailable { .. } => ErrorKind::SkillPackageUnavailable,
             Self::InvalidAgentDefBody(_) => ErrorKind::InvalidAgentDefBody,
+            Self::InvalidEmbeddingSetupBody(_) => ErrorKind::InvalidEmbeddingSetupBody,
+            Self::EmbeddingSetupDependencyPending(_) => ErrorKind::EmbeddingSetupDependencyPending,
             Self::AgentDefinitionNotFound { .. } => ErrorKind::AgentDefinitionNotFound,
             Self::AgentDefinitionDisabled { .. } => ErrorKind::AgentDefinitionDisabled,
             Self::SeededAgentDefinitionConflict { .. } => ErrorKind::SeededAgentDefinitionConflict,

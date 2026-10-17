@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 231 facade rows, 797 declarations.
-Inputs: 196 of 231 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 186 of 231 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 54; unread shapes: 1.
+Census: 233 facade rows, 803 declarations.
+Inputs: 197 of 233 fully typed, 35 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 186 of 233 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 59; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -3523,6 +3523,10 @@ class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
 HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
+class QuestionCriteria(TypedDict):
+    yes_if_all: list[str]
+    no_if_any: list[str]
+    not_a_reason_to_say_no: list[str]
 class GraphAskRequest(TypedDict):
     question: DecisionQuestion
     units: NotRequired[list[EntityId]]
@@ -3530,6 +3534,7 @@ class GraphAskRequest(TypedDict):
     ceiling: NotRequired[DecisionRung | None]
     unit_deadline_ms: NotRequired[int | None]
     posture: NotRequired[HostingPrivacyPosture | None]
+    criteria: NotRequired[QuestionCriteria | None]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
     probability: NotRequired[float | None]
@@ -3568,10 +3573,6 @@ QuestionActivation = Literal["one_off", "standing"]
 class RefreshPolicy(TypedDict):
     on_arrival: bool
     every_seconds: NotRequired[int | None]
-class QuestionCriteria(TypedDict):
-    yes_if_all: list[str]
-    no_if_any: list[str]
-    not_a_reason_to_say_no: list[str]
 QuestionAudience = Literal["asker"]
 class QuestionMedia(TypedDict):
     images: NotRequired[bool]
@@ -3737,6 +3738,46 @@ class ConnectorView(TypedDict):
     registered_at: int
     status_changed_at: NotRequired[int | None]
     budgeted_as_sends: bool
+MutationIntent = Literal["preview", "explicit_mutation"]
+class ConnectorCallRequest(TypedDict):
+    name: str
+    tool: str
+    arguments: NotRequired[Any]
+    mutation: NotRequired[MutationIntent]
+class ConnectorToolResult(TypedDict):
+    source: str
+    foreign: bool
+    content: Any
+    structured_content: NotRequired[Any | None]
+    is_error: bool
+    rpc_error: NotRequired[Any | None]
+class ConnectorCallReplyDelivered(TypedDict):
+    outcome: Literal["delivered"]
+    result: NotRequired[ConnectorToolResult | None]
+    reasons: NotRequired[list[str]]
+class ConnectorCallReplyHeld(TypedDict):
+    outcome: Literal["held"]
+    call_ref: str
+    decision_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyRefused(TypedDict):
+    outcome: Literal["refused"]
+    decision_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyPendingDelivery(TypedDict):
+    outcome: Literal["pending_delivery"]
+    call_ref: NotRequired[str | None]
+    reasons: list[str]
+ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery
+class ConnectorSchemaRequest(TypedDict):
+    name: str
+    tool: str
+class ConnectorSchemaReply(TypedDict):
+    source: str
+    foreign: bool
+    input_schema: NotRequired[Any | None]
+    destructive: NotRequired[bool | None]
+    reasons: NotRequired[list[str]]
 class CommitRequest(TypedDict):
     claims: list[ClaimInput]
 class ClaimRefRequest(TypedDict):
