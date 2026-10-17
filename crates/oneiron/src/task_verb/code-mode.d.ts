@@ -165,6 +165,10 @@ declare const vault: {
     supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
     upsert(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   };
+  code: {
+    blame(input: { path: string; repo: string; revision_ref?: string | null }): Promise<unknown>;
+    diff(input: { after: { path: string; repo: string; revision_ref?: string | null }; before: { path: string; repo: string; revision_ref?: string | null } }): Promise<unknown>;
+  };
   commit(input: { claims: object[] }): Promise<unknown>;
   companions: {
     sharing: {

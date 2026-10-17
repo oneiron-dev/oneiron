@@ -4,9 +4,9 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 267 code-mode rows (250 host rows, 17 run rows), 790 declarations.
-// Replies: 201 fully typed, 36 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
-// Opaque serde_json::Value leaves: 53; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 269 code-mode rows (252 host rows, 17 run rows), 803 declarations.
+// Replies: 200 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
+// Opaque serde_json::Value leaves: 54; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true }) & { budget?: BudgetLegibilityEnvelope };
@@ -414,6 +414,16 @@ declare namespace Sdk {
   type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string };
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[] };
   type ArtifactView = { artifact_id: EntityId; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
+  type CodeStateRequest = { repo: string; path: string; revision_ref?: string | null };
+  type CodeDiffRequest = { before: CodeStateRequest; after: CodeStateRequest };
+  type CodeStateView = { document_ref: string; repo: string; path: string; revision_ref?: string | null; text_hash: string };
+  type CodeUnitVersionView = { content_hash: string; text: string; start_line: number; end_line: number };
+  type CodeOperationView = { operation_ref: string; sequence: number; session_ref: string; actor_ref: string; actor_class: string; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null };
+  type CodeChangeView = { path: string; symbol: string; before?: CodeUnitVersionView | null; after?: CodeUnitVersionView | null; inserted_by: CodeOperationView[]; deleted_by: CodeOperationView[] };
+  type CodeDiffView = { before: CodeStateView; after: CodeStateView; changes: CodeChangeView[]; rendered: string };
+  type CodeSpanView = { start: number; end: number; op?: CodeOperationView | null };
+  type CodeUnitBlameView = { path: string; symbol: string; version: CodeUnitVersionView; spans: CodeSpanView[] };
+  type CodeBlameView = { at: CodeStateView; units: CodeUnitBlameView[] };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type BornFromRequest = { task_ref?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; agent_run?: string | null };
@@ -656,7 +666,10 @@ declare namespace Sdk {
   type QuestionAudience = "asker";
   type HostingPrivacyPosture = "managed" | "relay" | "self-host";
   type QuestionMedia = { images?: boolean; audio?: boolean };
-  type QuestionDefinition = { question: DecisionQuestion; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null };
+  type FolderItemInput = { artifact_ref: string; row: number };
+  type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
+  type ArtifactUnits = { artifact: string; selection: ArtifactAskUnits };
+  type QuestionDefinition = { question: DecisionQuestion; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null; artifacts?: ArtifactUnits[] };
   type QuestionCreateRequest = { definition: QuestionDefinition };
   type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition; created_at: number };
   type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinition };
@@ -1068,6 +1081,12 @@ declare const vault: {
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.Reply<unknown>>;
     /** Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate. */
     upsert(input: Sdk.ClaimInput): Promise<Sdk.Reply<Sdk.CommitReceipt>>;
+  };
+  code: {
+    /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
+    blame(input: Sdk.CodeStateRequest): Promise<Sdk.Reply<Sdk.CodeBlameView | null>>;
+    /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
+    diff(input: Sdk.CodeDiffRequest): Promise<Sdk.Reply<Sdk.CodeDiffView | null>>;
   };
   /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
   commit(input: Sdk.CommitRequest): Promise<Sdk.Reply<Sdk.CommitReceipt[]>>;

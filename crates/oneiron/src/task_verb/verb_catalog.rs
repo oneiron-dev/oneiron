@@ -113,6 +113,8 @@ pub enum AgentVerb {
     VaultSharesView,
     VaultHooksReplay,
     VaultArtifactsView,
+    VaultCodeDiff,
+    VaultCodeBlame,
     VaultArtifactsExport,
     VaultArtifactsBornFrom,
     VaultArtifactsProposals,
@@ -366,6 +368,8 @@ impl AgentVerb {
         Self::VaultSharesView,
         Self::VaultHooksReplay,
         Self::VaultArtifactsView,
+        Self::VaultCodeDiff,
+        Self::VaultCodeBlame,
         Self::VaultArtifactsExport,
         Self::VaultArtifactsBornFrom,
         Self::VaultArtifactsProposals,
@@ -626,6 +630,8 @@ impl AgentVerb {
             Self::VaultSharesView => "vault.shares.view",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultArtifactsView => "vault.artifacts.view",
+            Self::VaultCodeDiff => "vault.code.diff",
+            Self::VaultCodeBlame => "vault.code.blame",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
@@ -878,6 +884,8 @@ impl AgentVerb {
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
+                | Self::VaultCodeDiff
+                | Self::VaultCodeBlame
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1138,6 +1146,8 @@ impl AgentVerb {
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
+                | Self::VaultCodeDiff
+                | Self::VaultCodeBlame
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1423,6 +1433,8 @@ impl AgentVerb {
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
+                | Self::VaultCodeDiff
+                | Self::VaultCodeBlame
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1834,6 +1846,8 @@ impl AgentVerb {
             Self::VaultSharesView => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
+            Self::VaultCodeDiff => &["spec"],
+            Self::VaultCodeBlame => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
@@ -2088,6 +2102,8 @@ impl AgentVerb {
             Self::VaultSharesView => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
+            Self::VaultCodeDiff => &["spec"],
+            Self::VaultCodeBlame => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
@@ -2532,6 +2548,12 @@ impl AgentVerb {
             }
             Self::VaultArtifactsView => {
                 "One artifact: its kind, name, type, head and every version with its made_by and born-from."
+            }
+            Self::VaultCodeDiff => {
+                "The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort."
+            }
+            Self::VaultCodeBlame => {
+                "Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why."
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."

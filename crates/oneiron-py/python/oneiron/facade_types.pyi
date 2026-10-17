@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 211 facade rows, 714 declarations.
-Inputs: 182 of 211 fully typed, 28 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 171 of 211 fully typed, 32 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 48; unread shapes: 1.
+Census: 213 facade rows, 727 declarations.
+Inputs: 182 of 213 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 170 of 213 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 49; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2019,6 +2019,59 @@ class ArtifactView(TypedDict):
     media_type: str
     head: NotRequired[int | None]
     versions: list[ArtifactVersionView]
+class CodeStateRequest(TypedDict):
+    repo: str
+    path: str
+    revision_ref: NotRequired[str | None]
+class CodeDiffRequest(TypedDict):
+    before: CodeStateRequest
+    after: CodeStateRequest
+class CodeStateView(TypedDict):
+    document_ref: str
+    repo: str
+    path: str
+    revision_ref: NotRequired[str | None]
+    text_hash: str
+class CodeUnitVersionView(TypedDict):
+    content_hash: str
+    text: str
+    start_line: int
+    end_line: int
+class CodeOperationView(TypedDict):
+    operation_ref: str
+    sequence: int
+    session_ref: str
+    actor_ref: str
+    actor_class: str
+    turn_ref: NotRequired[str | None]
+    activity_ref: NotRequired[str | None]
+    intent_ref: NotRequired[str | None]
+    model_ref: NotRequired[str | None]
+    reasoning_effort: NotRequired[str | None]
+class CodeChangeView(TypedDict):
+    path: str
+    symbol: str
+    before: NotRequired[CodeUnitVersionView | None]
+    after: NotRequired[CodeUnitVersionView | None]
+    inserted_by: list[CodeOperationView]
+    deleted_by: list[CodeOperationView]
+class CodeDiffView(TypedDict):
+    before: CodeStateView
+    after: CodeStateView
+    changes: list[CodeChangeView]
+    rendered: str
+class CodeSpanView(TypedDict):
+    start: int
+    end: int
+    op: NotRequired[CodeOperationView | None]
+class CodeUnitBlameView(TypedDict):
+    path: str
+    symbol: str
+    version: CodeUnitVersionView
+    spans: list[CodeSpanView]
+class CodeBlameView(TypedDict):
+    at: CodeStateView
+    units: list[CodeUnitBlameView]
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
@@ -3242,6 +3295,31 @@ HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class QuestionMedia(TypedDict):
     images: NotRequired[bool]
     audio: NotRequired[bool]
+class FolderItemInput(TypedDict):
+    artifact_ref: str
+    row: int
+class ArtifactAskUnitsSheetRows(TypedDict):
+    kind: Literal["sheet_rows"]
+    sheet: str
+    rows: str
+    answer_column: int
+    header_row: NotRequired[int | None]
+    max_count: NotRequired[int | None]
+class ArtifactAskUnitsParagraphs(TypedDict):
+    kind: Literal["paragraphs"]
+    blocks: list[str]
+    author: str
+    labels: Any
+class ArtifactAskUnitsFolderItems(TypedDict):
+    kind: Literal["folder_items"]
+    sheet: str
+    answer_column: int
+    items: list[FolderItemInput]
+    max_count: NotRequired[int | None]
+ArtifactAskUnits = ArtifactAskUnitsSheetRows | ArtifactAskUnitsParagraphs | ArtifactAskUnitsFolderItems
+class ArtifactUnits(TypedDict):
+    artifact: str
+    selection: ArtifactAskUnits
 class QuestionDefinition(TypedDict):
     question: DecisionQuestion
     adapter: str
@@ -3259,6 +3337,7 @@ class QuestionDefinition(TypedDict):
     posture: NotRequired[HostingPrivacyPosture | None]
     media: NotRequired[QuestionMedia]
     deadline_ms: NotRequired[int | None]
+    artifacts: NotRequired[list[ArtifactUnits]]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinition
 class QuestionRecord(TypedDict):

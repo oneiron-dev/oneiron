@@ -1638,6 +1638,58 @@
       }
     },
     {
+      "name": "vault.code.diff",
+      "description": "The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort.",
+      "input": "crate::code_document::CodeDiffRequest",
+      "output": "Option<crate::code_document::CodeDiffView>",
+      "call": "memory.code_diff(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The semantic changes between two tested states of one code file, each with the operations that made it.\n",
+          "ts": "/** The semantic changes between two tested states of one code file, each with the operations that made it. */",
+          "py": "The semantic changes between two tested states of one code file, each with the operations that made it."
+        }
+      }
+    },
+    {
+      "name": "vault.code.blame",
+      "description": "Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why.",
+      "input": "crate::code_document::CodeStateRequest",
+      "output": "Option<crate::code_document::CodeBlameView>",
+      "call": "memory.code_blame(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Every unit of one tested code file state, blamed by the operations that wrote it.\n",
+          "ts": "/** Every unit of one tested code file state, blamed by the operations that wrote it. */",
+          "py": "Every unit of one tested code file state, blamed by the operations that wrote it."
+        }
+      }
+    },
+    {
       "name": "vault.artifacts.export",
       "description": "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it.",
       "input": "crate::blob_artifact::ArtifactExportRequest",
