@@ -54,7 +54,7 @@ pub const WORLD_KEY_WRAPS_PER_RECIPIENT: usize = 4;
 /// One world key as a history holds it: per commitment and owner its counted
 /// records named, per signer, per recipient, the records whose wraps count,
 /// by rank, each with the settings revision it was wrapped under.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct WorldKeyState {
     named: BTreeMap<KeyBytes, BTreeMap<EntityId, BTreeMap<WrapRecipient, Slots>>>,
 }
@@ -69,7 +69,7 @@ type Slots = BTreeMap<SlotRank, PolicyRevision>;
 type SlotRank = (u64, AuthorityEntryHash);
 
 /// One world key as this install's fold holds it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldedWorldKey {
     pub id: WorldKeyId,
     /// The vault owner PERSON its mint named.
@@ -86,7 +86,7 @@ pub struct FoldedWorldKey {
 }
 
 /// One counted envelope of a key for one recipient.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WrappedKey {
     pub envelope: Vec<u8>,
     /// The world's settings revision the wrap was made under.
