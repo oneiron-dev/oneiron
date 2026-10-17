@@ -643,7 +643,7 @@ impl Vault {
         let mut copies = Vec::new();
         for row in self.store.vault_meta.prefix_iter(txn, &prefix)? {
             let (_, raw) = row?;
-            let copy: RemovalExportCopy = decode(raw)?;
+            let copy: RemovalExportCopy = decode(&raw)?;
             if now < copy.expires_at {
                 copies.push(copy);
             }
@@ -665,7 +665,7 @@ impl Vault {
                 .prefix_iter(&txn, REMOVAL_EXPORT_PREFIX)?
             {
                 let (row_key, raw) = row?;
-                let copy: RemovalExportCopy = decode(raw)?;
+                let copy: RemovalExportCopy = decode(&raw)?;
                 if now >= copy.expires_at {
                     expired.push(row_key.to_vec());
                 }

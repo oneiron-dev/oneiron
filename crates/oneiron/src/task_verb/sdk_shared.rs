@@ -237,7 +237,7 @@ pub fn execute_shared_act(
         // A held erase runs through its own executor, which binds the
         // record; its receipt then tells the Owners (OF-150).
         vault
-            .memory(executor.actor(), EdgeActorClass::Human)
+            .memory(executor.revalidate_person(vault)?, EdgeActorClass::Human)
             .execute_completed_entity_erase(executor, &input.act_id)?;
         return Ok(SharedActExecuted {
             receipt: vault.record_erase_completion(executor, &input.act_id)?,
