@@ -11,9 +11,11 @@ use crate::entity_id::EntityId;
 /// so the review waits for the owner.
 pub(crate) const TEAM_DELIVERABLE_REVIEW_PREDICATE: &str = "team.deliverable.acceptance";
 
-/// The one output kind a submit pins: an existing blob artifact's exact
-/// version, `blob:<artifact hex>:<version>`.
+/// An existing blob artifact's exact version, `blob:<artifact hex>:<version>`.
 const BLOB_OUTPUT_KIND: &str = "blob";
+
+/// A finalized code revision, `code:<revision hex>`.
+const CODE_OUTPUT_KIND: &str = "code";
 
 /// `self.team.submit`: the leader submits one pinned output of a team it
 /// started for the owner's acceptance review.
@@ -23,7 +25,8 @@ pub struct TeamSubmitInput {
     /// The team, as `self.team.start` answered its `teamRef`.
     pub team: String,
     /// The output under review: one existing blob artifact version,
-    /// `blob:<artifact hex>:<version>`. Never a head or a latest.
+    /// `blob:<artifact hex>:<version>`, or one finalized code revision,
+    /// `code:<revision hex>`. Never a head or a latest.
     pub output_revision: String,
 }
 
@@ -42,38 +45,57 @@ pub struct TeamSubmitAnswer {
     pub already_submitted: bool,
 }
 
-/// One pinned blob artifact version.
+/// One pinned output a submit names. Each kind keeps its own spelling, so
+/// two kinds never share a canonical string, nor the review derived from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BlobOutputRevision {
-    pub(crate) artifact: EntityId,
-    pub(crate) version: u64,
+pub(crate) enum OutputRevision {
+    /// An existing blob artifact's exact version.
+    Blob { artifact: EntityId, version: u64 },
+    /// A finalized code revision: a commit or a revert.
+    Code { revision: EntityId },
 }
 
-impl BlobOutputRevision {
-    /// Parses `blob:<artifact hex>:<version>`. Any other kind, a head, or a
-    /// malformed id or version is `None`.
+impl OutputRevision {
+    /// Parses `blob:<artifact hex>:<version>` or `code:<revision hex>`.
+    /// Any other kind, an extra part, a head or a latest, or a malformed id
+    /// or version is `None`.
     pub(crate) fn parse(text: &str) -> Option<Self> {
         let mut parts = text.split(':');
-        let (Some(kind), Some(artifact), Some(version), None) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
-            return None;
+        let output = match parts.next()? {
+            BLOB_OUTPUT_KIND => {
+                let (artifact, version) = (parts.next()?, parts.next()?);
+                if !version.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return None;
+                }
+                Self::Blob {
+                    artifact: EntityId::from_hex(artifact).ok()?,
+                    version: version.parse().ok()?,
+                }
+            }
+            CODE_OUTPUT_KIND => Self::Code {
+                revision: EntityId::from_hex(parts.next()?).ok()?,
+            },
+            _ => return None,
         };
-        if kind != BLOB_OUTPUT_KIND || !version.bytes().all(|byte| byte.is_ascii_digit()) {
-            return None;
-        }
-        Some(Self {
-            artifact: EntityId::from_hex(artifact).ok()?,
-            version: version.parse().ok()?,
-        })
+        parts.next().is_none().then_some(output)
     }
 
-    /// The canonical spelling the review and its binding keep.
+    /// The canonical spelling the review and its binding keep, its ids in
+    /// lowercase hex.
     pub(crate) fn canonical(self) -> String {
-        format!(
-            "{BLOB_OUTPUT_KIND}:{}:{}",
-            self.artifact.to_hex(),
-            self.version
-        )
+        match self {
+            Self::Blob { artifact, version } => {
+                format!("{BLOB_OUTPUT_KIND}:{}:{version}", artifact.to_hex())
+            }
+            Self::Code { revision } => format!("{CODE_OUTPUT_KIND}:{}", revision.to_hex()),
+        }
+    }
+
+    /// The entity the output is: the blob artifact, or the code revision.
+    pub(crate) const fn subject(self) -> EntityId {
+        match self {
+            Self::Blob { artifact, .. } => artifact,
+            Self::Code { revision } => revision,
+        }
     }
 }

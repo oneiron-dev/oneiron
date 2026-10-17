@@ -20,9 +20,6 @@ use crate::{EntityId, Result};
 /// What the wait a summary not yet made parks on says, before its task.
 const SUMMARIZE_PROMPT: &str = "summarize:";
 
-/// The most members one summary takes.
-const SUMMARIZE_MAX_MEMBERS: usize = 256;
-
 /// The ask a summary job's row keeps, in place of a reader child's.
 const SUMMARIZE_JOB_ASK: &str = "summarize";
 
@@ -49,7 +46,7 @@ impl HostSelfDispatcher<'_> {
         let Some(members) = call.bound else {
             return Ok(failed("summarize_unresolved"));
         };
-        if members.is_empty() || members.len() > SUMMARIZE_MAX_MEMBERS {
+        if members.is_empty() {
             return Ok(failed("summarize_invalid_group"));
         }
         let parent_run = site.run_id;
