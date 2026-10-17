@@ -8,7 +8,10 @@
 //! last page names the entries this machine holds and the home lacks, and
 //! the machine appends them, parents first, so what it wrote reaches the home
 //! without the window it rides. A round ends by asking what history this
-//! machine's rows still name and it lacks (`Vault::authority_missing_history`).
+//! machine's rows still name and it lacks (`Vault::authority_history_request`)
+//! and fetching exactly that from the home (`residence.authority.range`), each
+//! missing entry with its ancestors, through the repair door: the rows wait in
+//! the stage until together they close the history, then land at once.
 
 use base64::Engine;
 use serde::Deserialize;
@@ -18,7 +21,10 @@ use std::collections::BTreeSet;
 
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
-use crate::authority::{AuthorityEntryHash, authority_entry_hash, decode_authority_log_entry_body};
+use crate::authority::{
+    AUTHORITY_HISTORY_PAGE_MAX, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
+    AuthorityRepairOutcome, authority_entry_hash, decode_authority_log_entry_body,
+};
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
     AUTHORITY_TAIL_PAGE_MAX, held_authority_entries, import_authority_page,
@@ -40,6 +46,15 @@ struct AuthorityTailReply {
     /// lacks, as concatenated 32-byte hashes in base64.
     #[serde(default)]
     wanted: String,
+}
+
+/// One page of an exact-hash fetch. The home's vault, checkpoint and unheld
+/// claims count for nothing here, so they are not read.
+#[derive(Deserialize)]
+struct AuthorityRangeReply {
+    rows: Vec<String>,
+    #[serde(default)]
+    next: Option<String>,
 }
 
 fn storage(error: crate::Error) -> TransportError {
@@ -110,7 +125,8 @@ pub(crate) async fn catch_up_authority(
             tracing::debug!(appended, "authority entries appended to the home");
         }
     }
-    let missing = vault.authority_missing_history().map_err(storage)?;
+    let (repaired, missing) = repair_authority_history(vault, &mut rpc, &skipped).await?;
+    taken += repaired;
     if !missing.is_complete() {
         tracing::warn!(
             missing = missing.missing.len(),
@@ -175,4 +191,124 @@ async fn append_authority(
         sent += page.len();
     }
     Ok(sent)
+}
+
+/// Fetches the history this machine's rows name and it lacks, by exact hash,
+/// each missing entry with its ancestors down to what this machine holds or
+/// staged, parents first, and imports each page through the repair door. It
+/// asks again after each page, since a fetched entry may name further
+/// ancestors, and stops once nothing is missing, the home serves none of it,
+/// or the door refuses a page. `refused` are entries refused this round:
+/// named as held, so no page carries them again. Returns how many rows landed
+/// and what is still missing.
+async fn repair_authority_history(
+    vault: &Vault,
+    rpc: &mut ResidenceRpc,
+    refused: &BTreeSet<AuthorityEntryHash>,
+) -> Result<(usize, AuthorityHistoryRequest), TransportError> {
+    let mut refused = refused.clone();
+    let mut written = 0;
+    let mut cursor = None;
+    let mut request = vault
+        .authority_history_request(&BTreeSet::new())
+        .map_err(storage)?;
+    for _ in 0..MAX_PAGES {
+        if request.is_complete() {
+            break;
+        }
+        let mut held = held_authority_entries(vault).map_err(storage)?;
+        held.extend(vault.authority_staged_history().map_err(storage)?);
+        held.extend(refused.iter().copied());
+        let fetch = AuthorityHistoryFetch {
+            cursor,
+            ..AuthorityHistoryFetch::closing(&request, held)
+        };
+        let Some((rows, next)) = fetch_authority_range(rpc, &fetch).await? else {
+            break;
+        };
+        if rows.is_empty() {
+            break;
+        }
+        let outcome = match vault.import_signed_authority_repair_page(&rows) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                tracing::warn!(%error, "authority repair page refused");
+                break;
+            }
+        };
+        request = match outcome {
+            AuthorityRepairOutcome::Applied {
+                written: landed,
+                refused: dropped,
+            } => {
+                written += landed.len();
+                refused.extend(dropped);
+                vault
+                    .authority_history_request(&BTreeSet::new())
+                    .map_err(storage)?
+            }
+            AuthorityRepairOutcome::Staged {
+                request,
+                refused: dropped,
+            } => {
+                refused.extend(dropped);
+                request
+            }
+        };
+        // Rows this page carried are held or staged now, so a home that
+        // finds its cursor among them starts the selection again.
+        cursor = next;
+    }
+    Ok((written, request))
+}
+
+/// One page of `fetch` from the home: its signed rows, parents first, and the
+/// cursor of the next page. `None` when the home refuses the fetch.
+async fn fetch_authority_range(
+    rpc: &mut ResidenceRpc,
+    fetch: &AuthorityHistoryFetch,
+) -> Result<Option<(Vec<Vec<u8>>, Option<AuthorityEntryHash>)>, TransportError> {
+    let packed = |hashes: &BTreeSet<AuthorityEntryHash>| {
+        base64::engine::general_purpose::STANDARD
+            .encode(hashes.iter().flatten().copied().collect::<Vec<u8>>())
+    };
+    let reply = match rpc
+        .request(
+            "residence.authority.range",
+            json!({
+                "vault_id": fetch.vault_id.map(|id| base64::engine::general_purpose::STANDARD.encode(id)),
+                "hashes": packed(&fetch.hashes),
+                "parent_closure": fetch.parent_closure,
+                "held": packed(&fetch.held),
+                "cursor": fetch.cursor.map(|cursor| base64::engine::general_purpose::STANDARD.encode(cursor)),
+                "limit": fetch.limit,
+            }),
+        )
+        .await
+    {
+        Ok(reply) => reply,
+        Err(TransportError::InvalidPayload(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let reply: AuthorityRangeReply = serde_json::from_value(reply).map_err(|_| refused())?;
+    if reply.rows.len() > AUTHORITY_HISTORY_PAGE_MAX {
+        return Err(refused());
+    }
+    let rows = reply
+        .rows
+        .iter()
+        .map(|row| base64::engine::general_purpose::STANDARD.decode(row))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| refused())?;
+    let next = reply
+        .next
+        .map(|next| {
+            base64::engine::general_purpose::STANDARD
+                .decode(next)
+                .ok()
+                .and_then(|raw| <[u8; 32]>::try_from(raw).ok())
+                .ok_or_else(refused)
+        })
+        .transpose()?;
+    Ok(Some((rows, next)))
 }
