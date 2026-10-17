@@ -314,6 +314,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.settings.learning",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning_setting_doors::LearningSettingsRequest,
+                >(),
+            ),
+            (
+                "vault.settings.learning.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning_setting_doors::LearningSettingPut,
+                >(),
+            ),
+            (
+                "vault.settings.learning.clear",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning_setting_doors::LearningSettingClear,
+                >(),
+            ),
+            (
                 "vault.lenses.propose",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensProposeRequest>(),
             ),
@@ -1454,6 +1472,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.settings.learning" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.learning.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.learning.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.lenses.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2440,6 +2479,17 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
                 decode(value.clone())?;
         }
+        "vault.settings.learning" => {
+            let _input: crate::learning_setting_doors::LearningSettingsRequest =
+                decode(value.clone())?;
+        }
+        "vault.settings.learning.put" => {
+            let _input: crate::learning_setting_doors::LearningSettingPut = decode(value.clone())?;
+        }
+        "vault.settings.learning.clear" => {
+            let _input: crate::learning_setting_doors::LearningSettingClear =
+                decode(value.clone())?;
+        }
         "vault.lenses.propose" => {
             let _input: crate::lens::LensProposeRequest = decode(value.clone())?;
         }
@@ -2978,6 +3028,13 @@ pub fn invoke(
         "vault.legal_holds.log" => encode(vault_legal_holds_log(memory, decode(value)?)?),
         "vault.legal_holds.lift_and_erase" => {
             encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
+        }
+        "vault.settings.learning" => encode(vault_settings_learning(memory, decode(value)?)?),
+        "vault.settings.learning.put" => {
+            encode(vault_settings_learning_put(memory, decode(value)?)?)
+        }
+        "vault.settings.learning.clear" => {
+            encode(vault_settings_learning_clear(memory, decode(value)?)?)
         }
         "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
@@ -3816,6 +3873,36 @@ pub fn vault_legal_holds_lift_and_erase(
     crate::task_verb::sdk::lift_legal_hold_and_erase_as(
         memory.vault(),
         &memory.embedded_owner("vault.legal_holds.lift_and_erase")?,
+        input,
+    )
+}
+pub fn vault_settings_learning(
+    memory: &Memory<'_>,
+    input: crate::learning_setting_doors::LearningSettingsRequest,
+) -> MemoryResult<crate::learning_setting_doors::LearningSettingsView> {
+    crate::learning_setting_doors::learning_settings_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.settings.learning")?,
+        &input,
+    )
+}
+pub fn vault_settings_learning_put(
+    memory: &Memory<'_>,
+    input: crate::learning_setting_doors::LearningSettingPut,
+) -> MemoryResult<crate::learning_setting_doors::LearningSettingsView> {
+    crate::learning_setting_doors::put_learning_setting_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.settings.learning.put")?,
+        input,
+    )
+}
+pub fn vault_settings_learning_clear(
+    memory: &Memory<'_>,
+    input: crate::learning_setting_doors::LearningSettingClear,
+) -> MemoryResult<crate::learning_setting_doors::LearningSettingsView> {
+    crate::learning_setting_doors::clear_learning_setting_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.settings.learning.clear")?,
         input,
     )
 }

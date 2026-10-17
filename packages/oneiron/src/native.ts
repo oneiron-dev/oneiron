@@ -88,6 +88,9 @@ vaultLegalHoldsWiden(input: unknown): unknown
 vaultLegalHoldsList(input: unknown): unknown
 vaultLegalHoldsLog(input: unknown): unknown
 vaultLegalHoldsLiftAndErase(input: unknown): unknown
+vaultSettingsLearning(input: unknown): unknown
+vaultSettingsLearningPut(input: unknown): unknown
+vaultSettingsLearningClear(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
