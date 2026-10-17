@@ -10474,7 +10474,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 14,
+      "fn": 15,
       "struct": 6,
       "type": 1
      }
@@ -10731,7 +10731,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 4,
       "re-export": 10
      }
@@ -10877,6 +10877,16 @@
      "purpose": "`slice`: one range of a result's body, by bytes or by lines, at most one reply of it, with where to go on from",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/run_verb_call.rs",
+     "purpose": "The four memory run rows as typed calls, outside the sandbox (OF-181)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -49659,7 +49669,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50907,7 +50917,7 @@
    },
    "over_bar": 137,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3074,
+   "source_files": 3075,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62291,7 +62301,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/action_routes.rs",
