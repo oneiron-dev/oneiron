@@ -568,6 +568,7 @@ fn output_record(
         pptx_slide_creation_id_mints: Vec::new(),
         pptx_review_identities: Vec::new(),
         pptx_judgments: Vec::new(),
+        docx_judgments: Vec::new(),
         anchors: Vec::new(),
         reason: None,
         sheet_answers: None,
