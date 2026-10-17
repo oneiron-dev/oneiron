@@ -606,7 +606,8 @@ fn settle(
             lease_owner: LEASE_OWNER.to_owned(),
             attempt_count: attempt.attempt_count,
             evidence,
-            blocked_reports: Vec::new(),
+            blocked_reports: vault
+                .blocked_reports_of_run(EntityId::from_bytes(*attempt.id.as_bytes())?)?,
             pre_fail_checkpoint_ref: EntityId::from_bytes(*attempt.id.as_bytes())?,
             qa_thread_ref: claimed.qa_thread_ref,
             retry_at,

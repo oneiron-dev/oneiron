@@ -268,7 +268,14 @@ pub(crate) fn run_core_query(
     if !media.is_empty() {
         let media: Vec<_> = media
             .iter()
-            .map(|seed| (seed.space.as_str(), seed.kind, seed.vector.as_slice()))
+            .map(|seed| {
+                (
+                    seed.space.as_str(),
+                    seed.kind,
+                    seed.vector.as_slice(),
+                    seed.kinds.as_slice(),
+                )
+            })
             .collect();
         return scoped_read.search_seeded(query, vector, &media, limit, None);
     }

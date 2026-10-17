@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 202 facade rows, 698 declarations.
-Inputs: 177 of 202 fully typed, 24 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 168 of 202 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 40; unread shapes: 1.
+Census: 205 facade rows, 701 declarations.
+Inputs: 178 of 205 fully typed, 26 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 168 of 205 fully typed, 29 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 43; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1750,6 +1750,14 @@ class LearningSettingClear(TypedDict):
     mode: LearningSettingMode
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+class WakePolicySetRequest(TypedDict):
+    policy: Any
+    idempotency_key: str
+class PolicyActionOutcome(TypedDict):
+    outcome: Any
+class InferenceDefaultsReplaceRequest(TypedDict):
+    defaults: Any
+    idempotency_key: str
 class LensSlot(TypedDict):
     pack_name: str
     skill_id: str
