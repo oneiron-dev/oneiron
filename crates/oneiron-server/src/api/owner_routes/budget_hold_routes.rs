@@ -60,7 +60,12 @@ struct HeldRunView {
 
 impl HeldRunView {
     fn of(hold: PartialResultHold) -> OwnerResult<Self> {
-        let hex = |id: oneiron::AttemptId| oneiron::entity_id::bytes_to_hex_lower(id.as_bytes());
+        let hex = |id: oneiron::AttemptId| {
+            id.as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
         Ok(Self {
             run: hex(hold.root_attempt),
             state: hold.state,
