@@ -21,11 +21,11 @@ pub(crate) fn stored_entity_type(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<u8>> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
-        return Ok(None);
-    };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    Ok(Some(header.entity_type))
+    crate::ports::EntityStoreRead::port_entity_with_raw(store, rtxn, id, |raw| {
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        Ok(header.entity_type)
+    })
 }
 
 /// ONE-1645 write-time type table for `FacetOf` (u8 17) edges: a facet stamp
