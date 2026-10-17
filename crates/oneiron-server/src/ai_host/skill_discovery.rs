@@ -161,8 +161,8 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
 /// answer. When no seat writes one, the host writes the reason it can see, so
 /// a doubtful answer always reaches the unclear ledger rather than failing
 /// the pass.
-struct CoachNotes<'a> {
-    models: &'a HostModels<'a>,
+pub(super) struct CoachNotes<'a> {
+    pub(super) models: &'a HostModels<'a>,
 }
 
 impl AttributionNotes for CoachNotes<'_> {
