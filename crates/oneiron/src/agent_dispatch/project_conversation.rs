@@ -23,9 +23,13 @@ use crate::{EntityId, Error, Result};
 /// requires a loaded skill of this name on the attempt's manifest.
 const GOAL_INTAKE_SKILL: &str = "goal-intake";
 
+/// The shipped drafting skill, by name.
+const PROJECT_PROPOSAL_SKILL: &str = "project-proposal";
+
 /// Skill references are host configuration. The goal-intake interview runs
-/// the installed goal-intake skill. No drafting skill ships, so a host
-/// without one configured refuses a drafting run rather than run it unskilled.
+/// the installed goal-intake skill. A drafting skill ships too, and
+/// [`ProjectConversationSkills::shipped`] falls back to it; skills built with
+/// no drafting skill refuse a drafting run rather than run it unskilled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectConversationSkills {
     /// The skill that teaches the house mind to draft a project card.
@@ -45,6 +49,19 @@ impl ProjectConversationSkills {
                 &[GOAL_INTAKE_SKILL.as_bytes()],
             )?,
         })
+    }
+
+    /// The installed bootstrap skills: the shipped drafting skill unless the
+    /// host configured another `draft`, and the shipped goal-intake skill.
+    pub fn shipped(draft: Option<EntityId>) -> Result<Self> {
+        let draft = match draft {
+            Some(draft) => draft,
+            None => EntityId::derive(
+                crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
+                &[PROJECT_PROPOSAL_SKILL.as_bytes()],
+            )?,
+        };
+        Self::seeded(Some(draft))
     }
 }
 
