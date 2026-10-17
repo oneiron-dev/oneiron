@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 308 facade rows, 1187 declarations.
+Census: 308 facade rows, 1188 declarations.
 Inputs: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
@@ -5934,11 +5934,16 @@ class ProposalAsk(TypedDict):
     ask: EntityId
     forks: list[EntityId]
     at: int
+class ProposalAskRefusal(TypedDict):
+    forks: list[EntityId]
+    reason: str
+    at: int
 class OfficeBodyProposal(TypedDict):
     header: ProposalHeader
     members: list[ProposalMember]
     settlement: NotRequired[ProposalSettlement | None]
     asks: NotRequired[list[ProposalAsk]]
+    ask_refused: NotRequired[ProposalAskRefusal | None]
 SettleVerdict = Literal["accept", "reject"]
 class ApproveScopeThisActor(TypedDict):
     this_actor: str

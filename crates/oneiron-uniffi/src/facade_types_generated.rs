@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 308 facade rows, 1100 generated types.
+// UniFFI census: 308 facade rows, 1101 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 276.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -17197,6 +17197,17 @@ pub struct ProposalAsk {
     pub at: u64,
 }
 
+/// `oneiron::office_body::consent::ProposalAskRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProposalAskRefusal {
+    #[serde(rename = "forks")]
+    pub forks: Vec<String>,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
 /// `oneiron::office_body::consent::OfficeBodyProposal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyProposal {
@@ -17212,6 +17223,12 @@ pub struct OfficeBodyProposal {
     pub settlement: Option<ProposalSettlement>,
     #[serde(rename = "asks", default, skip_serializing_if = "Option::is_none")]
     pub asks: Option<Vec<ProposalAsk>>,
+    #[serde(
+        rename = "ask_refused",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ask_refused: Option<ProposalAskRefusal>,
 }
 
 /// `oneiron::office_body::consent::SettleVerdict`.
