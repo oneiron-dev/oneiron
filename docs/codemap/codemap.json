@@ -6564,6 +6564,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkflowRecord"
+     ],
+     "path": "src/browser_library.rs",
+     "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
+     "surface": {
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -14092,7 +14105,7 @@
      "path": "src/context_board/room_verbs.rs",
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 16,
       "fn": 5
      }
     },
@@ -25702,7 +25715,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 190,
+      "mod": 191,
       "re-export": 74
      }
     },
@@ -28286,7 +28299,7 @@
      "path": "src/memory/room_turn.rs",
      "purpose": "A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 13,
       "struct": 1
      }
@@ -43990,7 +44003,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 176
+      "fn": 179
      }
     },
     {
@@ -46979,13 +46992,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 10
      }
     },
@@ -47113,7 +47126,7 @@
      "path": "src/workspace_roster/rooms/participation.rs",
      "purpose": "Thread participants (OF-529): one append-only stream of who took part in a room or one of its threads, how…",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 36,
       "enum": 1
      }
     },
@@ -48490,6 +48503,13 @@
      "layout": "dir",
      "purpose": "BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725)"
     },
+    "browser_library": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…"
+    },
     "build_cache": {
      "files": 6,
      "impl_vault": false,
@@ -49842,9 +49862,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 114,
+   "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3009,
+   "source_files": 3010,
    "test_files": 903
   },
   "oneiron-android": {
@@ -51957,7 +51977,7 @@
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -52007,9 +52027,36 @@
       "const": 9,
       "enum": 6,
       "fn": 8,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 28,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LibraryCard",
+      "LibraryFindInput",
+      "LibraryFindOutput",
+      "LibraryRunInput",
+      "LibraryRunOutput",
+      "ProposeInput",
+      "ProposeOutput",
+      "WorkflowCheck",
+      "WorkflowLibrary",
+      "WorkflowProgram",
+      "WorkflowProof"
+     ],
+     "path": "src/library.rs",
+     "purpose": "The replay library (OF-598; EIRI-ARCH-0002 \"The replay library\"): a solved browser run, kept as a…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 3,
+      "struct": 9,
+      "trait": 1
      }
     },
     {
@@ -52032,7 +52079,7 @@
      "path": "src/session.rs",
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
-      "fn": 9,
+      "fn": 10,
       "struct": 2
      }
     }
@@ -52052,6 +52099,13 @@
      "layout": "file",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref"
     },
+    "library": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The replay library (OF-598; EIRI-ARCH-0002 \"The replay library\"): a solved browser run, kept as a…"
+    },
     "outline": {
      "files": 1,
      "impl_vault": false,
@@ -52069,7 +52123,7 @@
    },
    "over_bar": 1,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 5,
+   "source_files": 6,
    "test_files": 0
   },
   "oneiron-code-check": {
