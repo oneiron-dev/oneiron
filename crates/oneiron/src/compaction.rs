@@ -103,7 +103,7 @@ pub(crate) use gate::{
 };
 pub use hooks::{CompactHooks, HOST_COMPACT, compact_invocation};
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
-pub(crate) use withdrawn::{WithdrawnKeyframe, scrub_withdrawn_epoch_in_txn};
+pub(crate) use withdrawn::{WithdrawnKeyframe, erased_form, scrub_withdrawn_epoch_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use withdrawn::{is_withdrawn_keyframe, withdrawn_keyframe_envelope};
 
