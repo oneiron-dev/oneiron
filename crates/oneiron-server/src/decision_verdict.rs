@@ -31,8 +31,8 @@ use oneiron::llm::decision::{
 use oneiron::llm::image::ImageBytes;
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{
-    BlobArtifactInput, BlobVersionView, ImageViewRequest, MEMORY_CODE_INTERNAL, Memory,
-    MemoryError, MemoryResult,
+    BlobArtifactInput, BlobVersionView, ImageViewRequest, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
@@ -218,14 +218,7 @@ pub(crate) fn run_verdict(
     // a Score starts above a seat that reads none, and never drops its image.
     dial.first = ladder
         .first_taking(&question, dial, &images)
-        .ok_or_else(|| {
-            MemoryError::bad_request_with(
-                "no rung up to the ceiling answers this contract over this evidence",
-                &[
-                    "Raise the ceiling, or ask a score without an image: no image seat reads a score.",
-                ],
-            )
-        })?;
+        .ok_or_else(|| no_rung(&question.contract, !images.is_empty()))?;
     let failed = |error: oneiron::Error| {
         MemoryError::bad_request_with(
             format!("ai.verdict: {error}"),
@@ -517,6 +510,28 @@ pub(crate) fn vision_rung(
     let seat = LocalVisionModel::new(&server.ai, vault, run, tokio::runtime::Handle::current())
         .ok_or_else(unbound)?;
     seat.rung().map_err(|_| unbound())
+}
+
+/// The typed reply when no rung up to the ceiling takes the question:
+/// `MODEL_UNAVAILABLE`, naming the capability the call needs.
+fn no_rung(contract: &AnswerContract, images: bool) -> MemoryError {
+    let answers = match contract {
+        AnswerContract::Noul => "a yes/no".to_owned(),
+        AnswerContract::Choice { options } => format!("a choice of {} options", options.len()),
+        AnswerContract::Score { .. } => "a score".to_owned(),
+        AnswerContract::Box => "a box".to_owned(),
+        AnswerContract::Point => "a point".to_owned(),
+    };
+    let reads = if images { "reads images and " } else { "" };
+    MemoryError::new(
+        MEMORY_CODE_MODEL_UNAVAILABLE,
+        format!(
+            "ai.verdict needs a rung that {reads}answers {answers}; none up to the ceiling does"
+        ),
+        &[
+            "Bind a rung that takes it or raise the ceiling; a score over an image is never asked without the image.",
+        ],
+    )
 }
 
 fn internal() -> MemoryError {
