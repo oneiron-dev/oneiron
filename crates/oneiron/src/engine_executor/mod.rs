@@ -6,6 +6,7 @@
 //! the pinned component boundary, and every `self.*` import is routed through a
 //! host dispatcher that records the typed bridge call in the durable replay log.
 
+mod capture;
 mod code_check;
 mod compaction;
 mod compaction_host;

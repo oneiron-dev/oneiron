@@ -36,7 +36,7 @@ use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttem
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat,
-    park_and_bind_wait_trap,
+    TaskExposure, finalize_step_captures, park_and_bind_wait_trap,
 };
 use oneiron::compaction::output::OutputContextEntry;
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
@@ -409,8 +409,11 @@ fn run_bound(
         config.model = seat.model().clone();
     }
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
-    // run whose skill does not load is refused, never run unskilled.
+    // run whose skill does not load is refused, never run unskilled. The
+    // body is tagged where it went, so the run's first step is captured with
+    // it marked for a contribution check (FIX 3028).
     let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
+    let mut exposures = Vec::new();
     if let Some(skill) = AgentDispatcher::new(vault)
         .prepare_project_conversation_run(
             &status.attempt,
@@ -426,7 +429,14 @@ fn run_bound(
             .find(|file| file.path == "SKILL.md")
             .and_then(|file| std::str::from_utf8(&file.content).ok())
     {
-        config.task = format!("{}\n\n{}", config.task, body.trim());
+        let revision = format!("{}@{}", skill.record.skill_id, skill.record.version);
+        exposures.push(TaskExposure::append(
+            &mut config.task,
+            "\n\n",
+            body.trim(),
+            skill.entity,
+            revision,
+        ));
     }
     // Its model calls and its reader children spend under the attempt's
     // scope. An unmetered attempt's calls stay on the provider's meter, and
@@ -486,7 +496,12 @@ fn run_bound(
             server.decision_host(),
             issuer,
             &server.live_runs,
-        )?;
+            &exposures,
+        );
+        // The first step's capsule takes the rung that answered it, on the
+        // thread the entry ran its calls on.
+        finalize_step_captures(vault);
+        let outcome = outcome?;
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
             EngineExecutorStatus::WindowFull { .. }
@@ -528,13 +543,15 @@ fn enter_run(
     decisions: &DecisionHost,
     issuer: Option<&oneiron::authority::HostSlipIssuer>,
     live_runs: &super::LiveRuns,
+    exposures: &[TaskExposure],
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
         .with_callable_skills(Arc::clone(vault))
         .map_err(text)?
         .with_agent_verb_door(Arc::clone(door))
-        .with_reader_spawn(seat.clone());
+        .with_reader_spawn(seat.clone())
+        .with_replay_exposures(exposures.to_vec());
     let planner = decisions.host_planner_decisions(actor.entity_ref());
     if let Some(planner) = planner_binding(vault, provider, config, planner)? {
         bound = bound.with_planner(planner);

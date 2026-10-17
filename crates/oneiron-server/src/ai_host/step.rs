@@ -394,7 +394,17 @@ impl StepRunner {
         // settled. An answer pays its tokens, or the reservation when it
         // reports none; a rung that went out and failed pays its reservation.
         let run = self.models.funded_run(run_id, guard, payer);
+        // The admitted request is the step's replay capsule (FIX 3028),
+        // finalized with the rung that answers it. A capture that fails
+        // leaves none and never fails the step.
+        oneiron::code_run::capture_workflow_step(
+            vault,
+            attempt.id,
+            attempt.attempt_count,
+            &request,
+        );
         let generated = runtime.block_on(call.ladder.generate_served(&run, request, None));
+        oneiron::code_run::finalize_step_captures(vault);
         // What this try spent goes on the lease whatever the call answered;
         // the replayed tries recorded their own.
         if let Some(scope) = &lease {

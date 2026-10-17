@@ -189,6 +189,7 @@ impl EngineNativeExecutor<'_> {
                 ));
             }
             let request_hash = request.canonical_hash()?;
+            self.capture_first_step(config, completed_steps, &request);
             let response = self.backend.generate(request, self.lease).await?;
             self.post_turn_hooks(turn, &response)?;
             // The provider that answered is the one this turn's program

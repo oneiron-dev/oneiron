@@ -35,6 +35,7 @@ mod coach_health;
 pub(crate) mod coach_host;
 mod code_fix;
 mod connector_event;
+mod contribution;
 mod dreamer;
 pub(crate) mod failure_signals;
 mod harness;

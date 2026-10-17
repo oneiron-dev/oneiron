@@ -6,6 +6,7 @@ mod lift;
 mod reader_folds;
 mod reader_jobs;
 mod records;
+mod replay_capsule;
 mod routing;
 mod speech_identity;
 mod wait_delivery;
@@ -21,6 +22,11 @@ pub(crate) use self::reader_jobs::{
 pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{FinishedOutput, code_run_body_file_of_row};
+pub use self::replay_capsule::step_replay_capsules;
+pub(crate) use self::replay_capsule::{
+    ForkRows, capsule_request, finalize_capsule, fork_response, fork_rows, put_capsule, put_fork,
+    put_unavailable, store_capsule_request, store_fork_response,
+};
 pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;

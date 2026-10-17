@@ -81,6 +81,19 @@ impl LadderRung {
         }
         request
     }
+
+    /// Names this rung as the one that answered `request` (before its
+    /// binding), for the step replay capsule a capture on this thread waits
+    /// to finalize (FIX 3028): its model, where it ran and the prompt it put
+    /// first, so the capsule holds what was really sent.
+    fn note_answered(&self, request: &LlmRequest) {
+        oneiron::code_run::note_answering_rung(
+            request,
+            &self.model,
+            self.offer.binding.locality,
+            self.prompt.as_deref(),
+        );
+    }
 }
 
 /// The wire a ladder's calls speak. An owner's fallback for its parked
@@ -276,6 +289,18 @@ impl OfferLadder {
     #[must_use]
     pub fn model(&self) -> &ModelId {
         &self.name
+    }
+
+    /// The route prompt this ladder's one picked rung puts first, when it is
+    /// one picked model (the ladder [`Self::generate_exact_within`] takes):
+    /// a step replay compares it with the prompt its capsule was answered
+    /// under (FIX 3028). `None` for any other ladder.
+    #[must_use]
+    pub fn exact_prompt(&self) -> Option<Option<&str>> {
+        match self.rungs.as_slice() {
+            [rung] if self.picked => Some(rung.prompt.as_deref()),
+            _ => None,
+        }
     }
 
     /// Bind one traceless turn without retained cooldowns, fallback logs or
@@ -1064,6 +1089,7 @@ impl OfferLadder {
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                 permit.settle(CallOutcome::Answered(&response.usage))?;
                 response.usage = self.answered(index, walk, response.usage);
+                rung.note_answered(call.request);
                 Ok(Sent::Answer(response))
             }
             Err(error) => {

@@ -20,6 +20,7 @@ use oneiron::dreamer_consolidation::{
     run_resident_dream, run_task_realize, run_weave_lens, settle_parked_conflicts,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
+use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
@@ -623,6 +624,31 @@ impl PassExecutorFactory for ObservedFactory {
             scorer: judge,
             live: judge.coach_live_slice(),
         }))
+    }
+
+    /// The host's replay capsule for the Coach's contribution checks (FIX
+    /// 3028), once serve has bound the server and registered its replay
+    /// judge: each fork runs on its capsule's own model, paid by the Coach up
+    /// to the pass's allowance, and that judge scores both on the pass's
+    /// clock.
+    fn contribution_replay_host(
+        &self,
+        _vault: &Vault,
+        guard: &oneiron::BudgetGuard,
+    ) -> oneiron::Result<Option<Box<dyn ContributionReplayHost + Send + Sync>>> {
+        let (Some(server), Some(judge)) =
+            (self.question_timer.get(), crate::replay_judge::registered())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Box::new(
+            super::contribution::HostContributionReplay::new(
+                server.clone(),
+                self.serve.clone(),
+                judge,
+                guard.read().limit_units,
+            ),
+        )))
     }
 
     /// The host's gate, asked as each pass starts and held until it ends. A
