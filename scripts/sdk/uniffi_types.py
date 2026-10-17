@@ -28,6 +28,24 @@ import json
 import re
 
 WIRE = 'crate::WireJson'
+# The WireJson policy (canon is silent): the shapes a generated record carries
+# as a `WireJson` field rather than a typed one, each with the reason the
+# census states. A `serde_json::Value` is WireJson by design and listed apart.
+# A row whose type has a shape the inventory could not read (`unknown`) keeps
+# that whole side on WireJson: `UniffiTypes.root`.
+WIRE_LEAVES = {
+    'recursive': 'the recursive type {name}',   # a UniFFI record cannot hold itself
+    'wide': 'a 128-bit integer',                # UniFFI carries 8 to 64 bits
+    'null': 'a unit value',
+    'tuple': 'a tuple',
+    'union': 'an untyped union',
+    'never': 'an enum with no variants',
+    'unknown': 'a shape the inventory could not read',
+    'inline': 'an inline {name}',
+}
+# The prefix a generated type takes when its name is a hand-written record's
+# or a reserved name (`WireClaimView`).
+COLLISION_PREFIX = 'Wire'
 # Rust spellings of the integer widths the inventory records; UniFFI carries
 # 8 to 64 bits, signed and unsigned, and nothing wider.
 WIDTHS = {
@@ -186,8 +204,8 @@ class UniffiTypes:
         if kind == 'prim':
             if node[1] == 'int':
                 width = WIDTHS.get(node[2] if len(node) > 2 else 'i64')
-                return width or self.leaf(where, 'a 128-bit integer')
-            if node[1] == 'null': return self.leaf(where, 'a unit value')
+                return width or self.leaf(where, WIRE_LEAVES['wide'])
+            if node[1] == 'null': return self.leaf(where, WIRE_LEAVES['null'])
             return {'string': 'String', 'float': 'f64', 'bool': 'bool'}[node[1]]
         if kind == 'opaque': return WIRE
         if kind == 'param': return self.rt(subst.get(node[1], ('unknown', 'unbound')), {}, where)
@@ -197,23 +215,20 @@ class UniffiTypes:
             return inner if inner.startswith('Option<') else f'Option<{inner}>'
         if kind == 'map': return f'std::collections::HashMap<String, {self.rt(node[1], subst, where)}>'
         if kind == 'ref': return self.ref(node, subst, where)
-        if kind == 'tuple': return self.leaf(where, 'a tuple')
-        if kind == 'union': return self.leaf(where, 'an untyped union')
-        if kind == 'unknown': return self.leaf(where, 'a shape the inventory could not read')
-        if kind == 'never': return self.leaf(where, 'an enum with no variants')
-        return self.leaf(where, f'an inline {kind}')
+        if kind in ('tuple', 'union', 'unknown', 'never'): return self.leaf(where, WIRE_LEAVES[kind])
+        return self.leaf(where, WIRE_LEAVES['inline'].format(name=kind))
 
     def ref(self, node, subst, where):
         key = node[1]
         decl = self.inv.decls[key]
         args = [self.close(a, subst) for a in node[2]]
-        if key in self.recursive: return self.leaf(where, f'the recursive type {decl["name"]}')
+        if key in self.recursive: return self.leaf(where, WIRE_LEAVES['recursive'].format(name=decl['name']))
         inner = dict(zip(decl['params'], args))
         ir, meta = decl['ir'], self.inv.variants.get(decl['name'])
         if meta is None and ir[0] not in ('object', 'and'):
             # A newtype, alias or handwritten codec: its wire value, inline.
             return self.rt(ir, inner, decl['name'])
-        if meta is not None and not meta['variants']: return self.leaf(decl['name'], 'an enum with no variants')
+        if meta is not None and not meta['variants']: return self.leaf(decl['name'], WIRE_LEAVES['never'])
         mkey = (key, repr(args))
         if mkey in self.mirrors: return self.mirrors[mkey]
         name = self.allocate(decl['name'] + ''.join(self.mangle(a) for a in args))
@@ -230,9 +245,9 @@ class UniffiTypes:
 
     def allocate(self, base):
         name, n = base, 2
-        if name.upper() in self.taken: name = 'Wire' + base
+        if name.upper() in self.taken: name = COLLISION_PREFIX + base
         while name.upper() in self.taken:
-            name = f'Wire{base}{n}'; n += 1
+            name = f'{COLLISION_PREFIX}{base}{n}'; n += 1
         self.taken.add(name.upper())
         return name
 
