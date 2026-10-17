@@ -116,7 +116,7 @@ impl VoiceMediaBindings {
             self.render,
             queue.clone(),
         )?;
-        let asr = MediaAsrAdapter::new(asr_route, self.sample_rate, self.channels, queue)?;
+        let asr = MediaAsrAdapter::new(asr_route, self.sample_rate, self.channels, queue.clone())?;
         let (deliver, outputs) = mpsc::unbounded_channel();
         Ok((
             tts,
@@ -127,6 +127,7 @@ impl VoiceMediaBindings {
                 outputs,
                 playout: self.playout,
                 chunking: self.chunking,
+                queue,
                 speech: None,
                 verdicts: Verdicts::new(),
                 tick_at: None,
@@ -249,6 +250,8 @@ pub(super) struct MediaBridge {
     outputs: mpsc::UnboundedReceiver<VoiceMediaOutput>,
     playout: mpsc::Sender<VoicePlayout>,
     pub(super) chunking: VoiceChunkPolicy,
+    /// The media queue, read for room before a sentence is sent.
+    pub(super) queue: VoiceMediaSender,
     /// The generation being spoken, while its audio is open.
     pub(super) speech: Option<Speech>,
     pub(super) verdicts: Verdicts,

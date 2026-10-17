@@ -329,6 +329,14 @@ pub fn voice_media_channel(capacity: usize) -> (VoiceMediaSender, VoiceMediaWork
 #[derive(Clone)]
 pub struct VoiceMediaSender(mpsc::Sender<VoiceMediaWork>);
 
+impl VoiceMediaSender {
+    /// Whether the queue takes one more item now.
+    #[must_use]
+    pub fn has_room(&self) -> bool {
+        self.0.capacity() > 0
+    }
+}
+
 impl VoiceMediaQueue for VoiceMediaSender {
     fn try_submit(&mut self, work: VoiceMediaWork) -> Result<()> {
         self.0.try_send(work).map_err(|error| match error {

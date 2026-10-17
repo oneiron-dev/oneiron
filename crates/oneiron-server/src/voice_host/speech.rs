@@ -9,15 +9,18 @@
 //! and a generation's last audio is marked with [`VoicePlayout::End`]. The
 //! owner's [`VoiceMediaIn::Drained`](super::VoiceMediaIn::Drained) for it
 //! closes the generation through `finish_playout` once its brain and every
-//! verdict are done. A sentence that was not spoken, a safeguard that did
-//! not run and a brain event the session refused stop the generation
-//! (`StopReason::OutputFailed`).
+//! verdict are done. A sentence the media queue has no room for waits, with
+//! every sentence after it and the brain's Done, until the queue takes it.
+//! A sentence that was not spoken, a safeguard that did not run, a queue
+//! that took nothing for 30 seconds and a brain event the session refused
+//! stop the generation (`StopReason::OutputFailed`).
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::stream::FuturesUnordered;
 use oneiron::llm::{BudgetGuard, LlmBackend, LlmStreamEvent, VoiceChunkPolicy, VoiceChunker};
@@ -33,6 +36,10 @@ use super::{HostError, SessionState, VoiceHost, VoiceOutputs};
 /// How often a quiet brain's buffered words are held against the
 /// cadence's longest wait.
 pub(super) const CHUNK_TICK: Duration = Duration::from_millis(50);
+
+/// How long held sentences wait for the media queue to take one before the
+/// generation stops: a queue that takes nothing for this long is stuck.
+const HOLD_LIMIT: Duration = Duration::from_secs(30);
 
 /// One thing the owner's brain hands back, in the order it made them.
 #[derive(Debug, Clone, PartialEq)]
@@ -103,6 +110,12 @@ pub(super) struct Speech {
     end_sent: bool,
     /// The owner's playout played it all.
     drained: bool,
+    /// Sentences waiting, in order, for room in the media queue.
+    held: VecDeque<String>,
+    /// Since when the held sentences have waited for the queue to take one.
+    held_since: Option<Instant>,
+    /// The brain's Done, held behind those sentences, with its taint mark.
+    done_held: Option<bool>,
 }
 
 /// A sentence's verdict, or why it has none.
@@ -169,6 +182,9 @@ impl VoiceHost {
             ended: false,
             end_sent: false,
             drained: false,
+            held: VecDeque::new(),
+            held_since: None,
+            done_held: None,
         });
         true
     }
@@ -190,6 +206,13 @@ impl VoiceHost {
             let tail =
                 speech_mut(bridge, generation).and_then(|speech| speech.chunker.tick(u64::MAX));
             if !self.speak(generation, tail, bridge, outputs) {
+                return Ok(());
+            }
+            // The session hears Done only after every sentence before it.
+            if let Some(speech) = speech_mut(bridge, generation)
+                && !speech.held.is_empty()
+            {
+                speech.done_held = Some(externally_tainted);
                 return Ok(());
             }
         }
@@ -238,13 +261,22 @@ impl VoiceHost {
         Ok(())
     }
 
-    /// The cadence's wait ran out on a quiet brain: its buffered words are
-    /// a sentence.
-    pub(super) fn speech_tick<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+    /// The cadence's clock. Held sentences go as the media queue makes
+    /// room, a Done held behind them follows, and a quiet brain's buffered
+    /// words become a sentence once the cadence's wait runs out.
+    pub(super) async fn speech_tick<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         bridge: &mut MediaBridge,
         outputs: &mut VoiceOutputs<B, T, C>,
-    ) {
+    ) -> io::Result<()> {
+        if let Some((generation, externally_tainted)) = self.release(bridge, outputs) {
+            let done = VoiceBrainOut {
+                generation,
+                event: BrainEvent::Done,
+                externally_tainted,
+            };
+            return self.brain_out(done, bridge, outputs).await;
+        }
         let now = bridge.now_ms();
         let Some((generation, text)) = bridge
             .speech
@@ -252,9 +284,44 @@ impl VoiceHost {
             .filter(|speech| !speech.ended)
             .and_then(|speech| Some((speech.generation, speech.chunker.tick(now)?)))
         else {
-            return;
+            return Ok(());
         };
         self.speak(generation, Some(text), bridge, outputs);
+        Ok(())
+    }
+
+    /// Sends held sentences while the media queue has room; a hold past
+    /// [`HOLD_LIMIT`] stops the generation. Once nothing is held, the Done
+    /// held behind them, for the caller to hand the session.
+    fn release<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+        &self,
+        bridge: &mut MediaBridge,
+        outputs: &mut VoiceOutputs<B, T, C>,
+    ) -> Option<(GenerationEpoch, bool)> {
+        loop {
+            let room = bridge.queue.has_room();
+            let speech = bridge.speech.as_mut()?;
+            let generation = speech.generation;
+            let Some(text) = speech.held.front() else {
+                return speech.done_held.take().map(|tainted| (generation, tainted));
+            };
+            if !room {
+                if speech
+                    .held_since
+                    .is_some_and(|since| since.elapsed() >= HOLD_LIMIT)
+                {
+                    tracing::warn!("voice media: the media queue took no sentence in time");
+                    self.output_failed(generation, bridge, outputs);
+                }
+                return None;
+            }
+            let text = text.clone();
+            speech.held.pop_front();
+            speech.held_since = (!speech.held.is_empty()).then(Instant::now);
+            if !self.send_sentence(generation, text, bridge, outputs) {
+                return None;
+            }
+        }
     }
 
     /// One sentence's audio: handed over only for the session's current
@@ -353,8 +420,9 @@ impl VoiceHost {
         }
     }
 
-    /// Each sentence through the session, then to the TTS seam and its
-    /// safeguard at once. `false` once the generation was stopped.
+    /// Each sentence in order, sent or held. A full media queue holds the
+    /// sentence, and every one after it, until it has room: a sentence
+    /// waits, never refused. `false` once the generation was stopped.
     fn speak<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         generation: GenerationEpoch,
@@ -363,32 +431,54 @@ impl VoiceHost {
         outputs: &mut VoiceOutputs<B, T, C>,
     ) -> bool {
         for text in sentences {
-            let work = self
-                .lock()
-                .and_then(|mut state| Ok(state.core.complete_sentence(generation, text)?));
-            match work {
-                Ok(Some(work)) => {
-                    let mut safeguard = HostSafeguard {
-                        backend: self.backend(),
-                        budget: self.budget(),
-                        verdicts: &mut bridge.verdicts,
-                    };
-                    if work.dispatch(&mut outputs.tts, &mut safeguard).is_empty() {
-                        if let Some(speech) = speech_mut(bridge, generation) {
-                            speech.sent = speech.sent.saturating_add(1);
-                        }
-                        continue;
-                    }
-                    tracing::warn!("voice media: a sentence was not handed to speech");
-                }
-                // Its audio closed: what it would have said is dropped.
-                Ok(None) => continue,
-                Err(error) => tracing::warn!(%error, "voice media: a sentence was refused"),
+            let room = bridge.queue.has_room();
+            if let Some(speech) = speech_mut(bridge, generation)
+                && (!room || !speech.held.is_empty())
+            {
+                speech.held_since.get_or_insert_with(Instant::now);
+                speech.held.push_back(text);
+                continue;
             }
-            self.output_failed(generation, bridge, outputs);
-            return false;
+            if !self.send_sentence(generation, text, bridge, outputs) {
+                return false;
+            }
         }
         true
+    }
+
+    /// One sentence through the session, then to the TTS seam and its
+    /// safeguard at once. `false` once the generation was stopped.
+    fn send_sentence<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+        &self,
+        generation: GenerationEpoch,
+        text: String,
+        bridge: &mut MediaBridge,
+        outputs: &mut VoiceOutputs<B, T, C>,
+    ) -> bool {
+        let work = self
+            .lock()
+            .and_then(|mut state| Ok(state.core.complete_sentence(generation, text)?));
+        match work {
+            Ok(Some(work)) => {
+                let mut safeguard = HostSafeguard {
+                    backend: self.backend(),
+                    budget: self.budget(),
+                    verdicts: &mut bridge.verdicts,
+                };
+                if work.dispatch(&mut outputs.tts, &mut safeguard).is_empty() {
+                    if let Some(speech) = speech_mut(bridge, generation) {
+                        speech.sent = speech.sent.saturating_add(1);
+                    }
+                    return true;
+                }
+                tracing::warn!("voice media: a sentence was not handed to speech");
+            }
+            // Its audio closed: what it would have said is dropped.
+            Ok(None) => return true,
+            Err(error) => tracing::warn!(%error, "voice media: a sentence was refused"),
+        }
+        self.output_failed(generation, bridge, outputs);
+        false
     }
 
     /// The brain is done: no sentence follows. A generation whose audio a
