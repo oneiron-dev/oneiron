@@ -360,6 +360,26 @@ fn mark_minted_in_txn(
 }
 
 impl Vault {
+    /// The project question's kept answer on one source message, if any: the
+    /// record a drafting run is checked against (OF-501).
+    pub(crate) fn project_detection_verdict_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        message: EntityId,
+    ) -> Result<Option<ProjectDetectionVerdict>> {
+        VERDICTS.get(&self.store, txn, &message)
+    }
+
+    /// One host-held card by its id, if any: the record a goal-intake run is
+    /// checked against (OF-501).
+    pub(crate) fn project_card_record_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        card_id: &str,
+    ) -> Result<Option<ProjectCardRecord>> {
+        CARDS.get(&self.store, txn, &card_key(card_id))
+    }
+
     /// One authorised tap mints a host-held card's project; the tap is the
     /// Grant move. The card is the host's stored one, never a client's: a
     /// card pinned on a thread in a project's room is born by conversion under

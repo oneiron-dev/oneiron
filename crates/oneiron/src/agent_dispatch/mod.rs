@@ -41,6 +41,7 @@ mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
 mod planner;
 mod planner_live;
+mod project_conversation;
 mod project_proposal;
 mod resident;
 mod room_join;
@@ -64,11 +65,13 @@ pub use workflow_record::{WorkflowDispatchStatus, WorkflowProgress, WorkflowStep
 mod workflow_tests;
 
 pub use self::widen_record::ContextWidenProposal;
-pub(crate) use self::widen_record::unlanded_widens_by_parent;
+#[allow(unused_imports)] // The Coach's widen_denial_findings switches to the window.
+pub(crate) use self::widen_record::{unlanded_widens_by_parent, unlanded_widens_by_parent_since};
 
 pub use self::fanout_statement::{
     ExceptionalWidthCheck, FanoutCaller, FanoutStatement, FanoutWork, PeerCount, WidthCheckClass,
 };
+pub use self::project_conversation::ProjectConversationSkills;
 pub use self::project_proposal::{ProjectDetection, ProjectDetectionRun};
 
 pub use self::launch::{

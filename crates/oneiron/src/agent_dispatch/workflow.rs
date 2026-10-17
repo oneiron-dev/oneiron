@@ -90,6 +90,7 @@ impl AgentDispatcher<'_> {
                 .collect(),
             depth_remaining: spawn.depth_remaining,
             project_ref: spawn.project_ref.map(|id| id.to_hex()),
+            type_ref: spawn.type_ref.clone(),
             budget: spawn.budget,
             spend: spawn.spend.as_ref().map(|spend| spend.scope.clone()),
             room: spawn.room,
