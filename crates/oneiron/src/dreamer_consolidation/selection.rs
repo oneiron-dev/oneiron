@@ -88,11 +88,15 @@ impl StrengthSignals {
         config: &SelectionConfig,
     ) -> Self {
         Self {
-            type_prior: config.type_priors.get(predicate).copied()
+            type_prior: config
+                .type_priors
+                .get(predicate)
+                .copied()
                 .unwrap_or(config.default_type_prior),
             frequency: (count as f64 / config.frequency_scale as f64).min(1.0),
-            recency: 1.0 - (now_ms.saturating_sub(latest_ms) as f64
-                / config.recency_window_ms as f64).min(1.0),
+            recency: 1.0
+                - (now_ms.saturating_sub(latest_ms) as f64 / config.recency_window_ms as f64)
+                    .min(1.0),
             diversity: (diversity as f64 / config.diversity_scale as f64).min(1.0),
         }
     }
@@ -192,7 +196,10 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.consolidation_selection_in_txn(&txn)
     }
-    pub(crate) fn consolidation_selection_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<SelectionConfig> {
+    pub(crate) fn consolidation_selection_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<SelectionConfig> {
         let config = SELECTION.get(&self.store, txn, &())?.unwrap_or_default();
         config.validate()?;
         Ok(config)
