@@ -68292,7 +68292,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 10,
-      "fn": 15,
+      "fn": 16,
       "struct": 3
      }
     },
@@ -68303,7 +68303,7 @@
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
