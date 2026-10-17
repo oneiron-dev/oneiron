@@ -29,8 +29,8 @@ pub use self::floor::{
     check_reliability_floor_for_executor, set_skill_reliability_floor, skill_reliability_floor,
 };
 pub use self::ledger::{
-    SKILL_RELIABILITY_MAX_CITED_RECEIPTS, record_resident_skill_contributing_win,
-    record_skill_contributing_win,
+    SKILL_RELIABILITY_MAX_CITED_RECEIPTS, effective_skill_outcome,
+    record_resident_skill_contributing_win, record_skill_contributing_win,
 };
 pub(crate) use self::ledger::{
     attributed_outcome_receipts, attributed_outcome_results, attributed_outcomes_weighted,

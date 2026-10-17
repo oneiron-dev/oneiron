@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 248 facade rows, 865 declarations.
-Inputs: 207 of 248 fully typed, 40 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 201 of 248 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 249 facade rows, 868 declarations.
+Inputs: 208 of 249 fully typed, 40 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 202 of 249 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 64; unread shapes: 1.
 """
 
@@ -672,6 +672,10 @@ class ContextPackMediaQuery(TypedDict):
     mime: str
     bytes_b64: str
     kinds: NotRequired[list[MediaQueryKind]]
+class QueryAffect(TypedDict):
+    valence: float
+    arousal: float
+    dominance: float
 class RecallRequest(TypedDict):
     query: str
     effort: NotRequired[RecallEffort | None]
@@ -681,6 +685,7 @@ class RecallRequest(TypedDict):
     as_of: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
     media: NotRequired[ContextPackMediaQuery | None]
+    query_affect: NotRequired[QueryAffect | None]
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -3737,6 +3742,14 @@ class QuestionPauseRequest(TypedDict):
 class QuestionPaused(TypedDict):
     id: EntityId
     paused: bool
+class QuestionBackfillRequest(TypedDict):
+    id: EntityId
+    expected_version: int
+    at: NotRequired[int | None]
+class ScheduledBackfill(TypedDict):
+    question: str
+    version: int
+    due_at: int
 class QuestionReadRequest(TypedDict):
     id: EntityId
     version: NotRequired[int | None]

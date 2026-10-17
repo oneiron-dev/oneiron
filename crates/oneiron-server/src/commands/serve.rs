@@ -454,6 +454,14 @@ pub(crate) async fn spawn_fact_hooks(
             let _ = server.hook_runtime.set(Arc::clone(&runtime));
             // Verb hooks run on it too: one sandbox per process.
             server.vault().install_hook_runtime(Arc::clone(&runtime));
+            // A credential caller's settled verb-hook ask runs again through
+            // the door it came in by, checked before the runner's first pass.
+            server.vault().install_verb_ask_credential_check(Arc::new(
+                crate::credential_resume::ServerVerbAskCredentialCheck::new(
+                    server,
+                    tokio::runtime::Handle::current(),
+                ),
+            ));
             // Generative fact hooks ask `ai.verdict` on serve's own ladder.
             let verdict: Arc<dyn oneiron::runtime_hooks::HookVerdict> =
                 Arc::new(crate::hook_verdict::ServerHookVerdict::new(server));
