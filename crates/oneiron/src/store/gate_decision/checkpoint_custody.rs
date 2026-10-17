@@ -116,7 +116,10 @@ pub(crate) fn replace_host_holds_in_txn(
     wtxn: &mut RwTxn<'_>,
     rows: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<()> {
-    if rows.iter().any(|(key, _)| !key.starts_with(HOST_HOLD_PREFIX)) {
+    if rows
+        .iter()
+        .any(|(key, _)| !key.starts_with(HOST_HOLD_PREFIX))
+    {
         return Err(Error::CorruptedIndex("host-order legal hold rows"));
     }
     let vault_meta = store
