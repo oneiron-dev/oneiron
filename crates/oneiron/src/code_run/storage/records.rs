@@ -212,8 +212,16 @@ impl Vault {
         REPLAY_RECORDS.get(&self.store, &rtxn, run_id)
     }
 
-    /// A writer for one result body, into this vault's `bodies/`.
+    /// A writer for one result body, into this vault's `bodies/`. Each value
+    /// custody knows is replaced by its handle as it streams (OF-560 C).
     pub(crate) fn code_run_output_sink(&self) -> Result<BodySink> {
+        Ok(self.code_run_script_sink()?.sweeping(self.known_values()?))
+    }
+
+    /// [`Self::code_run_output_sink`] with no sweep, for a step's program:
+    /// the stored program is the one a resumed step runs again, byte for
+    /// byte.
+    pub(crate) fn code_run_script_sink(&self) -> Result<BodySink> {
         Ok(BodySink::new(
             self.store.body_dir()?,
             self.limit_watch().bound(EngineLimit::CodeResultInlineBytes),

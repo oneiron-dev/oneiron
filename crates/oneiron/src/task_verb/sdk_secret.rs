@@ -395,11 +395,14 @@ impl Memory<'_> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let origin = task_create_origin_in_txn(self, &txn, self.task_host())?;
         drop(txn);
+        // The provider is the host's: the one its ladder served this
+        // program's turn from, never a field the agent sends.
         Ok(RevealAsker::new(
             self.actor(),
             origin.as_ref().and_then(|origin| origin.project_ref()),
             origin.and_then(|origin| origin.run_id()),
-        ))
+        )
+        .with_provider(self.model_provider()))
     }
 }
 
