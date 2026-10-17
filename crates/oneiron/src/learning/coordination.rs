@@ -7,18 +7,25 @@
 //! gathered off the hot path: a projector derives them from event times the
 //! attempt rows already carry, with no inline timer or counter. They stay in
 //! the vault until the owner shows or publishes them.
+//!
+//! A team's attempts are the ones its dispatches stamped with the team run's
+//! `TeamReceipt.team_ref` (OF-540 (c)), not a queue run: a nested team's
+//! attempts carry their own reference, and one team may span queue runs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState};
+use crate::attempt_queue::{
+    AttemptId, AttemptInterventionKind, AttemptRecord, AttemptState, attempt_record_order,
+    decode_record,
+};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 
-/// Derived diagnostics per team. Key: team reference (the run id).
+/// Derived diagnostics per team. Key: the run's `TeamReceipt.team_ref`.
 const COORDINATION: SideTable<String, CoordinationCost, Named> =
     SideTable::new(&side_table::LEARNING_COORDINATION);
 
@@ -180,7 +187,7 @@ pub fn derive_coordination_cost(
     }
 }
 
-/// The timed events one run's attempt rows already carry: queue wait from
+/// The timed events one team's attempt rows already carry: queue wait from
 /// creation (or the scheduled instant) to claim, backoff from creation to the
 /// scheduled instant, pause-to-resume spans, each completed attempt's task as
 /// a publication, and each manifest load of a peer's published reference as a
@@ -260,17 +267,49 @@ fn bounded(text: &str, what: &'static str) -> Result<()> {
     Ok(())
 }
 
-/// Re-derives one run's coordination cost from its attempt rows and the
-/// audit labels, and stores it. Run it from a sweep, never inline in the work.
-///
-/// # Errors
-///
-/// [`Error::InvalidClaimBody`] for a malformed run id; storage errors.
-pub fn project_run_coordination(vault: &Vault, run_id: &str, now: u64) -> Result<CoordinationCost> {
-    bounded(run_id, "a team reference is 1..=256 bytes without NUL")?;
-    let records = AttemptQueue::new(vault).list_run(run_id)?;
-    let events = team_events_from_attempts(&records);
-    let prefix = format!("{run_id}\0");
+/// Every attempt row a dispatch stamped into a team run, archived rows
+/// included, grouped by the stamp's `team_ref` in creation order.
+fn team_attempts(vault: &Vault) -> Result<BTreeMap<String, Vec<AttemptRecord>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut teams: BTreeMap<String, Vec<AttemptRecord>> = BTreeMap::new();
+    for row in vault.store.attempt_records.iter(&rtxn)? {
+        let (key, raw_record) = row?;
+        let record = decode_record(&raw_record, AttemptId::from_bytes(&key)?)?;
+        if let Some(stamp) = crate::agent_dispatch::attempt_team_stamp(&record)? {
+            teams.entry(stamp.team_ref).or_default().push(record);
+        }
+    }
+    for records in teams.values_mut() {
+        records.sort_by(attempt_record_order);
+    }
+    Ok(teams)
+}
+
+/// Every team with a derived cost or an audit label.
+fn recorded_runs(vault: &Vault) -> Result<BTreeSet<String>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut runs: BTreeSet<String> = COORDINATION
+        .scan_keys(&vault.store, &rtxn, &[])?
+        .into_iter()
+        .collect();
+    for key in DUPLICATE_LABEL.scan_keys(&vault.store, &rtxn, &[])? {
+        if let Some((run, _)) = key.split_once('\0') {
+            runs.insert(run.to_owned());
+        }
+    }
+    Ok(runs)
+}
+
+/// Derives one team's cost from its stamped attempts and the audit labels,
+/// and stores it.
+fn store_coordination(
+    vault: &Vault,
+    team_ref: &str,
+    records: &[AttemptRecord],
+    now: u64,
+) -> Result<CoordinationCost> {
+    let events = team_events_from_attempts(records);
+    let prefix = format!("{team_ref}\0");
     let duplicates = {
         let rtxn = vault.store.env.read_txn()?;
         DUPLICATE_LABEL
@@ -279,12 +318,50 @@ pub fn project_run_coordination(vault: &Vault, run_id: &str, now: u64) -> Result
             .map(|(_, label)| label)
             .collect()
     };
-    let cost = derive_coordination_cost(run_id, &events, duplicates, records.len() as u64, now);
+    let cost = derive_coordination_cost(team_ref, &events, duplicates, records.len() as u64, now);
     vault.with_write_txn_grouped(|wtxn| {
         COORDINATION.put(&vault.store, wtxn, &cost.team_ref, &cost)?;
         Ok(())
     })?;
     Ok(cost)
+}
+
+/// Re-derives one team's coordination cost from the attempts stamped with its
+/// `team_ref` and the audit labels, and stores it. Run it from a sweep, never
+/// inline in the work.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] for a malformed team reference; a malformed
+/// team stamp on a dispatch row; storage errors.
+pub fn project_run_coordination(
+    vault: &Vault,
+    team_ref: &str,
+    now: u64,
+) -> Result<CoordinationCost> {
+    bounded(team_ref, "a team reference is 1..=256 bytes without NUL")?;
+    let records = team_attempts(vault)?.remove(team_ref).unwrap_or_default();
+    store_coordination(vault, team_ref, &records, now)
+}
+
+/// The coordination sweep: one scan of the attempt rows re-derives every team
+/// with stamped attempts, a derived cost or an audit label. A team whose cost
+/// will not store is left for the next sweep; the others still run.
+///
+/// # Errors
+///
+/// A malformed team stamp on a dispatch row; storage errors.
+pub fn project_all_coordination(vault: &Vault, now: u64) -> Result<()> {
+    let mut teams = team_attempts(vault)?;
+    let mut runs = recorded_runs(vault)?;
+    runs.extend(teams.keys().cloned());
+    for run in runs {
+        let records = teams.remove(&run).unwrap_or_default();
+        if let Err(error) = store_coordination(vault, &run, &records, now) {
+            tracing::warn!(kind = ?error.kind(), "team coordination did not derive");
+        }
+    }
+    Ok(())
 }
 
 /// Records an audit's label that two pieces of a team's work duplicated each
@@ -293,8 +370,8 @@ pub fn project_run_coordination(vault: &Vault, run_id: &str, now: u64) -> Result
 /// # Errors
 ///
 /// [`Error::InvalidClaimBody`] for a malformed reference; storage errors.
-pub fn label_duplicate_work(vault: &Vault, run_id: &str, label: &DuplicateWork) -> Result<()> {
-    bounded(run_id, "a team reference is 1..=256 bytes without NUL")?;
+pub fn label_duplicate_work(vault: &Vault, team_ref: &str, label: &DuplicateWork) -> Result<()> {
+    bounded(team_ref, "a team reference is 1..=256 bytes without NUL")?;
     bounded(
         &label.first,
         "a work reference is 1..=256 bytes without NUL",
@@ -312,30 +389,22 @@ pub fn label_duplicate_work(vault: &Vault, run_id: &str, label: &DuplicateWork) 
             "duplicate work names two distinct pieces of work",
         ));
     }
-    let key = format!("{run_id}\0{}\0{}", label.first, label.second);
+    let key = format!("{team_ref}\0{}\0{}", label.first, label.second);
     vault.with_write_txn_grouped(|wtxn| {
         DUPLICATE_LABEL.put(&vault.store, wtxn, &key, label)?;
         Ok(())
     })
 }
 
-/// Every run with a derived cost or an audit label, in run order: the
-/// coordination sweep's worklist.
+/// Every team with stamped attempts, a derived cost or an audit label, in
+/// reference order.
 ///
 /// # Errors
 ///
-/// Storage errors.
+/// A malformed team stamp on a dispatch row; storage errors.
 pub fn coordination_runs(vault: &Vault) -> Result<Vec<String>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let mut runs: std::collections::BTreeSet<String> = COORDINATION
-        .scan_keys(&vault.store, &rtxn, &[])?
-        .into_iter()
-        .collect();
-    for key in DUPLICATE_LABEL.scan_keys(&vault.store, &rtxn, &[])? {
-        if let Some((run, _)) = key.split_once('\0') {
-            runs.insert(run.to_owned());
-        }
-    }
+    let mut runs = recorded_runs(vault)?;
+    runs.extend(team_attempts(vault)?.into_keys());
     Ok(runs.into_iter().collect())
 }
 
