@@ -550,7 +550,9 @@ impl Vault {
         let moving = open_move_in_txn(&self.store, &wtxn, candidate)?;
         EMBEDDING_MOVE.delete(&self.store, &mut wtxn, &moving.candidate)?;
         drop_space_rows_in_txn(&self.store, &mut wtxn, candidate, &moving.kinds)?;
+        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup);
         Ok(())
     }
 
@@ -773,7 +775,9 @@ impl Vault {
         moving.state = SpaceMoveState::Undone { at };
         self.note_space_move_in_txn(&mut wtxn, &moving)?;
         EMBEDDING_MOVE.put(&self.store, &mut wtxn, &moving.candidate, &moving)?;
+        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup);
         Ok(())
     }
 
@@ -857,7 +861,9 @@ impl Vault {
             self.note_space_move_in_txn(&mut wtxn, &moving)?;
             expired.push(moving.candidate);
         }
+        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup);
         Ok(expired)
     }
 
@@ -905,7 +911,9 @@ impl Vault {
         if concluded {
             self.note_space_move_in_txn(&mut wtxn, &moving)?;
         }
+        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup);
         let check = check.unwrap_or(SpaceMoveCheck {
             checked_at: at,
             kinds: Vec::new(),

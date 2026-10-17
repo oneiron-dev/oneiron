@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 228 facade rows, 784 declarations.
-Inputs: 193 of 228 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 183 of 228 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 231 facade rows, 797 declarations.
+Inputs: 196 of 231 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 186 of 231 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 54; unread shapes: 1.
 """
 
@@ -2087,6 +2087,28 @@ class DisclosureOffered(TypedDict):
     owner_ref: str
     created_at: int
     expires_at: int
+class RevealRequest(TypedDict):
+    handle: str
+    why: str
+class RevealPending(TypedDict):
+    reveal: str
+class RevealWaitRequest(TypedDict):
+    reveal: str
+RevealDecision = Literal["pending", "granted", "denied", "expired"]
+RevealReceipt = TypedDict("RevealReceipt", {"reveal": str, "handle": str, "class": str, "why": str, "connection": NotRequired[str | None], "provider": NotRequired[str | None], "project": NotRequired[str | None], "run": NotRequired[str | None], "answered_by": NotRequired[str | None], "decision": NotRequired[str | None], "lease": NotRequired[str | None], "asked_at": int, "delivered_at": NotRequired[int | None]})
+class RevealWaitAnswer(TypedDict):
+    decision: RevealDecision
+    value: NotRequired[str | None]
+    value_base64: NotRequired[str | None]
+    receipt: NotRequired[RevealReceipt | None]
+class RevealDescribeRequest(TypedDict):
+    handle: str
+class RevealProvenance(TypedDict):
+    record: str
+    place: str
+    kind: str
+    masked_at: int
+RevealHandleCard = TypedDict("RevealHandleCard", {"handle": str, "label": str, "class": str, "status": str, "band": str, "provenance": NotRequired[RevealProvenance | None], "reveal": str, "grant_ref": NotRequired[str | None], "refusal": NotRequired[str | None]})
 BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
 class TravelChoice(TypedDict):
     born_with: NotRequired[list[BornWithField]]
@@ -2138,14 +2160,32 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
+FactSource = Literal["claim_changelog", "settlement"]
 FactPositionHex = str
 FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled"]
+HookPhase = Literal["pre", "post", "fact"]
+class HookReplayCaseFact(TypedDict):
+    on: Literal["fact"]
+    source: FactSource
+    position: FactPositionHex
+    kind: FactKind
+    entity: str
+class HookReplayCaseVerb(TypedDict):
+    on: Literal["verb"]
+    run_key: str
+    invocation: str
+    verb: str
+    phase: HookPhase
+HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
+HookReplayCompare = Literal["same", "differs", "incomplete"]
 class HookReplayOutcomeRan(TypedDict):
     status: Literal["ran"]
     outcome_json: NotRequired[str | None]
     outcome: str
     reason: NotRequired[str | None]
     recorded: NotRequired[str | None]
+    recorded_outcome_json: NotRequired[str | None]
+    compare: HookReplayCompare
     from_memo: bool
     reads_live: bool
 class HookReplayOutcomeMissingHistory(TypedDict):
@@ -2153,9 +2193,7 @@ class HookReplayOutcomeMissingHistory(TypedDict):
     reason: str
 HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeMissingHistory
 class HookReplayRow(TypedDict):
-    position: FactPositionHex
-    kind: FactKind
-    entity: str
+    case: HookReplayCase
     result: HookReplayOutcome
 class ArtifactRefRequest(TypedDict):
     artifact_ref: str
