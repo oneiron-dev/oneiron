@@ -494,7 +494,7 @@ fn source_key(source: &EntityId, digest_key: &[u8]) -> Vec<u8> {
 /// and invalidated by the common deletion door in its erasure transaction.
 /// A deleted reader's own rows go too: its saved periods (a resident's carry
 /// its dreaming counters, which index no source), its schedule and its kept
-/// live render.
+/// live render. So do the wrong labels that name it, as reader or target.
 pub(crate) fn invalidate_weave_digest_source_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -534,7 +534,7 @@ pub(crate) fn invalidate_weave_digest_source_in_txn(
         store.vault_meta.delete(txn, &reader.key(SCHEDULE_PREFIX))?;
         store.vault_meta.delete(txn, &reader.key(LIVE_PREFIX))?;
     }
-    Ok(())
+    super::weave_correction::erase_weave_labels_in_txn(store, txn, source)
 }
 
 /// Deletes one saved period and the source-index keys its report wrote.
