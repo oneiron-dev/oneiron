@@ -4,7 +4,6 @@ use crate::attempt_queue::annotation_hold::{
     ANNOTATION_HOLD_ACTOR, ERR_ANNOTATION_HOLD_ACTOR_RESERVED,
 };
 use crate::attempt_queue::budget_hold::{BUDGET_HOLD_ACTOR, ERR_BUDGET_HOLD_ACTOR_RESERVED};
-use crate::attempt_queue::fanout_hold::{ERR_FANOUT_HOLD_ACTOR_RESERVED, FANOUT_HOLD_ACTOR};
 use crate::attempt_queue::cancel::{
     ATTEMPT_RUNTIME_ACTOR, AttemptCancelState, AttemptLandingReserve, ForceCancelAuthority,
     force_cancel_record, validate_force_authority,
@@ -12,6 +11,7 @@ use crate::attempt_queue::cancel::{
 use crate::attempt_queue::encoding::{
     DedupeIndexKeys, decode_record, lease_expired, ready_at, ready_key, waiting_on_backoff,
 };
+use crate::attempt_queue::fanout_hold::{ERR_FANOUT_HOLD_ACTOR_RESERVED, FANOUT_HOLD_ACTOR};
 use crate::attempt_queue::telemetry::{emit_attempt_queue_cleanup_span, invalid_transition};
 use crate::attempt_queue::types::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueueCleanupReport,
