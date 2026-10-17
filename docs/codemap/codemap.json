@@ -2290,6 +2290,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AuthorityHistoryFetch",
+      "AuthorityHistoryPage",
+      "AuthorityHistoryVerificationCoverage"
+     ],
+     "path": "src/authority/history_fetch.rs",
+     "purpose": "Exact-hash authority history fetch, and the coverage an asker verifies itself (OF-469)",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -2550,7 +2566,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 19,
-      "re-export": 31
+      "re-export": 32
      }
     },
     {
@@ -18611,7 +18627,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CoachLiveSlice",
@@ -31193,6 +31209,32 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AnsweringAuthority",
+      "BundleVerdict",
+      "MemberAnswer",
+      "MemberVerdict",
+      "OfficeBodyProposal",
+      "ProposalHeader",
+      "ProposalMember",
+      "ProposalSettleRequest",
+      "ProposalSettlement",
+      "ReviewedFork",
+      "SettleVerdict"
+     ],
+     "path": "src/office_body/consent.rs",
+     "purpose": "Office proposals (DEC-0006, \"A content proposal is a set of forks that share its id\"; ARCH-0035's embedded…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 8,
+      "enum": 4,
+      "fn": 2,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BodyBlock",
       "BodyBlockKind",
       "DocxBody",
@@ -31242,10 +31284,10 @@
      "path": "src/office_body/mod.rs",
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 17,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 7
      }
     },
@@ -31314,7 +31356,10 @@
       "OfficeBodyForkRequest",
       "OfficeBodyImportRequest",
       "OfficeBodyOps",
+      "OfficeBodyProposalRequest",
+      "OfficeBodyProposalSettleRequest",
       "OfficeBodyReadRequest",
+      "OfficeBodyReviewedFork",
       "OfficeBodyView",
       "XlsxBodyView",
       "XlsxSheetView"
@@ -31324,8 +31369,8 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 12,
-      "struct": 15
+      "fn": 14,
+      "struct": 18
      }
     },
     {
@@ -44403,7 +44448,7 @@
      "purpose": "Authority history for a machine that syncs what it opened (OF-469, the delivery half)",
      "surface": {
       "const": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -46431,7 +46476,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 305
+      "fn": 307
      }
     },
     {
@@ -47637,7 +47682,7 @@
      "path": "src/typed_body.rs",
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 11,
       "struct": 4
@@ -51332,7 +51377,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 131,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52137,7 +52182,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52776,7 +52821,7 @@
    },
    "over_bar": 157,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3195,
+   "source_files": 3197,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60731,7 +60776,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 259
+      "fn": 261
      }
     },
     {
@@ -61748,7 +61793,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 260
+      "fn": 262
      }
     },
     {
@@ -63210,6 +63255,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/home_digests.rs",
+     "purpose": "Due digests on a host that runs no Dreamer (OF-499)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/identity.rs",
      "purpose": "Identity decisions (OF-123, ask rule B): the host side of the Dreamer's identity re-check",
      "surface": {
@@ -63246,7 +63301,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -70005,7 +70060,7 @@
      "path": "src/owner/vault_key.rs",
      "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -71226,7 +71281,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71620,7 +71675,7 @@
    },
    "over_bar": 43,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 579,
+   "source_files": 580,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -71822,6 +71877,7 @@
       "AiVideoTicket",
       "AnswerContract",
       "AnswerRecord",
+      "AnsweringAuthority",
       "ApproveScope",
       "ArtifactAskRecord",
       "ArtifactAskStanding",
@@ -71866,6 +71922,7 @@
       "BriefIntent",
       "BriefStamp",
       "BudgetDenied",
+      "BundleVerdict",
       "BundledSkillPermissions",
       "CalibrationPair",
       "CallOutcome",
@@ -72157,6 +72214,8 @@
       "MadeByProcess",
       "MadeByTrigger",
       "MediaUsage",
+      "MemberAnswer",
+      "MemberVerdict",
       "MembershipConsent",
       "MemoryExport",
       "MessagePersonReceipt",
@@ -72209,7 +72268,11 @@
       "OfficeBodyImportRequest",
       "OfficeBodyKind",
       "OfficeBodyOps",
+      "OfficeBodyProposal",
+      "OfficeBodyProposalRequest",
+      "OfficeBodyProposalSettleRequest",
       "OfficeBodyReadRequest",
+      "OfficeBodyReviewedFork",
       "OfficeBodyView",
       "OpaqueChange",
       "OracleReceipt",
@@ -72291,7 +72354,10 @@
       "ProjectRosterWriteOutcome",
       "ProjectRosterWriteRequest",
       "ProjectTradeoffRouteRequest",
+      "ProposalHeader",
+      "ProposalMember",
       "ProposalSettleRequest",
+      "ProposalSettlement",
       "ProseSpan",
       "ProviderPin",
       "PulledImage",
@@ -72415,6 +72481,7 @@
       "SelfEffect",
       "Sensitivity",
       "SensitivityCeiling",
+      "SettleVerdict",
       "ShapeApplyItem",
       "ShapeApplyReceipt",
       "ShapeApplyRequest",
@@ -72615,8 +72682,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 238,
-      "struct": 583
+      "enum": 242,
+      "struct": 591
      }
     },
     {

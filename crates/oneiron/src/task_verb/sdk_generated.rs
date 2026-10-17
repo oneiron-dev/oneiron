@@ -1391,6 +1391,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.body.proposal.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyProposalRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.proposal.settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyProposalSettleRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.body.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::office_body::OfficeBodyExportVerbRequest,
@@ -3286,6 +3298,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.body.proposal.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.body.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4326,6 +4352,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.body.fork.discard" => {
             let _input: crate::office_body::OfficeBodyForkRequest = decode(value.clone())?;
         }
+        "vault.artifacts.body.proposal.read" => {
+            let _input: crate::office_body::OfficeBodyProposalRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            let _input: crate::office_body::OfficeBodyProposalSettleRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.body.export" => {
             let _input: crate::office_body::OfficeBodyExportVerbRequest = decode(value.clone())?;
         }
@@ -4769,6 +4802,13 @@ pub fn invoke(
         "vault.artifacts.body.fork.discard" => {
             encode(vault_artifacts_body_fork_discard(memory, decode(value)?)?)
         }
+        "vault.artifacts.body.proposal.read" => {
+            encode(vault_artifacts_body_proposal_read(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.proposal.settle" => encode(vault_artifacts_body_proposal_settle(
+            memory,
+            decode(value)?,
+        )?),
         "vault.artifacts.body.export" => {
             encode(vault_artifacts_body_export(memory, decode(value)?)?)
         }
@@ -7165,7 +7205,7 @@ pub fn vault_artifacts_body_fork_open(
         memory,
         "vault.artifacts.body.fork.open",
         &input,
-        &["/artifact_ref", "/run_root_ref"],
+        &["/artifact_ref", "/run_root_ref", "/proposal_ref"],
     )?;
     memory.artifacts_body_fork_open(&input)
 }
@@ -7223,6 +7263,30 @@ pub fn vault_artifacts_body_fork_discard(
         &["/artifact_ref", "/fork_ref"],
     )?;
     memory.artifacts_body_fork_discard(&input)
+}
+pub fn vault_artifacts_body_proposal_read(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyProposalRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.proposal.read",
+        &input,
+        &["/artifact_ref", "/proposal_ref"],
+    )?;
+    memory.artifacts_body_proposal_read(&input)
+}
+pub fn vault_artifacts_body_proposal_settle(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyProposalSettleRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.proposal.settle",
+        &input,
+        &["/artifact_ref", "/proposal_ref", "/reviewed/*/fork_ref"],
+    )?;
+    memory.artifacts_body_proposal_settle(&input)
 }
 pub fn vault_artifacts_body_export(
     memory: &Memory<'_>,

@@ -161,12 +161,16 @@ declare const vault: {
         diff(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
         discard(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
         edit(input: { artifact_ref: string; fork_ref: string; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] } | { format: "pptx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
-        merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[] }): Promise<unknown>;
-        open(input: { artifact_ref: string; run_root_ref?: string | null }): Promise<unknown>;
+        merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] }): Promise<unknown>;
+        open(input: { artifact_ref: string; run_root_ref?: string | null; proposal_ref?: string | null }): Promise<unknown>;
       };
       head(input: { artifact_ref: string }): Promise<unknown>;
       import(input: { artifact_ref: string; version?: number | null; made_by?: unknown }): Promise<unknown>;
       preview(input: { artifact_ref: string }): Promise<unknown>;
+      proposal: {
+        read(input: { artifact_ref: string; proposal_ref: string }): Promise<unknown>;
+        settle(input: { artifact_ref: string; proposal_ref: string; verdict: "accept" | "reject"; scope?: object | null; reviewed_head: number[]; reviewed: { fork_ref: string; reviewed_fork: number[] }[]; reason?: string | null }): Promise<unknown>;
+      };
       read(input: { artifact_ref: string; at?: number[] | null }): Promise<unknown>;
     };
     born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;

@@ -282,6 +282,8 @@ pub enum AgentVerb {
     VaultArtifactsBodyForkDiff,
     VaultArtifactsBodyForkMerge,
     VaultArtifactsBodyForkDiscard,
+    VaultArtifactsBodyProposalRead,
+    VaultArtifactsBodyProposalSettle,
     VaultArtifactsBodyExport,
     VaultArtifactsBodyPreview,
     VaultArtifactsBodyDeckReview,
@@ -585,6 +587,8 @@ impl AgentVerb {
         Self::VaultArtifactsBodyForkDiff,
         Self::VaultArtifactsBodyForkMerge,
         Self::VaultArtifactsBodyForkDiscard,
+        Self::VaultArtifactsBodyProposalRead,
+        Self::VaultArtifactsBodyProposalSettle,
         Self::VaultArtifactsBodyExport,
         Self::VaultArtifactsBodyPreview,
         Self::VaultArtifactsBodyDeckReview,
@@ -895,6 +899,8 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiff => "vault.artifacts.body.fork.diff",
             Self::VaultArtifactsBodyForkMerge => "vault.artifacts.body.fork.merge",
             Self::VaultArtifactsBodyForkDiscard => "vault.artifacts.body.fork.discard",
+            Self::VaultArtifactsBodyProposalRead => "vault.artifacts.body.proposal.read",
+            Self::VaultArtifactsBodyProposalSettle => "vault.artifacts.body.proposal.settle",
             Self::VaultArtifactsBodyExport => "vault.artifacts.body.export",
             Self::VaultArtifactsBodyPreview => "vault.artifacts.body.preview",
             Self::VaultArtifactsBodyDeckReview => "vault.artifacts.body.deck.review",
@@ -1160,6 +1166,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiff
                 | Self::VaultArtifactsBodyForkMerge
                 | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyProposalRead
+                | Self::VaultArtifactsBodyProposalSettle
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
                 | Self::VaultArtifactsBodyDeckReview
@@ -1470,6 +1478,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiff
                 | Self::VaultArtifactsBodyForkMerge
                 | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyProposalRead
+                | Self::VaultArtifactsBodyProposalSettle
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
                 | Self::VaultArtifactsBodyDeckReview
@@ -1834,6 +1844,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiff
                 | Self::VaultArtifactsBodyForkMerge
                 | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyProposalRead
+                | Self::VaultArtifactsBodyProposalSettle
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
                 | Self::VaultArtifactsBodyDeckReview
@@ -2021,6 +2033,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkEdit
                 | Self::VaultArtifactsBodyForkMerge
                 | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyProposalSettle
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyDeckMerge
                 | Self::VaultArtifactsBodyDeckExport
@@ -2337,6 +2350,8 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiff => &["spec"],
             Self::VaultArtifactsBodyForkMerge => &["spec"],
             Self::VaultArtifactsBodyForkDiscard => &["spec"],
+            Self::VaultArtifactsBodyProposalRead => &["spec"],
+            Self::VaultArtifactsBodyProposalSettle => &["spec"],
             Self::VaultArtifactsBodyExport => &["spec"],
             Self::VaultArtifactsBodyPreview => &["spec"],
             Self::VaultArtifactsBodyDeckReview => &["spec"],
@@ -2641,6 +2656,8 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiff => &["spec"],
             Self::VaultArtifactsBodyForkMerge => &["spec"],
             Self::VaultArtifactsBodyForkDiscard => &["spec"],
+            Self::VaultArtifactsBodyProposalRead => &["spec"],
+            Self::VaultArtifactsBodyProposalSettle => &["spec"],
             Self::VaultArtifactsBodyExport => &["spec"],
             Self::VaultArtifactsBodyPreview => &["spec"],
             Self::VaultArtifactsBodyDeckReview => &["spec"],
@@ -3374,7 +3391,7 @@ impl AgentVerb {
                 "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head."
             }
             Self::VaultArtifactsBodyForkOpen => {
-                "Opens a fork of the live body at its head for machine work, in an optional run."
+                "Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own."
             }
             Self::VaultArtifactsBodyForkEdit => {
                 "The opener's typed DOCX, XLSX or deck operations on its open fork of a live body."
@@ -3383,10 +3400,16 @@ impl AgentVerb {
                 "A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show."
             }
             Self::VaultArtifactsBodyForkMerge => {
-                "A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses."
+                "Lands one reviewed fork, naming the head and fork head the review read, on the caller's word from outside the opener's lineage or on a standing grant; a moved head, a blocking conflict or no answer refuses."
             }
             Self::VaultArtifactsBodyForkDiscard => {
                 "Abandons an open fork's unlanded work and returns its record."
+            }
+            Self::VaultArtifactsBodyProposalRead => {
+                "An office proposal on the artifact: its opener and run, each member fork with its verdict and answer, and its settlement."
+            }
+            Self::VaultArtifactsBodyProposalSettle => {
+                "Accepts or rejects the reviewed forks of an office proposal that the scope covers; each lands on a person's word from outside the opener's lineage or on a standing grant, or waits."
             }
             Self::VaultArtifactsBodyExport => {
                 "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export."

@@ -1206,6 +1206,16 @@ export_facade! {
     let output = client.vault_artifacts_body_fork_discard(&input)?;
     crate::codec::lift_record("vault.artifacts.body.fork.discard", &output)
 };
+"vault.artifacts.body.proposal.read" => fn vault_artifacts_body_proposal_read(&self, input: OfficeBodyProposalRequest) -> OfficeBodyProposal = |client| {
+    let input: oneiron::office_body::OfficeBodyProposalRequest = crate::codec::lower_record("vault.artifacts.body.proposal.read", input)?;
+    let output = client.vault_artifacts_body_proposal_read(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.proposal.read", &output)
+};
+"vault.artifacts.body.proposal.settle" => fn vault_artifacts_body_proposal_settle(&self, input: OfficeBodyProposalSettleRequest) -> OfficeBodyProposal = |client| {
+    let input: oneiron::office_body::OfficeBodyProposalSettleRequest = crate::codec::lower_record("vault.artifacts.body.proposal.settle", input)?;
+    let output = client.vault_artifacts_body_proposal_settle(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.proposal.settle", &output)
+};
 "vault.artifacts.body.export" => fn vault_artifacts_body_export(&self, input: OfficeBodyExportVerbRequest) -> OfficeBodyExportView = |client| {
     let input: oneiron::office_body::OfficeBodyExportVerbRequest = crate::codec::lower_record("vault.artifacts.body.export", input)?;
     let output = client.vault_artifacts_body_export(&input)?;
