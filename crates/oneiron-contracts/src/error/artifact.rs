@@ -48,6 +48,16 @@ pub enum ArtifactError {
     /// are never mutated.
     #[error("edit round-trip failed: {0}")]
     EditRoundtripFailed(&'static str),
+    /// The live deck body (OF-510) refused an operation, a landing or an
+    /// export: the docedit refusal kept whole, its class, its message and the
+    /// live nodes it names. Nothing was written.
+    #[error("live deck refused ({}): {detail}", refusal.as_str())]
+    LiveDeckRefused {
+        refusal: LiveDeckRefusal,
+        detail: String,
+        /// Live-deck model node ids the refusal names (unbound nodes).
+        nodes: Vec<u64>,
+    },
     /// An ARTL-4 settle (select or discard) targeted an `EditProposal` that was
     /// already settled — settlement is consume-once (OF-368 D5/D6): exactly one
     /// of select or discard consumes a retained output, and a second settle of
@@ -166,6 +176,49 @@ pub enum ArtifactError {
     DeltaCaptureUnavailable(&'static str),
 }
 
+/// The class of a live-deck refusal, one per `oneiron_docedit::live::LiveError`
+/// variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LiveDeckRefusal {
+    /// The retained deck could not be read.
+    Deck,
+    /// The retained package refused.
+    Package,
+    /// A checked native edit refused.
+    Edit,
+    /// The operation is invalid in this state.
+    Invalid,
+    UnknownNode,
+    /// The tree rules refused (a slide under a group, the root moved).
+    TreeShape,
+    /// The proposer tried to settle its own proposal.
+    SelfSettle,
+    /// The head moved since the preflight; repeat it.
+    HeadAdvanced,
+    /// Live nodes have no retained binding to project over.
+    UnboundNodes,
+    Encoding,
+}
+
+impl LiveDeckRefusal {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Deck => "deck",
+            Self::Package => "package",
+            Self::Edit => "edit",
+            Self::Invalid => "invalid",
+            Self::UnknownNode => "unknown_node",
+            Self::TreeShape => "tree_shape",
+            Self::SelfSettle => "self_settle",
+            Self::HeadAdvanced => "head_advanced",
+            Self::UnboundNodes => "unbound_nodes",
+            Self::Encoding => "encoding",
+        }
+    }
+}
+
 impl ArtifactError {
     /// Returns the stable category for this error.
     #[must_use]
@@ -178,6 +231,7 @@ impl ArtifactError {
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
             Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
             Self::EditRoundtripFailed(_) => ErrorKind::EditRoundtripFailed,
+            Self::LiveDeckRefused { .. } => ErrorKind::LiveDeckRefused,
             Self::EditProposalAlreadySettled { .. } => ErrorKind::EditProposalAlreadySettled,
             Self::EditProposalStale => ErrorKind::EditProposalStale,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
