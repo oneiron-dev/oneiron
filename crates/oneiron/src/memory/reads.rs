@@ -285,7 +285,10 @@ impl Memory<'_> {
         let current = lifecycle == Some(ClaimLifecycleStatus::Active);
         let policy = SourceRankingPolicy::default();
         let settled = |body: &ClaimBody| {
-            matches!(body.approval, ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved)
+            matches!(
+                body.approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
         };
         let mut cap = filter.limit;
         let mut receipt = None;
@@ -326,7 +329,9 @@ impl Memory<'_> {
             }
         }
         if current {
-            clamp_order(&mut rows, &policy, |(_, body)| settled(body).then_some(body))?;
+            clamp_order(&mut rows, &policy, |(_, body)| {
+                settled(body).then_some(body)
+            })?;
         }
         rows.truncate(filter.limit);
         let mut views = Vec::with_capacity(rows.len());
