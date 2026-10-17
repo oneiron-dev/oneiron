@@ -23,6 +23,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::sync::quarantine::remote_rejection_reason;
 
 /// The most entries one authority tail page carries.
 pub const AUTHORITY_TAIL_PAGE_MAX: usize = 512;
@@ -122,12 +123,13 @@ pub fn authority_wanted(
 }
 
 /// Imports the signed entries a machine of the owner's appends, at most
-/// [`AUTHORITY_TAIL_PAGE_MAX`], through the signed-history door: every
-/// signature, parent and standing is checked and the log refolds here, so
-/// nothing the machine asserts is trusted beyond the signed bytes. Each
-/// entry's parents are held here or earlier in `entries`. Returns how many
-/// rows the import wrote, or `None` for a peer that is not a machine of the
-/// owner's.
+/// [`AUTHORITY_TAIL_PAGE_MAX`], through the signed-history door
+/// ([`import_authority_page`]): every signature, parent and standing is
+/// checked and the log refolds here, so nothing the machine asserts is
+/// trusted beyond the signed bytes. Each entry's parents are held here or
+/// earlier in `entries`; an entry the door refuses holds back only itself and
+/// what stands on it. Returns how many rows the import wrote, or `None` for a
+/// peer that is not a machine of the owner's.
 ///
 /// # Errors
 ///
@@ -145,8 +147,52 @@ pub fn authority_append_for(
             SyncProtocolValidation::DocumentAdmissionDenied,
         ));
     }
+    Ok(Some(import_authority_page(vault, entries)?.written))
+}
+
+/// What one authority page import did ([`import_authority_page`]).
+#[derive(Debug, Default)]
+pub struct AuthorityPageImport {
+    /// How many rows the import wrote.
+    pub written: usize,
+    /// The entries the signed-history door refused, by hash.
+    pub refused: BTreeSet<AuthorityEntryHash>,
+}
+
+/// Imports one page of signed authority entries, parents first, through the
+/// door for a history held in part ([`Vault::import_signed_authority_page`]).
+/// When the door refuses the page whole, each entry is tried alone in order,
+/// so one refused entry (a fork on a retired key, say) holds back only itself
+/// and the entries that stand on it.
+///
+/// # Errors
+///
+/// An entry that does not decode; an error that judges no entry, such as
+/// storage.
+pub fn import_authority_page(vault: &Vault, entries: &[Vec<u8>]) -> Result<AuthorityPageImport> {
     if entries.is_empty() {
-        return Ok(Some(0));
+        return Ok(AuthorityPageImport::default());
     }
-    Ok(Some(vault.import_signed_authority_history(entries)?.len()))
+    match vault.import_signed_authority_page(entries) {
+        Ok(ids) => {
+            return Ok(AuthorityPageImport {
+                written: ids.len(),
+                refused: BTreeSet::new(),
+            });
+        }
+        Err(error) if remote_rejection_reason(&error).is_none() => return Err(error),
+        Err(_) => {}
+    }
+    let mut outcome = AuthorityPageImport::default();
+    for entry in entries {
+        let hash = authority_entry_hash(&decode_authority_log_entry_body(entry)?)?;
+        match vault.import_signed_authority_page(std::slice::from_ref(entry)) {
+            Ok(ids) => outcome.written += ids.len(),
+            Err(error) if remote_rejection_reason(&error).is_some() => {
+                outcome.refused.insert(hash);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(outcome)
 }

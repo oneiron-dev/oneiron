@@ -3,9 +3,12 @@
 //! machine asks the home for every signed entry it lacks, names what it holds,
 //! and imports each page through the signed-history door, which checks every
 //! signature and parent and refolds here. Nothing the home asserts is trusted
-//! beyond the signed bytes. The tail's last page names the entries this
-//! machine holds and the home lacks, and the machine appends them, parents
-//! first, so what it wrote reaches the home without the window it rides.
+//! beyond the signed bytes. An entry the door refuses holds back only itself
+//! and what stands on it, and the rest of the round asks past it. The tail's
+//! last page names the entries this machine holds and the home lacks, and
+//! the machine appends them, parents first, so what it wrote reaches the home
+//! without the window it rides. A round ends by asking what history this
+//! machine's rows still name and it lacks (`Vault::authority_missing_history`).
 
 use base64::Engine;
 use serde::Deserialize;
@@ -17,7 +20,9 @@ use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, authority_entry_hash, decode_authority_log_entry_body};
 use crate::sync::client::SyncClientConfig;
-use crate::sync::residence::{AUTHORITY_TAIL_PAGE_MAX, held_authority_entries};
+use crate::sync::residence::{
+    AUTHORITY_TAIL_PAGE_MAX, held_authority_entries, import_authority_page,
+};
 use crate::sync::transport::TransportError;
 
 /// The most pages one catch-up takes, or appends, before it stops for this
@@ -62,8 +67,11 @@ pub(crate) async fn catch_up_authority(
     };
     let mut taken = 0;
     let mut wanted = None;
+    // Entries refused this round: named as held, so the home pages past them.
+    let mut skipped = BTreeSet::new();
     for _ in 0..MAX_PAGES {
-        let held = held_authority_entries(vault).map_err(storage)?;
+        let mut held = held_authority_entries(vault).map_err(storage)?;
+        held.extend(skipped.iter().copied());
         let packed: Vec<u8> = held.iter().flatten().copied().collect();
         let reply = rpc
             .request(
@@ -85,11 +93,11 @@ pub(crate) async fn catch_up_authority(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| refused())?;
         let count = entries.len();
-        if count > 0 {
-            vault
-                .import_signed_authority_history(&entries)
-                .map_err(storage)?;
-            taken += count;
+        let page = import_authority_page(vault, &entries).map_err(storage)?;
+        taken += page.written;
+        if !page.refused.is_empty() {
+            tracing::debug!(refused = page.refused.len(), "authority entries refused");
+            skipped.extend(page.refused);
         }
         if count < AUTHORITY_TAIL_PAGE_MAX {
             wanted = Some(reply.wanted);
@@ -101,6 +109,14 @@ pub(crate) async fn catch_up_authority(
         if appended > 0 {
             tracing::debug!(appended, "authority entries appended to the home");
         }
+    }
+    let missing = vault.authority_missing_history().map_err(storage)?;
+    if !missing.is_complete() {
+        tracing::warn!(
+            missing = missing.missing.len(),
+            refused = skipped.len(),
+            "authority history still names entries this machine lacks"
+        );
     }
     Ok(taken)
 }
