@@ -313,25 +313,28 @@ pub(crate) struct McpBoardHooks {
     /// The blocks naming a TASKS row the board shows.
     blocks: std::collections::BTreeSet<oneiron::EntityId>,
     receipt: Option<crate::api::context_board::PinsReceipt>,
-    /// The blocks naming a pinned MEMORIES row the board shows.
-    memory_blocks: std::collections::BTreeSet<oneiron::EntityId>,
+    /// Each MEMORIES section the board shows, by its name: its pinned rows
+    /// and the blocks naming them.
+    memories: std::collections::BTreeMap<String, oneiron::context_board::HookShare>,
 }
 
 impl McpBoardHooks {
     /// The share of these hooks a keyed `describe` of section `key` shows:
-    /// the TASKS blocks for TASKS, the MEMORIES blocks and receipt for a
-    /// MEMORIES section, and none for any other. A MEMORIES section takes
-    /// every world's share.
-    pub(super) fn shown_by(self, key: &str) -> Self {
+    /// the TASKS blocks for TASKS, that one world's blocks and the receipt
+    /// for its rows for a MEMORIES section, and none for any other.
+    pub(super) fn shown_by(mut self, key: &str) -> Self {
         match key.split_once(' ').map_or(key, |(name, _)| name) {
             "TASKS" => Self {
                 blocks: self.blocks,
                 ..Self::default()
             },
-            "MEMORIES" => Self {
-                receipt: self.receipt,
-                memory_blocks: self.memory_blocks,
-                ..Self::default()
+            "MEMORIES" => match self.memories.remove(key) {
+                Some(share) => Self {
+                    receipt: self.receipt.map(|receipt| receipt.only(&share.rows)),
+                    memories: std::iter::once((key.to_owned(), share)).collect(),
+                    ..Self::default()
+                },
+                None => Self::default(),
             },
             _ => Self::default(),
         }
@@ -356,8 +359,10 @@ impl McpBoardHooks {
     /// Spends one delivery of each block a board that went out carried. A
     /// failed record leaves the block to show again, never to vanish unseen.
     pub(super) fn spend(&self, server: &SyncServer) {
-        let blocks: std::collections::BTreeSet<_> =
-            self.blocks.union(&self.memory_blocks).copied().collect();
+        let mut blocks = self.blocks.clone();
+        for share in self.memories.values() {
+            blocks.extend(share.blocks.iter().copied());
+        }
         if let Err(error) = server.vault.record_board_hook_deliveries(&blocks) {
             tracing::warn!(kind = ?error.kind(), "mcp board hook delivery record failed");
         }
@@ -501,7 +506,7 @@ fn mcp_board_sections(
     let mut hooks = McpBoardHooks {
         blocks: tasks.tag_hook_pins(pins),
         receipt: None,
-        memory_blocks: std::collections::BTreeSet::new(),
+        memories: std::collections::BTreeMap::new(),
     };
     // The engine's own footer states the render WINDOW's truncation and
     // whether its scan was exhausted. That is a different fact from the scope
@@ -520,7 +525,7 @@ fn mcp_board_sections(
         .map_err(mcp_board_frame_error)?;
     let mut sections = vec![verb_section, worlds_section];
     if let Some(memories) = mcp_pinned_memories(server, actor, pins)? {
-        hooks.memory_blocks = memories.section.hook_blocks_delivered(pins);
+        hooks.memories = memories.section.hook_shares(pins);
         served.extend_from_slice(memories.receipt.delivered());
         sections.extend(
             oneiron::context_board::assemble_memories_sections(&memories.section)
@@ -1267,7 +1272,7 @@ fn run_board_sections(
     let mut hooks = McpBoardHooks {
         blocks: tasks.tag_hook_pins(pins),
         receipt: None,
-        memory_blocks: std::collections::BTreeSet::new(),
+        memories: std::collections::BTreeMap::new(),
     };
     let omissions = McpBoardOmissions {
         scope_omitted: 0,
@@ -1298,7 +1303,7 @@ fn run_board_sections(
     if let Some(memories) = crate::api::context_board::lane_hook_pins_projection(read, pins)
         .map_err(super::mcp_api_error)?
     {
-        hooks.memory_blocks = memories.section.hook_blocks_delivered(pins);
+        hooks.memories = memories.section.hook_shares(pins);
         served.extend_from_slice(memories.receipt.delivered());
         sections.extend(
             oneiron::context_board::assemble_memories_sections(&memories.section)

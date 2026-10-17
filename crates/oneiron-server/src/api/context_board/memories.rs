@@ -472,6 +472,13 @@ impl PinsReceipt {
         &self.delivered
     }
 
+    /// This receipt kept to the rows in `shown`: what one section of the board, delivered
+    /// alone, owes.
+    pub(crate) fn only(mut self, shown: &std::collections::BTreeSet<oneiron::EntityId>) -> Self {
+        self.delivered.retain(|id| shown.contains(id));
+        self
+    }
+
     /// Records the receipt: call it once the rows are going out, never for a board only read.
     pub(crate) async fn record(
         self,
