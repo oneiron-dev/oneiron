@@ -117,6 +117,10 @@ pub(crate) fn admit_deep_retrieval(
     // caller that has no standing to know it.
     let admission = host.guard.admit().map_err(|error| {
         tracing::warn!(?error, "deep retrieval budget refused admission");
+        let line = host.guard.read().attempt_id;
+        server
+            .vault
+            .budget_denied_hooks(&error, &host.guard, &line, None);
         ApiError::deep_retrieval_unavailable()
     })?;
     Ok(Some(DeepAdmission {

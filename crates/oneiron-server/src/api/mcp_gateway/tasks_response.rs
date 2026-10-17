@@ -389,9 +389,12 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
     }
     let code = match error.code.as_str() {
         oneiron::MEMORY_CODE_NOT_FOUND => -32004,
+        // OF-123: an effect whose person is not settled yet is a typed
+        // refusal like these, never an argument error; its kind below names it.
         oneiron::MEMORY_CODE_FORBIDDEN
         | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
         | oneiron::memory::MEMORY_CODE_BUDGET_SPENT
+        | oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,

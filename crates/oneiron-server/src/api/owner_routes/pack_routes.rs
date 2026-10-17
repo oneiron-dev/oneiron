@@ -56,6 +56,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/packs/slack/install", post(slack_install))
         .route("/packs/hooks", get(hook_bindings))
         .route("/packs/hooks/bind", post(bind_hooks))
+        .route("/packs/hooks/qualify", post(qualify_hooks))
         .route("/packs/hooks/enabled", post(set_hook_enabled))
         .route("/packs/remove", post(remove_pack))
         .route("/packs/ref-sync", get(ref_sync).put(set_ref_sync))
@@ -322,6 +323,49 @@ async fn bind_hooks(
     })
     .await?;
     Ok(Json(bound))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QualifyHooks {
+    /// The Candidate pack's source, as 32 hex (its receipt's `source_id`).
+    source: String,
+}
+
+#[derive(Serialize)]
+struct HookQualification {
+    #[serde(flatten)]
+    put: PackPut,
+    replays: Vec<oneiron::skill_hub::pack_catalog::PackHookReplay>,
+}
+
+/// `POST /v1/owner/packs/hooks/qualify`: a Candidate hub pack's hooks take
+/// their test, a replay over past entries that lands nothing. A clean replay
+/// installs the pack; the replays come back either way.
+async fn qualify_hooks(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<QualifyHooks>, JsonRejection>,
+) -> OwnerReply<HookQualification> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let runtime = server.hook_runtime.get().cloned();
+    let qualified = blocking(move || {
+        let runtime = runtime.ok_or_else(|| {
+            OwnerError::Refused("no hook sandbox runs on this server".to_owned())
+        })?;
+        let source = EntityId::from_hex(&request.source)
+            .map_err(|_| OwnerError::Invalid("source is not an entity id".to_owned()))?;
+        let qualified = server
+            .vault()
+            .qualify_pack_hooks(&owner, runtime.as_ref(), source)?;
+        Ok(HookQualification {
+            put: PackPut::from(qualified.disposition),
+            replays: qualified.replays,
+        })
+    })
+    .await?;
+    Ok(Json(qualified))
 }
 
 #[derive(Debug, Deserialize)]

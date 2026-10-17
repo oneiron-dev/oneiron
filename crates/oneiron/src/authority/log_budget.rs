@@ -238,9 +238,15 @@ pub(super) fn uncounted_rows(
     let issuers = authority_structure(by_hash.values()).issuers;
     by_hash
         .iter()
-        .filter(|(_, entry)| is_slip_op(&entry.op) && issuers.contains(entry.signer_key()))
+        .filter(|(_, entry)| is_uncounted(entry, &issuers))
         .map(|(hash, _)| *hash)
         .collect()
+}
+
+/// Whether no fold bound counts `entry` under `issuers`, the log's slip
+/// issuers: it is one of their slip ops.
+pub(super) fn is_uncounted(entry: &AuthorityLogEntry, issuers: &BTreeSet<AuthorityKey>) -> bool {
+    is_slip_op(&entry.op) && issuers.contains(entry.signer_key())
 }
 
 /// What the store doors read of the stored log: its consent structure, and
