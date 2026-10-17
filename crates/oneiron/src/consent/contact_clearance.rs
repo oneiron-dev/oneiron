@@ -27,17 +27,16 @@ use super::grant::CONSENT_CONTENT_KIND;
 use super::support::normalized_ref;
 use super::widen::WidenProposal;
 use crate::authority::VerifiedSlip;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::counterparty_contact::{CounterpartyContactStatus, decode_counterparty_contact_body};
+use crate::batch::EntityMetadataHeader;
+use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::disclosure::{DisclosureScope, DisclosureScopeStatus, encode_disclosure_scope_body};
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, GateError};
 use crate::federation::Scope;
 use crate::federation::scope_codec::{decode_scope_value, encode_scope_value};
 use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
+use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 
 /// Pinned label of the typed contact-disclosure widen payload.
@@ -493,7 +492,7 @@ impl Vault {
                     "disclosure mode is always ask: only the owner starts a clearance",
                 )));
             }
-            require_active_contact_in_txn(&self.store, &*txn, &offer.contact_ref)?;
+            require_active_contact_in_txn(self, &*txn, &offer.contact_ref)?;
             let prior = crate::disclosure::contact_clearance_in_txn(
                 &self.store,
                 &*txn,
@@ -562,7 +561,7 @@ impl Vault {
             now,
         )?;
         let offer = &proposal.offer;
-        require_active_contact_in_txn(&self.store, &*txn, &offer.contact_ref)?;
+        require_active_contact_in_txn(self, &*txn, &offer.contact_ref)?;
         let prior =
             crate::disclosure::contact_clearance_in_txn(&self.store, &*txn, &offer.contact_ref)?;
         let before = contact_clearance_digest(prior.as_ref())?;
@@ -792,7 +791,7 @@ impl Vault {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let mut receipts = Vec::with_capacity(contacts.len());
             for contact in contacts {
-                require_active_contact_in_txn(&self.store, &*txn, contact)?;
+                require_active_contact_in_txn(self, &*txn, contact)?;
                 let prior =
                     crate::disclosure::contact_clearance_in_txn(&self.store, &*txn, contact)?;
                 let created_at = prior
@@ -882,7 +881,7 @@ impl Vault {
             if !contacts.contains(contact) {
                 continue;
             }
-            match require_active_contact_in_txn(&self.store, txn, contact) {
+            match require_active_contact_in_txn(self, txn, contact) {
                 Ok(()) => {}
                 Err(Error::EntityNotFound | Error::InvalidEntityType(_) | Error::Gate(_)) => {
                     continue;
@@ -917,24 +916,17 @@ impl Vault {
     }
 }
 
-/// A clearance names a live, active CID-7 contact, read on the acting txn.
+/// A clearance names a live, active CID-7 contact, read on the acting txn
+/// from its claims (OF-272): a dropped contact row changes nothing.
 fn require_active_contact_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     contact: &EntityId,
 ) -> Result<()> {
-    let raw = store
-        .port_entity_record(txn, contact)?
-        .map(|row| row.encode())
+    let record = vault
+        .get_counterparty_contact_in_txn(txn, contact)?
         .ok_or(Error::EntityNotFound)?;
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-        return Err(Error::InvalidEntityType(header.entity_type));
-    }
-    if !crate::vault::live_entity_row_in_txn(store, txn, contact)?.is_live()
-        || decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.status
-            != CounterpartyContactStatus::Active
-    {
+    if record.status != CounterpartyContactStatus::Active {
         return Err(Error::Gate(GateError::InvalidConsentBound(
             "contact clearance names an inactive contact",
         )));

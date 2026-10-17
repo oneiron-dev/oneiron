@@ -16,16 +16,12 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::consent::AuthenticatedOwner;
-use crate::counterparty_contact::{CounterpartyContactStatus, decode_counterparty_contact_body};
+use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
-use crate::store::Store;
 use crate::task_verb::{
     ConsultPayloadRef, TaskAskDefault, TaskAskOptionId, TaskAskQuestion, TaskAskReceipt,
     TaskAskSpec, TaskAskTarget,
@@ -304,7 +300,7 @@ impl Memory<'_> {
         let vault = self.vault();
         let owners = vault.with_write_txn_grouped(|txn| {
             for candidate in &record.candidates {
-                require_live_contact_in_txn(&vault.store, &*txn, candidate)?;
+                require_live_contact_in_txn(vault, &*txn, candidate)?;
             }
             match read_stored_claim_body(&vault.store, &*txn, &ask_ref)? {
                 Some(body) if body.predicate == PREDICATE_DISCLOSURE_ATTENDEE_ASK => {
@@ -408,7 +404,7 @@ impl Vault {
             if !record.candidates.contains(&contact) {
                 return Err(invalid_ask());
             }
-            require_live_contact_in_txn(&self.store, &*txn, &contact)?;
+            require_live_contact_in_txn(self, &*txn, &contact)?;
         }
         let identity_ref = attendee_identity_ref(ask_ref)?;
         // The first owner answer is the only one. A claim already at the
@@ -473,24 +469,17 @@ impl Vault {
     }
 }
 
-/// A candidate or a chosen identity is a live, active CID-7 contact.
+/// A candidate or a chosen identity is a live, active CID-7 contact, read
+/// from its claims (OF-272).
 fn require_live_contact_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     contact: &EntityId,
 ) -> Result<()> {
-    let raw = store
-        .port_entity_record(txn, contact)?
-        .map(|row| row.encode())
+    let record = vault
+        .get_counterparty_contact_in_txn(txn, contact)?
         .ok_or(Error::EntityNotFound)?;
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-        return Err(Error::InvalidEntityType(header.entity_type));
-    }
-    if !crate::vault::live_entity_row_in_txn(store, txn, contact)?.is_live()
-        || decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.status
-            != CounterpartyContactStatus::Active
-    {
+    if record.status != CounterpartyContactStatus::Active {
         return Err(invalid_ask());
     }
     Ok(())

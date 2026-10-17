@@ -370,6 +370,23 @@ impl Vault {
         Ok(records)
     }
 
+    /// The contacts whose live `counterparty_contact.identity_ref` head names
+    /// `identity_ref`, in the caller's snapshot: the discovery
+    /// [`Self::counterparty_contacts_for_identity`] runs, claims-first
+    /// (OF-272). A deleted contact is none of them.
+    pub(crate) fn counterparty_contact_ids_for_identity_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        identity_ref: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        contact_ids_with_live_head_in_txn(
+            &self.store,
+            rtxn,
+            PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF,
+            &identity_ref.to_hex(),
+        )
+    }
+
     /// Whether another live contact already holds `record`'s
     /// `(identity, counterparty)` pair, by the contacts' claims (OF-272). The
     /// cache's own index uniqueness stays its writer's check.

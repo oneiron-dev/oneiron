@@ -6,11 +6,9 @@
 
 use crate::Vault;
 use crate::authority::AuthorityFold;
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::ports::EdgeDirection;
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_COUNTERPARTY_CONTACT};
+use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::vault::LiveEntityRow;
 
 /// Whether `member` is one of the vault's own agents as `txn` and its
@@ -21,13 +19,9 @@ pub(crate) fn is_vault_agent_in(
     fold: &AuthorityFold,
     member: &EntityId,
 ) -> Result<bool> {
-    let contacts = vault.filtered_edge_peers(
-        txn,
-        EdgeDirection::In,
-        member,
-        EdgeKind::About,
-        Some(ENTITY_TYPE_COUNTERPARTY_CONTACT),
-    )?;
+    // A contact's party is no vault agent; contacts are read from their
+    // claims (OF-272).
+    let contacts = vault.counterparty_contact_ids_for_identity_in_txn(txn, member)?;
     if !contacts.is_empty() {
         return Ok(false);
     }
