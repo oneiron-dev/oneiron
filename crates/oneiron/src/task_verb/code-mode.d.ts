@@ -13,11 +13,13 @@ declare const ai: {
 declare function ask(input: object): Promise<unknown>;
 declare function can(input: { ask: object }): Promise<unknown>;
 declare function cancel(input: { task_ref: string }): Promise<unknown>;
-declare const connector: {
+declare const connector: { readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<unknown> } } & {
+  call(input: { arguments?: unknown; mutation?: "preview" | "explicit_mutation"; name: string; tool: string }): Promise<unknown>;
   list(input: { query?: string | null }): Promise<unknown>;
   outbound: {
     schedule(input: { channel: string; content_ref?: string | null; dedupe_key?: string | null; idempotency_key?: string | null; job_ref?: string | null; mention?: { end: number; message: string; start: number; turn: string } | null; occurred_at?: number | null; on_behalf_of?: string | null; target: string; trigger: string; trigger_ref: string; verb: string }): Promise<unknown>;
   };
+  schema(input: { name: string; tool: string }): Promise<unknown>;
   status(input: { name: string }): Promise<unknown>;
 };
 declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
@@ -238,7 +240,7 @@ declare const vault: {
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
   graph: {
-    ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; posture?: string | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
+    ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; criteria?: object | null; posture?: string | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
   };
   guests: {
     mint_slip(input: { expires_at: number; grant_ref: string; holder_key: string }): Promise<unknown>;

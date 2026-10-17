@@ -65,6 +65,8 @@ pub(crate) use super::wave_doors::*;
 pub(crate) use super::widen_proposal_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::policy_doors::*;
+// The generic connector call's door (ONE-2510), likewise.
+pub(crate) use super::connector_call_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
 // The core write doors (OF-181), likewise.
