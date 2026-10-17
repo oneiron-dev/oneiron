@@ -85,16 +85,15 @@ fn mcp_describe_result(
             "engine_error",
             "describe of one task returned the TASKS section",
         )),
-        oneiron::task_verb::TaskDescription::SelfCard { tail } => {
-            let value =
-                serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
-                    .map_err(|_| {
-                        McpGatewayError::new(
-                            -32603,
-                            "engine_error",
-                            "typed agent result cannot be encoded",
-                        )
-                    })?;
+        description @ (oneiron::task_verb::TaskDescription::SelfCard { .. }
+        | oneiron::task_verb::TaskDescription::VaultCard { .. }) => {
+            let value = serde_json::to_value(description).map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
             Ok((value, crate::mcp::McpPageSource::complete(1)))
         }
         oneiron::task_verb::TaskDescription::Card { lines } => {
@@ -736,6 +735,9 @@ fn mcp_agent_verb_input(
             if let Some(value) = &a.self_target {
                 map.insert("self".to_owned(), json!(value));
             }
+            if let Some(value) = &a.vault {
+                map.insert("vault".to_owned(), json!(value));
+            }
             if let Some(value) = &a.session_id {
                 map.insert("session_id".to_owned(), json!(value));
             }
@@ -886,6 +888,7 @@ fn mcp_agent_verb_input(
         "vault.artifacts.waits" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.release_wait" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.review_slides" => a.spec.clone().ok_or_else(invalid),
+        "vault.critic.review" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.propose_deck" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.propose_output" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.keep" => a.spec.clone().ok_or_else(invalid),
@@ -1223,6 +1226,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("self") {
                 arguments.insert("self".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("vault") {
+                arguments.insert("vault".to_owned(), value.clone());
             }
             if let Some(value) = input.get("session_id") {
                 arguments.insert("session_id".to_owned(), value.clone());
@@ -1586,6 +1592,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.review_slides" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.critic.review" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.propose_deck" => {
@@ -2435,7 +2444,7 @@ async fn execute_agent_verb_row(
                 })
                 .await;
             }
-            if input.task_ref.is_none() && !input.self_target {
+            if input.task_ref.is_none() && !input.self_target && !input.vault {
                 // The section is narrowed to this credential before its
                 // render cap, so its counts are the credential's rows alone.
                 let rows = memory.describe_rows().map_err(mcp_facade_error)?;
@@ -3879,6 +3888,18 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_artifacts_review_slides(server, auth, input)
                     .await
                     .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.critic.review" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.critic.review", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::critic::review::CriticReviewSubmit =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_critic_review(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

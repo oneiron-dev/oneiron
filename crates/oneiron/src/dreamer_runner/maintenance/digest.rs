@@ -16,7 +16,7 @@ const PRESENTATION: SideTable<(), ProactivityPresentation, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_PRESENTATION);
 const POLICY_CONFIRMED: SideTable<EntityId, [u8; 32], side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CONFIRMED);
-/// Per-recipient time of the last digest that delivered judge asks.
+/// Per-recipient time of the last digest that delivered judge or eval label asks.
 const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_JUDGE_ASKS);
 /// Generic proposed claim written through the existing gated agent memory
@@ -165,13 +165,15 @@ impl DigestCleanup {
 pub struct ProactivityDigest {
     pub id: [u8; 32],
     pub created_at: u64,
-    /// The authenticated reader the judge asks are addressed to; `None` for
-    /// the ownerless timer projection, which carries no asks.
+    /// The authenticated reader the asks are addressed to; `None` for the
+    /// ownerless timer projection, which carries no asks.
     #[serde(with = "crate::serialize::entity_ref::optional")]
     pub recipient: Option<EntityId>,
     pub urgent: bool,
     pub groups: BTreeMap<String, Vec<DigestProposal>>,
     pub judge_asks: Vec<crate::skill_optimize::JudgeAsk>,
+    /// The recipient's eval label asks, paid from what the judge asks left.
+    pub eval_label_asks: Vec<crate::skill_optimize::EvalLabelAsk>,
     /// Pending training offers not carried by an earlier digest.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offers: Vec<DigestOffer>,
@@ -305,8 +307,8 @@ impl Vault {
 
     /// The deadline source calls this on a timer wake. No owner credential is
     /// minted by the background job: this is a projection, not a policy edit.
-    /// Judge asks stay pending here; they reach only their responsible
-    /// human's authenticated digest read.
+    /// Judge and eval label asks stay pending here; they reach only their
+    /// responsible human's authenticated digest read.
     pub fn emit_due_proactivity_digest(
         &self,
         now: u64,
@@ -366,9 +368,9 @@ impl Vault {
                 .last_regular
                 .map(|last| last.saturating_add(cadence.period_secs));
             let due = next.is_none_or(|next| now >= next);
-            // Judge asks spend one human's funded minutes, so each recipient
-            // keeps its own mark on the shared vault cadence: one person's
-            // digest never consumes another's.
+            // Judge and eval label asks spend one human's funded minutes, so
+            // each recipient keeps its own mark on the shared vault cadence:
+            // one person's digest never consumes another's.
             let asks_due = match &recipient {
                 Some(actor) => load_ask_mark(self, &*txn, actor)?
                     .is_none_or(|last| now >= last.saturating_add(cadence.period_secs)),
@@ -414,11 +416,13 @@ impl Vault {
                     .unwrap_or(group);
                 groups.entry(display_group).or_default().push(proposal);
             }
-            let judge_asks = match recipient {
-                Some(actor) if asks_due => {
-                    crate::skill_optimize::take_digest_asks_in_txn(self, txn, actor, now)?
-                }
-                _ => Vec::new(),
+            // Judge asks are paid first; eval label asks spend what remains.
+            let (judge_asks, eval_label_asks) = match recipient {
+                Some(actor) if asks_due => (
+                    crate::skill_optimize::take_digest_asks_in_txn(self, txn, actor, now)?,
+                    crate::skill_optimize::take_digest_eval_asks_in_txn(self, txn, actor, now)?,
+                ),
+                _ => (Vec::new(), Vec::new()),
             };
             // Offers ride the regular cadence; an urgent wake is about its intent.
             let offers = if due {
@@ -447,7 +451,11 @@ impl Vault {
             } else {
                 Vec::new()
             };
-            if groups.is_empty() && judge_asks.is_empty() && offers.is_empty() && cleanup.is_none()
+            if groups.is_empty()
+                && judge_asks.is_empty()
+                && eval_label_asks.is_empty()
+                && offers.is_empty()
+                && cleanup.is_none()
             {
                 return Ok(None);
             }
@@ -528,6 +536,7 @@ impl Vault {
                 urgent: is_urgent,
                 groups,
                 judge_asks,
+                eval_label_asks,
                 offers,
                 cleanup,
                 health_cards,
@@ -576,7 +585,8 @@ impl Vault {
                 state.last_digest_id = Some(digest.id);
                 STATE.put(&self.store, txn, &(), &state)?;
             }
-            if let Some(actor) = recipient.filter(|_| !digest.judge_asks.is_empty()) {
+            let asked = !digest.judge_asks.is_empty() || !digest.eval_label_asks.is_empty();
+            if let Some(actor) = recipient.filter(|_| asked) {
                 JUDGE_ASK_MARK.put(&self.store, txn, &actor, &now)?;
             }
             Ok(Some(digest))
@@ -636,6 +646,7 @@ fn digest_id(digest: &ProactivityDigest) -> Result<[u8; 32]> {
         digest.recipient,
         &digest.groups,
         &digest.judge_asks,
+        &digest.eval_label_asks,
         &digest.offers,
         &digest.cleanup,
         digest.urgent,

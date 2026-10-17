@@ -146,6 +146,7 @@ pub enum AgentVerb {
     VaultArtifactsWaits,
     VaultArtifactsReleaseWait,
     VaultArtifactsReviewSlides,
+    VaultCriticReview,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -459,6 +460,7 @@ impl AgentVerb {
         Self::VaultArtifactsWaits,
         Self::VaultArtifactsReleaseWait,
         Self::VaultArtifactsReviewSlides,
+        Self::VaultCriticReview,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -779,6 +781,7 @@ impl AgentVerb {
             Self::VaultArtifactsWaits => "vault.artifacts.waits",
             Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
+            Self::VaultCriticReview => "vault.critic.review",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -1091,6 +1094,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -1411,6 +1415,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -1756,6 +1761,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -2006,6 +2012,7 @@ impl AgentVerb {
                 | Self::VaultSharesRevoke
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -2149,7 +2156,14 @@ impl AgentVerb {
             Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
-            Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
+            Self::Describe => &[
+                "task_ref",
+                "self",
+                "vault",
+                "session_id",
+                "key",
+                "frame_epoch",
+            ],
             Self::TasksCreate => &["spec", "label", "assignee"],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
@@ -2269,6 +2283,7 @@ impl AgentVerb {
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
+            Self::VaultCriticReview => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -2583,6 +2598,7 @@ impl AgentVerb {
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
+            Self::VaultCriticReview => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -2817,7 +2833,7 @@ impl AgentVerb {
                 "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt."
             }
             Self::Describe => {
-                "Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named."
+                "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named."
             }
             Self::TasksCreate => {
                 "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."
@@ -3065,7 +3081,7 @@ impl AgentVerb {
                 "The owner clears one learned-setting row of a key, mode and scope."
             }
             Self::VaultSecretsLiftHistory => {
-                "The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."
+                "The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."
             }
             Self::VaultWidenProposals => {
                 "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."
@@ -3153,6 +3169,9 @@ impl AgentVerb {
             }
             Self::VaultArtifactsReviewSlides => {
                 "Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard."
+            }
+            Self::VaultCriticReview => {
+                "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."
             }
             Self::VaultArtifactsProposeDeck => {
                 "Runs one native deck transaction over an artifact's head and holds the proposal for Keep."

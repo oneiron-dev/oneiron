@@ -579,6 +579,28 @@ fn admitted_event_in_txn(
     ))
 }
 
+/// The historical lift sweep's door to an intake event a queued row carries
+/// (OF-067): the payload's event read again by the side-row wall, as its
+/// admission reads it, so each secret the wall places goes to custody and the
+/// field keeps its handle. `None` when the wall changed nothing.
+pub(crate) fn lift_intake_payload_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    payload: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    let mut held: SurfaceEventAttemptPayload = rmp_serde::from_slice(payload).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            "surface event attempt payload",
+        ))
+    })?;
+    let admitted = admitted_event_in_txn(vault, wtxn, &held.event, &held.dispatch_idempotency_key)?;
+    if admitted == held.event {
+        return Ok(None);
+    }
+    held.event = admitted;
+    encode_surface_event_attempt_payload(&held).map(Some)
+}
+
 /// Whether a replayed event is the one a row already holds, as the side-row
 /// wall stored it: a field whose secret it lifted holds a handle there.
 fn held_event_matches(held: &SurfaceEvent, offered: &SurfaceEvent) -> Result<bool> {

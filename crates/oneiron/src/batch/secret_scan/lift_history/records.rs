@@ -11,7 +11,7 @@ use std::ops::Bound;
 use heed::{RoTxn, RwTxn};
 
 use super::super::write_payload_hit;
-use super::{Done, LiftCause, Page};
+use super::{Done, LiftCause, Page, record_text};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -78,11 +78,14 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     if crate::store::legal_hold::held_in_txn(&vault.store, txn, id.as_bytes())? {
         return Ok(Done::Propose(LiftCause::Held, reason));
     }
+    // A record's prose lives in its document, whose history no door
+    // rewrites: its keys are marked through the document's own door.
     #[cfg(feature = "sync")]
     if header.entity_type != ENTITY_TYPE_NOTE
         && crate::entity_doc::has_record_head(&vault.store, txn, &id)?
     {
-        return Ok(Done::Propose(LiftCause::NoDoor, reason));
+        return crate::entity_doc::lift_entity_text_in_txn(vault, txn, &id)
+            .map(super::retained::text_done);
     }
     match header.entity_type {
         ENTITY_TYPE_NOTE => {
@@ -91,7 +94,14 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         }
         ENTITY_TYPE_ASSET => {
             mark_file(vault, txn, &id, &header, &raw)?;
-            Ok(Done::Propose(LiftCause::File, reason))
+            // A file whose only hit was in its index text reads clean now.
+            match raw
+                .get(ENTITY_METADATA_HEADER_LEN..)
+                .and_then(write_payload_hit)
+            {
+                Some(_) => Ok(Done::Propose(LiftCause::File, reason)),
+                None => after_rewrite(vault, txn, &id, reason, false),
+            }
         }
         _ => rewrite(vault, txn, &id, &header, &raw, reason),
     }
@@ -105,13 +115,14 @@ pub(super) fn path(key: &[u8]) -> String {
     )
 }
 
-fn record_id(key: &[u8]) -> Option<EntityId> {
+pub(super) fn record_id(key: &[u8]) -> Option<EntityId> {
     EntityId::from_bytes(key.try_into().ok()?).ok()
 }
 
-/// The door's reason for a hit in `raw`'s body or in the text it was indexed
-/// with; `None` for a clean record and for one the sweep leaves: a custody
-/// record, the value's home, and a world key's pad.
+/// The door's reason for a hit in `raw`'s body, in the text it was indexed
+/// with, or in the text it keeps beside them ([`record_text`]); `None` for a
+/// clean record and for one the sweep leaves: a custody record, the value's
+/// home, and a world key's pad.
 fn hit(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId, raw: &[u8]) -> Result<Option<&'static str>> {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(None);
@@ -128,9 +139,13 @@ fn hit(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId, raw: &[u8]) -> Result<Opti
     {
         return Ok(Some(reason));
     }
-    Ok(index_text(vault, txn, id)?
+    if let Some(reason) = index_text(vault, txn, id)?
         .iter()
-        .find_map(|(_, text)| write_payload_hit(text.as_bytes())))
+        .find_map(|(_, text)| write_payload_hit(text.as_bytes()))
+    {
+        return Ok(Some(reason));
+    }
+    record_text::hit(vault, txn, id, header.entity_type)
 }
 
 fn index_text(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<(String, String)>> {
@@ -161,7 +176,7 @@ fn rewrite(
 ) -> Result<Done> {
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
     let body_hit = write_payload_hit(body).is_some();
-    let fields = index_text(vault, txn, id)?;
+    let fields = index_inputs(vault, txn, id)?;
     crate::bm25::deindex_text(&vault.store, txn, id)?;
     let mut batch = vault.batch_in();
     if body_hit {
@@ -187,7 +202,8 @@ fn rewrite(
 
 /// A file keeps its bytes. Put again as they are, the batch door marks each
 /// key in them with its custody record and raises the file's band; a file
-/// already marked is left as it is.
+/// already marked is left as it is. Its index text is text, not its bytes,
+/// and is lifted first ([`lift_file_text`]).
 fn mark_file(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -195,6 +211,7 @@ fn mark_file(
     header: &EntityMetadataHeader,
     raw: &[u8],
 ) -> Result<()> {
+    lift_file_text(vault, txn, id)?;
     let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
     let hash = *blake3::hash(bytes).as_bytes();
     if crate::secret_custody::masked_file_in_txn(&vault.store, txn, &hash)?.is_some() {
@@ -216,11 +233,12 @@ fn mark_file(
 /// placed; else masked, with `history` when its ledger kept what it replaced.
 fn after_rewrite(
     vault: &Vault,
-    txn: &RwTxn<'_>,
+    txn: &mut RwTxn<'_>,
     id: &EntityId,
     reason: &'static str,
     history: bool,
 ) -> Result<Done> {
+    record_text::settle_staged(vault, txn, id)?;
     let left = match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)? {
         Some(raw) => hit(vault, txn, id, &raw)?,
         None => None,
@@ -229,4 +247,41 @@ fn after_rewrite(
         Some(left) => Done::Propose(LiftCause::Unplaceable, left),
         None => Done::Masked { history, reason },
     })
+}
+
+/// Whether record `key` is still live.
+pub(super) fn exists(vault: &Vault, txn: &RoTxn<'_>, key: &[u8]) -> Result<bool> {
+    match record_id(key) {
+        Some(id) => Ok(crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()),
+        None => Ok(false),
+    }
+}
+
+/// The text a record's index reads next: what it staged for its live
+/// revision's idle publication, which that publication indexes, else the
+/// text it was indexed with.
+fn index_inputs(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<(String, String)>> {
+    match record_text::staged_live(vault, txn, id)? {
+        Some(staged) => Ok(staged),
+        None => index_text(vault, txn, id),
+    }
+}
+
+/// A file's index text that holds a hit goes through the batch door again,
+/// masked, as an ordinary record's does; staged text that still holds one is
+/// dropped. The file's bytes are [`mark_file`]'s.
+fn lift_file_text(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    let fields = index_inputs(vault, txn, id)?;
+    if fields
+        .iter()
+        .any(|(_, text)| write_payload_hit(text.as_bytes()).is_some())
+    {
+        crate::bm25::deindex_text(&vault.store, txn, id)?;
+        let fields = fields
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str()))
+            .collect::<Vec<_>>();
+        vault.batch_in().text(id, &fields).apply(txn)?;
+    }
+    record_text::settle_staged(vault, txn, id)
 }

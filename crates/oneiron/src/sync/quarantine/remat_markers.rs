@@ -239,8 +239,33 @@ pub fn drain_remat_markers(
     user_id: &str,
     materializer: &Arc<Materializer>,
 ) -> Result<RematDrainReport> {
+    drain_remat_windows(vault, user_id, materializer, pending_remat_windows(vault)?)
+}
+
+/// [`drain_remat_markers`] for `window` alone, when it is flagged: the rows
+/// it holds back on a local dependency are tried again once that dependency
+/// may have cleared (OF-370: a move here ended under the setup window).
+pub(in crate::sync) fn drain_remat_markers_of(
+    vault: &Arc<Vault>,
+    user_id: &str,
+    materializer: &Arc<Materializer>,
+    window: &WindowKey,
+) -> Result<RematDrainReport> {
+    let flagged = pending_remat_windows(vault)?
+        .into_iter()
+        .filter(|flagged| flagged == window.as_str())
+        .collect();
+    drain_remat_windows(vault, user_id, materializer, flagged)
+}
+
+fn drain_remat_windows(
+    vault: &Arc<Vault>,
+    user_id: &str,
+    materializer: &Arc<Materializer>,
+    windows: Vec<String>,
+) -> Result<RematDrainReport> {
     let mut report = RematDrainReport::default();
-    for window in pending_remat_windows(vault)? {
+    for window in windows {
         if parse_window_key_str(&window).is_none() {
             tracing::error!(
                 window = %window,
