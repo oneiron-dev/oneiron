@@ -54,7 +54,8 @@ pub use self::observers::{
 };
 pub(crate) use self::observers::{
     DELETION_TOMBSTONE_ORIGIN, persist_window_update, persist_window_update_in_txn,
-    register_custody_observer, with_deletion_tombstone_observer_a_suppressed,
+    register_custody_observer, register_room_turns_observer,
+    with_deletion_tombstone_observer_a_suppressed,
 };
 
 #[cfg(test)]
