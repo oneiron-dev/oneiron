@@ -789,12 +789,15 @@ fn append_reveal_decision_in_txn(
         created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
         outcome: act.outcome().into(),
         reason_codes: vec![act.reason_code().into()],
-        receipt_reasons: vec![
-            format!("reveal:{}", reveal.to_hex()),
-            format!("handle:{}", row.handle),
-            format!("class:{}", row.class),
-        ],
-        system_notices: Vec::new(),
+        receipt_reasons: Vec::new(),
+        system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
+            SECRET_REVEAL_CONTENT_KIND,
+            vec![
+                format!("reveal:{}", reveal.to_hex()),
+                format!("handle:{}", row.handle),
+                format!("class:{}", row.class),
+            ],
+        ),
         actor_class: act.actor_class().into(),
         actor_ref: Some(row.actor.to_hex()),
         content_kind: SECRET_REVEAL_CONTENT_KIND.into(),

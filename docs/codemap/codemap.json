@@ -26142,7 +26142,7 @@
      "purpose": "The owner's review of what the Dreamer proposes from one import (ARCH-0027 trust tier): imported material…",
      "surface": {
       "crate-vis": 2,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -26498,14 +26498,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PdfText",
       "PdfTextError"
      ],
      "path": "src/ingest/pdf.rs",
      "purpose": "A PDF's text, for the notes import and the attached folder (OF-554, ARCH-0027: \"The first adapter reads a…",
      "surface": {
-      "const": 1,
       "enum": 1,
-      "fn": 1
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -27624,7 +27625,7 @@
      "purpose": "The engine's `[limits]` rows and their question port, defined in `oneiron-contracts`",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 2,
       "re-export": 1
      }
     },
@@ -43286,7 +43287,7 @@
      "path": "src/store/gate_decision/types.rs",
      "purpose": "Gate-decision ledger record shapes, id type, and version and bound consts",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3,
       "struct": 4
      }
@@ -45738,18 +45739,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SharedLeaveKind",
-      "SharedLeaveReceipt"
+      "SharedLeaveReceipt",
+      "VerifiedLeaveNotice"
      ],
      "path": "src/sync/shared_leave.rs",
      "purpose": "Leaving a shared vault, the device side (OF-158)",
      "surface": {
       "enum": 1,
-      "fn": 3,
-      "struct": 1
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -46083,7 +46085,7 @@
      "path": "src/sync/withdrawn_cutoffs.rs",
      "purpose": "OF-013: withdrawn-generation cutoffs on the window plane",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -64749,7 +64751,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
       "crate-vis": 25,
-      "fn": 21,
+      "fn": 22,
       "re-export": 1,
       "struct": 2
      }
@@ -68418,7 +68420,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import/notes.rs",
@@ -73455,7 +73457,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 50,
+   "over_bar": 51,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 613,
    "test_files": 182
