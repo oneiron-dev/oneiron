@@ -116,13 +116,19 @@ pub fn revise_with_notes(
     preflight_with_limits(input, limits)?;
     let transaction = parse_native_revision(transaction_json)?;
     let (edited, notes) = Document::parse(input)?.apply_with_notes(&transaction)?;
+    Ok((export_redline(&edited, limits)?, notes))
+}
+
+/// An edited document as Word-native revisions, passed by the blocking linker
+/// and gated by the caller's archive policy.
+fn export_redline(edited: &Document, limits: ArchiveLimits) -> Result<Vec<u8>, DoceditError> {
     let output = edited.serialize(&ExportOptions {
         mode: ExportMode::Redline,
         validator_level: ValidatorLevel::Blocking,
         validator: None,
     })?;
     preflight_with_limits(&output, limits)?;
-    Ok((output, notes))
+    Ok(output)
 }
 
 /// Re-run the blocking OOXML linker on caller-supplied output at settlement.
