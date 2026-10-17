@@ -1,9 +1,12 @@
 //! The Coach's scheduled tier-1 sweep (ARCH-0066 §4) and its proposed-only
 //! repair bridge. The sweep runs the receipt tripwires over the last day of
-//! Gate receipts, one tripwire window at a time, as the signed scheduled
-//! detector instance. Each accepted firing a closed-form repair answers gets
-//! one bounded repair intent, filed through the production healer host for
-//! the owner to review. Nothing here applies a repair.
+//! Gate receipts, one tripwire window at a time, and the served-signal
+//! detectors over the stored retrieval runs and call receipts, as the
+//! signed scheduled detector instance. Each accepted firing a closed-form
+//! repair answers gets one bounded repair intent, filed through the
+//! production healer host for the owner to review and counted by the
+//! healer oversight receipts under its diagnostic's id. Nothing here
+//! applies a repair.
 
 use super::{
     DiagnosticEventClass, MAX_EVENTS_PER_RUN, RepairActor, RepairOperation, RepairProposal,
@@ -56,6 +59,7 @@ impl Vault {
             diagnostics.extend(self.run_consent_denied_detector(TIER1_SWEEP_SCOPE, query)?);
             end = end.saturating_sub(window);
         }
+        diagnostics.extend(self.run_served_signal_detectors(now)?);
         diagnostics.sort();
         diagnostics.dedup();
         let repairs = self.propose_tier1_repairs(&diagnostics, now)?;
@@ -67,10 +71,14 @@ impl Vault {
 
     /// The Coach's deterministic healer: one repair intent per signed tier-1
     /// diagnostic whose class a closed-form repair answers. A retrieval miss
-    /// asks for a reindex of its scope; a Dreamer consolidation the Gate
-    /// refused asks for a retry of its run. A consent refusal is the owner's
-    /// answer, not a malfunction, and drift is the owner's policy to narrow,
-    /// so both stay diagnostics. A diagnostic already answered is skipped.
+    /// (a point miss or the windowed regression) asks for a reindex of its
+    /// scope; a Dreamer consolidation the Gate refused and a degenerate
+    /// Dreamer run each ask for a retry of their run. A consent refusal is
+    /// the owner's answer, not a malfunction, drift is the owner's policy to
+    /// narrow, and a refused MCP call is the boundary working, so those stay
+    /// diagnostics. A diagnostic already answered is skipped. Each intent
+    /// filed is counted as proposed in the healer oversight receipts under
+    /// its diagnostic's id, where the host's review door settles it.
     pub fn propose_tier1_repairs(
         &self,
         diagnostics: &[EntityId],
@@ -120,6 +128,12 @@ impl Vault {
                     };
                     ("dreamer.consolidation", RepairOperation::Retry { run_ref })
                 }
+                DiagnosticEventClass::DreamerRunDegenerate => {
+                    let Some(run_ref) = event.replay.run_ref.clone() else {
+                        continue;
+                    };
+                    ("dreamer.run", RepairOperation::Retry { run_ref })
+                }
                 _ => continue,
             };
             let proposal_id = crate::codebase::entity_id_from_hash_material(
@@ -142,6 +156,9 @@ impl Vault {
                     session_tag: String::new(),
                 },
             )?;
+            self.with_write_txn_grouped(|txn| {
+                crate::failure_ladder::oversight::proposed_in_txn(self, txn, &id.to_hex(), now)
+            })?;
             filed.push(proposal_id);
         }
         Ok(filed)
