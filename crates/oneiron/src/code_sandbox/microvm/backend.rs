@@ -8,6 +8,7 @@ use crate::code_sandbox::SandboxMount;
 use crate::code_sandbox::{
     SandboxBoundaryContract, SandboxGuestTier, SandboxMountTable, SandboxProposalWrite,
 };
+use crate::engine_executor::StepCancellation;
 use crate::{Error, Result};
 
 use super::credential::CredentialResolver;
@@ -79,6 +80,25 @@ pub trait MicroVmBackend: Send + Sync {
         _proxy: &super::credential::CredentialEgressProxy,
     ) -> Result<MicroVmExit> {
         self.run(vm, image, budget)
+    }
+
+    /// [`Self::run_with_proxy`] for a step `cancel` may stop (FIX 600). A
+    /// backend that runs a guest overrides it and ends that guest alone (its
+    /// own process group or container) once `cancel` fires. This default
+    /// only checks the token before the run and after it, and drops a run
+    /// cancelled meanwhile; every backend the selector picks overrides it.
+    fn run_with_proxy_cancellable(
+        &self,
+        vm: &MicroVmHandle,
+        image: &GuestImage,
+        budget: ExecutionBudget,
+        proxy: &super::credential::CredentialEgressProxy,
+        cancel: &StepCancellation,
+    ) -> Result<MicroVmExit> {
+        cancel.check()?;
+        let exit = self.run_with_proxy(vm, image, budget, proxy);
+        cancel.check()?;
+        exit
     }
 
     /// Collects the guest delta as typed review proposals (writes, deletes,
@@ -158,6 +178,17 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
         proxy: &super::credential::CredentialEgressProxy,
     ) -> Result<MicroVmExit> {
         (**self).run_with_proxy(vm, image, budget, proxy)
+    }
+
+    fn run_with_proxy_cancellable(
+        &self,
+        vm: &MicroVmHandle,
+        image: &GuestImage,
+        budget: ExecutionBudget,
+        proxy: &super::credential::CredentialEgressProxy,
+        cancel: &StepCancellation,
+    ) -> Result<MicroVmExit> {
+        (**self).run_with_proxy_cancellable(vm, image, budget, proxy, cancel)
     }
 
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>> {

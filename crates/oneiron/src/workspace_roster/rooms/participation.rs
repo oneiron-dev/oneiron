@@ -623,6 +623,10 @@ fn write_join_in_txn(
         intent_key: format!("write:{}:{}", room.to_hex(), person.to_hex()),
     };
     let outcome = rooms_join_in_txn(vault, txn, &request, caller, now)?;
+    // FIX 3321: the receipt reaches the live window of its room once the
+    // write commits; a held or refused join aborts it, and nothing travels.
+    #[cfg(feature = "sync")]
+    crate::batch::queue_room_join(vault, txn, &outcome.join_ref);
     match &outcome.decision.state {
         JoinDecision::Ready => JoinReceiptRef::parse(
             outcome
