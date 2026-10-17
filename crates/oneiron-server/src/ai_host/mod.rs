@@ -415,6 +415,11 @@ impl AiHost {
         // The Dreamer started before the server staffed its ladder; its next
         // pass asks through it.
         let _ = host.handle.decisions.set(server.decision_host().clone());
+        // So did the workflow pump: from its next leaf on, a leaf that ran is
+        // judged on its execution context through the same ladder (OF-540).
+        if let Some(pump) = &host.workflows {
+            pump.with_attribution_ladder(server.decision_host().ladder().clone());
+        }
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server =
             code_mode::bind(server, &host.handle.runtime, models, &host.handle.status).await;
