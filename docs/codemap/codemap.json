@@ -14188,7 +14188,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 22
      }
     },
@@ -14495,16 +14495,18 @@
      "notable": [
       "ScratchpadAppendReceipt",
       "ScratchpadBoard",
-      "ScratchpadMark"
+      "ScratchpadMark",
+      "ScratchpadRecall",
+      "ScratchpadRecallLine"
      ],
      "path": "src/context_board/scratchpad.rs",
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
      "surface": {
-      "const": 1,
-      "crate-vis": 2,
+      "const": 2,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 4,
-      "struct": 2
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -62406,13 +62408,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_board/scratchpad.rs",
      "purpose": "POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
      }
     },
     {
