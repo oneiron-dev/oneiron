@@ -101,36 +101,57 @@ pub(super) fn write_companion(
         ClaimApprovalStatus::Proposed,
         envelope.lineage().clone().with(source),
     );
+    let mut candidate = ClaimCandidate::new(PREDICATE, ClaimSubject::Entity(*new), value, 1.0)
+        .with_evidence(Value::Map(vec![(
+            Value::from("refs"),
+            Value::Array(vec![
+                Value::Binary(new.as_bytes().to_vec()),
+                Value::Binary(old.as_bytes().to_vec()),
+            ]),
+        )]))
+        .with_scope(Value::Map(vec![(
+            Value::from(super::CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
+            Value::from(source.as_str()),
+        )]));
+    if let Some(world) = body.world {
+        candidate = candidate.with_world(world);
+    }
     write(
         vault,
         txn,
         companion_id(new, old, PREDICATE)?,
-        body,
-        ClaimCandidate::new(PREDICATE, ClaimSubject::Entity(*new), value, 1.0)
-            .with_evidence(Value::Map(vec![(
-                Value::from("refs"),
-                Value::Array(vec![
-                    Value::Binary(new.as_bytes().to_vec()),
-                    Value::Binary(old.as_bytes().to_vec()),
-                ]),
-            )]))
-            .with_scope(Value::Map(vec![(
-                Value::from(super::CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
-                Value::from(source.as_str()),
-            )])),
+        candidate,
         &envelope,
         now,
     )
 }
-pub(super) fn write_coaching(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
+
+/// A `core.conflict.open` marker for one claim pair, built but not written.
+/// A writer that keeps its own transaction bookkeeping signs and applies it
+/// once [`ConflictMarker::landed_in_txn`] has ruled out a replay.
+pub(crate) struct ConflictMarker {
+    pub(crate) id: EntityId,
+    pub(crate) candidate: ClaimCandidate,
+    pub(crate) envelope: WriteEnvelope,
+}
+
+impl ConflictMarker {
+    /// Whether this exact marker is already stored. A replay finds it and
+    /// writes nothing; a different row under the pair's id is a collision.
+    pub(crate) fn landed_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        landed(vault, txn, &self.id, &self.candidate, &self.envelope)
+    }
+}
+
+/// The marker naming `new` against `old` under the pair's deterministic id:
+/// evidence refs `[new, old]`, `body`'s predicate as its value, and every
+/// scope axis of `body` (world, relationship, scope map, facet and project).
+pub(crate) fn conflict_marker(
     new: &EntityId,
     old: &EntityId,
     body: &ClaimBody,
     envelope: &WriteEnvelope,
-    now: u64,
-) -> Result<()> {
+) -> Result<ConflictMarker> {
     let envelope = WriteEnvelope::with_lineage(
         envelope.actor(),
         envelope.source(),
@@ -144,7 +165,7 @@ pub(super) fn write_coaching(
         ClaimApprovalStatus::Proposed,
         envelope.lineage().clone(),
     );
-    let candidate = ClaimCandidate::new(
+    let mut candidate = ClaimCandidate::new(
         super::PREDICATE_CONFLICT_OPEN,
         body.subject,
         Value::from(body.predicate.as_str()),
@@ -157,38 +178,69 @@ pub(super) fn write_coaching(
             Value::Binary(old.as_bytes().to_vec()),
         ]),
     )]))
-    .with_scope(body.scope.clone().unwrap_or(Value::Map(Vec::new())));
+    .with_scope(body.scope.clone().unwrap_or(Value::Map(Vec::new())))
+    .with_scope_stamps(body.scope_facet, body.scope_project);
+    if let Some(world) = body.world {
+        candidate = candidate.with_world(world);
+    }
+    if let Some(relationship) = body.rel {
+        candidate = candidate.with_relationship(relationship);
+    }
+    Ok(ConflictMarker {
+        id: companion_id(new, old, super::PREDICATE_CONFLICT_OPEN)?,
+        candidate,
+        envelope,
+    })
+}
+pub(super) fn write_coaching(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    new: &EntityId,
+    old: &EntityId,
+    body: &ClaimBody,
+    envelope: &WriteEnvelope,
+    now: u64,
+) -> Result<()> {
+    let marker = conflict_marker(new, old, body, envelope)?;
     write(
         vault,
         txn,
-        companion_id(new, old, super::PREDICATE_CONFLICT_OPEN)?,
-        body,
-        candidate,
-        &envelope,
+        marker.id,
+        marker.candidate,
+        &marker.envelope,
         now,
     )
+}
+fn landed(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    candidate: &ClaimCandidate,
+    envelope: &WriteEnvelope,
+) -> Result<bool> {
+    let Some(existing) = vault.get_claim_in_txn(txn, id)? else {
+        return Ok(false);
+    };
+    let candidate = candidate.clone();
+    let mut expected = candidate.into_claim_body(envelope, vault.default_facet_in_txn(txn)?)?;
+    // Approval is the gate's result, not part of the deterministic candidate.
+    expected.approval = existing.approval;
+    if existing != expected {
+        return Err(Error::InvalidClaimBody(
+            "supersession companion identity collision",
+        ));
+    }
+    Ok(true)
 }
 fn write(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
-    body: &ClaimBody,
-    mut candidate: ClaimCandidate,
+    candidate: ClaimCandidate,
     envelope: &WriteEnvelope,
     now: u64,
 ) -> Result<()> {
-    if let Some(world) = body.world {
-        candidate = candidate.with_world(world);
-    }
-    if let Some(existing) = vault.get_claim_in_txn(txn, &id)? {
-        let mut expected = candidate.into_claim_body(envelope, vault.default_facet_in_txn(txn)?)?;
-        // Approval is the gate's result, not part of the deterministic candidate.
-        expected.approval = existing.approval;
-        if existing != expected {
-            return Err(Error::InvalidClaimBody(
-                "supersession companion identity collision",
-            ));
-        }
+    if landed(vault, txn, &id, &candidate, envelope)? {
         return Ok(());
     }
     let mut envelope = envelope.clone();
