@@ -7300,7 +7300,7 @@
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 10,
       "struct": 2
@@ -17020,6 +17020,16 @@
      "purpose": "Bounds and shape checks for critic lenses, artifacts and learned reliability",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/actor_fields.rs",
+     "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -41020,7 +41030,7 @@
      "path": "src/side_table/decls/mod.rs",
      "purpose": "The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -41080,7 +41090,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 42
+      "crate-vis": 43
      }
     },
     {
@@ -53551,7 +53561,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54631,7 +54641,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3322,
+   "source_files": 3323,
    "test_files": 902
   },
   "oneiron-android": {
