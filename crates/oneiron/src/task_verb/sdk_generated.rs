@@ -432,6 +432,34 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.packs.connector.prepare",
+                crate::code_run::vault_read::request_schema::<ConnectorPackPrepareRequest>(),
+            ),
+            (
+                "vault.packs.connector.get",
+                crate::code_run::vault_read::request_schema::<ConnectorPackGetRequest>(),
+            ),
+            (
+                "vault.packs.connector.qualify",
+                crate::code_run::vault_read::request_schema::<ConnectorPackQualifyRequest>(),
+            ),
+            (
+                "vault.packs.connector.accept",
+                crate::code_run::vault_read::request_schema::<ConnectorPackAcceptRequest>(),
+            ),
+            (
+                "vault.packs.connector.update",
+                crate::code_run::vault_read::request_schema::<ConnectorPackUpdateRequest>(),
+            ),
+            (
+                "vault.packs.connector.grants.get",
+                crate::code_run::vault_read::request_schema::<ConnectorPackGrantsGetRequest>(),
+            ),
+            (
+                "vault.packs.connector.grants.put",
+                crate::code_run::vault_read::request_schema::<ConnectorPackGrantsPutRequest>(),
+            ),
+            (
                 "vault.packs.remove",
                 crate::code_run::vault_read::request_schema::<PackRemoveRequest>(),
             ),
@@ -2989,6 +3017,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.packs.connector.prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.qualify" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.accept" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.grants.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.grants.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.packs.remove" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5432,6 +5509,27 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.packs.connector.prepare" => {
+            let _input: ConnectorPackPrepareRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.get" => {
+            let _input: ConnectorPackGetRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.qualify" => {
+            let _input: ConnectorPackQualifyRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.accept" => {
+            let _input: ConnectorPackAcceptRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.update" => {
+            let _input: ConnectorPackUpdateRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.grants.get" => {
+            let _input: ConnectorPackGrantsGetRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.grants.put" => {
+            let _input: ConnectorPackGrantsPutRequest = decode(value.clone())?;
+        }
         "vault.packs.remove" => {
             let _input: PackRemoveRequest = decode(value.clone())?;
         }
@@ -6664,6 +6762,25 @@ pub fn invoke(
         "vault.packs.hooks.list" => encode(vault_packs_hooks_list(memory, decode(value)?)?),
         "vault.packs.hooks.qualify" => encode(vault_packs_hooks_qualify(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.packs.connector.prepare" => {
+            encode(vault_packs_connector_prepare(memory, decode(value)?)?)
+        }
+        "vault.packs.connector.get" => encode(vault_packs_connector_get(memory, decode(value)?)?),
+        "vault.packs.connector.qualify" => {
+            encode(vault_packs_connector_qualify(memory, decode(value)?)?)
+        }
+        "vault.packs.connector.accept" => {
+            encode(vault_packs_connector_accept(memory, decode(value)?)?)
+        }
+        "vault.packs.connector.update" => {
+            encode(vault_packs_connector_update(memory, decode(value)?)?)
+        }
+        "vault.packs.connector.grants.get" => {
+            encode(vault_packs_connector_grants_get(memory, decode(value)?)?)
+        }
+        "vault.packs.connector.grants.put" => {
+            encode(vault_packs_connector_grants_put(memory, decode(value)?)?)
+        }
         "vault.packs.remove" => encode(vault_packs_remove(memory, decode(value)?)?),
         "vault.connectors.subscriptions.put" => {
             encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
@@ -8098,6 +8215,48 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_packs_connector_prepare(
+    memory: &Memory<'_>,
+    input: ConnectorPackPrepareRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackView> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.prepare", &input)
+}
+pub fn vault_packs_connector_get(
+    memory: &Memory<'_>,
+    input: ConnectorPackGetRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackView> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.get", &input)
+}
+pub fn vault_packs_connector_qualify(
+    memory: &Memory<'_>,
+    input: ConnectorPackQualifyRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackView> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.qualify", &input)
+}
+pub fn vault_packs_connector_accept(
+    memory: &Memory<'_>,
+    input: ConnectorPackAcceptRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackView> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.accept", &input)
+}
+pub fn vault_packs_connector_update(
+    memory: &Memory<'_>,
+    input: ConnectorPackUpdateRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackDelta> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.update", &input)
+}
+pub fn vault_packs_connector_grants_get(
+    memory: &Memory<'_>,
+    input: ConnectorPackGrantsGetRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackGrants> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.grants.get", &input)
+}
+pub fn vault_packs_connector_grants_put(
+    memory: &Memory<'_>,
+    input: ConnectorPackGrantsPutRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackGrants> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.grants.put", &input)
 }
 pub fn vault_packs_remove(
     memory: &Memory<'_>,

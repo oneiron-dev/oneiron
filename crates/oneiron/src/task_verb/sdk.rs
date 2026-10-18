@@ -504,6 +504,7 @@ pub use super::sdk_catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
 pub use super::sdk_connector::*;
+pub use super::sdk_connector_pack::*;
 pub use super::sdk_connector_call::*;
 pub use super::sdk_courtesy_delete::*;
 pub use super::sdk_diary::*;

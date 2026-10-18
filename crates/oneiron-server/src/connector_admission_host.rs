@@ -20,9 +20,8 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::connector_key::qualification::{
-    GroundingOracle, ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeTraceEvent,
+    ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeTraceEvent,
     ProbeWrite, QualificationConnection, QualificationConnector, QualificationFailure,
-    QualificationPlan,
 };
 use oneiron::connector_key::{
     ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
@@ -335,63 +334,7 @@ fn header_parameters(schema: &Value) -> Vec<String> {
     names
 }
 
-/// The owner's qualification kit: the probe plan, the isolated probe
-/// store's sources and claims the oracle reads, and the MCP resource whose
-/// contents are the sandbox's effect state.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct QualificationKit {
-    plan: QualificationPlan,
-    /// Each source record's text, by reference.
-    #[serde(default)]
-    sources: BTreeMap<String, String>,
-    /// Each claim's source references, by claim reference.
-    #[serde(default)]
-    claims: BTreeMap<String, Vec<String>>,
-    pub(crate) effect_state_uri: String,
-}
-
-impl QualificationKit {
-    /// The plan for one suite run, every idempotency key made fresh.
-    /// Staging and activation each run the whole suite; a key the first run
-    /// spent would replay with no new effect in the second.
-    pub(crate) fn plan_for_run(&self) -> QualificationPlan {
-        let run = oneiron::EntityId::now().to_hex();
-        let mut plan = self.plan.clone();
-        let injected = plan
-            .injections
-            .iter_mut()
-            .flat_map(|injection| [&mut injection.baseline, &mut injection.injected]);
-        for case in plan
-            .reads
-            .iter_mut()
-            .chain([&mut plan.unanswerable])
-            .chain(injected)
-            .chain(plan.scope_escape.iter_mut())
-            .chain(plan.write.as_mut())
-            .chain(plan.timeout_retry.as_mut())
-        {
-            if let Some(Value::String(key)) = case.call.arguments.get_mut("idempotency_key") {
-                key.push('.');
-                key.push_str(&run);
-            }
-        }
-        plan
-    }
-}
-
-/// The kit's probe store, never the connector's word.
-impl GroundingOracle for QualificationKit {
-    fn source_bytes(&self, reference: &str) -> Option<Vec<u8>> {
-        self.sources
-            .get(reference)
-            .map(|text| text.as_bytes().to_vec())
-    }
-
-    fn claim_sources(&self, reference: &str) -> Option<Vec<String>> {
-        self.claims.get(reference).cloned()
-    }
-}
+pub(crate) use oneiron::connector_key::qualification::ConnectorQualificationKit as QualificationKit;
 
 /// The suite's transport. Each connection is a fresh MCP session at the
 /// key's pinned revision; the effect state is one `resources/read` of the

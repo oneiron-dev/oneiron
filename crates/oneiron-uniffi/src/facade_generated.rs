@@ -431,6 +431,41 @@ export_facade! {
     let output = client.vault_packs_put(&input)?;
     crate::codec::lift_record("vault.packs.put", &output)
 };
+"vault.packs.connector.prepare" => fn vault_packs_connector_prepare(&self, input: ConnectorPackPrepareRequest) -> ConnectorPackView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackPrepareRequest = crate::codec::lower_record("vault.packs.connector.prepare", input)?;
+    let output = client.vault_packs_connector_prepare(&input)?;
+    crate::codec::lift_record("vault.packs.connector.prepare", &output)
+};
+"vault.packs.connector.get" => fn vault_packs_connector_get(&self, input: ConnectorPackGetRequest) -> ConnectorPackView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackGetRequest = crate::codec::lower_record("vault.packs.connector.get", input)?;
+    let output = client.vault_packs_connector_get(&input)?;
+    crate::codec::lift_record("vault.packs.connector.get", &output)
+};
+"vault.packs.connector.qualify" => fn vault_packs_connector_qualify(&self, input: ConnectorPackQualifyRequest) -> ConnectorPackView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackQualifyRequest = crate::codec::lower_record("vault.packs.connector.qualify", input)?;
+    let output = client.vault_packs_connector_qualify(&input)?;
+    crate::codec::lift_record("vault.packs.connector.qualify", &output)
+};
+"vault.packs.connector.accept" => fn vault_packs_connector_accept(&self, input: ConnectorPackAcceptRequest) -> ConnectorPackView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackAcceptRequest = crate::codec::lower_record("vault.packs.connector.accept", input)?;
+    let output = client.vault_packs_connector_accept(&input)?;
+    crate::codec::lift_record("vault.packs.connector.accept", &output)
+};
+"vault.packs.connector.update" => fn vault_packs_connector_update(&self, input: ConnectorPackUpdateRequest) -> ConnectorPackDelta = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackUpdateRequest = crate::codec::lower_record("vault.packs.connector.update", input)?;
+    let output = client.vault_packs_connector_update(&input)?;
+    crate::codec::lift_record("vault.packs.connector.update", &output)
+};
+"vault.packs.connector.grants.get" => fn vault_packs_connector_grants_get(&self, input: ConnectorPackGrantsGetRequest) -> ConnectorPackGrants = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackGrantsGetRequest = crate::codec::lower_record("vault.packs.connector.grants.get", input)?;
+    let output = client.vault_packs_connector_grants_get(&input)?;
+    crate::codec::lift_record("vault.packs.connector.grants.get", &output)
+};
+"vault.packs.connector.grants.put" => fn vault_packs_connector_grants_put(&self, input: ConnectorPackGrantsPutRequest) -> ConnectorPackGrants = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackGrantsPutRequest = crate::codec::lower_record("vault.packs.connector.grants.put", input)?;
+    let output = client.vault_packs_connector_grants_put(&input)?;
+    crate::codec::lift_record("vault.packs.connector.grants.put", &output)
+};
 "vault.packs.remove" => fn vault_packs_remove(&self, input: PackRemoveRequest) -> PackInstallReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackRemoveRequest = crate::codec::lower_record("vault.packs.remove", input)?;
     let output = client.vault_packs_remove(&input)?;

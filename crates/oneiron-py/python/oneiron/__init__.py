@@ -1034,6 +1034,9 @@ class Oneiron:
         def put(self, spec):
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
+        @property
+        def connector(self) -> "Oneiron._VaultPacksConnectorVerbs":
+            return Oneiron._VaultPacksConnectorVerbs(self._client)
         def remove(self, spec):
             """The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."""
             return json.loads(_translate(lambda: self._client.vault_packs_remove(json.dumps(spec))))
@@ -1052,6 +1055,36 @@ class Oneiron:
         def qualify(self, spec):
             """The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."""
             return json.loads(_translate(lambda: self._client.vault_packs_hooks_qualify(json.dumps(spec))))
+    class _VaultPacksConnectorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def prepare(self, spec):
+            """Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate."""
+            return json.loads(_translate(lambda: self._client.vault_packs_connector_prepare(json.dumps(spec))))
+        def get(self, spec):
+            """Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows."""
+            return json.loads(_translate(lambda: self._client.vault_packs_connector_get(json.dumps(spec))))
+        def qualify(self, spec):
+            """Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant."""
+            return json.loads(_translate(lambda: self._client.vault_packs_connector_qualify(json.dumps(spec))))
+        def accept(self, spec):
+            """Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent."""
+            return json.loads(_translate(lambda: self._client.vault_packs_connector_accept(json.dumps(spec))))
+        def update(self, spec):
+            """Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities."""
+            return json.loads(_translate(lambda: self._client.vault_packs_connector_update(json.dumps(spec))))
+        @property
+        def grants(self) -> "Oneiron._VaultPacksConnectorGrantsVerbs":
+            return Oneiron._VaultPacksConnectorGrantsVerbs(self._client)
+    class _VaultPacksConnectorGrantsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Reads current per-capability authority for one actor on the reviewed connector pack source."""
+            return json.loads(_translate(lambda: self._client.vault_packs_connector_grants_get(json.dumps(spec))))
+        def put(self, spec):
+            """Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint."""
+            return json.loads(_translate(lambda: self._client.vault_packs_connector_grants_put(json.dumps(spec))))
     class _VaultPacksSetupVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

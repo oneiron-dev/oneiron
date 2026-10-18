@@ -271,6 +271,7 @@ mod sdk_calendar;
 mod sdk_campaign_split;
 mod sdk_catalog_fragment;
 mod sdk_connector;
+mod sdk_connector_pack;
 mod sdk_connector_call;
 mod sdk_courtesy_delete;
 mod sdk_diary;
