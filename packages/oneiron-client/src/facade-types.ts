@@ -69,7 +69,7 @@ export type InboxListRequest = { after?: string | null; limit?: number | null }
 /** `oneiron::inbox::notification::NotificationKind` */
 export type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask"
 /** `oneiron::inbox::notification::NotificationSource` */
-export type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null }
+export type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null }
 /** `oneiron::inbox::list::NotificationRow` */
 export type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean }
 /** `oneiron::inbox::list::NotificationPage` */

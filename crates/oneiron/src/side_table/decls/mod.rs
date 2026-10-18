@@ -12,11 +12,14 @@
 //! An entry may end with what its rows carry, a [`SidePayload`] (OF-067). A table classed
 //! `Authored` is admitted at every write by the side-row wall; an entry with no class is written
 //! as given. The class changes no stored byte.
+//!
+//! An entry whose rows record an actor ends with `=> scrub`, the [`ActorScrub`] an actor's erase
+//! runs over its rows (FIX 3520); the erase walks every entry that names one.
 
-use super::{CodecName, SideDb, SidePayload, SideTableDecl};
+use super::{ActorScrub, CodecName, SideDb, SidePayload, SideTableDecl};
 
 macro_rules! side_tables {
-    ($list:ident; $($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)?;)+) => {
+    ($list:ident; $($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)? $(=> $scrub:path)?;)+) => {
         $(
             $(#[$doc])*
             pub(crate) static $name: SideTableDecl = SideTableDecl {
@@ -25,6 +28,7 @@ macro_rules! side_tables {
                 prefix: $prefix,
                 codec: CodecName::$codec,
                 payload: side_payload!($($payload)?),
+                actor: side_actor!($($scrub)?),
             };
         )+
 
@@ -40,6 +44,16 @@ macro_rules! side_payload {
     };
     ($payload:ident) => {
         SidePayload::$payload
+    };
+}
+
+/// An entry's actor scrub: `None` when it names none.
+macro_rules! side_actor {
+    () => {
+        None
+    };
+    ($scrub:path) => {
+        Some($scrub)
     };
 }
 
@@ -64,6 +78,12 @@ pub(crate) fn authored_vault_meta() -> impl Iterator<Item = &'static SideTableDe
         .flatten()
         .copied()
         .filter(|decl| decl.db == SideDb::VaultMeta && decl.payload == SidePayload::Authored)
+}
+
+/// The scrub of every table whose entry names one, in catalog order: an actor's erase runs
+/// them all (FIX 3520).
+pub(crate) fn actor_scrubs() -> impl Iterator<Item = ActorScrub> {
+    PARTS.into_iter().flatten().filter_map(|decl| decl.actor)
 }
 
 /// The declared table whose prefix `key` falls under, in `db`, or `None` when
