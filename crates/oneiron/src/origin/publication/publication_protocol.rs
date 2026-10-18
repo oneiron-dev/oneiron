@@ -232,7 +232,16 @@ impl Vault {
         publication_id: EntityId,
     ) -> Result<Option<OriginPublicationRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(row) = PUBLICATIONS.get(&self.store, &rtxn, &publication_id)? else {
+        self.origin_publication_in_txn(&rtxn, publication_id)
+    }
+
+    /// Reads a publication in the transaction that validates a checkout teardown.
+    pub(crate) fn origin_publication_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        publication_id: EntityId,
+    ) -> Result<Option<OriginPublicationRecord>> {
+        let Some(row) = PUBLICATIONS.get(&self.store, txn, &publication_id)? else {
             return Ok(None);
         };
         row.into_record().map(Some)

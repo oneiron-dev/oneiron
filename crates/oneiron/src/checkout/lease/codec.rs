@@ -24,49 +24,28 @@ pub(crate) const LEASE: SideTable<CheckoutId, CheckoutLeaseAct, Raw> =
 pub(in crate::checkout) const TOMBSTONE: SideTable<CheckoutId, TombstoneRow, Raw> =
     SideTable::new(&side_table::CHECKOUT_TOMBSTONE);
 
-/// Checkout settlement receipt. Key: hex32 + decimal + hex64.
+/// Checkout settlement receipt. Key: hex32 + decimal epoch.
 pub(crate) const SETTLEMENT: SideTable<SettlementKey, CheckoutSettlementReceipt, Raw> =
     SideTable::new(&side_table::CHECKOUT_SETTLEMENT);
 
-/// [`SETTLEMENT`]'s key: the checkout id's hex text, a literal `:`, the epoch as decimal text, a
-/// literal `:`, then the result identity's hex text — the byte layout the module has always
-/// spelled (never decoded back into fields: every reader already holds the exact key it wrote).
+/// One consume-once slot per checkout epoch; the receipt carries the candidate identity.
 pub(in crate::checkout) struct SettlementKey {
     pub(in crate::checkout) checkout_id: CheckoutId,
     pub(in crate::checkout) epoch: u64,
-    pub(in crate::checkout) identity: [u8; 32],
 }
 impl SideKey for SettlementKey {
     fn encode_into(&self, out: &mut Vec<u8>) {
         self.checkout_id.encode_into(out);
         out.push(b':');
         out.extend_from_slice(self.epoch.to_string().as_bytes());
-        out.push(b':');
-        for byte in self.identity {
-            out.extend_from_slice(format!("{byte:02x}").as_bytes());
-        }
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(bytes).ok()?;
-        let (id_part, rest) = text.split_at_checked(32)?;
-        let rest = rest.strip_prefix(':')?;
-        let separator = rest.find(':')?;
-        let (epoch_part, rest) = rest.split_at(separator);
-        let identity_part = rest.strip_prefix(':')?;
-        if identity_part.len() != 64 {
-            return None;
-        }
-        let checkout_id = CheckoutId::decode_key(id_part.as_bytes())?;
-        let epoch = epoch_part.parse::<u64>().ok()?;
-        let mut identity = [0_u8; 32];
-        for (index, byte) in identity.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&identity_part[index * 2..index * 2 + 2], 16).ok()?;
-        }
+        let (id, epoch) = text.split_once(':')?;
         Some(Self {
-            checkout_id,
-            epoch,
-            identity,
+            checkout_id: CheckoutId::decode_key(id.as_bytes())?,
+            epoch: epoch.parse().ok()?,
         })
     }
 }
@@ -161,11 +140,10 @@ pub fn checkout_result_identity(
 /// Test-only now: every non-test read/write of [`SETTLEMENT`] goes through the typed door
 /// directly.
 #[cfg(test)]
-pub(crate) fn settlement_key(id: CheckoutId, epoch: u64, identity: [u8; 32]) -> Vec<u8> {
+pub(crate) fn settlement_key(id: CheckoutId, epoch: u64, _identity: [u8; 32]) -> Vec<u8> {
     SETTLEMENT.key_bytes(&SettlementKey {
         checkout_id: id,
         epoch,
-        identity,
     })
 }
 const CHECKOUT_LEASE_BODY_KEYS: [&str; 11] = [

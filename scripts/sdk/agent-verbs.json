@@ -5712,6 +5712,126 @@
       "openapi": true
     },
     {
+      "name": "vault.code.checkout.claim",
+      "description": "Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence.",
+      "input": "crate::memory::checkout_doors::CheckoutClaimInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.claim\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.get",
+      "description": "Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it.",
+      "input": "crate::memory::checkout_doors::CheckoutGetInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.get\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.renew",
+      "description": "Renew the caller's still-live checkout under its exact holder and epoch fence.",
+      "input": "crate::memory::checkout_doors::CheckoutRenewInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.renew\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.reclaim",
+      "description": "Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch.",
+      "input": "crate::memory::checkout_doors::CheckoutReclaimInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.reclaim\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.takeover",
+      "description": "Explicitly take over a checkout as its task owner, including effect work, at the named epoch.",
+      "input": "crate::memory::checkout_doors::CheckoutTakeoverInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.takeover\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.publish",
+      "description": "Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head.",
+      "input": "crate::memory::checkout_doors::CheckoutPublishInput",
+      "output": "crate::memory::checkout_doors::CheckoutPublished",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.publish\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.settle",
+      "description": "Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt.",
+      "input": "crate::memory::checkout_doors::CheckoutSettleInput",
+      "output": "crate::memory::checkout_doors::CheckoutSettled",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.settle\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.teardown",
+      "description": "Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees.",
+      "input": "crate::memory::checkout_doors::CheckoutTeardownInput",
+      "output": "crate::memory::checkout_doors::CheckoutTornDown",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.teardown\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.snapshots.ingest",
       "description": "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt.",
       "input": "crate::memory::codebase_doors::CodeSnapshotIngestRequest",
