@@ -14,7 +14,7 @@ const POLICY: SideTable<(), WakeRecipePolicy, LegacyJson> =
     SideTable::new(&side_table::DREAMER_WAKE_RECIPE_POLICY);
 
 /// Per-receipt work budgets. Unspent interest stays in the queue.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WakeRecipePolicy {
     pub continuous_rung_spans: u32,

@@ -24,6 +24,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.inbox.concern", post(facade_route))
         .route("/self.inbox.concern.outcome", post(facade_route))
         .route("/self.inbox.concern.move", post(facade_route))
+        .route("/vault.diagnostics.list", post(facade_route))
+        .route("/vault.diagnostics.get", post(facade_route))
+        .route("/vault.coach.inspect", post(facade_route))
         .route("/vault.people.list", post(facade_route))
         .route("/vault.people.get", post(facade_route))
         .route("/vault.shape.read", post(facade_route))
@@ -118,6 +121,17 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.weave.owner.link.wrong", post(facade_route))
         .route("/vault.weave.item.wrong", post(facade_route))
         .route("/vault.weave.owner.item.wrong", post(facade_route))
+        .route("/vault.weave.enqueue", post(facade_route))
+        .route("/vault.weave.schedules.list", post(facade_route))
+        .route("/vault.weave.schedules.put", post(facade_route))
+        .route("/vault.weave.schedules.clear", post(facade_route))
+        .route("/vault.weave.owner.digest.render", post(facade_route))
+        .route("/vault.inbox.concerns.review", post(facade_route))
+        .route("/vault.inbox.lens", post(facade_route))
+        .route("/vault.inbox.groups", post(facade_route))
+        .route("/vault.weave.digest.render", post(facade_route))
+        .route("/vault.weave.link.corrections", post(facade_route))
+        .route("/self.inbox.lens", post(facade_route))
         .route("/vault.skill_hubs.put", post(facade_route))
         .route("/vault.skill_hubs.get", post(facade_route))
         .route("/vault.skill_hubs.publishers.admit", post(facade_route))
@@ -250,6 +264,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.residence.open", post(facade_route))
         .route("/vault.residence.index", post(facade_route))
         .route("/vault.residence.prune", post(facade_route))
+        .route("/vault.residence.directives", post(facade_route))
         .route("/vault.off_record.start", post(facade_route))
         .route("/vault.off_record.status", post(facade_route))
         .route("/vault.off_record.witness", post(facade_route))
@@ -270,6 +285,32 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.research.archive.coverage", post(facade_route))
         .route("/vault.evals.inventory", post(facade_route))
         .route("/vault.evals.cohorts.setup", post(facade_route))
+        .route("/vault.coach.training_offers", post(facade_route))
+        .route("/vault.coach.training_offers.get", post(facade_route))
+        .route("/vault.coach.training_offers.trigger", post(facade_route))
+        .route("/vault.coach.training_offers.result", post(facade_route))
+        .route("/vault.coach.training_offers.answer", post(facade_route))
+        .route("/vault.coach.training_offers.undo", post(facade_route))
+        .route(
+            "/vault.coach.training_offers.candidates",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.candidates.prepare",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.pilots.prepare",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.pilots.complete",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.pilots.get",
+            post(facade_route),
+        )
         .route("/vault.research.bind", post(facade_route))
         .route("/vault.research.fork", post(facade_route))
         .route("/vault.research.weave", post(facade_route))
@@ -670,6 +711,15 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.runs.checkpoint", post(facade_route))
         .route("/vault.consolidation.promote", post(facade_route))
         .route("/vault.consolidation.evidence", post(facade_route))
+        .route("/vault.sieve.queue", post(facade_route))
+        .route("/vault.sieve.retained", post(facade_route))
+        .route("/vault.sieve.receipts", post(facade_route))
+        .route("/vault.sieve.policy", post(facade_route))
+        .route("/vault.sieve.policy.set", post(facade_route))
+        .route("/vault.sieve.recipe_policy", post(facade_route))
+        .route("/vault.sieve.recipe_policy.set", post(facade_route))
+        .route("/vault.sieve.lease", post(facade_route))
+        .route("/vault.sieve.lease.refill", post(facade_route))
         .route("/vault.claims.vet", post(facade_route))
         .route("/vault.claims.vetting", post(facade_route))
         .route("/vault.memory.signal_extraction", post(facade_route))
@@ -764,6 +814,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.browser.crop", post(facade_route))
         .route("/self.browser.zoom", post(facade_route))
         .route("/self.browser.batch", post(facade_route))
+        .route("/self.browser.library.find", post(facade_route))
+        .route("/self.browser.library.propose", post(facade_route))
+        .route("/self.browser.library.retire", post(facade_route))
+        .route("/self.browser.library.retired", post(facade_route))
+        .route("/self.browser.library.run", post(facade_route))
         .route("/self.browser.handover", post(facade_route))
         .route("/vault.claims.supersede", post(facade_route))
         .route("/self.fold", post(facade_route))
@@ -771,6 +826,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.unfold", post(facade_route))
         .route("/self.folds", post(facade_route))
         .route("/tasks.refuse", post(facade_route))
+        .route("/self.report_blocked", post(facade_route))
         .route("/self.agents.spawn", post(facade_route))
         .route("/self.leader.split", post(facade_route))
         .route("/self.skills.call", post(facade_route))

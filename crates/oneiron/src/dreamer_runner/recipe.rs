@@ -95,7 +95,7 @@ impl Vault {
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_in_txn(self, txn)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             if policy.is_fail_closed() {
                 return Err(invalid());
