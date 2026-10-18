@@ -17572,7 +17572,7 @@
      "path": "src/disclosure/import_audience.rs",
      "purpose": "The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -23058,7 +23058,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -65503,7 +65503,7 @@
      "path": "src/ai_host/judge_swap.rs",
      "purpose": "The Coach's judge-swap upkeep on this server (OF-184)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -68757,7 +68757,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 43
      }
     },
     {
@@ -71324,7 +71324,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7,
       "struct": 1
      }
@@ -71457,7 +71457,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -76012,13 +76012,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ManagedOwnerAction",
+      "ManagedOwnerRequest",
       "ManagedWidenAction"
      ],
      "path": "src/lib/managed_holder.rs",
-     "purpose": "Host-attested account action for one managed widen request",
+     "purpose": "Host-attested account actions: one managed widen request, and one facade request the vault owner makes in…",
      "surface": {
-      "fn": 2,
-      "struct": 1
+      "const": 2,
+      "fn": 4,
+      "struct": 3
      }
     },
     {
