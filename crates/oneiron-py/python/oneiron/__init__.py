@@ -766,6 +766,15 @@ class Oneiron:
         def list(self, input: dict[str, Any]) -> Any:
             """Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_list(json.dumps(input, allow_nan=False))))
+        def demote(self, input: dict[str, Any]) -> Any:
+            """Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it."""
+            return json.loads(_translate(lambda: self._client.vault_claims_demote(json.dumps(input, allow_nan=False))))
+        def list_filtered(self, input: dict[str, Any]) -> Any:
+            """Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_claims_list_filtered(json.dumps(input, allow_nan=False))))
+        def read_filtered(self, input: dict[str, Any]) -> Any:
+            """Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_claims_read_filtered(json.dumps(input, allow_nan=False))))
         def history(self, input: dict[str, Any]) -> Any:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_history(json.dumps(input, allow_nan=False))))
@@ -787,6 +796,9 @@ class Oneiron:
     class _VaultRetrievalVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def aging(self) -> "Oneiron._VaultRetrievalAgingVerbs":
+            return Oneiron._VaultRetrievalAgingVerbs(self._client)
         @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs":
             return Oneiron._VaultRetrievalWeightsVerbs(self._client)
@@ -814,6 +826,15 @@ class Oneiron:
         def replay(self, spec):
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_replay(json.dumps(spec))))
+    class _VaultRetrievalAgingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_aging_get(json.dumps({} if spec is None else spec))))
+        def configure(self, spec):
+            """The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_aging_configure(json.dumps(spec))))
     class _VaultRetrievalWeightsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -931,9 +952,24 @@ class Oneiron:
     class _VaultCampaignVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def enroll(self, spec):
+            """Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_enroll(json.dumps(spec))))
+        @property
+        def stage(self) -> "Oneiron._VaultCampaignStageVerbs":
+            return Oneiron._VaultCampaignStageVerbs(self._client)
+        def unsubscribe(self, spec):
+            """Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_unsubscribe(json.dumps(spec))))
         @property
         def program(self) -> "Oneiron._VaultCampaignProgramVerbs":
             return Oneiron._VaultCampaignProgramVerbs(self._client)
+    class _VaultCampaignStageVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def evidence(self, spec):
+            """Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_stage_evidence(json.dumps(spec))))
     class _VaultCampaignProgramVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2461,6 +2497,12 @@ class Oneiron:
         @property
         def branches(self) -> "Oneiron._VaultRunsBranchesVerbs":
             return Oneiron._VaultRunsBranchesVerbs(self._client)
+        def step(self, spec):
+            """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
+            return json.loads(_translate(lambda: self._client.vault_runs_step(json.dumps(spec))))
+        def checkpoint(self, spec):
+            """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
+            return json.loads(_translate(lambda: self._client.vault_runs_checkpoint(json.dumps(spec))))
     class _VaultRunsBranchesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

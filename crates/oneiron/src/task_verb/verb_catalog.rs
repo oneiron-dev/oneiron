@@ -59,6 +59,8 @@ pub enum AgentVerb {
     VaultWitness,
     VaultClaimsUpsert,
     VaultRecall,
+    VaultRetrievalAgingGet,
+    VaultRetrievalAgingConfigure,
     VaultRetrievalWeightsGet,
     VaultRetrievalWeightsConfigure,
     VaultAffectAnnotationsPut,
@@ -90,6 +92,9 @@ pub enum AgentVerb {
     VaultKvDelete,
     VaultKvSearch,
     VaultKvNamespaces,
+    VaultCampaignEnroll,
+    VaultCampaignStageEvidence,
+    VaultCampaignUnsubscribe,
     VaultCampaignProgramCreate,
     VaultCampaignProgramRead,
     VaultCampaignProgramUpdate,
@@ -562,6 +567,9 @@ pub enum AgentVerb {
     VaultCalendarFreebusy,
     VaultCalendarTranscriptIngest,
     VaultClaimsList,
+    VaultClaimsDemote,
+    VaultClaimsListFiltered,
+    VaultClaimsReadFiltered,
     VaultClaimsHistory,
     VaultDelete,
     VaultWritesPending,
@@ -614,6 +622,8 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultRunsStep,
+    VaultRunsCheckpoint,
     VaultConsolidationPromote,
     VaultConsolidationEvidence,
     VaultClaimsVet,
@@ -763,6 +773,8 @@ impl AgentVerb {
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
+        Self::VaultRetrievalAgingGet,
+        Self::VaultRetrievalAgingConfigure,
         Self::VaultRetrievalWeightsGet,
         Self::VaultRetrievalWeightsConfigure,
         Self::VaultAffectAnnotationsPut,
@@ -794,6 +806,9 @@ impl AgentVerb {
         Self::VaultKvDelete,
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
+        Self::VaultCampaignEnroll,
+        Self::VaultCampaignStageEvidence,
+        Self::VaultCampaignUnsubscribe,
         Self::VaultCampaignProgramCreate,
         Self::VaultCampaignProgramRead,
         Self::VaultCampaignProgramUpdate,
@@ -1266,6 +1281,9 @@ impl AgentVerb {
         Self::VaultCalendarFreebusy,
         Self::VaultCalendarTranscriptIngest,
         Self::VaultClaimsList,
+        Self::VaultClaimsDemote,
+        Self::VaultClaimsListFiltered,
+        Self::VaultClaimsReadFiltered,
         Self::VaultClaimsHistory,
         Self::VaultDelete,
         Self::VaultWritesPending,
@@ -1318,6 +1336,8 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultRunsStep,
+        Self::VaultRunsCheckpoint,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationEvidence,
         Self::VaultClaimsVet,
@@ -1470,6 +1490,8 @@ impl AgentVerb {
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
+            Self::VaultRetrievalAgingGet => "vault.retrieval.aging.get",
+            Self::VaultRetrievalAgingConfigure => "vault.retrieval.aging.configure",
             Self::VaultRetrievalWeightsGet => "vault.retrieval.weights.get",
             Self::VaultRetrievalWeightsConfigure => "vault.retrieval.weights.configure",
             Self::VaultAffectAnnotationsPut => "vault.affect.annotations.put",
@@ -1501,6 +1523,9 @@ impl AgentVerb {
             Self::VaultKvDelete => "vault.kv.delete",
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
+            Self::VaultCampaignEnroll => "vault.campaign.enroll",
+            Self::VaultCampaignStageEvidence => "vault.campaign.stage.evidence",
+            Self::VaultCampaignUnsubscribe => "vault.campaign.unsubscribe",
             Self::VaultCampaignProgramCreate => "vault.campaign.program.create",
             Self::VaultCampaignProgramRead => "vault.campaign.program.read",
             Self::VaultCampaignProgramUpdate => "vault.campaign.program.update",
@@ -1985,6 +2010,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
             Self::VaultCalendarTranscriptIngest => "vault.calendar.transcript.ingest",
             Self::VaultClaimsList => "vault.claims.list",
+            Self::VaultClaimsDemote => "vault.claims.demote",
+            Self::VaultClaimsListFiltered => "vault.claims.list_filtered",
+            Self::VaultClaimsReadFiltered => "vault.claims.read_filtered",
             Self::VaultClaimsHistory => "vault.claims.history",
             Self::VaultDelete => "vault.delete",
             Self::VaultWritesPending => "vault.writes.pending",
@@ -2037,6 +2065,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultRunsStep => "vault.runs.step",
+            Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
             Self::VaultClaimsVet => "vault.claims.vet",
@@ -2189,6 +2219,8 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultRetrievalAgingGet
+                | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
@@ -2220,6 +2252,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -2667,6 +2702,9 @@ impl AgentVerb {
                 | Self::VaultCalendarFreebusy
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
+                | Self::VaultClaimsDemote
+                | Self::VaultClaimsListFiltered
+                | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
                 | Self::VaultWritesPending
@@ -2719,6 +2757,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -2915,6 +2955,8 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultRetrievalAgingGet
+                | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
@@ -2946,6 +2988,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -3393,6 +3438,9 @@ impl AgentVerb {
                 | Self::VaultCalendarFreebusy
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
+                | Self::VaultClaimsDemote
+                | Self::VaultClaimsListFiltered
+                | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
                 | Self::VaultWritesPending
@@ -3445,6 +3493,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -3633,6 +3683,8 @@ impl AgentVerb {
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
                 | Self::VaultClaimsList
+                | Self::VaultClaimsListFiltered
+                | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultHydrate
                 | Self::VaultGet
@@ -3703,6 +3755,8 @@ impl AgentVerb {
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::VaultWitness
+                | Self::VaultRetrievalAgingGet
+                | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultTaggingStatus
@@ -3730,6 +3784,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -4196,6 +4253,7 @@ impl AgentVerb {
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
+                | Self::VaultClaimsDemote
                 | Self::VaultDelete
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
@@ -4238,6 +4296,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -4356,6 +4416,7 @@ impl AgentVerb {
                 | Self::TasksAccept
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
+                | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultAffectClaimsConsolidate
@@ -4363,6 +4424,9 @@ impl AgentVerb {
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
@@ -4658,6 +4722,7 @@ impl AgentVerb {
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
+                | Self::VaultClaimsDemote
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
@@ -4840,6 +4905,8 @@ impl AgentVerb {
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
+            Self::VaultRetrievalAgingGet => &["spec"],
+            Self::VaultRetrievalAgingConfigure => &["spec"],
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
@@ -4871,6 +4938,9 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignEnroll => &["spec"],
+            Self::VaultCampaignStageEvidence => &["spec"],
+            Self::VaultCampaignUnsubscribe => &["spec"],
             Self::VaultCampaignProgramCreate => &["spec"],
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
@@ -5343,6 +5413,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => &["spec"],
             Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
+            Self::VaultClaimsDemote => &["spec"],
+            Self::VaultClaimsListFiltered => &["spec"],
+            Self::VaultClaimsReadFiltered => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
             Self::VaultWritesPending => &["spec"],
@@ -5395,6 +5468,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultRunsStep => &["spec"],
+            Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultClaimsVet => &["spec"],
@@ -5545,6 +5620,8 @@ impl AgentVerb {
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
+            Self::VaultRetrievalAgingGet => &["spec"],
+            Self::VaultRetrievalAgingConfigure => &["spec"],
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
@@ -5576,6 +5653,9 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignEnroll => &["spec"],
+            Self::VaultCampaignStageEvidence => &["spec"],
+            Self::VaultCampaignUnsubscribe => &["spec"],
             Self::VaultCampaignProgramCreate => &["spec"],
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
@@ -6048,6 +6128,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => &["spec"],
             Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
+            Self::VaultClaimsDemote => &["spec"],
+            Self::VaultClaimsListFiltered => &["spec"],
+            Self::VaultClaimsReadFiltered => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
             Self::VaultWritesPending => &["spec"],
@@ -6100,6 +6183,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultRunsStep => &["spec"],
+            Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultClaimsVet => &["spec"],
@@ -6355,6 +6440,12 @@ impl AgentVerb {
             Self::VaultRecall => {
                 "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting."
             }
+            Self::VaultRetrievalAgingGet => {
+                "The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."
+            }
+            Self::VaultRetrievalAgingConfigure => {
+                "The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies."
+            }
             Self::VaultRetrievalWeightsGet => {
                 "The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."
             }
@@ -6447,6 +6538,15 @@ impl AgentVerb {
             }
             Self::VaultKvNamespaces => {
                 "The caller's distinct live namespaces, with exact segment prefix and suffix matching."
+            }
+            Self::VaultCampaignEnroll => {
+                "Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."
+            }
+            Self::VaultCampaignStageEvidence => {
+                "Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."
+            }
+            Self::VaultCampaignUnsubscribe => {
+                "Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."
             }
             Self::VaultCampaignProgramCreate => {
                 "Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."
@@ -7786,6 +7886,15 @@ impl AgentVerb {
             Self::VaultClaimsList => {
                 "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."
             }
+            Self::VaultClaimsDemote => {
+                "Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it."
+            }
+            Self::VaultClaimsListFiltered => {
+                "Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."
+            }
+            Self::VaultClaimsReadFiltered => {
+                "Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."
+            }
             Self::VaultClaimsHistory => {
                 "The supersession timeline of one claim, oldest first, with the read's narrowing receipt."
             }
@@ -7935,6 +8044,12 @@ impl AgentVerb {
             }
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
+            }
+            Self::VaultRunsStep => {
+                "Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."
+            }
+            Self::VaultRunsCheckpoint => {
+                "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."

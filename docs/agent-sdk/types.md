@@ -1088,6 +1088,12 @@ class Oneiron:
             """Retracts one active claim: a deliberate withdrawal that preserves the record."""
         def list(self, input: Facade.ClaimListFilter) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
             """Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."""
+        def demote(self, input: Facade.ClaimDemoteRequest) -> Facade.ClaimDemoteView:
+            """Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it."""
+        def list_filtered(self, input: Facade.ClaimFilteredListRequest) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
+            """Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
+        def read_filtered(self, input: Facade.ClaimFilteredReadRequest) -> Facade.ScopedReadResult[Facade.ClaimView | None]:
+            """Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
         def history(self, input: Facade.ClaimRefRequest) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
@@ -1101,6 +1107,8 @@ class Oneiron:
         def supersede(self, spec: Facade.LiveRunRequest[Facade.MemorySupersedeInput]) -> Facade.MemoryWriteOutput:
             """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
     class _VaultRetrievalVerbs:
+        @property
+        def aging(self) -> "Oneiron._VaultRetrievalAgingVerbs": ...
         @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs": ...
         def recall(self, spec: Facade.RecallRequest) -> Facade.MemoryPack:
@@ -1119,6 +1127,11 @@ class Oneiron:
             """The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."""
         def replay(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticReplay:
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
+    class _VaultRetrievalAgingVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ClaimAgingProfilesView:
+            """The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."""
+        def configure(self, spec: Facade.ClaimAgingProfilesConfigureRequest) -> Facade.ClaimAgingProfilesReceipt:
+            """The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies."""
     class _VaultRetrievalWeightsVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.RetrievalWeightsView:
             """The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."""
@@ -1176,8 +1189,17 @@ class Oneiron:
         def search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
         def namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
     class _VaultCampaignVerbs:
+        def enroll(self, spec: Facade.CampaignEnrollRequest) -> Facade.CampaignEnrollmentReceipt:
+            """Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."""
+        @property
+        def stage(self) -> "Oneiron._VaultCampaignStageVerbs": ...
+        def unsubscribe(self, spec: Facade.CampaignUnsubscribeRequest) -> Facade.CampaignUnsubscribeReceipt:
+            """Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."""
         @property
         def program(self) -> "Oneiron._VaultCampaignProgramVerbs": ...
+    class _VaultCampaignStageVerbs:
+        def evidence(self, spec: Facade.CampaignStageEvidenceRequest) -> Facade.CampaignStageEvidenceReceipt:
+            """Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."""
     class _VaultCampaignProgramVerbs:
         def create(self, spec: Facade.CreateCampaignProgramRequest) -> Facade.CampaignProgramRecord:
             """Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."""
@@ -1312,6 +1334,10 @@ class Oneiron:
         def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs": ...
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
+        @property
+        def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
+        @property
+        def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs": ...
         def pack_receipt(self, spec: Facade.SkillPackReceiptRequest) -> Facade.SkillPackReceipt:
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
         @property
@@ -1325,6 +1351,16 @@ class Oneiron:
     class _VaultSkillsPermissionsVerbs:
         def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
             """The owner answers one imported skill permission ask at its exact hub source."""
+    class _VaultSkillsOptimizeVerbs:
+        def start(self, spec: Facade.SkillOptimizeStartRequest) -> Facade.SkillOptimizeStartReceipt:
+            """The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."""
+        def result(self, spec: Facade.SkillOptimizeResultRequest) -> Facade.SkillOptimizeResultView:
+            """Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."""
+    class _VaultSkillsGovernanceVerbs:
+        def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillGovernanceView:
+            """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
+        def set(self, spec: Facade.SkillGovernanceSetRequest) -> Facade.SkillGovernanceView:
+            """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
     class _VaultSkillsOutcomesVerbs:
         def project(self, spec: Facade.SkillPackOutcomeRequest) -> Facade.SkillPackOutcomeProjection:
             """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
@@ -2037,6 +2073,10 @@ class Oneiron:
     class _VaultRunsVerbs:
         @property
         def branches(self) -> "Oneiron._VaultRunsBranchesVerbs": ...
+        def step(self, spec: Facade.SettledStepRequest) -> Facade.SettledStepView | None:
+            """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
+        def checkpoint(self, spec: Facade.CheckpointReadRequest) -> Facade.CheckpointView | None:
+            """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
     class _VaultRunsBranchesVerbs:
         def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""

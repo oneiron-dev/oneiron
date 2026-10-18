@@ -67,6 +67,11 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_bool(&mut hasher, builder.recency_blend_applies());
     fork_hash_opt_u64(&mut hasher, explicit_time_dependent_now_secs);
     fork_hash_access_factor_overrides(&mut hasher, builder.access_factor_overrides);
+    let profiles = builder.claim_aging_profiles;
+    for policy in [profiles.durable, profiles.standard, profiles.ephemeral] {
+        fork_hash_f64(&mut hasher, policy.half_life_secs);
+        fork_hash_f32(&mut hasher, policy.floor + 0.0);
+    }
     fork_hash_bool(&mut hasher, builder.apply_salience);
     fork_hash_bool(&mut hasher, builder.apply_confidence);
     fork_hash_bool(&mut hasher, builder.apply_gravity);

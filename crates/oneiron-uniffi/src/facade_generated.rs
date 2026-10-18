@@ -277,6 +277,16 @@ export_facade! {
     let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect)?;
     Lift::lift(output)
 };
+"vault.retrieval.aging.get" => fn vault_retrieval_aging_get(&self) -> ClaimAgingProfilesView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.aging.get")?;
+    let output = client.vault_retrieval_aging_get(&input)?;
+    crate::codec::lift_record("vault.retrieval.aging.get", &output)
+};
+"vault.retrieval.aging.configure" => fn vault_retrieval_aging_configure(&self, input: ClaimAgingProfilesConfigureRequest) -> ClaimAgingProfilesReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::ClaimAgingProfilesConfigureRequest = crate::codec::lower_record("vault.retrieval.aging.configure", input)?;
+    let output = client.vault_retrieval_aging_configure(&input)?;
+    crate::codec::lift_record("vault.retrieval.aging.configure", &output)
+};
 "vault.retrieval.weights.get" => fn vault_retrieval_weights_get(&self) -> RetrievalWeightsView = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.weights.get")?;
     let output = client.vault_retrieval_weights_get(&input)?;
@@ -430,6 +440,21 @@ export_facade! {
     let input: oneiron::memory::KeyValueNamespaces = crate::codec::lower_record("vault.kv.namespaces", input)?;
     let output = client.vault_kv_namespaces(&input)?;
     crate::codec::lift_record("vault.kv.namespaces", &output)
+};
+"vault.campaign.enroll" => fn vault_campaign_enroll(&self, input: CampaignEnrollRequest) -> CampaignEnrollmentReceipt = |client| {
+    let input: oneiron::campaign::surface::CampaignEnrollRequest = crate::codec::lower_record("vault.campaign.enroll", input)?;
+    let output = client.vault_campaign_enroll(&input)?;
+    crate::codec::lift_record("vault.campaign.enroll", &output)
+};
+"vault.campaign.stage.evidence" => fn vault_campaign_stage_evidence(&self, input: CampaignStageEvidenceRequest) -> CampaignStageEvidenceReceipt = |client| {
+    let input: oneiron::campaign::surface::CampaignStageEvidenceRequest = crate::codec::lower_record("vault.campaign.stage.evidence", input)?;
+    let output = client.vault_campaign_stage_evidence(&input)?;
+    crate::codec::lift_record("vault.campaign.stage.evidence", &output)
+};
+"vault.campaign.unsubscribe" => fn vault_campaign_unsubscribe(&self, input: CampaignUnsubscribeRequest) -> CampaignUnsubscribeReceipt = |client| {
+    let input: oneiron::campaign::surface::CampaignUnsubscribeRequest = crate::codec::lower_record("vault.campaign.unsubscribe", input)?;
+    let output = client.vault_campaign_unsubscribe(&input)?;
+    crate::codec::lift_record("vault.campaign.unsubscribe", &output)
 };
 "vault.campaign.program.create" => fn vault_campaign_program_create(&self, input: CreateCampaignProgramRequest) -> CampaignProgramRecord = |client| {
     let input: oneiron::campaign::surface::CreateCampaignProgramRequest = crate::codec::lower_record("vault.campaign.program.create", input)?;
@@ -2666,6 +2691,21 @@ export_facade! {
     let output = client.vault_claims_list(&input)?;
     Lift::lift(output)
 };
+"vault.claims.demote" => fn vault_claims_demote(&self, input: ClaimDemoteRequest) -> ClaimDemoteView = |client| {
+    let input: oneiron::memory::ClaimDemoteRequest = crate::codec::lower_record("vault.claims.demote", input)?;
+    let output = client.vault_claims_demote(&input)?;
+    crate::codec::lift_record("vault.claims.demote", &output)
+};
+"vault.claims.list_filtered" => fn vault_claims_list_filtered(&self, input: ClaimFilteredListRequest) -> ClaimViews = |client| {
+    let input: oneiron::memory::ClaimFilteredListRequest = crate::codec::lower_record("vault.claims.list_filtered", input)?;
+    let output = client.vault_claims_list_filtered(&input)?;
+    Lift::lift(output)
+};
+"vault.claims.read_filtered" => fn vault_claims_read_filtered(&self, input: ClaimFilteredReadRequest) -> ScopedReadResultOptionalClaimView = |client| {
+    let input: oneiron::memory::ClaimFilteredReadRequest = crate::codec::lower_record("vault.claims.read_filtered", input)?;
+    let output = client.vault_claims_read_filtered(&input)?;
+    crate::codec::lift_record("vault.claims.read_filtered", &output)
+};
 "vault.claims.history" => fn vault_claims_history(&self, claim_ref: String) -> ClaimViews = |client| {
     let input: oneiron::task_verb::sdk::ClaimRefRequest = claim_ref.lower()?;
     let output = client.vault_claims_history(&input)?;
@@ -2925,6 +2965,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::ConsolidationStatusRequest = job_ref.lower()?;
     let output = client.vault_consolidation_status(&input)?;
     Lift::lift(output)
+};
+"vault.runs.step" => fn vault_runs_step(&self, input: SettledStepRequest) -> Option<SettledStepView> = |client| {
+    let input: oneiron::llm::model_step::SettledStepRequest = crate::codec::lower_record("vault.runs.step", input)?;
+    let output = client.vault_runs_step(&input)?;
+    crate::codec::lift_record("vault.runs.step", &output)
+};
+"vault.runs.checkpoint" => fn vault_runs_checkpoint(&self, input: CheckpointReadRequest) -> Option<CheckpointView> = |client| {
+    let input: oneiron::engine_executor::checkpoint_read::CheckpointReadRequest = crate::codec::lower_record("vault.runs.checkpoint", input)?;
+    let output = client.vault_runs_checkpoint(&input)?;
+    crate::codec::lift_record("vault.runs.checkpoint", &output)
 };
 "vault.consolidation.promote" => fn vault_consolidation_promote(&self, input: ConsolidationPromoteRequest) -> ConsolidationPromotion = |client| {
     let input: oneiron::memory::consolidation::ConsolidationPromoteRequest = crate::codec::lower_record("vault.consolidation.promote", input)?;

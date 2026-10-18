@@ -33,6 +33,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
@@ -685,18 +686,26 @@ struct AnswerIdentityAsk {
 }
 
 /// `POST /v1/owner/identity/asks/answer`: the owner's choice on one ask. The
-/// mention takes it, and the words around it are saved as a hint.
+/// mention takes it, and the words around it are saved as a hint. A
+/// someone-new answer's topology decision is the owner's, carried from the
+/// surface it reached this install from (mesh PR2-topology).
 async fn answer_identity_ask(
     auth: CoreAuth,
+    headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<AnswerIdentityAsk>, JsonRejection>,
 ) -> OwnerReply<IdentitySettled> {
     let owner = owner(&auth, &server)?;
+    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
     let request = json_payload(payload)?;
     let settled = blocking(move || -> OwnerResult<IdentitySettled> {
-        Ok(server
-            .vault()
-            .answer_identity_ask(&owner, &request.ask, &request.choice, now_secs())?)
+        Ok(server.vault().answer_identity_ask_as(
+            &owner,
+            surface,
+            &request.ask,
+            &request.choice,
+            now_secs(),
+        )?)
     })
     .await?;
     Ok(Json(settled))
