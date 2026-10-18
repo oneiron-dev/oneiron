@@ -22586,7 +22586,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FailureLadder"
@@ -22878,6 +22878,20 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectGrantMinted"
+     ],
+     "path": "src/federation/connect_grant.rs",
+     "purpose": "The guest grant a vault-to-vault Connect pact governs (FIX 3016, ARCH-0043 #guest-grants…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -22958,9 +22972,9 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 3,
-      "fn": 18,
+      "fn": 19,
       "struct": 2
      }
     },
@@ -22971,7 +22985,7 @@
      "path": "src/federation/grant_policy.rs",
      "purpose": "Vault-resident default capability rows for member-grant minting",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -23038,9 +23052,9 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 2,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -30931,8 +30945,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 45,
-      "fn": 31,
+      "crate-vis": 47,
+      "fn": 32,
       "struct": 2,
       "type": 1
      }
@@ -47052,7 +47066,7 @@
      "purpose": "Per-revision, per-person bearer ingress for generic ask options (no page UI)",
      "surface": {
       "crate-vis": 6,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -47643,7 +47657,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -48017,8 +48031,21 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 25,
+      "re-export": 26,
       "struct": 36
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CampaignSplitWire"
+     ],
+     "path": "src/task_verb/sdk_campaign_split.rs",
+     "purpose": "`vault.research.evaluate_split` (FIX 655): the vault owner scores one arm of a bound claim-authoring…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -48189,7 +48216,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 364
+      "fn": 365
      }
     },
     {
@@ -50583,7 +50610,7 @@
      "path": "src/voice_cascade/uds.rs",
      "purpose": "Private, synchronous per-vault Unix socket adapter for the real retrieval bridge",
      "surface": {
-      "const": 3,
+      "const": 1,
       "re-export": 2,
       "struct": 1
      }
@@ -53883,7 +53910,7 @@
     "failure_ladder": {
      "files": 16,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
@@ -53902,7 +53929,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54637,7 +54664,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 132,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54807,7 +54834,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3334,
+   "source_files": 3336,
    "test_files": 902
   },
   "oneiron-android": {
@@ -57740,7 +57767,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 51,
+      "const": 52,
       "crate-vis": 1
      }
     },
@@ -63050,7 +63077,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 315
+      "fn": 316
      }
     },
     {
@@ -64070,7 +64097,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 316
+      "fn": 317
      }
     },
     {
@@ -65731,13 +65758,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/payer_funding.rs",
      "purpose": "Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -66347,7 +66374,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 26
      }
     },
     {
@@ -66920,6 +66947,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/campaign_split_doors.rs",
+     "purpose": "The host door of a campaign split's evaluation, `vault.research.evaluate_split` (FIX 655): the owner scores…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
@@ -67033,7 +67070,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 62
+      "crate-vis": 63
      }
     },
     {
@@ -70493,7 +70530,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 24,
       "struct": 1
      }
@@ -71195,7 +71232,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 32
      }
     },
     {
@@ -71215,7 +71252,7 @@
      "path": "src/livequery/connection.rs",
      "purpose": "Socket attachment and bounded reconnect retention",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -71233,7 +71270,7 @@
      "path": "src/livequery/error.rs",
      "purpose": "The HTTP facade error body on app frames",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -71331,7 +71368,7 @@
      "path": "src/livequery/rpc.rs",
      "purpose": "The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -71407,7 +71444,7 @@
      "path": "src/livequery/wire.rs",
      "purpose": "Version-8 app envelopes",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -72704,7 +72741,7 @@
      "path": "src/owner/federation_connect.rs",
      "purpose": "Connect (ARCH-0043 #relationship-lifecycle, FIX 323): the owner offers a pact to a peer vault and accepts…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -74197,7 +74234,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 316,
+     "files": 317,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74605,7 +74642,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 632,
+   "source_files": 633,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -74867,6 +74904,7 @@
       "AttemptHandle",
       "AttemptId",
       "AttemptView",
+      "AuthoringStrategyPin",
       "AuthorityAuditEventKind",
       "AuthorityAuditOrder",
       "AuthorityAuditPage",
@@ -74874,6 +74912,7 @@
       "AuthorityAuditRow",
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
+      "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
       "BodyCell",
@@ -74904,7 +74943,11 @@
       "CallableCardView",
       "CampaignArchivePin",
       "CampaignConfig",
+      "CampaignCost",
       "CampaignDatasetRef",
+      "CampaignEvaluationSplit",
+      "CampaignExecutableArm",
+      "CampaignGoldAnchor",
       "CampaignKnobs",
       "CampaignProgramAudienceSpec",
       "CampaignProgramDefinitionView",
@@ -74915,7 +74958,11 @@
       "CampaignProgramRecord",
       "CampaignProgramStepSpec",
       "CampaignPromotionReceipt",
+      "CampaignSmokeOutcome",
+      "CampaignSplitReport",
+      "CampaignSplitWire",
       "CampaignSplits",
+      "CampaignTaste",
       "CancelRejectionPathology",
       "CandidateRef",
       "Care",
@@ -75360,6 +75407,29 @@
       "NotificationPage",
       "NotificationRow",
       "NotificationSource",
+      "Of360Ar3MetricTier",
+      "Of360CaseEvalReport",
+      "Of360CaseExtractionOutput",
+      "Of360ConversationTurn",
+      "Of360DatasetCompleteness",
+      "Of360DerivationEnvelope",
+      "Of360EvalReport",
+      "Of360ExtractedClaim",
+      "Of360ExtractionRun",
+      "Of360ExtractionScore",
+      "Of360GoldCase",
+      "Of360GoldDataset",
+      "Of360GoldMatch",
+      "Of360GoldMemoryPoint",
+      "Of360GoldQa",
+      "Of360MemoryKind",
+      "Of360MetricDefinition",
+      "Of360MetricDefinitionSet",
+      "Of360MetricDirection",
+      "Of360ParsedMetrics",
+      "Of360QaAnswer",
+      "Of360RateMetric",
+      "Of360Speaker",
       "OfferAnswer",
       "OfferAnswerRequest",
       "OfferCard",
@@ -75942,8 +76012,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 313,
-      "struct": 827
+      "enum": 321,
+      "struct": 852
      }
     },
     {
