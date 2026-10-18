@@ -31025,6 +31025,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/code_run_doors/mod.rs",
+     "purpose": "The typed per-model code-run heal count door (DOOR-093)",
+     "surface": {
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeRunModelHealCountRequest",
+      "CodeRunModelHealCountView"
+     ],
+     "path": "src/memory/code_run_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/codebase_doors/mod.rs",
      "purpose": "Typed code snapshot doors (DOOR-118): the import of one committed local Git tree, its pinned manifest, its…",
      "surface": {
@@ -31486,7 +31510,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 8,
+      "mod": 9,
       "re-export": 43
      }
     },
@@ -32787,7 +32811,7 @@
       "crate-vis": 37,
       "enum": 3,
       "fn": 4,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 2
      }
     },
@@ -33158,6 +33182,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "NoteForkReadRequest",
+      "NoteForkRecordView",
+      "NoteForkRequest",
+      "NoteForkView",
+      "NoteLandingView",
+      "NoteProposalForkRef",
+      "NoteProposalOpenRequest",
+      "NoteProposalRequest",
+      "NoteProposalView",
+      "NoteVersionTree"
+     ],
+     "path": "src/note/proposal_doors.rs",
+     "purpose": "Typed NOTE forks and explicit proposal sets over the existing NOTE engine doors",
+     "surface": {
+      "fn": 6,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "NoteActor",
       "NoteFork",
       "NoteLandingReceipt",
@@ -33169,7 +33215,7 @@
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 3,
       "fn": 5,
       "struct": 3
@@ -33193,7 +33239,7 @@
      "path": "src/note/reads.rs",
      "purpose": "Caller-scoped NOTE text, stable edit anchors and retained operation attribution",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 9
@@ -48922,7 +48968,7 @@
      "path": "src/task_verb/create_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -48946,7 +48992,7 @@
      "path": "src/task_verb/create_spec.rs",
      "purpose": "—",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -49810,7 +49856,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 554
+      "fn": 563
      }
     },
     {
@@ -56074,7 +56120,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 165,
+     "files": 167,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56095,7 +56141,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -56755,7 +56801,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3459,
+   "source_files": 3462,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65169,7 +65215,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 504
+      "fn": 513
      }
     },
     {
@@ -66218,7 +66264,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 505
+      "fn": 514
      }
     },
     {
@@ -69188,6 +69234,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_run_doors.rs",
+     "purpose": "The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/codebase_doors.rs",
      "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
      "surface": {
@@ -69401,7 +69457,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 98
+      "crate-vis": 99
      }
     },
     {
@@ -76846,7 +76902,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 356,
+     "files": 357,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77261,7 +77317,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 682,
+   "source_files": 683,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77741,6 +77797,8 @@
       "CodeRepoDiffView",
       "CodeRepoPointer",
       "CodeRepoRequest",
+      "CodeRunModelHealCountRequest",
+      "CodeRunModelHealCountView",
       "CodeSnapshotDefinition",
       "CodeSnapshotDefinitionsRequest",
       "CodeSnapshotDefinitionsView",
@@ -78396,22 +78454,33 @@
       "NoteEditorBinding",
       "NoteEditorCloseRequest",
       "NoteEditorClosed",
+      "NoteForkReadRequest",
+      "NoteForkRecordView",
+      "NoteForkRequest",
+      "NoteForkView",
       "NoteHistoryPurgeExecuteRequest",
       "NoteHistoryPurgeOutcome",
       "NoteHistoryPurgeReceipt",
       "NoteHistoryPurgeRequest",
       "NoteHistoryView",
       "NoteKindDescriptor",
+      "NoteLandingView",
       "NoteLifecycleStatus",
       "NoteLifecycleView",
       "NoteOverrides",
+      "NoteProposalForkRef",
+      "NoteProposalOpenRequest",
+      "NoteProposalRequest",
+      "NoteProposalView",
       "NoteReadRequest",
       "NoteReadSource",
       "NoteReadSpan",
       "NoteReadView",
       "NoteRefRequest",
       "NoteSeal",
+      "NoteVerdict",
       "NoteVersion",
+      "NoteVersionTree",
       "NotificationKind",
       "NotificationMark",
       "NotificationPage",
@@ -78835,8 +78904,10 @@
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
+      "ScopedReadResultOptionalNoteForkView",
       "ScopedReadResultOptionalNoteHistoryView",
       "ScopedReadResultOptionalNoteReadView",
+      "ScopedReadResultOptionalNoteVersionTree",
       "ScopedReadResultOptionalProductivityTree",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
@@ -79270,8 +79341,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 475,
-      "struct": 1336
+      "enum": 476,
+      "struct": 1350
      }
     },
     {

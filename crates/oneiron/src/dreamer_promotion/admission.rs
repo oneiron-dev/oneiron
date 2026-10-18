@@ -1,10 +1,12 @@
 //! The promotion writer's evidence decision, also exposed by the typed evidence read.
 use crate::claim::{
-    ClaimApprovalStatus, claim_consolidatable, claim_evidence_admissible,
-    claim_generated_origin, claim_surfaceable,
+    ClaimApprovalStatus, claim_consolidatable, claim_evidence_admissible, claim_generated_origin,
+    claim_surfaceable,
 };
 use crate::gate::ConsolidationReader;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
+};
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +52,10 @@ pub(crate) fn evidence_ref_refusal_in_txn(
                 return Ok(Some(GeneratedOrigin));
             }
             if !crate::gate::claim_consolidation_eligible_in_txn(
-                &vault.store, txn, entry, ConsolidationReader::PromotionEvidence,
+                &vault.store,
+                txn,
+                entry,
+                ConsolidationReader::PromotionEvidence,
             )? {
                 return Ok(Some(PendingCriticalConfirmation));
             }
@@ -60,10 +65,14 @@ pub(crate) fn evidence_ref_refusal_in_txn(
             let Some(raw) = vault.get_raw_in(txn, entry)? else {
                 return Ok(Some(Missing));
             };
-            let body = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            let body = raw
+                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                 .ok_or(crate::Error::CorruptedIndex("evidence TURN header"))?;
-            Ok(crate::dreamer_consolidation::resources::native_turn_source(vault, body)
-                .err().map(|_| UnsupportedTurnRole))
+            Ok(
+                crate::dreamer_consolidation::resources::native_turn_source(vault, body)
+                    .err()
+                    .map(|_| UnsupportedTurnRole),
+            )
         }
         Some(_) => Ok(None),
     }
@@ -101,8 +110,13 @@ pub struct CursorSpan {
 /// A candidate may carry these citations into the promotion writer, which
 /// verifies them again inside its own commit. No source or actor rides here.
 pub(crate) fn public_evidence_refs(value: Option<&rmpv::Value>) -> Result<Vec<EvidenceRef>> {
-    let Some(value) = value.and_then(rmpv::Value::as_map)
-        .and_then(|fields| fields.iter().find(|(key, _)| key.as_str() == Some("evidence_refs")))
+    let Some(value) = value
+        .and_then(rmpv::Value::as_map)
+        .and_then(|fields| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("evidence_refs"))
+        })
         .map(|(_, value)| value)
     else {
         return Ok(Vec::new());

@@ -348,6 +348,11 @@ pub struct TaskCreateRequest {
     /// The TASK's absolute expiry.
     #[serde(default)]
     pub ttl: Option<super::TaskTtl>,
+    /// The parent TASK this one files under (DOOR-113), by short-id ref or
+    /// 32-hex id. The nesting matrix decides, so a Task nests under a
+    /// Milestone; absent is a root.
+    #[serde(default)]
+    pub parent_ref: Option<String>,
 }
 
 /// The create spec one `tasks.create` request names, owned by the
@@ -357,6 +362,11 @@ pub fn task_create_spec(
     memory: &Memory<'_>,
     input: TaskCreateRequest,
 ) -> MemoryResult<super::TaskCreateSpec> {
+    let parent_ref = input
+        .parent_ref
+        .as_deref()
+        .map(|reference| crate::memory::resolve_entity_ref(memory.vault(), reference))
+        .transpose()?;
     let spec = super::TaskCreateSpec::new(
         crate::msgpack_value_from_json(&input.spec)?,
         input.label,
@@ -369,6 +379,10 @@ pub fn task_create_spec(
     };
     let spec = match input.ttl {
         Some(ttl) => spec.with_ttl(ttl),
+        None => spec,
+    };
+    let spec = match parent_ref {
+        Some(parent_ref) => spec.with_parent_ref(parent_ref),
         None => spec,
     };
     match (input.intent_key, input.brief) {

@@ -2382,6 +2382,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_model_heal_count(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.model_heal_count", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_repo_diff(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {
@@ -4588,6 +4597,75 @@ impl NativeClient {
     pub fn vault_notes_history(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.notes.history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_fork(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.fork", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_forks_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.forks.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_proposals_open(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.proposals.open", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_proposals_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.proposals.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_proposals_merge(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.proposals.merge", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_proposals_switch(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.proposals.switch", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_proposals_reject(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.proposals.reject", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_version_tree(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.version_tree", input)
             .map_err(facade_error)
     }
     #[napi]
