@@ -35,6 +35,9 @@ pub use self::bridge::{ActorScopedVault, VaultBridge};
 // `numeric.rs` names this DTO through `super::`, as it did when both lived in
 // the flat file; it is the only DTO the rest of the crate reaches via `facade::`.
 pub(crate) use self::dtos::NapiClaimInput;
+// The legacy `NapiVault` context pack takes `vault.recall`'s media object and
+// lowers it the same way (OF-370), so the binding has one media shape.
+pub(crate) use self::{convert::recall_media_to_engine, dtos::NapiRecallMedia};
 
 // The flat facade.rs module used to provide these names to the inline test
 // module through `use super::*`: the DTO/convert/boundary items the tests
