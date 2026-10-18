@@ -41,6 +41,7 @@ mod gap;
 mod judge_context;
 mod neighbourhood;
 pub(crate) mod nightly_merge;
+mod note_parts;
 mod note_review;
 mod open_conflict;
 mod parallel;
