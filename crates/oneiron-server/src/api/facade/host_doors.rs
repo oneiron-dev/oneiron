@@ -428,7 +428,9 @@ fn ai_options_answer(
 }
 
 /// One owner's media call's answer, from its seat's ladder, on the media
-/// meter.
+/// meter. Only an owner-grade credential reaches it: the facade's, or an
+/// MCP `execute_code` run's, whose calls spend under no scope. No room pays
+/// for it, so it bills the vault owner (FIX 805).
 async fn answered(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -452,7 +454,8 @@ pub(crate) async fn ai_speech_for_run(
 }
 
 /// One media call's answer, from its seat's ladder: on `run` when its caller
-/// admitted it on a line of its own, else on the media meter. A banked voice
+/// admitted it on a line of its own, which bills that run's payer, else on
+/// the media meter as the owner's call ([`answered`]). A banked voice
 /// withdrawn or re-recorded while it rendered, on the rung that answered, is
 /// not handed back; nor is a call that found the voice withdrawn everywhere
 /// while it waited (FIX 1746).
@@ -467,8 +470,8 @@ async fn rendered(
     let hint = media.retry_hint(&request, voices.as_ref());
     let answer = match (run, &voices) {
         (Some(run), voices) => media.run_admitted(run, request, voices.as_ref()).await,
-        (None, Some(voices)) => media.run_voiced(request, voices).await,
-        (None, None) => media.run(request).await,
+        (None, Some(voices)) => media.run_voiced(request, voices, None).await,
+        (None, None) => media.run(request, None).await,
     };
     let withdrawn = || {
         MemoryError::new(
@@ -553,6 +556,8 @@ pub(crate) async fn ai_embed(
 }
 
 /// `ai.video`: the clip renders as a provider job; the answer is its ticket.
+/// It is the owner's call, as [`answered`]'s is, so its job bills the vault
+/// owner, and so does each later take-up of it.
 pub(crate) async fn ai_video(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -563,7 +568,7 @@ pub(crate) async fn ai_video(
         .ai
         .model_runtime()
         .media()
-        .submit(request)
+        .submit(request, None)
         .await
         .map_err(|error| failure(AiOperation::Video, &error))?;
     Ok(AiVideoTicket {

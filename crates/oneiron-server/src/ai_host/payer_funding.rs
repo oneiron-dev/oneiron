@@ -21,6 +21,7 @@ use oneiron::llm::decision::{
     ProviderPin,
 };
 use oneiron::llm::run_admission::{PayerAccount, PayerPerson};
+use oneiron::workspace_roster::RoomFunding;
 use oneiron::{EntityId, Vault};
 
 /// The host-issued queue identity of a payer-needed ask.
@@ -129,6 +130,38 @@ pub(crate) fn scope_funding(
         root_scope: root,
         account,
     }))
+}
+
+/// How a launch that `agent` answers in `room`, or its thread `branch`, is
+/// funded (FIX 805): a chat or voice turn, or a queued Continue or Retry.
+/// Its payer is the PERSON whose consent on the agent's Ready join funds the
+/// place (L02's join receipt, re-proved live), read through that consent's
+/// scope as [`scope_funding`] reads a room-bound call's. A join that
+/// launches no paid work, or that no longer covers the place, is no funding
+/// consent: the launch holds on [`PayerFault::Missing`], never the vault
+/// owner's default. A join that cannot be read holds too. This is the one
+/// place that says which launch is room-bound.
+pub(crate) fn room_launch_funding(
+    vault: &Vault,
+    room: EntityId,
+    branch: Option<EntityId>,
+    agent: EntityId,
+) -> Result<Option<PayerPerson>, PayerFault> {
+    let funding = match vault.room_funding(room, branch, agent) {
+        Ok(funding) => funding,
+        Err(error) => {
+            tracing::warn!(%error, room = %room.to_hex(), "a room launch's join could not be read");
+            return Err(PayerFault::Missing { scope: None });
+        }
+    };
+    match funding {
+        RoomFunding::Paid { scope, .. } => scope_funding(vault, Some(&scope), true),
+        RoomFunding::NoPaidWork | RoomFunding::Lapsed => Err(PayerFault::Missing { scope: None }),
+        // The room-bound predicate (CALLS, FIX 805): an agent with no Ready
+        // join filed for the place answers no room launch but the owner's
+        // own conversation, which keeps the vault owner's default.
+        RoomFunding::NotJoined => Ok(None),
+    }
 }
 
 /// The owners' yes to billing the vault for the launch under `root`, whose

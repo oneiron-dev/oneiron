@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use oneiron::llm::media::{AiMediaDoor, MediaFuture, MediaRequest, MediaResponse};
-use oneiron::llm::run_admission::MediaStreamLease;
+use oneiron::llm::run_admission::{MediaStreamLease, PayerPerson};
 use oneiron::llm::{
     ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext, VoiceLane,
 };
@@ -68,11 +68,15 @@ pub(crate) fn admit_media(
 /// The media door engine code holds ([`AiMediaDoor`], and
 /// [`VoiceStreamDoor`] for a live hearing's segments): the server's model
 /// runtime bound to its vault. Each call is admitted by [`admit_media`],
-/// then runs on the media meter as a run of its own.
+/// then runs on the media meter as a run of its own, billed to the door's
+/// payer.
 pub struct MediaDoor {
     vault: Arc<Vault>,
     runtime: Arc<ModelRuntime>,
     extraction_egress: Option<Arc<dyn ExtractionEgressPredicate>>,
+    /// Who its calls and streams bill when a room pays for them (FIX 805),
+    /// bound when the door is made; `None` is the vault owner.
+    payer: Option<PayerPerson>,
 }
 
 impl MediaDoor {
@@ -126,7 +130,7 @@ impl AiMediaDoor for MediaDoor {
     fn call<'a>(&'a self, request: MediaRequest) -> MediaFuture<'a, MediaResponse> {
         Box::pin(async move {
             let request = self.admit(request)?;
-            self.runtime.media().run(request).await
+            self.runtime.media().run(request, self.payer.clone()).await
         })
     }
 }
@@ -139,7 +143,9 @@ impl VoiceStreamDoor for MediaDoor {
     ) -> MediaFuture<'a, MediaStreamLease> {
         Box::pin(async move {
             let request = self.admit(request)?;
-            self.runtime.media().open_stream(request, bound_ms)
+            self.runtime
+                .media()
+                .open_stream(request, bound_ms, self.payer.clone())
         })
     }
 }
@@ -147,13 +153,15 @@ impl VoiceStreamDoor for MediaDoor {
 impl SyncServer {
     /// The vault-bound media door over this server's model runtime: the
     /// one engine code (the voice host's media worker and live hearing)
-    /// makes its media calls through.
+    /// makes its media calls through, each billed to `payer`, which its
+    /// caller resolved (FIX 805).
     #[must_use]
-    pub(crate) fn media_door(&self) -> Arc<MediaDoor> {
+    pub(crate) fn media_door(&self, payer: Option<PayerPerson>) -> Arc<MediaDoor> {
         Arc::new(MediaDoor {
             vault: Arc::clone(&self.vault),
             runtime: Arc::clone(self.ai.models()),
             extraction_egress: self.extraction_egress.clone(),
+            payer,
         })
     }
 }

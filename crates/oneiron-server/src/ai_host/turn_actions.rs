@@ -28,6 +28,7 @@ use oneiron::memory::{MessageWriteMode, WitnessAuthor};
 use oneiron::{LlmCapability, LlmMessage, LlmMessageRole, Vault, WriteActor};
 use tokio::sync::{broadcast, watch};
 
+use super::payer_funding::room_launch_funding;
 use super::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
     Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, TurnCredential, after_turn,
@@ -123,6 +124,11 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
             .turn_action_context(&action, settings.history_turns)
     })
     .map_err(|error| error.to_string())?;
+    // A reply in a room bills the payer whose consent on its agent's join
+    // funds that room (FIX 805): one with no payer to bill is refused, typed,
+    // before anything is written or any model is called.
+    let funding = blocking(|| room_launch_funding(vault, action.conversation, None, context.agent))
+        .map_err(|fault| fault.to_string())?;
     let seat = ai
         .chat_seat()
         .cloned()
@@ -215,6 +221,7 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
             mode: MessageWriteMode::Atomic,
             admitted,
             payer: WriteActor::new(actor, class),
+            funding,
             budget_units: settings.turn_budget_units,
             credential: TurnCredential::Action {
                 action: Box::new(action),

@@ -44,6 +44,7 @@ use super::{
     ChatBrain, ChatBrainBindings, VoiceHost, VoiceHostBindings, VoiceServeBindings,
     VoiceWireBindings,
 };
+use crate::ai_host::payer_funding::room_launch_funding;
 use crate::auth::{BindingProof, CoreAuth, CoreScope};
 use crate::config::models::VoiceSettings;
 use crate::managed::{ManagedShutdown, ShutdownSignal};
@@ -205,7 +206,7 @@ async fn call(
         .and_then(|principal| EntityId::from_hex(principal).ok())
         .ok_or_else(|| refused("principal"))?;
     let payer = WriteActor::new(actor, EdgeActorClass::Human);
-    let instructions = instructions(&auth, vault)?;
+    let (agent, instructions) = instructions(&auth, vault)?;
     if roster.as_deref().is_some_and(|roster| {
         roster.is_empty() || roster.trim() != roster || roster.len() > MAX_ROSTER_REF_BYTES
     }) {
@@ -215,6 +216,17 @@ async fn call(
         .as_deref()
         .map(|room| bind_room(vault, &auth, actor, room))
         .transpose()?;
+    // A call heard in a room bills the payer whose consent on its answering
+    // agent's join funds that room (FIX 805), resolved once, before any
+    // provider work; a call with no payer to bill is refused, typed. The
+    // host's run, each brain turn and the media door all bill it.
+    let funding = match &container {
+        Some(binding) => {
+            crate::server::blocking(|| room_launch_funding(vault, binding.container, None, agent))
+                .map_err(|fault| refused(&fault.to_string()))?
+        }
+        None => None,
+    };
 
     let call_ref = format!("voice-call:{}", EntityId::now().to_hex());
     let mut session = VoiceSessionConfig::new(
@@ -246,7 +258,10 @@ async fn call(
         .models()
         .router()
         .ok_or_else(|| failed("no [models] router"))?;
-    let run = server.ai.undeclared_run(call_ref.clone(), line);
+    let run = server
+        .ai
+        .model_runtime()
+        .funded_run(call_ref.clone(), line, funding.clone());
     let host = VoiceHost::new(
         Arc::clone(vault),
         &server.config.runtime,
@@ -271,6 +286,7 @@ async fn call(
         auth: auth.clone(),
         instructions,
         payer,
+        funding: funding.clone(),
         out,
     })
     .map_err(failed)?;
@@ -285,7 +301,7 @@ async fn call(
         stream,
         brain,
         VoiceWireBindings {
-            door: server.media_door(),
+            door: server.media_door(funding),
             vault: Arc::clone(vault),
             render,
             sample_rate,
@@ -377,9 +393,9 @@ async fn hello(stream: &mut UnixStream) -> io::Result<Hello> {
     serde_json::from_slice(&frame).map_err(|_| refused("not a hello"))
 }
 
-/// The answering agent's instructions, as the chat route reads them: the
-/// seeded default, dispatchable, and readable by the caller.
-fn instructions(auth: &CoreAuth, vault: &Vault) -> io::Result<Option<String>> {
+/// The answering agent and its instructions, as the chat route reads them:
+/// the seeded default, dispatchable, and readable by the caller.
+fn instructions(auth: &CoreAuth, vault: &Vault) -> io::Result<(EntityId, Option<String>)> {
     let (id, _) = vault
         .get_seeded_agent_definition_by_logical_id(DEFAULT_AGENT)
         .map_err(failed)?
@@ -390,7 +406,10 @@ fn instructions(auth: &CoreAuth, vault: &Vault) -> io::Result<Option<String>> {
     if !auth.can_read_entity(vault, &id).unwrap_or(false) {
         return Err(refused("agent not readable"));
     }
-    Ok(definition
-        .instructions
-        .filter(|text| !text.trim().is_empty()))
+    Ok((
+        id,
+        definition
+            .instructions
+            .filter(|text| !text.trim().is_empty()),
+    ))
 }

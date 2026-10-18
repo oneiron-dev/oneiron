@@ -15,7 +15,7 @@ use oneiron::llm::media::{
     Modality,
 };
 use oneiron::llm::run_admission::{
-    HostAccount, MediaGate, OfferBinding, RunAdmission, RunPermit, RunReceiptSink,
+    HostAccount, MediaGate, OfferBinding, PayerPerson, RunAdmission, RunPermit, RunReceiptSink,
 };
 use oneiron::llm::{SingleRouteBackend, SingleSend, VoiceBackendBinding};
 use oneiron::voice_cascade::media::BankVoiceBinding;
@@ -41,6 +41,7 @@ use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedW
 use super::http::{KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
 use super::offer::{ServedOffer, clone_connector, media_offer};
+use super::raw::funded_run;
 use super::rerank::transport;
 use super::soniox::{self, SonioxRung};
 use super::status::{RungHealth, RungStatus, SeatState, SeatStatus};
@@ -722,21 +723,37 @@ impl MediaRuntime {
         &'a self,
         request: MediaRequest,
         voices: Option<&'a RungVoices>,
+        payer: Option<PayerPerson>,
     ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + 'a> {
         let ladder = self.ladder(&request)?;
+        let run = self.media_run(payer)?;
+        Ok(async move { ladder.media(&run, request, None, voices).await })
+    }
+
+    /// A run of its own on the media meter, for one call or stream, billed
+    /// to `payer` when a room pays for it (FIX 805): each permit binds the
+    /// PERSON and account its caller resolved before the call. `None` is
+    /// the vault owner's run.
+    fn media_run(&self, payer: Option<PayerPerson>) -> LlmResult<RunAdmission> {
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
-        let run = undeclared_run(
+        Ok(funded_run(
             MEDIA_RUN,
             meter,
             self.host.clone(),
             Arc::clone(&self.receipts),
-        );
-        Ok(async move { ladder.media(&run, request, None, voices).await })
+            payer,
+        ))
     }
 
-    /// One call to its answer, on a run of its own on the media meter.
-    pub async fn run(&self, request: MediaRequest) -> LlmResult<MediaResponse> {
-        self.run_in(request, None).await
+    /// One call to its answer, on a run of its own on the media meter,
+    /// billed to `payer` when a room pays for it (FIX 805); `None` is the
+    /// vault owner's.
+    pub async fn run(
+        &self,
+        request: MediaRequest,
+        payer: Option<PayerPerson>,
+    ) -> LlmResult<MediaResponse> {
+        self.run_in(request, None, payer).await
     }
 
     /// [`Self::run`] for a speech call in a banked voice (FIX 1746): it goes
@@ -746,8 +763,9 @@ impl MediaRuntime {
         &self,
         request: MediaRequest,
         voices: &RungVoices,
+        payer: Option<PayerPerson>,
     ) -> LlmResult<MediaResponse> {
-        self.run_in(request, Some(voices)).await
+        self.run_in(request, Some(voices), payer).await
     }
 
     /// When `request` may be sent again if no offer answers it (FIX 3194):
@@ -771,14 +789,9 @@ impl MediaRuntime {
         &self,
         request: MediaRequest,
         voices: Option<&RungVoices>,
+        payer: Option<PayerPerson>,
     ) -> LlmResult<MediaResponse> {
-        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
-        let run = undeclared_run(
-            MEDIA_RUN,
-            meter,
-            self.host.clone(),
-            Arc::clone(&self.receipts),
-        );
+        let run = self.media_run(payer)?;
         self.run_admitted(&run, request, voices).await
     }
 
@@ -805,15 +818,24 @@ impl MediaRuntime {
         }
     }
 
-    /// Submits one job (`ai.video`); its caller polls the ticket. The job
-    /// is kept in the vault, so a restart loses none.
-    pub async fn submit(&self, request: MediaRequest) -> LlmResult<MediaTicket> {
+    /// Submits one job (`ai.video`), billed to `payer` as [`Self::run`]'s
+    /// call is; its caller polls the ticket. The job is kept in the vault
+    /// with its payer, so a restart loses neither, and a poll or a cancel
+    /// never names a payer of its own.
+    pub async fn submit(
+        &self,
+        request: MediaRequest,
+        payer: Option<PayerPerson>,
+    ) -> LlmResult<MediaTicket> {
         if !request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let operation = request.operation;
-        let sent = self.store.as_ref().map(|_| request.clone());
-        let MediaAnswer::Job(job) = self.walk(request, None)?.await? else {
+        let sent = self
+            .store
+            .as_ref()
+            .map(|_| (request.clone(), payer.clone()));
+        let MediaAnswer::Job(job) = self.walk(request, None, payer)?.await? else {
             return Err(FatalLlmError::EmptyResponse.into());
         };
         let id = job_ticket(&job.provider_job);
@@ -822,7 +844,7 @@ impl MediaRuntime {
             model: job.model.to_string(),
             operation,
         };
-        if let (Some(store), Some(request)) = (&self.store, sent)
+        if let (Some(store), Some((request, payer))) = (&self.store, sent)
             && let Err(error) = store.put(
                 &id,
                 JobRow {
@@ -832,6 +854,7 @@ impl MediaRuntime {
                     request,
                     ended: None,
                     receipt: job.receipt.clone(),
+                    payer,
                 },
             )
         {
@@ -975,8 +998,9 @@ impl MediaRuntime {
     /// its caller sent, and started for the job's polls without a new
     /// submit. It carries the served receipt it went out with, and its end
     /// counts toward its offer's health as a sent request's does: a
-    /// recovering offer's one probation request when that slot is free. A
-    /// job whose rung left the config cannot be taken up.
+    /// recovering offer's one probation request when that slot is free. It
+    /// bills the payer its submit bound, whoever polls it. A job whose rung
+    /// left the config cannot be taken up.
     fn take_up(&self, row: &JobRow) -> LlmResult<HeldJob> {
         let rung = self
             .job_rungs
@@ -986,13 +1010,7 @@ impl MediaRuntime {
         let mut bound = row.request.clone();
         bound.model = rung.model.clone();
         bound.envelope.locality = rung.offer.binding.locality;
-        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
-        let run = undeclared_run(
-            MEDIA_RUN,
-            meter,
-            self.host.clone(),
-            Arc::clone(&self.receipts),
-        );
+        let run = self.media_run(row.payer.clone())?;
         let selector = Some(row.request.model.as_str());
         let permit = run.admit_media(selector, &bound, &rung.offer.binding)?;
         let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);
@@ -1302,23 +1320,19 @@ impl MediaRuntime {
     /// reserving `bound_ms` of audio, started at its rung's media gate
     /// before any audio leaves. As a [`HeldJob`] holds a job's permit to its
     /// end, the lease holds the stream's: it meters the audio its wire sends
-    /// and settles when the stream ends or is cancelled.
+    /// and settles when the stream ends or is cancelled. The stream bills
+    /// `payer` as [`Self::run`]'s call does.
     pub fn open_stream(
         &self,
         request: MediaRequest,
         bound_ms: u64,
+        payer: Option<PayerPerson>,
     ) -> LlmResult<oneiron::llm::run_admission::MediaStreamLease> {
         if request.operation != AiOperation::Transcribe || bound_ms == 0 {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let ladder = self.ladder(&request)?;
-        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
-        let run = undeclared_run(
-            MEDIA_RUN,
-            meter,
-            self.host.clone(),
-            Arc::clone(&self.receipts),
-        );
+        let run = self.media_run(payer)?;
         ladder.open_media_stream(&run, request, bound_ms)
     }
 }

@@ -397,9 +397,14 @@ fn host_row(
                 .and_then(|text| server.embed_query(&text).ok());
             encode(memory.report_with_embedding(request, vector.as_deref())?)
         }
-        AgentVerb::VaultRecall => {
-            encode(server.recall(memory, principal, class, decode(input)?)?)
-        }
+        // Its query embeds bill the payer the run's line binds (FIX 805).
+        AgentVerb::VaultRecall => encode(server.recall(
+            memory,
+            principal,
+            class,
+            decode(input)?,
+            line.and_then(RunAdmission::payer),
+        )?),
         AgentVerb::AiVerdict => {
             let request: AiVerdictRequest = decode(input)?;
             let held = HeldImage::in_task(request.image.as_deref());

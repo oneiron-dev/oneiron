@@ -25,6 +25,7 @@ use std::time::Instant;
 use oneiron::authority::VerifiedSlip;
 use oneiron::claim::CallerLocality;
 use oneiron::embed::InputKind;
+use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::{
     Effort, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryPack, MemoryResult, ProducerRows,
@@ -44,7 +45,9 @@ use crate::embedder::EmbedQueryRefusal;
 const LIGHT_RECALL_EMBEDS_MEDIA: bool = false;
 
 impl SyncServer {
-    /// Runs `recall` for `memory` with the server's execution inputs.
+    /// Runs `recall` for `memory` with the server's execution inputs. Its
+    /// `ai.embed` calls bill `payer`, the funding of the run that recalls
+    /// (FIX 805); `None` is the vault owner's.
     ///
     /// Blocking: it may embed the query and it reads the vault. Async callers
     /// take [`Self::recall_off_runtime`]; a synchronous caller that may sit on
@@ -55,12 +58,13 @@ impl SyncServer {
         actor: EntityId,
         class: EdgeActorClass,
         input: RecallRequest,
+        payer: Option<&PayerPerson>,
     ) -> MemoryResult<MemoryPack> {
         let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
         let rerank = self.door_rerank(effort, actor, class)?;
         let media = self.recall_media(&input)?;
         let refused = Mutex::new(None);
-        let embed = self.recall_embed_media(input.effort, media, &refused);
+        let embed = self.recall_embed_media(input.effort, media, &refused, payer);
         let door = RecallDoor {
             rerank: rerank.engine(),
             ..RecallDoor::now()
@@ -102,18 +106,19 @@ impl SyncServer {
     /// into its declared space through the context pack's shared seed
     /// embedding once the request is admitted, as the query is. A refused
     /// embedding is kept in `refused` for the door to answer with: the recall
-    /// never answers without its media.
+    /// never answers without its media. Each call bills `payer`.
     fn recall_embed_media<'a>(
         &'a self,
         effort: Option<RecallEffort>,
         media: Option<DecodedMediaQuery>,
         refused: &'a Mutex<Option<MemoryError>>,
+        payer: Option<&'a PayerPerson>,
     ) -> impl FnOnce(&str) -> RecallQueryVectors + 'a {
-        let embed = self.recall_embed(effort);
+        let embed = self.recall_embed(effort, payer);
         move |query| {
             let mut vectors = embed(query);
             if let Some(media) = media {
-                match self.recall_media_vectors(media) {
+                match self.recall_media_vectors(media, payer) {
                     Ok(seeds) => vectors.media.extend(seeds),
                     Err(refusal) => {
                         if let Ok(mut slot) = refused.lock() {
@@ -127,10 +132,11 @@ impl SyncServer {
     }
 
     /// The media's vectors in its declared space, driven on
-    /// [`Self::recall_embed_runtime`].
+    /// [`Self::recall_embed_runtime`], billed to `payer`.
     fn recall_media_vectors(
         &self,
         media: DecodedMediaQuery,
+        payer: Option<&PayerPerson>,
     ) -> MemoryResult<Vec<(String, InputKind, Vec<f32>)>> {
         let Ok(runtime) = self.recall_embed_runtime() else {
             return Err(MemoryError::new(
@@ -140,7 +146,12 @@ impl SyncServer {
             ));
         };
         let seeds = runtime
-            .block_on(crate::api::embed_media_seeds(self, Some(media), None))
+            .block_on(crate::api::embed_media_seeds_for(
+                self,
+                Some(media),
+                None,
+                payer,
+            ))
             .map_err(media_refusal)?;
         Ok(seeds
             .into_iter()
@@ -153,11 +164,13 @@ impl SyncServer {
     /// the text kind slot binds a declared space (the one-space preset), the
     /// query goes through that space's text tower, and the vault's own text
     /// index, which no text search reads then, gets no vector. Otherwise it
-    /// embeds on the vault's embedder when that serves.
-    fn recall_embed(
-        &self,
+    /// embeds on the vault's embedder when that serves. A space's call bills
+    /// `payer`.
+    fn recall_embed<'a>(
+        &'a self,
         effort: Option<RecallEffort>,
-    ) -> impl FnOnce(&str) -> RecallQueryVectors + '_ {
+        payer: Option<&'a PayerPerson>,
+    ) -> impl FnOnce(&str) -> RecallQueryVectors + 'a {
         let embeds = effort.map_or(Effort::Medium, RecallEffort::level) != Effort::Light;
         move |query| {
             if !embeds {
@@ -166,7 +179,7 @@ impl SyncServer {
             match self.vault.kind_slot_bindings() {
                 Ok(bindings) => {
                     if let Some(space) = bindings.text {
-                        let vector = self.recall_slot_vector(&space, query);
+                        let vector = self.recall_slot_vector(&space, query, payer);
                         return RecallQueryVectors {
                             text_index: None,
                             media: vector
@@ -202,9 +215,14 @@ impl SyncServer {
 
     /// The query's vector in declared space `space`, through the text tower
     /// of the `ai.embed` rung its id names, driven on
-    /// [`Self::recall_embed_runtime`]; `None` when it does not embed, so
-    /// recall runs sparse.
-    fn recall_slot_vector(&self, space: &str, query: &str) -> Option<Vec<f32>> {
+    /// [`Self::recall_embed_runtime`], billed to `payer`; `None` when it does
+    /// not embed, so recall runs sparse.
+    fn recall_slot_vector(
+        &self,
+        space: &str,
+        query: &str,
+        payer: Option<&PayerPerson>,
+    ) -> Option<Vec<f32>> {
         let runtime = match self.recall_embed_runtime() {
             Ok(handle) => handle,
             Err(error) => {
@@ -213,7 +231,7 @@ impl SyncServer {
             }
         };
         let embedded = self.media_embedder(space).and_then(|embedder| {
-            runtime.block_on(embedder.embed_query(
+            runtime.block_on(embedder.funded_by(payer.cloned()).embed_query(
                 InputKind::Text,
                 "text/plain",
                 query.as_bytes().to_vec(),
@@ -290,7 +308,8 @@ impl SyncServer {
                     .at(locality)
                     .listing_producers(&listing);
                 let refused = Mutex::new(None);
-                let embed = server.recall_embed_media(input.effort, media, &refused);
+                // A door's own recall is the owner's: no run funds it.
+                let embed = server.recall_embed_media(input.effort, media, &refused, None);
                 let answer = match room {
                     Some(room) => memory
                         .for_room_turn(room)?
@@ -366,7 +385,7 @@ impl SyncServer {
             let memory = reader(&self.vault, actor, class, proof.as_ref())
                 .at(locality)
                 .listing_producers(producers);
-            return blocking(|| self.recall(&memory, actor, class, input));
+            return blocking(|| self.recall(&memory, actor, class, input, None));
         };
         let ready = CutSlot::default();
         let publish = ready.clone();

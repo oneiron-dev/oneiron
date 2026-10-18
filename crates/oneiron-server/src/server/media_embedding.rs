@@ -26,6 +26,7 @@ use oneiron::embed::{
     MediaEmbeddingInput,
 };
 use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest, Modality};
+use oneiron::llm::run_admission::PayerPerson;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, FatalLlmError, LlmError, ModelId, ModelLocality,
     ModelTierRef, ResponseFormat, TierPrecedence,
@@ -154,6 +155,10 @@ pub(crate) struct RuntimeMediaEmbedder {
     /// The runtime the synchronous door drives its calls on; a blocking
     /// caller sets it.
     runtime: Option<tokio::runtime::Handle>,
+    /// Who its calls bill when a room pays for them (FIX 805): a funded
+    /// run's payer, which its caller sets. `None` is the vault owner, as a
+    /// backfill's or a door's own query is.
+    payer: Option<PayerPerson>,
 }
 
 impl SyncServer {
@@ -206,6 +211,7 @@ impl SyncServer {
             egress: self.extraction_egress.clone(),
             names_width: AtomicBool::new(false),
             runtime: None,
+            payer: None,
         })
     }
 
@@ -369,6 +375,13 @@ impl RuntimeMediaEmbedder {
         self
     }
 
+    /// This embedder with its calls billed to `payer`, the funding of the
+    /// run they are made for (FIX 805).
+    pub(crate) fn funded_by(mut self, payer: Option<PayerPerson>) -> Self {
+        self.payer = payer;
+        self
+    }
+
     /// One query of `kind` into this space, through that kind's tower.
     pub(crate) async fn embed_query(
         &self,
@@ -427,7 +440,7 @@ impl RuntimeMediaEmbedder {
             .ai
             .model_runtime()
             .media()
-            .run(request)
+            .run(request, self.payer.clone())
             .await
             .map_err(MediaEmbedRefusal::Call)?;
         let mut vectors = response.parts.into_iter().filter_map(|part| match part {
