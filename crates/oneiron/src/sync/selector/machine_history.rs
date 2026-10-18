@@ -7,7 +7,8 @@ use crate::{EntityId, Vault};
 /// export, read from stored truth: its birth event, each transition event of
 /// the chain's union and every handoff of its chain. `None` when that history
 /// does not resolve whole (a missing or malformed row, a cycle in the chain).
-pub(super) fn machine_history_controls(
+/// The home's history pages serve the same rows (FIX 3820).
+pub(in crate::sync) fn machine_history_controls(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     id: EntityId,

@@ -597,6 +597,8 @@ class Oneiron:
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
+        def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
         @property
         def critic(self) -> "Oneiron._VaultCriticVerbs": ...
@@ -1386,6 +1388,17 @@ class Oneiron:
         def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
             """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
+    class _VaultWorkflowsVerbs:
+        def save(self, spec: Facade.WorkflowSaveRequest) -> Facade.WorkflowView:
+            """The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."""
+        def get(self, spec: Facade.WorkflowRequest) -> Facade.WorkflowView:
+            """The owner reads one saved workflow, its steps, revision and fork lineage."""
+        def update(self, spec: Facade.WorkflowUpdateRequest) -> Facade.WorkflowView:
+            """The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps."""
+        def dispatch(self, spec: Facade.WorkflowDispatchRequest) -> Facade.WorkflowRunView:
+            """The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."""
+        def status(self, spec: Facade.WorkflowRunRequest) -> Facade.WorkflowRunView:
+            """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
     class _VaultWorkspaceVerbs:
         def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
             """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""
@@ -1668,6 +1681,12 @@ class Oneiron:
             """Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."""
         def history(self, input: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteHistoryView | None]:
             """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
+        def history_purge(self, spec: Facade.NoteHistoryPurgeRequest) -> Facade.NoteHistoryPurgeOutcome:
+            """The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."""
+        def history_purge_execute(self, spec: Facade.NoteHistoryPurgeExecuteRequest) -> Facade.NoteHistoryPurgeReceipt:
+            """Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt."""
+        def history_purge_receipts(self, spec: Facade.NoteHistoryPurgeRequest) -> list[Facade.NoteHistoryPurgeReceipt]:
+            """The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier."""
         @property
         def editor(self) -> "Oneiron._VaultNotesEditorVerbs": ...
         def edit(self, input: Facade.EditNoteRequest) -> Facade.NoteEditOutcome:

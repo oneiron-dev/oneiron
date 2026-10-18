@@ -1121,6 +1121,18 @@ export class Oneiron {
       /** The agent's travelling AgentPack folder (files base64) and what stayed home. */
       export_pack: (request: Facade.AgentPackExportRequest): Facade.AgentPackExport => this.#call(() => {  const result = JSON.parse(this.#client.vaultAgentsExportPack(keyedJson(request))) as Facade.AgentPackExport; return result }),
     },
+    workflows: {
+      /** The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched. */
+      save: (input: Facade.WorkflowSaveRequest): Facade.WorkflowView => this.#call(() => this.#client.vaultWorkflowsSave(input) as Facade.WorkflowView),
+      /** The owner reads one saved workflow, its steps, revision and fork lineage. */
+      get: (input: Facade.WorkflowRequest): Facade.WorkflowView => this.#call(() => this.#client.vaultWorkflowsGet(input) as Facade.WorkflowView),
+      /** The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps. */
+      update: (input: Facade.WorkflowUpdateRequest): Facade.WorkflowView => this.#call(() => this.#client.vaultWorkflowsUpdate(input) as Facade.WorkflowView),
+      /** The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run. */
+      dispatch: (input: Facade.WorkflowDispatchRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsDispatch(input) as Facade.WorkflowRunView),
+      /** The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result. */
+      status: (input: Facade.WorkflowRunRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsStatus(input) as Facade.WorkflowRunView),
+    },
     workspace: {
       /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
       establish: (input: Facade.WorkspacePresetRequest): Facade.WorkspacePresetReceipt => this.#call(() => this.#client.vaultWorkspaceEstablish(input) as Facade.WorkspacePresetReceipt),
@@ -1418,6 +1430,12 @@ export class Oneiron {
       read: (input: Facade.NoteReadRequest): Facade.ScopedReadResult<Facade.NoteReadView | null> => this.#call(() => this.#client.vaultNotesRead(input) as Facade.ScopedReadResult<Facade.NoteReadView | null>),
       /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
       history: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteHistoryView | null> => this.#call(() => this.#client.vaultNotesHistory(input) as Facade.ScopedReadResult<Facade.NoteHistoryView | null>),
+      /** The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action. */
+      history_purge: (input: Facade.NoteHistoryPurgeRequest): Facade.NoteHistoryPurgeOutcome => this.#call(() => this.#client.vaultNotesHistoryPurge(input) as Facade.NoteHistoryPurgeOutcome),
+      /** Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt. */
+      history_purge_execute: (input: Facade.NoteHistoryPurgeExecuteRequest): Facade.NoteHistoryPurgeReceipt => this.#call(() => this.#client.vaultNotesHistoryPurgeExecute(input) as Facade.NoteHistoryPurgeReceipt),
+      /** The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier. */
+      history_purge_receipts: (input: Facade.NoteHistoryPurgeRequest): Facade.NoteHistoryPurgeReceipt[] => this.#call(() => this.#client.vaultNotesHistoryPurgeReceipts(input) as Facade.NoteHistoryPurgeReceipt[]),
       editor: {
         /** Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves. */
         bind: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteEditorBinding | null> => this.#call(() => this.#client.vaultNotesEditorBind(input) as Facade.ScopedReadResult<Facade.NoteEditorBinding | null>),

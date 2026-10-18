@@ -221,6 +221,9 @@ side_tables! {
     /// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
     /// Key: hex32.
     GATE_MANIFEST_TRUSTED_ORIGIN: SyncState b"manifest:trusted:" Raw;
+    /// A target whose machine-claim history this machine is owed (FIX 3820): the windows its rows
+    /// came in by, where the home's paging stopped and what the last try found. Key: hex32.
+    SYNC_MACHINE_HISTORY_OWED: SyncState b"mh:owed:v1:" Named;
     /// One submitted `ai.video` job (FIX-LIST 465): its rung, provider handle and call, and its end
     /// once a poll saw it, so a restart takes it up again and an ended job answers every poll until
     /// its caller deletes it. Its clips' bytes sit beside it. Key: ticket (`job_` hex24), or ticket
@@ -298,7 +301,8 @@ side_tables! {
     /// (32) ‖ u64be bytes staged. Key: hex32 (the uploading machine) ":" b|k.
     SYNC_RESIDENCE_BUNDLE_STAGE: SyncState b"rb:s:" Raw;
     /// The publisher turn of the vault's sealed bundle on the home (FIX 3351): u64be vault second
-    /// the holder's turn runs from ‖ each machine that asked for it (16), the holder first. Key: ().
+    /// the holder's turn runs from ‖ u64be slot the machine whose turn lapsed holds first (0 for
+    /// none) ‖ that machine (16) ‖ each machine that asked for it (16), the holder first. Key: ().
     SYNC_RESIDENCE_BUNDLE_TURN: SyncState b"rb:t" Raw;
     /// One part of a staged upload. Key: hex32 (the uploading machine) ":" b|k ":" hex16
     /// (offset).

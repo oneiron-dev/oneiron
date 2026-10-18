@@ -315,6 +315,11 @@ vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown
 vaultAgentsUpdate(input: unknown): unknown
+vaultWorkflowsSave(input: unknown): unknown
+vaultWorkflowsGet(input: unknown): unknown
+vaultWorkflowsUpdate(input: unknown): unknown
+vaultWorkflowsDispatch(input: unknown): unknown
+vaultWorkflowsStatus(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown
@@ -497,6 +502,9 @@ vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
+vaultNotesHistoryPurge(input: unknown): unknown
+vaultNotesHistoryPurgeExecute(input: unknown): unknown
+vaultNotesHistoryPurgeReceipts(input: unknown): unknown
 vaultNotesEditorBind(input: unknown): unknown
 vaultNotesEditorClose(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown

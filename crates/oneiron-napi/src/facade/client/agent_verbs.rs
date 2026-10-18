@@ -2576,6 +2576,48 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_workflows_save(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workflows.save", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workflows_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workflows.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workflows_update(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workflows.update", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workflows_dispatch(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workflows.dispatch", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workflows_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workflows.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_workspace_establish(
         &self,
         input: serde_json::Value,
@@ -4441,6 +4483,33 @@ impl NativeClient {
     pub fn vault_notes_history(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.notes.history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_history_purge(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.history_purge", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_history_purge_execute(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.history_purge_execute", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_history_purge_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.history_purge_receipts", input)
             .map_err(facade_error)
     }
     #[napi]

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 487 facade rows, 1836 declarations.
-Inputs: 438 of 487 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 433 of 487 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 495 facade rows, 1849 declarations.
+Inputs: 446 of 495 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 441 of 495 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 88; unread shapes: 0.
 """
 
@@ -5580,6 +5580,70 @@ class AgentDefinitionUpdateRequest(TypedDict):
     agent_def_ref: EntityId
     expected_version: str
     definition: AgentDefinitionSpec
+class WorkflowSaveRequest(TypedDict):
+    workflow_ref: EntityId
+    name: str
+    steps: list[EntityId]
+class WorkflowView(TypedDict):
+    workflow_ref: EntityId
+    name: str
+    steps: list[EntityId]
+    revision: int
+    forked_from: NotRequired[EntityId | None]
+class WorkflowRequest(TypedDict):
+    workflow_ref: EntityId
+class WorkflowUpdateRequest(TypedDict):
+    workflow_ref: EntityId
+    expected_revision: int
+    name: str
+    steps: list[EntityId]
+class MemoryProjectionDefault(TypedDict):
+    mode: Literal["default"]
+class MemoryProjectionExclude(TypedDict):
+    mode: Literal["exclude"]
+class MemoryProjectionScoped(TypedDict):
+    mode: Literal["scoped"]
+    domains: list[str]
+    limit: int
+MemoryProjection = MemoryProjectionDefault | MemoryProjectionExclude | MemoryProjectionScoped
+class ChatProjectionDefault(TypedDict):
+    mode: Literal["default"]
+class ChatProjectionExclude(TypedDict):
+    mode: Literal["exclude"]
+class ChatProjectionRecent(TypedDict):
+    mode: Literal["recent"]
+    last_n: int
+ChatProjection = ChatProjectionDefault | ChatProjectionExclude | ChatProjectionRecent
+class ContextSpec(TypedDict):
+    layers: NotRequired[list[str]]
+    memory: NotRequired[MemoryProjection]
+    chat: NotRequired[ChatProjection]
+    briefing: NotRequired[str | None]
+    _annotation: NotRequired[str | None]
+class WorkflowDispatchRequest(TypedDict):
+    workflow_ref: EntityId
+    intent_key: str
+    briefing: str
+    context_spec: NotRequired[ContextSpec | None]
+class WorkflowStepCapture(TypedDict):
+    requested_agent_ref: EntityId
+    agent_def_ref: EntityId
+    definition: AgentDefinitionSpec
+class WorkflowStepRun(TypedDict):
+    ordinal: int
+    requested_agent_ref: EntityId
+    dispatched_agent_ref: EntityId
+    attempt_ref: EntityId
+    result_ref: str
+class WorkflowRunView(TypedDict):
+    workflow_ref: EntityId
+    workflow_revision: int
+    root_attempt_ref: EntityId
+    active_attempt_ref: EntityId
+    steps: list[WorkflowStepCapture]
+    results: list[WorkflowStepRun]
+class WorkflowRunRequest(TypedDict):
+    root_attempt_ref: EntityId
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str
@@ -9042,6 +9106,27 @@ class NoteHistoryView(TypedDict):
     operations: list[NoteAuthorship]
     shallow_since: list[int]
     complete: bool
+class NoteHistoryPurgeRequest(TypedDict):
+    note_ref: str
+class NoteHistoryPurgeReceipt(TypedDict):
+    receipt: str
+    entity: str
+    document: str
+    actor: NotRequired[str | None]
+    requested: list[int]
+    applied: list[int]
+    at: int
+    live_text_hash: list[int]
+class NoteHistoryPurgeOutcomeErased(TypedDict):
+    state: Literal["erased"]
+    receipt: NoteHistoryPurgeReceipt
+class NoteHistoryPurgeOutcomeWaiting(TypedDict):
+    state: Literal["waiting"]
+    note_ref: str
+    act_id: str
+NoteHistoryPurgeOutcome = NoteHistoryPurgeOutcomeErased | NoteHistoryPurgeOutcomeWaiting
+class NoteHistoryPurgeExecuteRequest(TypedDict):
+    act_id: str
 class NoteEditorBinding(TypedDict):
     binding: str
     note: NoteReadView
@@ -9272,29 +9357,6 @@ class SpawnKnobPin(TypedDict, Generic[T]):
     value: T
 SpawnKnob = SpawnKnobSeed[T] | SpawnKnobPin[T]
 SpawnPattern = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
-class MemoryProjectionDefault(TypedDict):
-    mode: Literal["default"]
-class MemoryProjectionExclude(TypedDict):
-    mode: Literal["exclude"]
-class MemoryProjectionScoped(TypedDict):
-    mode: Literal["scoped"]
-    domains: list[str]
-    limit: int
-MemoryProjection = MemoryProjectionDefault | MemoryProjectionExclude | MemoryProjectionScoped
-class ChatProjectionDefault(TypedDict):
-    mode: Literal["default"]
-class ChatProjectionExclude(TypedDict):
-    mode: Literal["exclude"]
-class ChatProjectionRecent(TypedDict):
-    mode: Literal["recent"]
-    last_n: int
-ChatProjection = ChatProjectionDefault | ChatProjectionExclude | ChatProjectionRecent
-class ContextSpec(TypedDict):
-    layers: NotRequired[list[str]]
-    memory: NotRequired[MemoryProjection]
-    chat: NotRequired[ChatProjection]
-    briefing: NotRequired[str | None]
-    _annotation: NotRequired[str | None]
 CommReach = Literal["parent", "subtree", "project", "vault"]
 class AgentSpawnInput(TypedDict):
     need: str
