@@ -1213,6 +1213,35 @@
       "section": false
     },
     {
+      "name": "vault.authority.history.export",
+      "description": "Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves.",
+      "input": "EmptyRequest",
+      "output": "crate::task_verb::sdk::SignedAuthorityHistory",
+      "call": "crate::task_verb::sdk::export_authority_history_as_owner(memory.vault(), &memory.embedded_owner(\"vault.authority.history.export\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.authority.history.import",
+      "description": "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing.",
+      "input": "crate::task_verb::sdk::SignedAuthorityHistory",
+      "output": "crate::task_verb::sdk::AuthorityHistoryImported",
+      "call": "crate::task_verb::sdk::import_authority_history_as_owner(memory.vault(), &memory.embedded_owner(\"vault.authority.history.import\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.mesh.path_receipts",
       "description": "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner.",
       "input": "crate::task_verb::sdk::MeshPathReceiptsRequest",

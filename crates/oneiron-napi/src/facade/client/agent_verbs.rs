@@ -652,6 +652,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_authority_history_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.history.export", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_authority_history_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.history.import", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_mesh_path_receipts(
         &self,
         input: serde_json::Value,

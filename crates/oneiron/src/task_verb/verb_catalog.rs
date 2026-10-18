@@ -72,6 +72,8 @@ pub enum AgentVerb {
     VaultPacksSetupAnswer,
     VaultPacksSetupVerify,
     VaultAuthorityAudit,
+    VaultAuthorityHistoryExport,
+    VaultAuthorityHistoryImport,
     VaultMeshPathReceipts,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
@@ -465,6 +467,8 @@ impl AgentVerb {
         Self::VaultPacksSetupAnswer,
         Self::VaultPacksSetupVerify,
         Self::VaultAuthorityAudit,
+        Self::VaultAuthorityHistoryExport,
+        Self::VaultAuthorityHistoryImport,
         Self::VaultMeshPathReceipts,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
@@ -861,6 +865,8 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => "vault.packs.setup.answer",
             Self::VaultPacksSetupVerify => "vault.packs.setup.verify",
             Self::VaultAuthorityAudit => "vault.authority.audit",
+            Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
+            Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
             Self::VaultMeshPathReceipts => "vault.mesh.path_receipts",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
@@ -1261,6 +1267,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultAuthorityHistoryExport
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -1661,6 +1669,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultAuthorityHistoryExport
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -2091,6 +2101,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultAuthorityHistoryExport
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -2445,6 +2457,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -2743,6 +2756,8 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => &["spec"],
             Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultAuthorityHistoryExport => &[],
+            Self::VaultAuthorityHistoryImport => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -3137,6 +3152,8 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => &["spec"],
             Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultAuthorityHistoryExport => &[],
+            Self::VaultAuthorityHistoryImport => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -3659,6 +3676,12 @@ impl AgentVerb {
             }
             Self::VaultAuthorityAudit => {
                 "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."
+            }
+            Self::VaultAuthorityHistoryExport => {
+                "Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves."
+            }
+            Self::VaultAuthorityHistoryImport => {
+                "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."

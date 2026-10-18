@@ -341,6 +341,16 @@ export_facade! {
     let output = client.vault_authority_audit(&input)?;
     crate::codec::lift_record("vault.authority.audit", &output)
 };
+"vault.authority.history.export" => fn vault_authority_history_export(&self) -> SignedAuthorityHistory = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.authority.history.export")?;
+    let output = client.vault_authority_history_export(&input)?;
+    crate::codec::lift_record("vault.authority.history.export", &output)
+};
+"vault.authority.history.import" => fn vault_authority_history_import(&self, input: SignedAuthorityHistory) -> AuthorityHistoryImported = |client| {
+    let input: oneiron::task_verb::sdk::SignedAuthorityHistory = crate::codec::lower_record("vault.authority.history.import", input)?;
+    let output = client.vault_authority_history_import(&input)?;
+    crate::codec::lift_record("vault.authority.history.import", &output)
+};
 "vault.mesh.path_receipts" => fn vault_mesh_path_receipts(&self, input: MeshPathReceiptsRequest) -> Vec<MeshPathReceipt> = |client| {
     let input: oneiron::task_verb::sdk::MeshPathReceiptsRequest = crate::codec::lower_record("vault.mesh.path_receipts", input)?;
     let output = client.vault_mesh_path_receipts(&input)?;
