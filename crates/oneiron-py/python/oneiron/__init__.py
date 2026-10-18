@@ -1476,7 +1476,7 @@ class Oneiron:
         def hooks(self) -> "Oneiron._VaultPacksHooksVerbs":
             return Oneiron._VaultPacksHooksVerbs(self._client)
         def put(self, spec):
-            """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
+            """The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks."""
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
         @property
         def connector(self) -> "Oneiron._VaultPacksConnectorVerbs":

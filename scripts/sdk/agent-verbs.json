@@ -3397,7 +3397,7 @@
     },
     {
       "name": "vault.packs.put",
-      "description": "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks.",
+      "description": "The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks.",
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",

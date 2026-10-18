@@ -8733,7 +8733,7 @@ impl AgentVerb {
                 "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."
             }
             Self::VaultPacksPut => {
-                "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."
+                "The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks."
             }
             Self::VaultPacksConnectorPrepare => {
                 "Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate."
