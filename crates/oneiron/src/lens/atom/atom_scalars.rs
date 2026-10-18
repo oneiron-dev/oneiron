@@ -46,7 +46,7 @@ pub const LENS_RESULT_SET_UNSUPPORTED: &str = "result_set requires lens atom cat
 
 pub(in crate::lens) const MAX_LENS_TEXT_BYTES: usize = 16 * 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, schemars::JsonSchema)]
 pub struct LensText(String);
 
 impl LensText {
@@ -107,7 +107,7 @@ impl<'de> Deserialize<'de> for LensText {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, schemars::JsonSchema)]
 pub struct FiniteF64(f64);
 
 impl FiniteF64 {

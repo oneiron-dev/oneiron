@@ -87,6 +87,12 @@ fn invalid() -> Error {
         "standing block requires its stored handle and gated persona claims".into(),
     )
 }
+fn check_config(name: &str, token_floor: usize) -> Result<()> {
+    if name.trim().is_empty() || name.len() > 128 || token_floor == 0 {
+        return Err(invalid());
+    }
+    Ok(())
+}
 fn identity(agent: EntityId, world: EntityId) -> String {
     let mut hash = blake3::Hasher::new();
     hash.update(b"standing.block.v1:");
@@ -116,9 +122,7 @@ impl Vault {
         token_floor: usize,
     ) -> Result<StandingBlockHandle> {
         owner.revalidate(self)?;
-        if name.trim().is_empty() || name.len() > 128 || token_floor == 0 {
-            return Err(invalid());
-        }
+        check_config(name, token_floor)?;
         let handle = StandingBlockHandle {
             handle: identity(agent, world),
             agent,
@@ -130,21 +134,7 @@ impl Vault {
         // first configures nothing.
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
-            let actor_row =
-                crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &agent)?
-                    .ok_or(Error::EntityNotFound)?;
-            let actor_kind = crate::batch::EntityMetadataHeader::parse(&actor_row)
-                .ok_or_else(invalid)?
-                .entity_type;
-            crate::provenance::validate_actor_class(actor_kind, EdgeActorClass::Agent)?;
-            let world_row =
-                crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &world)?
-                    .ok_or(Error::EntityNotFound)?;
-            if crate::batch::EntityMetadataHeader::parse(&world_row)
-                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_WORLD)
-            {
-                return Err(invalid());
-            }
+            self.check_standing_pair(txn, agent, world)?;
             if let Some(stored) = STANDING_BLOCKS.get(&self.store, &*txn, &handle.handle)? {
                 let stored = validated(stored, &handle.handle)?;
                 if stored != handle {
@@ -152,6 +142,58 @@ impl Vault {
                 }
                 return Ok(stored);
             }
+            STANDING_BLOCKS.put(&self.store, txn, &handle.handle, &handle)?;
+            Ok(handle)
+        })
+    }
+    fn check_standing_pair(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        agent: EntityId,
+        world: EntityId,
+    ) -> Result<()> {
+        let actor_row = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &agent)?
+            .ok_or(Error::EntityNotFound)?;
+        let actor_kind = crate::batch::EntityMetadataHeader::parse(&actor_row)
+            .ok_or_else(invalid)?
+            .entity_type;
+        crate::provenance::validate_actor_class(actor_kind, EdgeActorClass::Agent)?;
+        let world_row = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &world)?
+            .ok_or(Error::EntityNotFound)?;
+        if crate::batch::EntityMetadataHeader::parse(&world_row)
+            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_WORLD)
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+    /// The owner's explicit configuration edit: a new name and floor for a
+    /// pair [`Self::open_standing_block`] already configured. An
+    /// unconfigured pair is refused, never implicitly opened.
+    pub fn reconfigure_standing_block(
+        &self,
+        owner: &AuthenticatedOwner,
+        agent: EntityId,
+        world: EntityId,
+        name: &str,
+        token_floor: usize,
+    ) -> Result<StandingBlockHandle> {
+        owner.revalidate(self)?;
+        check_config(name, token_floor)?;
+        let handle = StandingBlockHandle {
+            handle: identity(agent, world),
+            agent,
+            world,
+            name: name.trim().into(),
+            token_floor,
+        };
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            self.check_standing_pair(txn, agent, world)?;
+            let stored = STANDING_BLOCKS
+                .get(&self.store, &*txn, &handle.handle)?
+                .ok_or(Error::EntityNotFound)?;
+            validated(stored, &handle.handle)?;
             STANDING_BLOCKS.put(&self.store, txn, &handle.handle, &handle)?;
             Ok(handle)
         })

@@ -3,8 +3,7 @@ use oneiron::booking::agent_api::{
     BookingOperationResponse, SelectedSlot,
 };
 use oneiron::booking::anti_abuse::{
-    BookingRequestFacts, EmailValidationEvidence, booking_email_hash, booking_ip_hash,
-    booking_session_hash,
+    BookingRequestFacts, EmailValidationEvidence, booking_email_hash, booking_session_hash,
 };
 use oneiron::booking::lifecycle::{confirm_event_type, token_event_type};
 use oneiron::booking::{
@@ -18,7 +17,7 @@ use oneiron::{
     TimeRange, Vault,
 };
 
-use super::BookingTransportContext;
+use super::BookingAdmissionContext;
 use super::constants::{INTAKE_DOMAIN, SELECTED_SLOT_DOMAIN};
 use super::helpers::{domain_digest, engine_read_error};
 use super::subject::{booker_contact_ref, session_key};
@@ -39,18 +38,11 @@ pub(super) fn admission_facts(
     server: &SyncServer,
     page_ref: EntityId,
     request: &BookingOperationRequest,
-    transport: &BookingTransportContext,
+    transport: impl Into<BookingAdmissionContext>,
     now: u64,
 ) -> Result<BookingRequestFacts, ApiError> {
-    let mut ip_material = transport.source_ip.to_string();
-    if let Some(actor) = transport.actor_key() {
-        // An authenticated connector actor keys its own bucket, so two agents
-        // behind one address keep independent budgets — the same reason the
-        // engine keys the book window on the IP+email pair.
-        ip_material.push('\0');
-        ip_material.push_str(&actor);
-    }
-    let ip_hash = booking_ip_hash(&ip_material);
+    let transport = transport.into();
+    let ip_hash = transport.ip_hash;
 
     // A confirm or an amendment does not carry its event type, so it is read
     // from what the request names: the hold or the booking it already made,

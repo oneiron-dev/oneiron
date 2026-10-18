@@ -52,6 +52,7 @@ use crate::server::SyncServer;
 pub(crate) use super::artifact_hosting_doors::*;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
+pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
 pub(crate) use super::credential_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
@@ -159,10 +160,14 @@ pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
 pub(crate) use super::consolidation_doors::*;
+// The owner's standing-block and dreaming-choice doors (DOOR-134), likewise.
+pub(crate) use super::standing_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
 // The owner's per-model code-run heal count door (DOOR-093), likewise.
 pub(crate) use super::code_run_doors::*;
+// The owner's code consent wait answer and receipt doors (DOOR-079), likewise.
+pub(crate) use super::code_wait_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -1065,6 +1070,11 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
+        "vault.booking.constraint_turn" => {
+            crate::api::host_action::require_host_owner_act(server, auth)
+                .map(drop)
+                .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
+        }
         "ai.steps.submit"
         | "ai.steps.receipt"
         | "ai.reply"
@@ -1179,6 +1189,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.agents.create"
         | "vault.agents.update"
         | "vault.agents.get"
+        | "vault.agents.dreaming.get"
+        | "vault.agents.dreaming.set"
+        | "vault.standing_blocks.configure"
+        | "vault.standing_blocks.reconfigure"
+        | "vault.standing_blocks.get"
+        | "vault.standing_blocks.list"
         | "vault.workflows.save"
         | "vault.workflows.update"
         | "vault.workflows.get"
@@ -1204,6 +1220,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.policy.owner.configure"
         | "vault.policy.owner.row.change"
         | "vault.consent.approve_once"
+        | "vault.consent.deny"
         | "vault.consent.create_standing_grant"
         | "vault.consent.registry"
         | "vault.consent.revoke"
@@ -1269,6 +1286,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.results.read"
         | "vault.results.slice"
         | "vault.code.model_heal_count"
+        | "vault.code.waits.resolve"
+        | "vault.code.waits.receipt"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
