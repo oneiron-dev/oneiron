@@ -162,11 +162,6 @@ pub(super) const DREAMER_PARKED_KEYS: [&str; 6] = [
     KEY_PARKED_AT,
 ];
 
-pub(super) const MAX_DREAMER_ATTEMPT_TYPE_LEN: usize = 128;
-pub(super) const MAX_DREAMER_BUDGET_ID_LEN: usize = 128;
-pub(super) const MAX_DREAMER_PARK_REASON_LEN: usize = 512;
-pub(super) const MAX_DREAMER_PARK_OWNER_LEN: usize = 128;
-
 pub(super) const MIN_DREAMER_TOURNAMENT_SAMPLE_COUNT: u32 = 3;
 pub(super) const DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR: &str = "dreamer-budget-trap";
 pub(super) const DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE: &str =

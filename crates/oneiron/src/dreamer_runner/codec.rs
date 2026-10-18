@@ -18,8 +18,7 @@ use super::constants::{
     KEY_ATTEMPT_ID, KEY_ATTEMPT_TYPE, KEY_BUDGET_ID, KEY_CAUSE, KEY_CLASS, KEY_CREATED_AT,
     KEY_ELECTED_AT, KEY_INPUT, KEY_NODE_ID, KEY_PARENT_ATTEMPT, KEY_PARK_OWNER, KEY_PARKED_AT,
     KEY_REASON, KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION, KEY_TOTAL_UNITS,
-    KEY_UPDATED_AT, MAX_DREAMER_ATTEMPT_TYPE_LEN, MAX_DREAMER_BUDGET_ID_LEN,
-    MAX_DREAMER_PARK_OWNER_LEN, MAX_DREAMER_PARK_REASON_LEN,
+    KEY_UPDATED_AT,
 };
 use super::types::{
     DreamerAttemptPayload, DreamerBudgetRecord, DreamerBudgetReservation, DreamerHomeNodeClass,
@@ -696,9 +695,6 @@ pub(super) fn validate_attempt_type(attempt_type: &str) -> Result<()> {
     if attempt_type.is_empty() {
         return Err(invalid_dreamer_runner("dreamer job_type must not be empty"));
     }
-    if attempt_type.len() > MAX_DREAMER_ATTEMPT_TYPE_LEN {
-        return Err(invalid_dreamer_runner("dreamer job_type exceeds 128 bytes"));
-    }
     Ok(())
 }
 
@@ -706,11 +702,6 @@ pub(super) fn validate_budget_id(budget_id: &str) -> Result<()> {
     if budget_id.is_empty() {
         return Err(invalid_dreamer_runner(
             "dreamer budget_id must not be empty",
-        ));
-    }
-    if budget_id.len() > MAX_DREAMER_BUDGET_ID_LEN {
-        return Err(invalid_dreamer_runner(
-            "dreamer budget_id exceeds 128 bytes",
         ));
     }
     Ok(())
@@ -722,11 +713,6 @@ pub(super) fn validate_park_reason(reason: &str) -> Result<()> {
             "dreamer parked reason must not be empty",
         ));
     }
-    if reason.len() > MAX_DREAMER_PARK_REASON_LEN {
-        return Err(invalid_dreamer_runner(
-            "dreamer parked reason exceeds 512 bytes",
-        ));
-    }
     Ok(())
 }
 
@@ -734,11 +720,6 @@ pub(super) fn validate_park_owner(park_owner: &str) -> Result<()> {
     if park_owner.is_empty() {
         return Err(invalid_dreamer_runner(
             "dreamer parked park_owner must not be empty",
-        ));
-    }
-    if park_owner.len() > MAX_DREAMER_PARK_OWNER_LEN {
-        return Err(invalid_dreamer_runner(
-            "dreamer parked park_owner exceeds 128 bytes",
         ));
     }
     Ok(())

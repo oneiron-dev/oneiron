@@ -10,6 +10,7 @@ use crate::dreamer_runner::maintenance::agent_health::{
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EdgeKind, EntityId, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -100,7 +101,8 @@ pub struct WeaveReport {
 impl ScopedRead<'_> {
     /// Project live vault rows for one bound reader, with a mandatory scoped
     /// receipt. The recipe cannot elevate a role or expand the actor's floor.
-    /// A bounded scan refuses rather than silently dropping a lower-ranked row.
+    /// Past the policy's `max_rows` a scan raises one scan check and reads on
+    /// (rule 5).
     pub fn weave_report(
         &self,
         reader: WeaveReader<'_>,
@@ -148,6 +150,7 @@ impl ScopedRead<'_> {
         )
         .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?
         .max_rows;
+        let threshold = u64::try_from(max_rows).unwrap_or(u64::MAX);
         let mut project_ids = BTreeSet::new();
         let mut projects = Vec::new();
         if (recipe.iter().any(|s| {
@@ -158,7 +161,7 @@ impl ScopedRead<'_> {
         }) || subject.is_some())
             && let Ok(kind) = self.vault.project_type_byte()
         {
-            let mut scanned = 0;
+            let mut count = ScanCount::start_at(EngineScan::TypeIndexRows, &[kind], threshold);
             let project_fold = crate::workspace_roster::ProjectReader::new(
                 &self.vault.store,
                 txn,
@@ -170,10 +173,7 @@ impl ScopedRead<'_> {
             };
             for row in project_rows {
                 let id = row?;
-                scanned += 1;
-                if scanned > max_rows {
-                    return Err(Error::IndexOverflow("weave projects"));
-                }
+                count.row();
                 // A project id must be readable before its body or membership
                 // becomes available to the projection.
                 if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &id)? {
@@ -208,6 +208,7 @@ impl ScopedRead<'_> {
                     projects.push((id, record));
                 }
             }
+            count.finish(self.vault);
         }
         let mut sections = Vec::with_capacity(recipe.len());
         for spec in recipe {
@@ -246,12 +247,9 @@ impl ScopedRead<'_> {
             } else {
                 let mut seen = BTreeSet::new();
                 for predicate in &spec.predicates {
-                    for id in self.weave_claim_ids_in(txn, predicate, max_rows)? {
+                    for id in self.weave_claim_ids_in(txn, predicate, threshold)? {
                         if !seen.insert(id) {
                             continue;
-                        }
-                        if seen.len() > max_rows {
-                            return Err(Error::IndexOverflow("weave claim rows"));
                         }
                         if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &id)? {
                             continue;
@@ -334,19 +332,8 @@ impl ScopedRead<'_> {
                     &filter,
                     (subject, &project_ids),
                     &spec.edge_kinds,
-                    max_rows,
+                    threshold,
                 )?);
-            }
-            if items.len()
-                > crate::gate::weave_policy::effective_resolved(
-                    &policy,
-                    reader.role(),
-                    reader.id(self.vault, txn)?,
-                )
-                .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?
-                .max_rows
-            {
-                return Err(Error::IndexOverflow("weave policy rows"));
             }
             sections.push(WeaveSection {
                 kind: spec.kind,
@@ -379,29 +366,38 @@ pub(super) fn weave_card_admitted(
 impl ScopedRead<'_> {
     /// The base predicate index is not part of a session's write overlay.
     /// A composed type scan sees overlay-only, shadowed and removed rows under
-    /// the same snapshot as hydration. Refuse an oversized scan, never page it.
+    /// the same snapshot as hydration. Either read runs to its end: past
+    /// `threshold` claim rows it raises one scan check and reads on (rule 5).
     fn weave_claim_ids_in(
         &self,
         txn: &heed::RoTxn<'_>,
         predicate: &str,
-        max_rows: usize,
+        threshold: u64,
     ) -> Result<Vec<EntityId>> {
         let Some(view) = self.session_view else {
-            return crate::claim::claim_ids_for_predicate_bounded_in_txn(
+            // The whole posting list, one page of this snapshot.
+            let mut count = ScanCount::start_at(
+                EngineScan::PredicateClaimRows,
+                predicate.as_bytes(),
+                threshold,
+            );
+            let ids = crate::claim::claim_ids_for_predicate_page_in_txn(
                 &self.vault.store,
                 txn,
                 predicate,
-                max_rows,
-            );
+                None,
+                usize::MAX,
+            )?;
+            count.rows(ids.len());
+            count.finish(self.vault);
+            return Ok(ids);
         };
+        let mut count =
+            ScanCount::start_at(EngineScan::TypeIndexRows, &[ENTITY_TYPE_CLAIM], threshold);
         let mut matches = Vec::new();
-        let mut scanned = 0;
         for row in view.port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)? {
             let id = row?;
-            scanned += 1;
-            if scanned > max_rows {
-                return Err(Error::IndexOverflow("weave session claims"));
-            }
+            count.row();
             let Some(record) = self.entity_record_in(txn, &id)? else {
                 continue;
             };
@@ -413,6 +409,7 @@ impl ScopedRead<'_> {
                 matches.push(id);
             }
         }
+        count.finish(self.vault);
         Ok(matches)
     }
 
@@ -423,11 +420,10 @@ impl ScopedRead<'_> {
         filter: &crate::gate::ResolvedRetrievalFilter,
         anchors: (Option<EntityId>, &BTreeSet<EntityId>),
         kinds: &[EdgeKind],
-        max_rows: usize,
+        threshold: u64,
     ) -> Result<Vec<WeaveItem>> {
         let (subject, project_ids) = anchors;
         let mut links = BTreeMap::new();
-        let mut scanned = 0;
         if let Some(person) = subject {
             for anchor in std::iter::once(&person).chain(project_ids.iter()) {
                 for direction in [EdgeDirection::Out, EdgeDirection::In] {
@@ -435,8 +431,9 @@ impl ScopedRead<'_> {
                         if kinds[..index].contains(&kind) {
                             continue;
                         }
-                        // One extra eligible row proves completeness at the cap.
-                        // Hidden pairs never consume a visible row slot.
+                        // Every admitted row is read: past the policy's row
+                        // count the anchor's link read raises one scan check
+                        // and reads on (rule 5). Hidden pairs are never counted.
                         let admitted = self.admitted_edges_in(
                             txn,
                             policy,
@@ -444,19 +441,20 @@ impl ScopedRead<'_> {
                             anchor,
                             direction,
                             Some(kind),
-                            max_rows.saturating_add(1),
-                            max_rows.saturating_add(1),
+                            usize::MAX,
+                            usize::MAX,
                             false,
                         )?;
+                        let scope =
+                            [&[direction as u8][..], anchor.as_bytes(), &[kind as u8][..]].concat();
+                        let mut count =
+                            ScanCount::start_at(EngineScan::EdgePeerRows, &scope, threshold);
                         for edge in admitted.edges {
                             let edge = edge.info();
                             if !weave_edge_live(edge.provenance) {
                                 continue;
                             }
-                            scanned += 1;
-                            if scanned > max_rows {
-                                return Err(Error::IndexOverflow("weave link rows"));
-                            }
+                            count.row();
                             let (source, target) = if direction == EdgeDirection::Out {
                                 (*anchor, edge.target)
                             } else {
@@ -471,19 +469,23 @@ impl ScopedRead<'_> {
                                 },
                             );
                         }
+                        count.finish(self.vault);
                     }
                 }
             }
         } else {
-            // Owner-global view still uses the canonical cursor, but hidden
-            // relations cannot consume its visible scan budget either.
+            // Owner-global view reads the canonical cursor whole: past the
+            // policy's row count its walk raises one scan check and reads on
+            // (rule 5). Hidden relations still never reach the report.
             if self.session_view.is_some() {
                 return Err(Error::InvalidConfig(
                     "owner weave links need a canonical read".into(),
                 ));
             }
+            let mut count = ScanCount::start_at(EngineScan::VaultEdgeRows, &[], threshold);
             for row in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&self.vault.store, txn)?
             {
+                count.row();
                 let (key, value) = row?;
                 let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
                 if !kinds.contains(&edge.kind) || !weave_edge_live(edge.decoded.provenance) {
@@ -496,10 +498,6 @@ impl ScopedRead<'_> {
                 {
                     continue;
                 }
-                scanned += 1;
-                if scanned > max_rows {
-                    return Err(Error::IndexOverflow("weave link rows"));
-                }
                 links.insert(
                     (source, kind as u8, target),
                     WeaveItem::Link {
@@ -509,6 +507,7 @@ impl ScopedRead<'_> {
                     },
                 );
             }
+            count.finish(self.vault);
         }
         Ok(links.into_values().collect())
     }
@@ -609,18 +608,16 @@ pub(super) fn validate_weave_recipe(
         reader.id(vault, txn)?,
     )
     .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?;
-    if recipe.len() > row.max_sections
-        || recipe.iter().any(|section| {
-            section.predicates.len() > row.max_predicates
-                || section.edge_kinds.len() > row.max_edge_kinds
-                || (!section.edge_kinds.is_empty() && section.kind != WeaveSectionKind::Links)
-                || section
-                    .predicates
-                    .iter()
-                    .any(|p| p.is_empty() || p.len() > 128)
-                || !row.sections.contains(section.kind.policy_name())
-        })
-    {
+    // A recipe holds however many sections, predicates and edge kinds (rule
+    // 5); the 128-byte bound is the predicate token grammar's own.
+    if recipe.iter().any(|section| {
+        (!section.edge_kinds.is_empty() && section.kind != WeaveSectionKind::Links)
+            || section
+                .predicates
+                .iter()
+                .any(|p| p.is_empty() || p.len() > 128)
+            || !row.sections.contains(section.kind.policy_name())
+    }) {
         return Err(Error::InvalidConfig("invalid weave report recipe".into()));
     }
     Ok(())

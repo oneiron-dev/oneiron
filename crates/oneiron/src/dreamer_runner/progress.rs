@@ -49,6 +49,8 @@ const DREAMER_ATTEMPT_PROGRESS_VALUE_KEYS: [&str; 7] = [
     KEY_UPDATED_AT_MS,
 ];
 
+/// Bytes of an attempt's last error a live Failed row previews; the whole
+/// error stays on the attempt row.
 #[cfg(feature = "sync")]
 pub(super) const MAX_DREAMER_PROGRESS_MESSAGE_LEN: usize = 512;
 
@@ -116,15 +118,6 @@ impl DreamerAttemptProgressUpdate {
         {
             return Err(TransportError::InvalidPayload(
                 "dreamer progress completed_units exceeds total_units",
-            ));
-        }
-        if self
-            .message
-            .as_ref()
-            .is_some_and(|message| message.len() > MAX_DREAMER_PROGRESS_MESSAGE_LEN)
-        {
-            return Err(TransportError::InvalidPayload(
-                "dreamer progress message exceeds 512 bytes",
             ));
         }
         Ok(())

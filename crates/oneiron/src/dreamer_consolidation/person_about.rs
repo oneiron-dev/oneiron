@@ -40,7 +40,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The four sensitivity bands, public (0) to restricted (3).
 const TOP_BAND: u8 = 3;
-/// Longest `about` line the board prints, in characters.
+/// Longest `about` line the board prints, in characters. The stored line is
+/// the model's whole first line; only the read for display clips it.
 const ABOUT_MAX_CHARS: usize = 240;
 const FACTS_DIGEST_DOMAIN: &[u8] = b"oneiron:people-about-facts:v1";
 /// How long an attempt whose facts moved under the model waits to write again.
@@ -411,7 +412,8 @@ impl Vault {
     /// `person`'s `about` line for a reader whose sensitivity ceiling is
     /// `ceiling`: the line of the highest band at or below it. `None` reads
     /// no band. A person whose facts moved since its lines were written shows
-    /// none until the Dreamer writes them again.
+    /// none until the Dreamer writes them again. The line is clipped to what
+    /// the board prints.
     pub fn person_about(&self, person: EntityId, ceiling: Option<u8>) -> Result<Option<String>> {
         let Some(ceiling) = ceiling else {
             return Ok(None);
@@ -428,7 +430,7 @@ impl Vault {
             .iter()
             .rev()
             .find(|line| line.band <= ceiling)
-            .map(|line| line.text.clone()))
+            .map(|line| line.text.chars().take(ABOUT_MAX_CHARS).collect()))
     }
 }
 
@@ -632,7 +634,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     .lines()
                     .find(|line| !line.trim().is_empty())
                     .unwrap_or(""),
-                ABOUT_MAX_CHARS,
+                usize::MAX,
             );
             if text.is_empty() {
                 return Ok(charges.park("the model wrote an empty about line"));

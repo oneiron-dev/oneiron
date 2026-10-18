@@ -17,7 +17,7 @@ use crate::dreamer_runner::{
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
-use crate::edge::EdgeActorClass;
+use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, Result};
 use crate::llm::manifest::ModelRole;
 use crate::llm::{
@@ -47,7 +47,8 @@ const PROGRESS: SideTable<EntityId, ResidentDreamProgress, Named> =
 /// pad.
 const PADS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
     SideTable::new(&side_table::DREAMER_RESIDENT_PADS);
-/// The diary entry one dreaming attempt landed, so a replay writes none.
+/// The diary entry one dreaming attempt landed (its first part), so a
+/// replay writes none.
 const LANDED: SideTable<crate::attempt_queue::AttemptId, EntityId, Named> =
     SideTable::new(&side_table::DREAMER_RESIDENT_LANDED);
 
@@ -355,10 +356,12 @@ fn cut_for(
     }
     cut.sections.push(("Sealed scratchpads", pad_lines));
 
+    // Every receipt past the cursor, not the newest page of them: the cut
+    // reads them oldest first, so the cursor never passes one unread.
     let after = (progress.receipts_after, progress.receipt_after_id.as_str());
     let mut receipts: Vec<_> = vault
         .receipts(
-            ReceiptQuery::new(crate::receipt::MAX_RECEIPT_QUERY_SCAN)
+            ReceiptQuery::new(usize::MAX)
                 .with_actor(resident.to_hex())
                 .with_time_bounds(
                     (progress.receipts_after > 0).then_some(progress.receipts_after),
@@ -474,6 +477,42 @@ fn cut_for(
     }
     cut.sections.push(("Inbox", inbox_lines));
     Ok(cut)
+}
+
+/// Lands `entry` in `resident`'s diary in the caller's write. Past the NOTE
+/// body bound it lands as ordered private parts, each continuation linked
+/// `Mentions` to the first, as an imported note's parts are. Returns the
+/// first part.
+fn append_diary_entry_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    resident: WriteActor,
+    entry: &str,
+    at: u64,
+) -> Result<EntityId> {
+    let mut parts = Vec::new();
+    for part in super::note_parts::parts(entry, crate::note::MAX_NOTE_BYTES) {
+        parts.push(crate::memory::append_agent_diary_in_txn(
+            vault,
+            txn,
+            resident,
+            part.to_owned(),
+            at,
+        )?);
+    }
+    let (&first, continuations) = parts
+        .split_first()
+        .ok_or_else(|| invalid("the entry landed no note"))?;
+    if !continuations.is_empty() {
+        let mut batch = vault.batch_in();
+        for part in continuations {
+            batch = batch.edge(part, EdgeKind::Mentions, &first, 1.0);
+        }
+        let mut content = crate::federation::ActorContentTxn::new(vault, txn, resident)?;
+        content.apply_batch(batch)?;
+        content.finish()?;
+    }
+    Ok(first)
 }
 
 /// Runs one resident's dreaming: reads its cut, asks its model with the
@@ -626,22 +665,16 @@ pub async fn run_resident_dream(
         return Ok(charges.park("the model wrote an empty diary entry"));
     }
     let now = ctx.now_ms / 1_000;
-    // The entry, its landing marker and the progress it read commit in one
-    // write: a crash between them neither drops the progress nor lands the
-    // entry twice.
+    // The entry, every part of it, its landing marker and the progress it
+    // read commit in one write: a crash between them neither drops the
+    // progress nor lands the entry twice.
     ctx.vault.with_write_txn_grouped(|txn| {
         if LANDED.contains(&ctx.vault.store, txn, &attempt_id)? {
             return Ok(());
         }
         let at = crate::ports::recorded_at_in_txn(&ctx.vault.store, txn)?;
-        let entry_id = crate::memory::append_agent_diary_in_txn(
-            ctx.vault,
-            txn,
-            resident,
-            entry.to_owned(),
-            at,
-        )
-        .map_err(|error| invalid(&format!("diary entry: {error}")))?;
+        let entry_id = append_diary_entry_in_txn(ctx.vault, txn, resident, entry, at)
+            .map_err(|error| invalid(&format!("diary entry: {error}")))?;
         LANDED.put(&ctx.vault.store, txn, &attempt_id, &entry_id)?;
         for pad in &cut.pads {
             PADS.put(&ctx.vault.store, txn, &(resident_id, *pad), &[1])?;

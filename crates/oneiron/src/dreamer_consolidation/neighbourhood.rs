@@ -49,10 +49,6 @@ const SPAN_WORDS: usize = 4;
 /// Identity-index probes per branch: a Meso round's words at four spans each,
 /// over three kinds, stay under it.
 const MAX_PROBES: usize = 8 * 1024;
-/// A subject with more claims than this lists none: its newest k need the
-/// whole fan-in ordered, and one prolific subject must not slow every wake
-/// that names it. A subject+time index is the follow-up.
-const SUBJECT_SCAN: usize = 20_000;
 /// Claims read through the scoped read per entity while looking for k it
 /// admits, newest first.
 const CLAIM_WALK: usize = 64;
@@ -482,11 +478,9 @@ fn newest_claims(
     axes: &Scope,
     bound: Option<&Scope>,
 ) -> Result<Vec<(KnownClaim, (EntityId, Row))>> {
-    let ids = match vault.claims_for_subject_in_txn(txn, &subject) {
-        Ok(ids) if ids.len() <= SUBJECT_SCAN => ids,
-        Ok(_) | Err(crate::Error::IndexOverflow(_)) => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
+    // A subject of any fan-in lists its newest claims (Rule 5): the subject
+    // read raises its own scan check past its row and reads on.
+    let ids = vault.claims_for_subject_in_txn(txn, &subject)?;
     // Order by the stored learned_at alone; only rows the scoped read admits
     // below are shown.
     let mut ordered = Vec::with_capacity(ids.len());

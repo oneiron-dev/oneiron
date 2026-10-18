@@ -2,9 +2,10 @@
 //! a TASK routed to the Dreamer. Its lease took the TASK on the highway at
 //! admission. One durable model step answers the TASK's spec and brief with
 //! the host's wording, or the catalogue's own (`dreamer.task_realize`); the
-//! answer lands as one research NOTE the Dreamer authors, and the row's
-//! result names it. Completing the row then reports the TASK Done, under
-//! its brief's own judgment.
+//! answer lands as one research NOTE the Dreamer authors, in linked parts
+//! past the NOTE body bound, and the row's result names it (its first part).
+//! Completing the row then reports the TASK Done, under its brief's own
+//! judgment.
 //!
 //! The engine ships the wording, so a Dreamer-lane TASK realizes out of the
 //! box; it parks only on a host that lends no Dreamer model.
@@ -18,6 +19,7 @@ use crate::dreamer_runner::{
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
+use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::llm::manifest::ModelRole;
 use crate::llm::{
@@ -54,9 +56,11 @@ fn invalid(reason: &str) -> Error {
 
 /// Realizes one TASK: asks the lent model with the instruction, the TASK's
 /// spec and its brief, writes the answer as one research NOTE under the
-/// Dreamer's stamp, and names that NOTE as the row's result. A replay after
-/// the result was attached writes nothing; a TASK cancelled or settled since
-/// it was queued is owed nothing.
+/// Dreamer's stamp, and names that NOTE as the row's result. An answer past
+/// the NOTE body bound lands in ordered parts, each continuation linked
+/// `Mentions` to the first, as an imported note's parts are; the result
+/// names the first. A replay after the result was attached writes nothing;
+/// a TASK cancelled or settled since it was queued is owed nothing.
 pub async fn run_task_realize(
     attempt: &DreamerAdmittedAttempt,
     ctx: &WakeAttemptContext<'_>,
@@ -192,10 +196,27 @@ pub async fn run_task_realize(
     if answer.is_empty() {
         return Ok(charges.park("the model wrote an empty answer"));
     }
-    let note = ctx
-        .vault
-        .create_note(RESULT_NOTE_KIND, answer, model.actor)
-        .map_err(|error| invalid(&format!("result note: {error}")))?;
+    let mut notes = Vec::new();
+    for part in super::note_parts::parts(answer, crate::note::MAX_NOTE_BYTES) {
+        notes.push(
+            ctx.vault
+                .create_note(RESULT_NOTE_KIND, part, model.actor)
+                .map_err(|error| invalid(&format!("result note: {error}")))?,
+        );
+    }
+    let (&note, continuations) = notes
+        .split_first()
+        .ok_or_else(|| invalid("the answer landed no note"))?;
+    if !continuations.is_empty() {
+        ctx.vault
+            .try_with_actor_content_write_txn(model.actor, |content| {
+                let mut batch = ctx.vault.batch_in();
+                for part in continuations {
+                    batch = batch.edge(part, EdgeKind::Mentions, &note, 1.0);
+                }
+                content.apply_batch(batch)
+            })?;
+    }
     AttemptQueue::new(ctx.vault).set_result(SetAttemptResult {
         id: record.id,
         lease_owner: record.lease_owner.clone().unwrap_or_default(),
