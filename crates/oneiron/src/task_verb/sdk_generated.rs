@@ -1217,6 +1217,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.learning.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning::doors::LearningReadRequest,
+                >(),
+            ),
+            (
+                "vault.learning.projection",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning::doors::LearningProjectionRequest,
+                >(),
+            ),
+            (
                 "vault.settings.learning",
                 crate::code_run::vault_read::request_schema::<
                     crate::learning_setting_doors::LearningSettingsRequest,
@@ -3172,6 +3184,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.gate.policy.propose",
     "vault.gate.checker.get",
     "vault.gate.checker.set",
+    "vault.learning.read",
+    "vault.learning.projection",
     "vault.claims.review",
     "vault.claims.settle",
     "vault.artifacts.units",
@@ -3516,6 +3530,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.gate.checker.set" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::GateCheckerReceipt,
+        >(),
+        "vault.learning.read" => crate::code_run::vault_read::request_schema::<
+            crate::learning::doors::LearningCellView,
+        >(),
+        "vault.learning.projection" => crate::code_run::vault_read::request_schema::<
+            crate::learning::doors::LearningProjectionView,
         >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
@@ -5467,6 +5487,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.gate.checker.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.learning.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.learning.projection" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8420,6 +8454,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.gate.checker.set" => {
             let _input: crate::policy_manifest_doors::GateCheckerSet = decode(value.clone())?;
         }
+        "vault.learning.read" => {
+            let _input: crate::learning::doors::LearningReadRequest = decode(value.clone())?;
+        }
+        "vault.learning.projection" => {
+            let _input: crate::learning::doors::LearningProjectionRequest = decode(value.clone())?;
+        }
         "vault.settings.learning" => {
             let _input: crate::learning_setting_doors::LearningSettingsRequest =
                 decode(value.clone())?;
@@ -9972,6 +10012,8 @@ pub fn invoke(
         "vault.gate.policy.propose" => encode(vault_gate_policy_propose(memory, decode(value)?)?),
         "vault.gate.checker.get" => encode(vault_gate_checker_get(memory, decode(value)?)?),
         "vault.gate.checker.set" => encode(vault_gate_checker_set(memory, decode(value)?)?),
+        "vault.learning.read" => encode(vault_learning_read(memory, decode(value)?)?),
+        "vault.learning.projection" => encode(vault_learning_projection(memory, decode(value)?)?),
         "vault.settings.learning" => encode(vault_settings_learning(memory, decode(value)?)?),
         "vault.settings.learning.put" => {
             encode(vault_settings_learning_put(memory, decode(value)?)?)
@@ -12528,6 +12570,28 @@ pub fn vault_gate_checker_set(
         memory.vault(),
         &memory.embedded_owner("vault.gate.checker.set")?,
         input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_learning_read(
+    memory: &Memory<'_>,
+    input: crate::learning::doors::LearningReadRequest,
+) -> MemoryResult<crate::learning::doors::LearningCellView> {
+    crate::learning::doors::read_learning_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.learning.read")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_learning_projection(
+    memory: &Memory<'_>,
+    input: crate::learning::doors::LearningProjectionRequest,
+) -> MemoryResult<crate::learning::doors::LearningProjectionView> {
+    crate::learning::doors::learning_projection_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.learning.projection")?,
+        &input,
     )
     .map_err(crate::memory::MemoryError::from)
 }

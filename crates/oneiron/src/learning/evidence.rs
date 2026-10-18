@@ -49,7 +49,7 @@ pub struct CellRow {
 }
 
 /// An anchored outcome kind.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Anchor {
     /// A held-out run scored against frozen cases.
@@ -126,7 +126,7 @@ impl EvidenceSource {
 }
 
 /// What one anchored outcome observed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", content = "v", rename_all = "snake_case")]
 pub enum Observation {
     /// The named event happened (true) or did not (false).
@@ -222,7 +222,7 @@ impl LearningEvidence {
 }
 
 /// A stored, admitted evidence row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EvidenceRow {
     pub at: u64,
     pub anchor: Anchor,

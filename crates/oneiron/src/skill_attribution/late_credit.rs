@@ -17,7 +17,7 @@ pub(super) const CREDIT_RECEIPT: SideTable<String, LateCreditReceipt, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_LATE_CREDIT);
 
 /// One fractional share, with its complete eligible used chain.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LateCreditShare {
     pub subject: EntityId,
     pub origin_skill: Option<EntityId>,
@@ -28,7 +28,7 @@ pub struct LateCreditShare {
 
 /// An anchored projection's receipt. Empty shares explicitly record no late
 /// credit, including disabled credit, an environment verdict or an unclear one.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LateCreditReceipt {
     pub receipt_id: String,
     pub attempt_receipt: String,
@@ -51,6 +51,17 @@ pub struct LateCreditReceipt {
 pub fn late_credit_receipt(vault: &Vault, receipt_id: &str) -> Result<Option<LateCreditReceipt>> {
     let txn = vault.store.env.read_txn()?;
     CREDIT_RECEIPT.get(&vault.store, &txn, &receipt_id.to_owned())
+}
+
+/// The stored projection for one anchored outcome, using the projector's key.
+/// This read never runs attribution or mints a receipt.
+pub fn late_credit_receipt_for_outcome(
+    vault: &Vault,
+    attempt: &str,
+    outcome: &str,
+    axis: &str,
+) -> Result<Option<LateCreditReceipt>> {
+    late_credit_receipt(vault, &receipt_id(attempt, outcome, axis))
 }
 
 pub(super) fn receipt_id(attempt: &str, outcome: &str, axis: &str) -> String {

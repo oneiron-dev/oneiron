@@ -247,6 +247,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.gate.policy.propose", post(facade_route))
         .route("/vault.gate.checker.get", post(facade_route))
         .route("/vault.gate.checker.set", post(facade_route))
+        .route("/vault.learning.read", post(facade_route))
+        .route("/vault.learning.projection", post(facade_route))
         .route("/vault.settings.learning", post(facade_route))
         .route("/vault.settings.learning.put", post(facade_route))
         .route("/vault.settings.learning.clear", post(facade_route))
