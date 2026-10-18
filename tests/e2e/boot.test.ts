@@ -6,7 +6,7 @@ import { EngineFixture } from "./support/engine.ts";
 import type { PairedActor } from "./support/engine.ts";
 import { McpClient, PublicHttpClient } from "./support/clients.ts";
 import type { JsonRpcReply, SdkDriverResult, SdkOperation } from "./support/clients.ts";
-import { loadFixtures, requireAsset } from "./support/fixtures.ts";
+import { loadFixtures, ownerBaseClaimScope, requireAsset } from "./support/fixtures.ts";
 import { defineFile, redactor, runProcess } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -313,6 +313,7 @@ suite.test(test, "BOOT-05", "CLI memory access should work", async () => {
   expect(got.exitCode).toBe(0);
   expect(got.stdout).toContain(journey.text);
   const committed = await actor.cli.call("vault.claims.upsert", {
+    scope: await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef),
     id: journey.claimId, subject_ref: journey.turnId, predicate: journey.predicate,
     value: journey.value, source: "user_stated", confidence: 1,
   });
@@ -394,6 +395,7 @@ suite.test(test, "BOOT-07", "MCP tool-first operator registration should work", 
   expect(read.meta.ttlMs).toBe(0);
   expect(read.meta.cacheScope).toBe("private");
   const proposal: FacadeInput<"vault.claims.upsert"> = {
+    scope: await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef),
     predicate: journey.predicate, subject_ref: journey.turnId,
     value: journey.value, confidence: 1, source: "tool_output",
   };
