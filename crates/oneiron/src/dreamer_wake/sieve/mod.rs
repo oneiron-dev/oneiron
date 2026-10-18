@@ -42,7 +42,7 @@ mod chunks;
 mod policy;
 mod read;
 mod recipes;
-pub use recipes::SieveAudit;
+pub use recipes::{SieveAudit, SieveConsumeReceipt};
 pub(crate) use recipes::*;
 mod rules;
 #[cfg(test)]

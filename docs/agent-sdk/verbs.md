@@ -645,6 +645,15 @@ both bindings and their export-census tests in one change.
 - `vault.runs.checkpoint`
 - `vault.consolidation.promote`
 - `vault.consolidation.evidence`
+- `vault.sieve.queue`
+- `vault.sieve.retained`
+- `vault.sieve.receipts`
+- `vault.sieve.policy`
+- `vault.sieve.policy.set`
+- `vault.sieve.recipe_policy`
+- `vault.sieve.recipe_policy.set`
+- `vault.sieve.lease`
+- `vault.sieve.lease.refill`
 - `vault.claims.vet`
 - `vault.claims.vetting`
 - `vault.memory.signal_extraction`

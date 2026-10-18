@@ -5629,6 +5629,72 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_sieve_queue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.queue")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.queue", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_retained(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.retained")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.retained", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_receipts(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.receipts")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.receipts", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_policy(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.policy")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.policy", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_policy_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.policy.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.policy.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_recipe_policy(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.recipe_policy")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.recipe_policy", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_recipe_policy_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.recipe_policy.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sieve.recipe_policy.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_lease(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.lease")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.lease", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_lease_refill(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.lease.refill")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.lease.refill", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_claims_vet(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.claims.vet")?;
         let output = py

@@ -200,6 +200,9 @@ side_tables! {
     DREAMER_SELECTION_SCOPE: VaultMeta b"dreamer:selection_scope:v1:" LegacyJson;
     /// Sample audit grade per durable rung attempt. Key: id16.
     DREAMER_SIEVE_AUDIT: VaultMeta b"dreamer:sieve:audit:v1:" Named;
+    /// One span the nightly spending consumed, by the attempt that spent it.
+    /// Key: id16(attempt) + hash32(span).
+    DREAMER_SIEVE_CONSUMED: VaultMeta b"dreamer:sieve:consumed:v1:" Named;
     /// A TURN whose sieve read the pass's text bound stopped, with the chunks it reads on in.
     /// Key: id16(turn).
     DREAMER_SIEVE_CONTINUE: VaultMeta b"dreamer:sieve:continue:v1:" Named;

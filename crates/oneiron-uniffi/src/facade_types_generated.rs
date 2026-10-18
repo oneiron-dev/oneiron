@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 728 facade rows, 2557 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 684.
+// UniFFI census: 737 facade rows, 2571 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 693.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -37071,6 +37071,209 @@ pub struct ScopedReadResultConsolidationEvidenceSourceList {
     pub value: Vec<ConsolidationEvidenceSource>,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SievePageRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SievePageRequest {
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SieveSpanView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SieveSpanView {
+    #[serde(rename = "span")]
+    pub span: String,
+    #[serde(rename = "turn")]
+    pub turn: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "entity", default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    #[serde(rename = "novel", default, skip_serializing_if = "Option::is_none")]
+    pub novel: Option<bool>,
+    #[serde(rename = "confidence")]
+    pub confidence: u8,
+    #[serde(rename = "score")]
+    pub score: u32,
+    #[serde(rename = "band")]
+    pub band: String,
+    #[serde(rename = "owed")]
+    pub owed: Vec<String>,
+    #[serde(rename = "queued_at")]
+    pub queued_at: u64,
+    #[serde(rename = "source_digest")]
+    pub source_digest: String,
+    #[serde(rename = "policy_digest")]
+    pub policy_digest: String,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SieveQueuePage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SieveQueuePage {
+    #[serde(rename = "spans")]
+    pub spans: Vec<SieveSpanView>,
+    #[serde(rename = "skipped_unreadable")]
+    pub skipped_unreadable: u64,
+    #[serde(rename = "skipped_detached")]
+    pub skipped_detached: u64,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SieveRetainedPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SieveRetainedPage {
+    #[serde(rename = "spans")]
+    pub spans: Vec<SieveSpanView>,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SieveReceiptView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SieveReceiptView {
+    #[serde(rename = "span")]
+    pub span: String,
+    #[serde(rename = "turn")]
+    pub turn: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "score")]
+    pub score: u32,
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "consumed_at")]
+    pub consumed_at: u64,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SieveReceiptsPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SieveReceiptsPage {
+    #[serde(rename = "receipts")]
+    pub receipts: Vec<SieveReceiptView>,
+}
+
+/// `oneiron::dreamer_wake::sieve::policy::SievePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SievePolicy {
+    #[serde(rename = "max_turns_per_pass")]
+    pub max_turns_per_pass: u32,
+    #[serde(rename = "max_scan_per_pass")]
+    pub max_scan_per_pass: u32,
+    #[serde(rename = "max_text_bytes_per_pass")]
+    pub max_text_bytes_per_pass: u32,
+    #[serde(rename = "date_interest")]
+    pub date_interest: u32,
+    #[serde(rename = "name_interest")]
+    pub name_interest: u32,
+    #[serde(rename = "absolute_date_confidence")]
+    pub absolute_date_confidence: u8,
+    #[serde(rename = "relative_date_confidence")]
+    pub relative_date_confidence: u8,
+    #[serde(rename = "vague_date_confidence")]
+    pub vague_date_confidence: u8,
+    #[serde(rename = "name_confidence")]
+    pub name_confidence: u8,
+    #[serde(rename = "initial_name_confidence")]
+    pub initial_name_confidence: u8,
+    #[serde(rename = "katakana_name_confidence")]
+    pub katakana_name_confidence: u8,
+    #[serde(rename = "uncertain_low")]
+    pub uncertain_low: u8,
+    #[serde(rename = "uncertain_high")]
+    pub uncertain_high: u8,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SievePolicySetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SievePolicySetRequest {
+    #[serde(rename = "policy")]
+    pub policy: SievePolicy,
+}
+
+/// `oneiron::dreamer_wake::recipes::WakeRecipePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WakeRecipePolicy {
+    #[serde(rename = "continuous_rung_spans")]
+    pub continuous_rung_spans: u32,
+    #[serde(rename = "nightly_spans")]
+    pub nightly_spans: u32,
+    #[serde(rename = "nightly_children")]
+    pub nightly_children: u32,
+    #[serde(rename = "rung_retry_secs")]
+    pub rung_retry_secs: u64,
+    #[serde(rename = "audit_percent")]
+    pub audit_percent: u8,
+    #[serde(rename = "audit_spans")]
+    pub audit_spans: u32,
+    #[serde(rename = "novelty_instruction")]
+    pub novelty_instruction: String,
+    #[serde(rename = "typing_instruction")]
+    pub typing_instruction: String,
+    #[serde(rename = "narrative_instruction")]
+    pub narrative_instruction: String,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SieveRecipePolicySetRequest {
+    #[serde(rename = "policy")]
+    pub policy: WakeRecipePolicy,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SieveLeaseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SieveLeaseRequest {
+    #[serde(rename = "budget_id")]
+    pub budget_id: String,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SieveLeaseCounter`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SieveLeaseCounter {
+    #[serde(rename = "total_units")]
+    pub total_units: u64,
+    #[serde(rename = "remaining_units")]
+    pub remaining_units: u64,
+    #[serde(rename = "reserved_units")]
+    pub reserved_units: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SieveLeaseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SieveLeaseView {
+    #[serde(rename = "budget_id")]
+    pub budget_id: String,
+    #[serde(rename = "counter", default, skip_serializing_if = "Option::is_none")]
+    pub counter: Option<SieveLeaseCounter>,
+}
+
+/// `oneiron::dreamer_wake::sieve_doors::SieveLeaseRefillRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SieveLeaseRefillRequest {
+    #[serde(rename = "budget_id")]
+    pub budget_id: String,
+    #[serde(rename = "total_units")]
+    pub total_units: u64,
 }
 
 /// `oneiron::memory::signal_extraction::SignalExtractionRequest`.
