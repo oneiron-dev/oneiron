@@ -25440,7 +25440,7 @@
      "purpose": "Actor-scoped, receipt-backed proposal observation; crossing only asks a question",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 3
      }
@@ -31848,6 +31848,38 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CodeConflictHistory",
+      "CodeConflictRecordRequest",
+      "CodeConflictResolutionView",
+      "CodeConflictView",
+      "CodeConflictViewRequest",
+      "CodeProposalResolveRequest",
+      "CodeProposalReviewRequest",
+      "CodeProposalSettleRequest",
+      "CodeProposalSettlementRequest",
+      "CodeProposalSettlementView"
+     ],
+     "path": "src/memory/code_doors/conflict_types.rs",
+     "purpose": "—",
+     "surface": {
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_doors/conflicts.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/memory/code_doors/leases.rs",
      "purpose": "—",
@@ -31860,9 +31892,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/code_doors/mod.rs",
-     "purpose": "Typed symbol lease, proposal submit and mutation oplog doors (DOOR-137)",
+     "purpose": "Typed code leases, proposals, conflicts and settlement doors (DOOR-137/057)",
      "surface": {
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -31872,7 +31904,18 @@
      "path": "src/memory/code_doors/proposals.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 3,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_doors/resolutions.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -36698,7 +36741,7 @@
      "purpose": "Node-local OF-520 own-rate windows",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -40629,8 +40672,18 @@
      "path": "src/repo_mutation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/conflict_doors.rs",
+     "purpose": "Owner-bound admission of real overlaps, retaining both proposed changes",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -40681,7 +40734,7 @@
      "path": "src/repo_mutation/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 2,
       "re-export": 5
      }
@@ -40724,9 +40777,10 @@
      "path": "src/repo_mutation/proposal.rs",
      "purpose": "Durable per-operation code proposals",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 2,
-      "fn": 6,
+      "fn": 5,
+      "mod": 1,
       "struct": 1
      }
     },
@@ -40744,6 +40798,42 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/proposal/guards.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/proposal/review.rs",
+     "purpose": "The shared authenticated critic writer for engine and public owner doors",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoProposalDecision",
+      "RepoProposalSettlement"
+     ],
+     "path": "src/repo_mutation/proposal/settlement.rs",
+     "purpose": "Review decisions are retained separately from execution",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -40819,7 +40909,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -49859,7 +49949,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 7
      }
     },
@@ -50462,7 +50552,7 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 5,
       "struct": 1
@@ -50598,7 +50688,7 @@
      "path": "src/task_verb/lifecycle_receipt.rs",
      "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -50632,10 +50722,10 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "fn": 1,
       "mod": 3,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
@@ -50772,7 +50862,7 @@
      "path": "src/task_verb/reconciliation.rs",
      "purpose": "Repository conflicts mint one linked reconciliation TASK and realizing attempt",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -50798,7 +50888,7 @@
      "path": "src/task_verb/report_journal.rs",
      "purpose": "The per-attempt report journal (OF-220)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -51378,7 +51468,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 742
+      "fn": 748
      }
     },
     {
@@ -52153,6 +52243,20 @@
      "path": "src/task_verb/symbol_lease_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskActor"
+     ],
+     "path": "src/task_verb/task_actor.rs",
+     "purpose": "Who a task row names, and the erase that forgets it (FIX 3520): a fan-out launch's launcher, an ask wait's…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2
+     }
     },
     {
      "bucket": "s",
@@ -58056,7 +58160,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 183,
+     "files": 186,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58280,7 +58384,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 20,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58567,7 +58671,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 172,
+     "files": 173,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58737,7 +58841,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3584,
+   "source_files": 3592,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67268,7 +67372,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 706
+      "fn": 712
      }
     },
     {
@@ -68317,7 +68421,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 707
+      "fn": 713
      }
     },
     {
@@ -71380,7 +71484,7 @@
      "path": "src/api/facade/code_doors.rs",
      "purpose": "Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 11
      }
     },
     {
@@ -80472,6 +80576,11 @@
       "ClickInput",
       "CodeBlameView",
       "CodeChangeView",
+      "CodeConflictHistory",
+      "CodeConflictRecordRequest",
+      "CodeConflictResolutionView",
+      "CodeConflictView",
+      "CodeConflictViewRequest",
       "CodeDiffRequest",
       "CodeDiffView",
       "CodeExportRequest",
@@ -80483,6 +80592,11 @@
       "CodeMutationState",
       "CodeOpProvenance",
       "CodeOperationView",
+      "CodeProposalResolveRequest",
+      "CodeProposalReviewRequest",
+      "CodeProposalSettleRequest",
+      "CodeProposalSettlementRequest",
+      "CodeProposalSettlementView",
       "CodeProposalSubmitRequest",
       "CodeProposalSubmitted",
       "CodeProposalView",
@@ -81718,6 +81832,8 @@
       "ReplyRouteRule",
       "ReplyStripsPage",
       "ReplyStripsRequest",
+      "RepoProposalDecision",
+      "RepoProposalSettlement",
       "RepoProposalStatus",
       "ReportDisclosure",
       "ReportDisclosureChoice",
@@ -82567,8 +82683,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 633,
-      "struct": 1868
+      "enum": 634,
+      "struct": 1879
      }
     },
     {

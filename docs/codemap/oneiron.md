@@ -1980,7 +1980,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/project_depth/mod.rs` | src | s | 6 crate-vis | — | Immutable project-scoped policy-manifest contributions |
 | `src/gate/project_depth/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/gate/project_depth/write.rs` | src | m | 1 fn · 4 crate-vis | — | Transaction-bound project-policy birth and owner edit doors |
-| `src/gate/proposal_observation.rs` | src | s | 3 struct · 3 fn · 1 const · 3 crate-vis | ProposalPolicySource, ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
+| `src/gate/proposal_observation.rs` | src | s | 3 struct · 3 fn · 1 const · 6 crate-vis | ProposalPolicySource, ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
 | `src/gate/record_references.rs` | src | L | 20 crate-vis | — | OF-063: one check that every record a write names resolves for its writer |
 | `src/gate/record_references/blocks.rs` | src | m | 4 crate-vis | — | The block structure [`super::parse_record_links`] reads a text's lines through (CommonMark, as far as… |
 | `src/gate/repair.rs` | src | s | 3 crate-vis | — | Pure, per-proposal consent recomputation |
@@ -2460,9 +2460,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/claims/lifecycle.rs` | src | s | 5 fn · 4 crate-vis | — | — |
 | `src/memory/claims/mod.rs` | src | m | 6 struct · 3 enum · 4 fn · 1 const · 1 re-export · 5 crate-vis | ClaimInput, CommitOutcome, CommitReceipt, DeleteReceipt, MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason +1 | Claim lifecycle verbs: commit/upsert/retract and the internal commit-decision plumbing (gate… |
 | `src/memory/claims/settle.rs` | src | m | 6 struct · 4 enum · 5 fn | ClaimChangeVerdict, ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer, ClaimSettlementReason +2 | One proposed claim's review and settlement (DOOR-115, e2e MEMORY-01): `vault.claims.review` reads one… |
+| `src/memory/code_doors/conflict_types.rs` | src | s | 10 struct | CodeConflictHistory, CodeConflictRecordRequest, CodeConflictResolutionView, CodeConflictView, CodeConflictViewRequest, CodeProposalResolveRequest, CodeProposalReviewRequest, CodeProposalSettleRequest +2 | — |
+| `src/memory/code_doors/conflicts.rs` | src | s | 2 fn · 1 crate-vis | — | — |
 | `src/memory/code_doors/leases.rs` | src | s | 3 fn | — | — |
-| `src/memory/code_doors/mod.rs` | src | s | 1 re-export | — | Typed symbol lease, proposal submit and mutation oplog doors (DOOR-137) |
-| `src/memory/code_doors/proposals.rs` | src | s | 2 fn | — | — |
+| `src/memory/code_doors/mod.rs` | src | s | 2 re-export | — | Typed code leases, proposals, conflicts and settlement doors (DOOR-137/057) |
+| `src/memory/code_doors/proposals.rs` | src | s | 2 fn · 3 crate-vis | — | — |
+| `src/memory/code_doors/resolutions.rs` | src | s | 4 fn | — | — |
 | `src/memory/code_doors/types.rs` | src | s | 10 struct · 1 enum | CodeMutationEntry, CodeMutationLog, CodeMutationState, CodeProposalSubmitRequest, CodeProposalSubmitted, CodeRepoRequest, CodeSymbolLeaseView, CodeSymbolsDeclareRequest +3 | — |
 | `src/memory/code_run_doors/mod.rs` | src | s | 1 fn · 1 re-export | — | The typed per-model code-run heal count door (DOOR-093) |
 | `src/memory/code_run_doors/types.rs` | src | s | 2 struct | CodeRunModelHealCountRequest, CodeRunModelHealCountView | — |
@@ -2853,7 +2856,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/overlay_db/merge.rs` | src | m | 15 crate-vis | — | Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and… |
 | `src/overlay_db/mod.rs` | src | s | 1 crate-vis | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
 | `src/overlay_db/tests.rs` | test | s | — | — | — |
-| `src/own_rate.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 const · 9 crate-vis | OwnRateCheck, OwnRateKind | Node-local OF-520 own-rate windows |
+| `src/own_rate.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 const · 11 crate-vis | OwnRateCheck, OwnRateKind | Node-local OF-520 own-rate windows |
 | `src/panic_report.rs` | src | s | 1 fn · 1 const | — | The content-free panic report a host installs before it opens a vault |
 | `src/persona_snapshot/codec.rs` | src | s | 2 fn · 5 crate-vis | — | Export-body msgpack codec, row-id and fingerprint validators, decode helpers |
 | `src/persona_snapshot/compile.rs` | src | m | 1 fn · 4 crate-vis | — | Tier-A clamp, row build, fingerprint, and Vault compile pass |
@@ -3185,16 +3188,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/registry/pack_byte_map/state.rs` | src | s | 1 fn · 7 crate-vis | — | Pure interning state machine |
 | `src/registry/pack_byte_map/tests.rs` | test | m | — | — | PackByteMap contract tests: public results, persisted rows, and typed refusals |
 | `src/registry/pack_byte_map/types.rs` | src | s | 5 struct · 4 fn · 3 crate-vis | PackByteMapSnapshot, PackInstanceEnvelope, PackInstanceOrigin, PackKindIdentity, PackKindRegistration | Name-bearing portable kinds, local registrations, and instance envelopes |
-| `src/repo_mutation/conflict.rs` | src | m | 2 fn · 4 crate-vis | — | — |
+| `src/repo_mutation/conflict.rs` | src | m | 2 fn · 7 crate-vis | — | — |
+| `src/repo_mutation/conflict_doors.rs` | src | s | 2 crate-vis | — | Owner-bound admission of real overlaps, retaining both proposed changes |
 | `src/repo_mutation/conflict_value.rs` | src | m | 3 const · 8 crate-vis | — | — |
 | `src/repo_mutation/document.rs` | src | s | 2 crate-vis | — | Review-approved repository file updates lower to idempotent document edits |
 | `src/repo_mutation/git.rs` | src | m | 19 crate-vis | — | — |
 | `src/repo_mutation/lift.rs` | src | s | 3 crate-vis | — | Repo snapshots the historical lift sweep reads again (OF-067, Engine ruling D = a) |
-| `src/repo_mutation/mod.rs` | src | s | 2 mod · 5 re-export · 4 crate-vis | — | — |
+| `src/repo_mutation/mod.rs` | src | s | 2 mod · 5 re-export · 5 crate-vis | — | — |
 | `src/repo_mutation/mount.rs` | src | s | 1 struct · 1 enum · 4 fn | RepoMount, RepoMountRef | One immutable read path for committed head, recovery forks and codebase snapshots |
 | `src/repo_mutation/oplog.rs` | src | m | 3 fn · 1 const · 15 crate-vis | — | — |
-| `src/repo_mutation/proposal.rs` | src | m | 1 struct · 2 enum · 6 fn · 16 crate-vis | RepoProposal, RepoProposalOperation, RepoProposalStatus | Durable per-operation code proposals |
+| `src/repo_mutation/proposal.rs` | src | m | 1 struct · 2 enum · 5 fn · 1 mod · 18 crate-vis | RepoProposal, RepoProposalOperation, RepoProposalStatus | Durable per-operation code proposals |
 | `src/repo_mutation/proposal/actor_erase.rs` | src | s | 2 enum · 3 fn · 1 const · 2 crate-vis | PendingRepoProposalErase, ProposalActor | Whose act a repo proposal records, and the erase that forgets it (FIX 3520) |
+| `src/repo_mutation/proposal/guards.rs` | src | s | 3 crate-vis | — | — |
+| `src/repo_mutation/proposal/review.rs` | src | s | 1 fn · 1 crate-vis | — | The shared authenticated critic writer for engine and public owner doors |
+| `src/repo_mutation/proposal/settlement.rs` | src | s | 1 struct · 1 enum · 2 crate-vis | RepoProposalDecision, RepoProposalSettlement | Review decisions are retained separately from execution |
 | `src/repo_mutation/queue.rs` | src | m | 1 fn · 18 crate-vis | — | — |
 | `src/repo_mutation/reviewed_stack.rs` | src | m | 4 crate-vis | — | Atomic critic admission and exact-prefix replay for a tested proposal stack |
 | `src/repo_mutation/snapshot.rs` | src | m | 13 crate-vis | — | — |
@@ -3202,7 +3209,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/repo_mutation/tests.rs` | test | XL | — | — | — |
 | `src/repo_mutation/tests/export_authority.rs` | test | m | — | — | — |
 | `src/repo_mutation/tests/reviewed_stack.rs` | test | m | — | — | — |
-| `src/repo_mutation/trailer.rs` | src | m | 6 fn · 5 const · 3 crate-vis | — | — |
+| `src/repo_mutation/trailer.rs` | src | m | 6 fn · 5 const · 4 crate-vis | — | — |
 | `src/repo_mutation/types.rs` | src | s | 6 struct · 2 enum · 7 fn · 1 type · 2 const · 2 crate-vis | RepoCommitProvenance, RepoConflictClaim, RepoConflictResolutionClaim, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationRequest, RepoMutationStatus | — |
 | `src/repo_mutation/worktree.rs` | src | s | 8 crate-vis | — | — |
 | `src/rerank.rs` | src | s | 2 struct · 1 trait · 1 const · 2 mod | RerankCandidate, RerankOptions, Reranker | RET-010 host-injected top-N rerank seam (1186-D1/D2) |
@@ -3921,7 +3928,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_type/placement.rs` | src | m | 3 struct · 7 fn · 4 const | PlacementDecisions, PlacementOutcome, PlacementRequest | Routed placement (OF-543, OF-541): a task is placed once, at spawn |
 | `src/task_verb/ask_band.rs` | src | s | 3 fn · 1 crate-vis | — | Owner-scoped, consume-once ask labels and the policy-owned question-class band |
 | `src/task_verb/ask_effect.rs` | src | s | 4 crate-vis | — | The typed effects the composed ask doors write beside their ask (OF-393): a project ask joining its… |
-| `src/task_verb/ask_facade.rs` | src | L | 7 fn · 12 crate-vis | — | Async scope-authority asks over existing consult TASKs |
+| `src/task_verb/ask_facade.rs` | src | L | 7 fn · 14 crate-vis | — | Async scope-authority asks over existing consult TASKs |
 | `src/task_verb/ask_guest.rs` | src | m | 7 crate-vis | — | Ask-scoped guest authority: reuse a person's owner-stamped bounds |
 | `src/task_verb/ask_limits.rs` | src | s | 3 crate-vis | — | The ask rows of the engine's `[limits]` (ARCH-0044 C5, OF-520) |
 | `src/task_verb/ask_option_link.rs` | src | m | 2 struct · 7 fn · 6 crate-vis | TaskAskOptionLink, TaskAskOptionLinkView | Per-revision, per-person bearer ingress for generic ask options (no page UI) |
@@ -3968,7 +3975,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/external_attempt.rs` | src | s | 3 crate-vis | — | The payload of one external try on a TASK (OF-220, OF-540) |
 | `src/task_verb/fanout_batch.rs` | src | m | 8 struct · 1 enum · 3 fn | FanoutBatchInput, FanoutBatchView, FanoutChildInput, FanoutChildSlot, FanoutLeaseView, FanoutSharedAccounting, FanoutSlotAttempt, FanoutSlotState +1 | Typed batched child admission and input-order observations over the wave launch gate |
 | `src/task_verb/fanout_check.rs` | src | s | 1 crate-vis | — | The exceptional-width check of fan-outs that go out with no hold: a `tasks.ask` census and a wave plan… |
-| `src/task_verb/fanout_launch.rs` | src | XL | 1 struct · 1 enum · 5 fn · 24 crate-vis | FanoutCheckChoice, FanoutLaunchReceipt | Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode… |
+| `src/task_verb/fanout_launch.rs` | src | XL | 1 struct · 1 enum · 5 fn · 25 crate-vis | FanoutCheckChoice, FanoutLaunchReceipt | Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode… |
 | `src/task_verb/follow_up.rs` | src | s | 2 fn · 7 crate-vis | — | — |
 | `src/task_verb/highway.rs` | src | m | 6 fn · 16 crate-vis | — | The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and… |
 | `src/task_verb/highway_accept.rs` | src | m | 8 crate-vis | — | The highway's Accept arm (OF-220): take a TASK addressed to you |
@@ -3979,10 +3986,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/highway_status.rs` | src | s | 1 crate-vis | — | The highway's Status arm (OF-220): any handle's status, and a poll |
 | `src/task_verb/highway_types.rs` | src | m | 10 struct · 6 enum · 1 fn · 9 crate-vis | AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle, TaskLifecycleRecord +8 | The task highway's typed calls, durable handles, outcomes and status view (OF-220) |
 | `src/task_verb/lifecycle_facade.rs` | src | m | 7 fn · 5 crate-vis | — | — |
-| `src/task_verb/lifecycle_receipt.rs` | src | s | 8 crate-vis | — | The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked… |
+| `src/task_verb/lifecycle_receipt.rs` | src | s | 9 crate-vis | — | The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked… |
 | `src/task_verb/linear_store.rs` | src | m | 1 struct · 5 fn · 10 crate-vis | VaultLinearTaskStore | Vault storage for the tracker mirror: replicated fields, local OCC and CAS links |
 | `src/task_verb/mirror_edit.rs` | src | s | 2 crate-vis | — | The owner's public title edit on `tasks.update` (OF-427 C8), and the Owner standing the mirror's mapping… |
-| `src/task_verb/mod.rs` | src | m | 1 fn · 3 mod · 25 re-export · 38 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
+| `src/task_verb/mod.rs` | src | m | 1 fn · 3 mod · 26 re-export · 39 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
 | `src/task_verb/owner_index.rs` | src | s | 3 fn · 2 crate-vis | — | Shared derived tasks-by-owner index for inbox and saved plan queries |
 | `src/task_verb/policy_change_followup.rs` | src | m | 2 crate-vis | — | Atomic, idempotent human TASK notification for one landed policy change |
 | `src/task_verb/presence_diagnostics.rs` | src | s | 3 crate-vis | — | Typed per-row presence read failures for the bounded TASKS projection |
@@ -3995,9 +4002,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/query_facade.rs` | src | L | 7 fn · 6 crate-vis | — | — |
 | `src/task_verb/rate_limit.rs` | src | s | 1 fn · 9 crate-vis | — | — |
 | `src/task_verb/recall_door.rs` | src | s | 1 struct · 5 fn · 1 const | RecallDoor | The recall door: when a recall's clock starts, what it answers when its door stops waiting, and how it… |
-| `src/task_verb/reconciliation.rs` | src | s | 1 fn · 1 crate-vis | — | Repository conflicts mint one linked reconciliation TASK and realizing attempt |
+| `src/task_verb/reconciliation.rs` | src | s | 1 fn · 2 crate-vis | — | Repository conflicts mint one linked reconciliation TASK and realizing attempt |
 | `src/task_verb/refusal.rs` | src | s | 3 struct · 1 fn | SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord | The agent's own refusal of a TASK, applied through her dial (OF-533) |
-| `src/task_verb/report_journal.rs` | src | s | 5 crate-vis | — | The per-attempt report journal (OF-220) |
+| `src/task_verb/report_journal.rs` | src | s | 6 crate-vis | — | The per-attempt report journal (OF-220) |
 | `src/task_verb/room_thread.rs` | src | m | 5 crate-vis | — | Existing TASK intent and follow-up facts projected onto a room thread |
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 5 enum · 3 fn · 2 const · 2 crate-vis | TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome +2 | — |
 | `src/task_verb/run_doors.rs` | src | m | 8 struct · 2 enum · 3 fn | CancelForceReceipt, CancelForceRequest, ConsultDisposition, ConsultInspection, ConsultReadRequest, ConsultSummaryView, ConsultTerminalView, RunBranchView +2 | The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)… |
@@ -4028,7 +4035,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
 | `src/task_verb/sdk_feedback.rs` | src | m | 11 struct · 7 fn | FeedbackPreviewRequest, FeedbackSendSubjectRequest, FeedbackSubjectPreview, FeedbackSubjectSent, ReportDisclosureRequest, ReportOutboundRequest, ReportOutboundView, ReportPayloadView +3 | Subject-bound feedback over one report issue: its publisher disclosure, its content-free outbound payload… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 742 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 748 fn · 4 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 27 struct · 6 enum · 25 fn · 4 const · 1 crate-vis | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +25 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`… |
 | `src/task_verb/sdk_hub.rs` | src | m | 20 struct · 2 enum · 17 fn | HubConsentOutcome, HubConsentReceipt, HubHookBindRequest, HubHookBindingRow, HubHookQualificationReceipt, HubHookQualifyRequest, HubHookReplay, HubImportRequest +14 | Typed owner doors over configured hubs, foreign publishers and pinned imports |
@@ -4064,6 +4071,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/subproject.rs` | src | s | 2 fn | — | A TASK that wraps a subproject (OF-389, ARCH-0079 "three kinds of work") |
 | `src/task_verb/symbol_lease.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 crate-vis | SymbolLease, SymbolLeaseOutcome | Node-local time-held symbol declarations and atomic queue ordering |
 | `src/task_verb/symbol_lease_tests.rs` | test | s | — | — | — |
+| `src/task_verb/task_actor.rs` | src | s | 1 enum · 2 fn · 4 crate-vis | TaskActor | Who a task row names, and the erase that forgets it (FIX 3520): a fan-out launch's launcher, an ask wait's… |
 | `src/task_verb/task_continuation.rs` | src | s | 4 crate-vis | — | The same-TASK continuation of a failed agent run (FIX 3694, OF-568, ruling 3) |
 | `src/task_verb/terminal_state.rs` | src | s | 1 struct · 4 enum · 4 fn · 3 crate-vis | ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord | — |
 | `src/task_verb/tests/addressable_consults.rs` | test | s | — | — | — |

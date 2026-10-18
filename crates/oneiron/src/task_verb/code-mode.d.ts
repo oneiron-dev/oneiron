@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 747 code-mode rows (725 host rows, 22 run rows), 2600 declarations.
-// Replies: 663 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 753 code-mode rows (731 host rows, 22 run rows), 2612 declarations.
+// Replies: 669 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1440,7 +1440,7 @@ declare namespace Sdk {
   type CodeUnitBlameView = { path: string; symbol: string; version: CodeUnitVersionView; spans: CodeSpanView[] };
   type CodeBlameView = { at: CodeStateView; units: CodeUnitBlameView[] };
   type CodeProposalViewRequest = { proposal_ref: string };
-  type RepoProposalStatus = "Proposed" | "Approved" | "Applied" | "Failed";
+  type RepoProposalStatus = "Proposed" | "Approved" | "Applied" | "Failed" | "Rejected";
   type CodeProposedStamp = { actor_ref?: string | null; session_ref?: string | null; provenance_claim_ref?: string | null; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null };
   type CodeProposalView = { proposal_ref: string; repo: string; path: string; message: string; status: RepoProposalStatus; proposed: CodeProposedStamp; changes: CodeChangeView[]; landed?: CodeOperationView | null; rendered: string };
   type CodeSymbolsDeclareRequest = { repo: EntityId; task: EntityId; symbols: EntityId[]; ttl_seconds: number };
@@ -1453,6 +1453,22 @@ declare namespace Sdk {
   type LensCatalog = { schema_version: number; lenses: CriticLens[] };
   type CodeProposalSubmitRequest = { repo: EntityId; session: EntityId; provenance_claim: EntityId; path: string; content: number[]; message: string; op_provenance: CodeOpProvenance; catalog: LensCatalog };
   type CodeProposalSubmitted = { proposal: EntityId; repo: EntityId; actor: EntityId; session: EntityId; provenance_claim: EntityId; base: string; status: RepoProposalStatus };
+  type CodeConflictRecordRequest = { repo: EntityId; branch_subject: EntityId; branch: string; left_proposal: EntityId; right_proposal: EntityId };
+  type CodeConflictView = { open: boolean; conflict: EntityId; branch_subject: EntityId; repo_ref: string; branch: string; base_tree: string; left_tree: string; right_tree: string; paths: string[]; proposals: EntityId[]; task: EntityId };
+  type CodeConflictViewRequest = { branch_subject: EntityId };
+  type CodeConflictResolutionView = { resolution: EntityId; conflict: EntityId; task: EntityId; resolved_tree: string; paths: string[] };
+  type CodeConflictHistory = { conflicts: CodeConflictView[]; resolved: CodeConflictResolutionView[] };
+  type CodeProposalResolveRequest = { change: CodeProposalSubmitRequest; branch_subject: EntityId; conflict: EntityId; branch: string };
+  type LearningPredicate = "reliability" | "edit_cost" | "retest_noise" | "setting";
+  type LearningCell = { predicate: LearningPredicate; subject: EntityId; executor?: string | null; type_ref?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null };
+  type CritiqueVerdict = "accept" | "revise" | "discard";
+  type CritiqueSeverity = "info" | "low" | "medium" | "high" | "blocking";
+  type CodeProposalReviewRequest = { proposal: EntityId; artifact_id: string; run_id: string; attempt: EntityId; lens_id: string; domain: string; model_id: string; model_revision?: string | null; calibration: LearningCell; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence: EntityId[]; suggested_edit?: string | null };
+  type RepoProposalDecision = "approve" | "reject";
+  type RepoProposalSettlement = { receipt: EntityId; actor: EntityId; decision: RepoProposalDecision; settled_at: number };
+  type CodeProposalSettlementView = { proposal: EntityId; status: RepoProposalStatus; reviews: number; settlement?: RepoProposalSettlement | null; conflict?: EntityId | null; task?: EntityId | null; parents: EntityId[]; mutation_seq?: number | null; resolution?: EntityId | null };
+  type CodeProposalSettleRequest = { proposal: EntityId; decision: RepoProposalDecision };
+  type CodeProposalSettlementRequest = { proposal: EntityId };
   type CodeRepoRequest = { repo: EntityId };
   type CodeMutationState = "prepared" | "applied" | "failed";
   type CodeMutationEntry = { repo_ref: string; seq: number; operation_kind: string; operation_subject?: string | null; actor?: EntityId | null; session?: EntityId | null; started_at_ms: number; finished_at_ms?: number | null; pre_action_fork_hash: string; expected_post_action_fork_hash?: string | null; status: CodeMutationState; failure?: string | null };
@@ -1674,14 +1690,10 @@ declare namespace Sdk {
   type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
   type CriticBinding = { lens_id: string; lens_ref: string; actor_ref: string; actor_class: number };
   type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[] };
-  type CritiqueVerdict = "accept" | "revise" | "discard";
   type CritiqueTriageScores = { accept: number; revise: number; discard: number };
-  type CritiqueSeverity = "info" | "low" | "medium" | "high" | "blocking";
   type MergedFinding = { key: string; verdict: CritiqueVerdict; severity: CritiqueSeverity; confidence: number; artifact_ids: string[]; evidence_refs: string[]; suggested_edit?: string | null; auto_resolved: boolean };
   type CritiqueTriage = { verdict: CritiqueVerdict; scores: CritiqueTriageScores; acted_on_artifact_ids: string[]; hard_veto_artifact_ids: string[]; out_of_scope_artifact_ids: string[]; findings: MergedFinding[]; auto_resolved: boolean };
   type CritiqueProvenance = { critic_ref: string; critic_class: number; model_id: string; model_revision?: string | null };
-  type LearningPredicate = "reliability" | "edit_cost" | "retest_noise" | "setting";
-  type LearningCell = { predicate: LearningPredicate; subject: EntityId; executor?: string | null; type_ref?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null };
   type CriticPrediction = { what: string; by_when: number; how_checked: OutcomeBinding };
   type CritiqueArtifact = { schema_version: number; artifact_id: string; run_id: string; branch_job: AttemptId; candidate_ref: string; lens_id: string; domain: string; provenance: CritiqueProvenance; calibration: LearningCell; prediction?: CriticPrediction | null; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence_refs: string[]; suggested_edit?: string | null; out_of_scope?: boolean; created_at: number };
   type CriticReviewOutcome = { verdict_claim_ref: string; triage: CritiqueTriage; artifacts: CritiqueArtifact[]; receipts: DecisionReceipt[] };
@@ -3308,6 +3320,10 @@ declare const vault: Sdk.VaultHost & {
       /** Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees. */
       teardown(input: Sdk.CheckoutTeardownInput): Promise<Sdk.CheckoutTornDown | StoredResult>;
     };
+    /** Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves. */
+    conflict_record(input: Sdk.CodeConflictRecordRequest): Promise<Sdk.CodeConflictView | StoredResult>;
+    /** Read open repository conflicts and their durable resolution claims, including each reconciliation task. Owner only. */
+    conflict_view(input: Sdk.CodeConflictViewRequest): Promise<Sdk.CodeConflictHistory | StoredResult>;
     /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
     diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;
     /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
@@ -3342,6 +3358,14 @@ declare const vault: Sdk.VaultHost & {
       /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
       publications(input: Sdk.OriginPublicationsRequest): Promise<Sdk.OriginPublicationsView | StoredResult>;
     };
+    /** Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands. */
+    proposal_resolve(input: Sdk.CodeProposalResolveRequest): Promise<Sdk.CodeProposalSubmitted | StoredResult>;
+    /** Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt. */
+    proposal_review(input: Sdk.CodeProposalReviewRequest): Promise<Sdk.CodeProposalSettlementView | StoredResult>;
+    /** Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it. */
+    proposal_settle(input: Sdk.CodeProposalSettleRequest): Promise<Sdk.CodeProposalSettlementView | StoredResult>;
+    /** Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only. */
+    proposal_settlement(input: Sdk.CodeProposalSettlementRequest): Promise<Sdk.CodeProposalSettlementView | StoredResult>;
     /** Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed. */
     proposal_submit(input: Sdk.CodeProposalSubmitRequest): Promise<Sdk.CodeProposalSubmitted | StoredResult>;
     /** One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied. */
