@@ -810,8 +810,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/evidence_support.rs` | src | s | 1 crate-vis | — | Live support for typed derived claims, resolved in the caller's read snapshot |
 | `src/claim/expression_archive.rs` | src | s | 7 crate-vis | — | Foreign expression histories restored by their owning source-aware writer |
 | `src/claim/expression_preference.rs` | src | m | 3 fn · 4 crate-vis | — | `Vault` write/read/retract surface for typed expression preferences: source-precedence resolution and… |
-| `src/claim/history_handoff.rs` | src | m | 5 struct · 5 enum · 5 fn · 3 const | ClaimBirth, ClaimHistoryHandoff, ClaimHistoryHandoffPin, ClaimTransition, HandoffCodecError, HandoffKind, HandoffRefusal, HandoffStanding +2 | Bounded, canonical, signed transfer of one scoped machine-claim history |
-| `src/claim/history_projection.rs` | src | L | 1 struct · 4 fn · 12 crate-vis | ResolvedMachineClaim | Verified MACHINE history residence: exact birth + transition closure at a trusted pin |
+| `src/claim/history_handoff.rs` | src | m | 5 struct · 5 enum · 5 fn · 3 const · 2 crate-vis | ClaimBirth, ClaimHistoryHandoff, ClaimHistoryHandoffPin, ClaimTransition, HandoffCodecError, HandoffKind, HandoffRefusal, HandoffStanding +2 | Bounded, canonical, signed transfer of one scoped machine-claim history, one delta at a time |
+| `src/claim/history_projection.rs` | src | L | 1 struct · 4 fn · 16 crate-vis | ResolvedMachineClaim | Verified MACHINE history residence: exact birth + transition closure at a trusted pin |
 | `src/claim/history_store.rs` | src | m | 17 crate-vis | — | Scoped, engine-owned CLAIM carriers for immutable MACHINE birth and transition evidence |
 | `src/claim/lexical_query_hint.rs` | src | s | 1 const · 8 crate-vis | — | Codec primitives for `core.lexical.query_hint` side records |
 | `src/claim/lifecycle.rs` | src | L | 4 fn · 13 crate-vis | — | Claim lifecycle transitions: the supersession-chain walk, the write-verb validity guard, `supersede_claim` /… |
@@ -3405,7 +3405,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/eval_set/authoring.rs` | src | m | 8 struct · 2 fn · 1 re-export · 1 crate-vis | CandidateLabel, CohortSummary, EvalAuthoringInventory, EvalCandidate, EvalSourceGroup, PurposeCounts, SeatInventory, UncutFamily | The eval-authoring pass (OF-578, ARCH-0053 "Eval authoring"): the Coach's nightly upkeep of each seat's test… |
 | `src/skill_optimize/eval_set/authoring/apply.rs` | src | m | 7 struct · 1 fn | CaseDecision, CutDecision, EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip, EvalCohortDecision, FamilyDecision | The plan the eval-authoring skill answers with, checked whole against its inventory and applied in order… |
 | `src/skill_optimize/eval_set/authoring/lineage.rs` | src | s | 7 crate-vis | — | The lineage fixed code resolves for a candidate, from the existing readers' explicit links only: the… |
-| `src/skill_optimize/eval_set/cohort.rs` | src | m | 5 struct · 1 enum · 6 fn · 8 crate-vis | CohortRetirement, EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease | Date-cut sealed cohorts and the exposure ledger (ARCH-0053: "The ledger counts what each sealed cohort has… |
+| `src/skill_optimize/eval_set/cohort.rs` | src | m | 5 struct · 1 enum · 6 fn · 9 crate-vis | CohortRetirement, EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease | Date-cut sealed cohorts and the exposure ledger (ARCH-0053: "The ledger counts what each sealed cohort has… |
 | `src/skill_optimize/eval_set/cut_audit.rs` | src | m | 7 struct · 1 fn · 7 crate-vis | AuditCase, AuditCoverage, AuditMethodPin, CoverageGap, EvalCutAudit, EvalCutAuditDraft, NearCopyFlag | The near-copy audit every cohort cut commits with (ARCH-0053: "At each cut, a near-copy audit runs across… |
 | `src/skill_optimize/eval_set/sufficiency.rs` | src | m | 4 struct · 2 enum · 5 fn · 2 crate-vis | EvalLabelAsk, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason, WaitingDecision | The sufficiency card and the sparse owner-label ask (ARCH-0053; NOT-WORSE = A, EVAL-COLDSTART = C) |
 | `src/skill_optimize/gate.rs` | src | m | 5 const · 11 re-export · 11 crate-vis | — | SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →… |
@@ -3798,7 +3798,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/lifecycle_facade.rs` | src | m | 7 fn · 5 crate-vis | — | — |
 | `src/task_verb/lifecycle_receipt.rs` | src | s | 8 crate-vis | — | The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked… |
 | `src/task_verb/linear_store.rs` | src | m | 1 struct · 5 fn · 6 crate-vis | VaultLinearTaskStore | Vault storage for the tracker mirror: replicated fields, local OCC and CAS links |
-| `src/task_verb/mod.rs` | src | m | 2 mod · 24 re-export · 32 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
+| `src/task_verb/mod.rs` | src | m | 2 mod · 25 re-export · 33 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
 | `src/task_verb/owner_index.rs` | src | s | 3 fn · 2 crate-vis | — | Shared derived tasks-by-owner index for inbox and saved plan queries |
 | `src/task_verb/policy_change_followup.rs` | src | m | 2 crate-vis | — | Atomic, idempotent human TASK notification for one landed policy change |
 | `src/task_verb/presence_diagnostics.rs` | src | s | 3 crate-vis | — | Typed per-row presence read failures for the bounded TASKS projection |
@@ -3866,7 +3866,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/tests/mod.rs` | test | s | 1 crate-vis | — | — |
 | `src/task_verb/tests/presence_scan.rs` | test | m | — | — | Task verb tests: Presence paging, scan caps, board-scan resilience and dangling-job rendering |
 | `src/task_verb/tests/support.rs` | test | L | 59 crate-vis | — | Shared fixtures and helpers for the task_verb tests |
-| `src/task_verb/training_offer_ask.rs` | src | m | 12 crate-vis | — | A pending training offer asked as a real `tasks.ask` (OF-577, FIX 856) |
+| `src/task_verb/training_offer_ask.rs` | src | m | 16 crate-vis | — | A pending training offer asked as a real `tasks.ask` (OF-577, FIX 856) |
+| `src/task_verb/training_swap_ask.rs` | src | m | 1 struct · 1 enum · 1 fn · 11 crate-vis | SwapAskState, TrainingSwapAskView | A Scored training run's result asked as a real `tasks.ask` (OF-577, FIX 857) |
+| `src/task_verb/training_swap_ask/question.rs` | src | s | 2 crate-vis | — | What a training swap question says and which results get one: the result in brief, and the expectation and… |
 | `src/task_verb/verb_catalog.rs` | src | XL | 1 enum · 16 fn · 1 const | AgentVerb | — |
 | `src/task_verb/verb_hook_boundary.rs` | src | s | 7 fn | — | The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1) |
 | `src/task_verb/verb_kind.rs` | src | s | 1 struct · 2 enum · 7 fn · 2 crate-vis | TaskAssignee, TaskKind, TaskTtl | — |
@@ -3928,8 +3930,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/training_pack/connector.rs` | src | m | 2 struct · 1 trait · 2 fn · 1 type · 1 crate-vis | TrainOutput, TrainRequest, TrainingConnector | One long-running connector verb |
 | `src/training_pack/custody.rs` | src | s | 5 fn · 5 crate-vis | — | Training artifacts use the existing versioned blob store, not another file store |
 | `src/training_pack/export.rs` | src | s | 1 fn | — | The existing consented reservoir becomes a reproducible, source-grouped split |
-| `src/training_pack/mod.rs` | src | s | 6 fn · 3 re-export | — | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
-| `src/training_pack/promotion.rs` | src | s | 1 struct · 4 fn | TrainingEvalInput | Held-out scoring releases a counted cohort |
+| `src/training_pack/mod.rs` | src | s | 6 fn · 3 re-export · 1 crate-vis | — | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
+| `src/training_pack/promotion.rs` | src | m | 2 struct · 1 enum · 7 fn · 4 crate-vis | SwapExpectation, TrainingEvalInput, ViewedSwap | Held-out scoring releases a counted cohort |
 | `src/training_pack/types.rs` | src | s | 21 struct · 5 enum | ArtifactPin, CalibrationResult, CheckpointFileKind, CheckpointFilePin, CheckpointFileUpload, CheckpointUpload, ComputeChoice, ComputePin +18 | Pins and receipts shared by the training pack and its host adapters |
 | `src/typed_body.rs` | src | L | 4 struct · 1 enum · 11 fn · 12 crate-vis | TypedBodyCommit, TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState | Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module… |
 | `src/typed_body/lift.rs` | src | s | 5 crate-vis | — | Typed bodies the historical lift sweep reads again (OF-067, Engine ruling G2 = b) |
