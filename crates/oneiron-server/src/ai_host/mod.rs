@@ -102,7 +102,9 @@ pub struct AiHandle {
     status: Arc<StatusCell>,
     hints: Option<Arc<HintPusher>>,
     chat: ChatSettings,
-    raw_budget_units: Option<u64>,
+    /// The raw routes' meter: `[models]`'s, else its default, so a device
+    /// with no `[models]` serves the models the mesh discovered (FIX 3229).
+    raw_budget_units: u64,
     /// Each paid recall's line for its rerank calls (`[models.recall]`).
     rerank_budget_units: u64,
     turns: TurnTracker,
@@ -153,7 +155,10 @@ impl AiHandle {
                 },
                 |models| models.chat,
             ),
-            raw_budget_units: models.map(|models| models.raw_budget_units),
+            raw_budget_units: models.map_or(
+                crate::config::models::DEFAULT_RAW_BUDGET_UNITS,
+                |models| models.raw_budget_units,
+            ),
             rerank_budget_units: models.map_or(0, |models| models.recall.rerank_budget_units),
             turns: TurnTracker::new(),
             inbound: Arc::new(AtomicU64::new(unix_now())),
@@ -968,17 +973,18 @@ impl AiHandle {
         self.runtime.decision_read().cloned()
     }
 
-    pub(crate) fn raw_inference(&self) -> Option<RawInference> {
-        let router = self.runtime.router()?;
-        let units = self.raw_budget_units?;
-        Some(RawInference::configured(
-            router,
+    /// The raw routes' inference: the runtime's raw router on its own meter.
+    /// With no configured model the router holds only the models the
+    /// owner's other nodes offer (FIX 3229).
+    pub(crate) fn raw_inference(&self) -> RawInference {
+        RawInference::configured(
+            self.runtime.raw_router(),
             oneiron::BudgetGuard::new(
                 "raw-inference",
-                units,
+                self.raw_budget_units,
                 oneiron::BudgetExhaustionPolicy::Suspend,
             ),
             self.runtime.host_account(),
-        ))
+        )
     }
 }

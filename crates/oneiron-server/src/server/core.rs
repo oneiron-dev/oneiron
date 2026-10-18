@@ -660,13 +660,16 @@ impl SyncServer {
         self.run_receipts.clone()
     }
 
-    /// Attaches the AI host's handle. When `[models]` configured any model,
-    /// the raw `/v1/llm` routes get its router and their own meter: the
-    /// config is the host injection `with_llm_backend` names.
+    /// Attaches the AI host's handle. The raw `/v1/llm` routes get its raw
+    /// router and their own meter: the config is the host injection
+    /// `with_llm_backend` names. With no configured model that router serves
+    /// only the models the owner's other nodes offer (FIX 3229).
     #[must_use]
     pub fn with_ai(mut self, ai: crate::ai_host::AiHandle) -> Self {
-        if let Some(raw) = ai.raw_inference() {
-            self.llm = Some(raw);
+        // An injected backend keeps the raw routes unless a model is
+        // configured.
+        if ai.models().router().is_some() || self.llm.is_none() {
+            self.llm = Some(ai.raw_inference());
         }
         // Its reads go on the raw routes' meter.
         if let (Some(door), Some(raw)) = (ai.decision_read(), &self.llm) {
