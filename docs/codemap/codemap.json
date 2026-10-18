@@ -3813,6 +3813,7 @@
       "ResearchBindRequest",
       "ResearchBinding",
       "ResearchConfirmationSeat",
+      "ResearchExecution",
       "ResearchGoalPin",
       "ResearchStep",
       "ResearchTarget",
@@ -3828,8 +3829,8 @@
       "crate-vis": 9,
       "enum": 6,
       "fn": 15,
-      "re-export": 3,
-      "struct": 15
+      "re-export": 4,
+      "struct": 16
      }
     },
     {
@@ -3843,9 +3844,29 @@
      "path": "src/autoreason_campaign/research/budget.rs",
      "purpose": "The campaign's spend on the RSI line: reserve-then-spend, fail-closed",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "ResearchContinuation",
+      "ResearchContinuationState",
+      "ResearchRunning",
+      "ResearchSplit",
+      "ResearchTask",
+      "ResearchWork"
+     ],
+     "path": "src/autoreason_campaign/research/continuation.rs",
+     "purpose": "The host continuation of a campaign bound with an execution spec (FIX 886, OF-351)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -14211,7 +14232,7 @@
      "path": "src/connector_key/slate_setting.rs",
      "purpose": "The four capability settings at call time (DEC-0006 §MCP connector permissions)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -15317,7 +15338,7 @@
      "purpose": "Typed turn-one self projection shared by the prefix and mid-run describe call",
      "surface": {
       "enum": 2,
-      "fn": 10,
+      "fn": 12,
       "struct": 8
      }
     },
@@ -18991,9 +19012,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 24,
+      "const": 25,
       "crate-vis": 8,
-      "fn": 10,
+      "fn": 12,
       "trait": 1
      }
     },
@@ -28946,7 +28967,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
       "re-export": 2,
       "struct": 5
      }
@@ -30028,7 +30049,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -42913,7 +42934,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
       "crate-vis": 9,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -42942,6 +42963,21 @@
       "enum": 4,
       "fn": 9,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OfferSwitchReceipt",
+      "OfferSwitchUndo"
+     ],
+     "path": "src/skill_optimize/offer_switch.rs",
+     "purpose": "An approved training offer's stock switch (OF-577; ARCH-0053 #training-offers: a switch binds now, with undo)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -43100,7 +43136,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 7
      }
     },
@@ -43150,7 +43186,7 @@
      "path": "src/skill_reliability/provenance.rs",
      "purpose": "Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -49615,6 +49651,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/connector_reach.rs",
+     "purpose": "The reach's connector rows (ARCH-0070 `shape:reach-line`): each key's outward tools under the setting its…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ShapeGrantBound"
      ],
@@ -49729,10 +49776,20 @@
      "purpose": "The reach line (ARCH-0070 `shape:reach-line`, OSH p3): what each actor can send, read as a set join over…",
      "surface": {
       "const": 3,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/retire.rs",
+     "purpose": "A retire line for a world or a mask lands as a person's delete of it: a user delete under the owner's gate…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -49773,7 +49830,7 @@
      "path": "src/vault_shape/skill.rs",
      "purpose": "Where a declared skill comes from, as a seed writes it (ARCH-0053)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1
      }
     },
@@ -52877,7 +52934,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -54067,7 +54124,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54256,7 +54313,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 14,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54326,9 +54383,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 185,
+   "over_bar": 186,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3299,
+   "source_files": 3303,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65321,7 +65378,7 @@
      "path": "src/api/ai/options.rs",
      "purpose": "`ai.options` (OF-131, OF-140; FIX 2942): the model rows a caller could call now",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -66249,7 +66306,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -66399,7 +66456,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 61
+      "crate-vis": 62
      }
     },
     {
@@ -67453,7 +67510,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/proactivity_routes.rs",
@@ -71122,7 +71179,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CodeRunLimits",
@@ -71135,7 +71192,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -71506,7 +71563,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostedCloner"
@@ -71572,8 +71629,8 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 23,
-      "fn": 16,
+      "crate-vis": 24,
+      "fn": 17,
       "struct": 3
      }
     },
@@ -71612,7 +71669,7 @@
      "path": "src/models/offer.rs",
      "purpose": "What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -72708,7 +72765,7 @@
      "path": "src/server/run_host_door.rs",
      "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -73754,7 +73811,7 @@
     "mcp": {
      "files": 22,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "MCP connector actor registry"
     },
@@ -73899,7 +73956,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 53,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 623,
    "test_files": 182
@@ -74841,6 +74898,7 @@
       "ResearchBudgetRead",
       "ResearchCandidateWire",
       "ResearchConfirmationSeat",
+      "ResearchExecution",
       "ResearchForkWire",
       "ResearchGoalPin",
       "ResearchHeldOutWire",
@@ -75220,7 +75278,7 @@
      "purpose": "—",
      "surface": {
       "enum": 307,
-      "struct": 814
+      "struct": 815
      }
     },
     {
