@@ -51,7 +51,9 @@ pub const POLICY_PATTERN_RULES_MAX: usize = 256;
 
 /// What a matching pattern is allowed to do. See the module doc for why
 /// [`Self::Escalate`] is the default.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyPatternRole {
     /// Trigger the safeguard model; never decide while a model verdict is

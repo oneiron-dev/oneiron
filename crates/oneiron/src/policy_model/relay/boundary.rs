@@ -73,8 +73,11 @@ impl Vault {
         safeguard: Option<RelaySafeguardTier<'_>>,
         verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayBoundaryPass> {
-        self.relay_boundary_pass_with_receipt(request, domain, registry, config, safeguard, verdicts)
-            .await.map(|(pass, _)| pass)
+        self.relay_boundary_pass_with_receipt(
+            request, domain, registry, config, safeguard, verdicts,
+        )
+        .await
+        .map(|(pass, _)| pass)
     }
 
     /// The same relay pass, beside the exact ledger row it wrote, if any.
@@ -90,7 +93,8 @@ impl Vault {
         let verify_at = self.relay_verify_at(&request, domain, config)?;
         self.relay_boundary_pass_at_receipted(
             request, domain, registry, config, safeguard, verdicts, verify_at,
-        ).await
+        )
+        .await
     }
 
     /// The identity-free binding a CloudVault reuse is verified at, pinned
@@ -125,7 +129,9 @@ impl Vault {
     ) -> Result<RelayBoundaryPass> {
         self.relay_boundary_pass_at_receipted(
             request, domain, registry, config, safeguard, verdicts, verify_at,
-        ).await.map(|(pass, _)| pass)
+        )
+        .await
+        .map(|(pass, _)| pass)
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -379,12 +385,16 @@ impl Vault {
             hosted,
             config,
             verify_at: None,
-        }).map(|(pass, _)| pass)
+        })
+        .map(|(pass, _)| pass)
     }
 }
 
 impl Vault {
-    fn record_relay_receipt(&self, receipt: RelayReceipt<'_>) -> Result<(Option<RelayBoundaryPass>, Option<String>)> {
+    fn record_relay_receipt(
+        &self,
+        receipt: RelayReceipt<'_>,
+    ) -> Result<(Option<RelayBoundaryPass>, Option<String>)> {
         #[cfg(test)]
         super::super::in_force::before_settling(
             super::super::in_force::SettlingDoor::RelayBoundary,

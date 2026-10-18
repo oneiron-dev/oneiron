@@ -106,22 +106,40 @@ pub struct LiveVoiceEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LiveVoiceEventKind {
-    GenerationStarted { run: String, context_sources: Vec<String> },
-    Pcm { sample_rate: u32, pcm_base64: String },
+    GenerationStarted {
+        run: String,
+        context_sources: Vec<String>,
+    },
+    Pcm {
+        sample_rate: u32,
+        pcm_base64: String,
+    },
     PlayoutEnd,
     Flush,
-    PlayoutStop { reason: LiveVoiceStopReason },
+    PlayoutStop {
+        reason: LiveVoiceStopReason,
+    },
     MediaCancelled,
     Safeguard {
         action: crate::policy_model::PolicyEnforcementAction,
         receipt_ref: Option<String>,
         custom_tier_skipped: bool,
     },
-    Notice { notice: crate::store::GateSystemNoticeRecord },
-    Memories { found: usize, heard: usize, receipts: Vec<crate::claim::ScopedReadReceipt> },
-    ToolContext { source: String },
+    Notice {
+        notice: crate::store::GateSystemNoticeRecord,
+    },
+    Memories {
+        found: usize,
+        heard: usize,
+        receipts: Vec<crate::claim::ScopedReadReceipt>,
+    },
+    ToolContext {
+        source: String,
+    },
     Finished,
-    Error { code: String },
+    Error {
+        code: String,
+    },
     SessionEnded,
 }
 

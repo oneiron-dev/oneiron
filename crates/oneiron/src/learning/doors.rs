@@ -348,7 +348,10 @@ pub fn read_learning_as_owner(
             .pack_attribution
             .as_ref()
             .map_or(row.receipt.as_str(), |pack| pack.outcome_receipt.as_str());
-        if !attributed_outcome_receipts.iter().any(|kept| kept == receipt) {
+        if !attributed_outcome_receipts
+            .iter()
+            .any(|kept| kept == receipt)
+        {
             attributed_outcome_receipts.push(receipt.to_owned());
         }
     }
@@ -378,7 +381,8 @@ pub fn learning_projection_as_owner(
 ) -> Result<LearningProjectionView> {
     owner.revalidate(vault)?;
     for reference in [&input.attempt_receipt, &input.outcome_receipt, &input.axis] {
-        if reference.is_empty() || reference.len() > 256 || reference.chars().any(char::is_control) {
+        if reference.is_empty() || reference.len() > 256 || reference.chars().any(char::is_control)
+        {
             return Err(Error::InvalidClaimBody(
                 "a projection reference is 1..=256 bytes without controls",
             ));

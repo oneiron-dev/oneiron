@@ -2,8 +2,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::code_run::ResultFacet;
 use crate::EntityId;
+use crate::code_run::ResultFacet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -133,7 +133,9 @@ pub enum ResultReadView {
         manifest: ResultOccurrenceManifest,
         card: ResultCard,
     },
-    Denied { refusal: ResultReadRefusal },
+    Denied {
+        refusal: ResultReadRefusal,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -143,7 +145,9 @@ pub enum ResultSliceView {
         manifest: ResultOccurrenceManifest,
         page: ResultSlicePage,
     },
-    Denied { refusal: ResultReadRefusal },
+    Denied {
+        refusal: ResultReadRefusal,
+    },
 }
 
 /// The existing slice reader's bounded reply, including its scan continuation

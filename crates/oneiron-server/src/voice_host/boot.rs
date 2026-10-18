@@ -272,24 +272,28 @@ async fn call(
         }
         _ => return Err(refused("credential")),
     };
-    let PreparedCall { host, brain, media, live: _live_call, .. } = prepare_call(
+    let PreparedCall {
+        host,
+        brain,
+        media,
+        live: _live_call,
+        ..
+    } = prepare_call(
         server,
         settings,
         &auth,
         oneiron::task_verb::sdk::LiveVoiceStartRequest {
-            sample_rate, channels, room_ref: room, roster_ref: roster,
+            sample_rate,
+            channels,
+            room_ref: room,
+            roster_ref: roster,
         },
         shutdown,
     )?;
     // The reply is written before the stream is handed over: nothing else
     // is written to it until then.
     stream.write_all(b"{\"op\":\"accepted\"}\n").await?;
-    let bindings = VoiceServeBindings::with_wire(
-        stream,
-        brain,
-        media,
-    )
-    .map_err(failed)?;
+    let bindings = VoiceServeBindings::with_wire(stream, brain, media).map_err(failed)?;
     let connection = bindings
         .take()
         .map_err(failed)?
@@ -326,7 +330,10 @@ pub(super) fn prepare_call(
     shutdown: &ManagedShutdown,
 ) -> io::Result<PreparedCall> {
     let oneiron::task_verb::sdk::LiveVoiceStartRequest {
-        sample_rate, channels, room_ref: room, roster_ref: roster,
+        sample_rate,
+        channels,
+        room_ref: room,
+        roster_ref: roster,
     } = input;
     let vault = server.vault();
     for scope in [CoreScope::Read, CoreScope::Write] {

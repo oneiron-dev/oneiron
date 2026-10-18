@@ -88,7 +88,9 @@ impl LearningPredicate {
 }
 
 /// A task type: the node and the tree version it was placed in.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct TypeRef {
     pub node_id: String,
     pub tree_version: u32,
