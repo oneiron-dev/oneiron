@@ -638,6 +638,11 @@ side_tables! {
     /// Empty-marker index from a normalized identity hint (name/alias/handle) hashed per entity-kind
     /// to the entity id it names, for lookup-before-mint resolution. Key: u8 + hash32 + id16.
     INGEST_IDENTITY_HINT: VaultMeta b"identity-hint:v1:" Raw;
+    /// One sensitive-topic cluster of imported claims (OF-492): its topic label, the claims
+    /// and import reviews seen in it, and whether it was found clear, asked of the owner
+    /// (the frozen question, evidence and options) or settled as a standing rule. Key: id16
+    /// (the topic id).
+    IMPORT_AUDIENCE_CLUSTER: VaultMeta b"import-audience:cluster:v1:" Named;
     /// Caller-supplied phonetic codes retained to recompute an entity's phonetic postings on
     /// reindex/delete. Key: id16.
     BATCH_PHONETIC_INDEX_SOURCE: VaultMeta b"index_source:phonetic:v1:" Named;

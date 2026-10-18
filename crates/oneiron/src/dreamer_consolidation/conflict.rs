@@ -431,6 +431,12 @@ pub(super) fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
     encode_value(&canonicalize_value(value))
 }
 
+/// The canonical bytes of an extractor `topic_key` value, so a caller outside
+/// consolidation groups claims by the same question topic (OF-492 import audience).
+pub(crate) fn topic_key_canonical_bytes(value: &Value) -> Result<Vec<u8>> {
+    canonical_value_bytes(value)
+}
+
 /// Derives a [`PromotionCandidate`]'s write-once claim id DETERMINISTICALLY
 /// from its identity (owning attempt, subject, predicate, canonical value, world,
 /// facet, relationship, project, question topic).

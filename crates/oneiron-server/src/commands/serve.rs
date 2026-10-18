@@ -418,6 +418,11 @@ pub(crate) async fn start_desktop_workers(
         &sync_server,
         crate::server::admit_every_pass(),
     ));
+    // Sensitive imported topics ask the owner who sees their later imports (OF-492).
+    workers.push(crate::import_audience::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
         workers.push(crate::decision_graph::spawn(

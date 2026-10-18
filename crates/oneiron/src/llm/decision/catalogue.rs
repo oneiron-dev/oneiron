@@ -220,6 +220,23 @@ pub const CONNECTOR_SLATE_DRAFT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Is one imported topic sensitive enough to ask the owner who may see its later
+/// imports (OF-492)? A yes or an unsure read asks [`IMPORT_AUDIENCE_ASK`]. Keyed by topic.
+pub const IMPORT_AUDIENCE_SENSITIVE: QuestionFamily = QuestionFamily {
+    name: "import.audience.sensitive",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// Who may see one sensitive topic's later imports: only the owner, one of the owner's
+/// projects, or everyone the source shared it with. Asked of the owner only. Keyed by
+/// topic.
+pub const IMPORT_AUDIENCE_ASK: QuestionFamily = QuestionFamily {
+    name: "import.audience.ask",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// How a conflicting claim set the Dreamer extracted resolves (merge, supersede, accumulate
 /// or escalate), and which listed candidate's identity a merge keeps. Keyed by `resolution`,
 /// or by `identity` and the option group.
@@ -372,6 +389,8 @@ pub const FAMILIES: &[QuestionFamily] = &[
     WIRE_HEALTH,
     ESIGN_HELD_SIGNING,
     CONNECTOR_SLATE_DRAFT,
+    IMPORT_AUDIENCE_SENSITIVE,
+    IMPORT_AUDIENCE_ASK,
     CONFLICT_RESOLUTION,
     CORRECTION,
     SAVED_QUERY_MATCH,
