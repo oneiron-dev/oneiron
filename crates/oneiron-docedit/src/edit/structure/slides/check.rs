@@ -17,7 +17,8 @@
 //!
 //! A reorder may change only the presentation, and only the order of the
 //! slide list and the section lists, which must follow the requested order
-//! with each section whole and in place.
+//! with each section whole and in place, and the app properties (their
+//! slide titles moved, the slide count kept).
 use super::super::super::check::{
     Added, content_types, declared_type, outside, relationships, timing as index,
 };
@@ -394,7 +395,17 @@ pub(in crate::edit::structure) fn reordered(
     let candidate = Package::open(&next.export()?, input.limits())?;
     let changed = diff(input, &candidate)?;
     let (old, new) = (Lists::read(input)?, Lists::read(&candidate)?);
-    if let Some(part) = changed.iter().find(|part| **part != old.part) {
+    // The app properties keep their slide count when they changed.
+    let props = related(input, "", "extended-properties")?.filter(|props| changed.contains(props));
+    if props.is_some() && slide_count(&candidate)? != slide_count(input)? {
+        return Err(EditRefusal::ReadBack(
+            "the app properties' slide count changed",
+        ));
+    }
+    if let Some(part) = changed
+        .iter()
+        .find(|part| **part != old.part && props.as_ref() != Some(*part))
+    {
         return Err(EditRefusal::PartDiffOutsideTransaction(part.clone()));
     }
     let fault = |why| Err(outside(&old.part, why));

@@ -504,6 +504,38 @@ impl QueueTaskBrief {
         }
         Ok(())
     }
+
+    /// The objectives an agent realizing this brief confesses against
+    /// (OF-544), in a Dreamer realization's order: the done-means question,
+    /// each criterion that must hold, then each that must not as
+    /// `none of: <text>`. Whitespace and control characters fold to one
+    /// space, so the dispatch codec takes every line; a blank one is left
+    /// out and a repeat keeps its first place.
+    pub(crate) fn confession_objectives(&self) -> Vec<String> {
+        let fold = |text: &str| {
+            text.split(|c: char| c.is_whitespace() || c.is_control())
+                .filter(|word| !word.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let done = &self.success;
+        let held = done
+            .yes_if_all
+            .iter()
+            .map(|criterion| fold(&criterion.text));
+        let none = done
+            .no_if_any
+            .iter()
+            .map(|criterion| fold(&criterion.text))
+            .filter(|text| !text.is_empty())
+            .map(|text| format!("none of: {text}"));
+        let mut seen = std::collections::BTreeSet::new();
+        std::iter::once(fold(&done.question))
+            .chain(held)
+            .chain(none)
+            .filter(|objective| !objective.is_empty() && seen.insert(objective.clone()))
+            .collect()
+    }
 }
 
 impl Memory<'_> {

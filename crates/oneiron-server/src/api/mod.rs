@@ -140,6 +140,8 @@ mod memory;
 // depth cost gate, the extractive answer for the model-free tiers, and the
 // citation gate over whatever a host composer returns.
 pub(crate) mod memory_reason;
+// FIX 365: the result a MESSAGE carries, read on its transcript's read lane.
+mod message_result;
 // OF-445: the OpenAI-compatible memory-injection proxy.
 mod openai_proxy;
 mod openapi;
@@ -353,6 +355,11 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route(
             "/conversations/{conversation_id}/transcript",
             get(conversation_transcript::get_core_conversation_transcript),
+        )
+        // A read with a POST body, so it stays out of the idempotency layer.
+        .route(
+            "/messages/{message}/result",
+            post(message_result::read_core_message_result),
         )
         .route(
             "/conversations/{conversation_id}/scope",

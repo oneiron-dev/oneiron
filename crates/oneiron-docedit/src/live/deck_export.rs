@@ -23,22 +23,27 @@
 //! projects over the new retained bytes. A live-born node is written from
 //! what it carries: a shape from its preset, a picture over a new media part
 //! from the asset its payload names (the caller's [`Assets`] supply the
-//! bytes, which must hash to the reference), a table or chart through the
-//! native writer, and a connector glued to the nodes its ends name once they
-//! are bound on its slide. A bound node whose preset or payload the live
-//! model changed is written over its retained element: its preset, its glue,
-//! new media, a table's changed cells or grid, a chart's changed series
-//! sequences or its rewritten plots and workbook.
+//! bytes, which must hash to the reference), a table through the native
+//! writer, a chart of any family through the native writer and the chart
+//! rewrite, and a connector glued to the nodes its ends name once they are
+//! bound on its slide. A bound node whose preset or payload the live model
+//! changed is written over its retained element: its preset, its glue, new
+//! media or held media shown again, a table's changed cells or grid (its
+//! frame fitted to the grid), a chart's changed series sequences or its
+//! rewritten plots, axes and workbook (a new one when its data lived
+//! elsewhere), and a SmartArt's node text. What it did PowerPoint's way
+//! where the deck once refused rides in the outcome's effects.
 //! Until [`Gate::is_open`], blob versions remain authoritative and exports
 //! are proposal artifacts. An export that changes anything recounts the app
 //! properties' words and paragraphs over the text it wrote last.
 
 use super::LiveError;
+use super::convert::{self, Conversion};
 use super::held;
 use super::pptx::{
-    BORN_CHART, CACHED_CHART, ChartKind, ChartSource, ConnectorEnd, DeckNode, HELD, LiveDeck,
-    NodeBinding, NodeId, NodeKind, NodePayload, PreflightReport, RelationshipChange, RenderPair,
-    RenderSide, SlideRender, TextBody, WRITTEN_FRAME, geometry_of, slide_of, text_body,
+    ChartKind, ConnectorEnd, DeckNode, LiveDeck, NodeBinding, NodeId, NodeKind, NodePayload,
+    PreflightReport, RelationshipChange, RenderPair, RenderSide, SlideRender, TextBody,
+    WRITTEN_FRAME, geometry_of, slide_of, text_body,
 };
 use super::reshape;
 use crate::deck::{DeckView, ShapeView};
@@ -58,7 +63,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/5";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/6";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -126,7 +131,8 @@ pub struct ExportOutcome {
     pub id_marks: IdMarks,
     /// What the value edits declared beyond their own writes: a preset that
     /// replaced a shape's custom geometry, or gave a shape that inherited
-    /// its geometry its own, as PowerPoint's Change Shape does.
+    /// its geometry its own, as PowerPoint's Change Shape does; and what the
+    /// projection did PowerPoint's way on a node ([`Effect::Converted`]).
     pub effects: Vec<Effect>,
 }
 
@@ -216,6 +222,14 @@ impl Work {
         self.changed.extend(report.changed_parts);
         self.effects.extend(report.effects);
         Ok(())
+    }
+
+    /// Record what the projection did PowerPoint's way on `node`.
+    fn converted(&mut self, node: NodeId, done: impl IntoIterator<Item = Conversion>) {
+        self.effects.extend(
+            done.into_iter()
+                .map(|conversion| Effect::Converted { node, conversion }),
+        );
     }
 
     /// `node`'s place and current fingerprint in `next`.
@@ -899,10 +913,11 @@ pub fn check_picture(image: &AssetRef, assets: &dyn Assets) -> Result<(), LiveEr
 
 /// Write what a bound node's preset or payload changed over its retained
 /// element: a shape's or connector's preset, a connector's glue (to nodes
-/// bound on its slide), new media for a picture, a table's changed cells,
-/// and a chart's changed series names, categories and values. Each write is
-/// one checked verb; a node whose retained element already reads as the
-/// live model writes nothing.
+/// bound on its slide), new media for a picture or the held media it shows,
+/// a table's changed cells or grid, a chart's changed series names,
+/// categories and values or its rewrite, and a SmartArt's node text. Each
+/// write is one checked verb or a rewrite that reads back; a node whose
+/// retained element already reads as the live model writes nothing.
 fn project_payload(
     work: &mut Work,
     deck: &LiveDeck,
@@ -997,7 +1012,10 @@ fn project_payload(
                     .zip(&wanted)
                     .any(|(was, now)| was.len() != now.len())
             {
-                reshape::table(&mut work.next, part, native, &wanted)?;
+                let fit = node.geometry.extent.is_none();
+                if let Some(extent) = reshape::table(&mut work.next, part, native, &wanted, fit)? {
+                    work.converted(id, [Conversion::TableFrameFitted { extent }]);
+                }
                 work.changed.insert(part.to_owned());
                 let view = work.view()?;
                 let at = shape_at(&view, part, native)
@@ -1033,15 +1051,15 @@ fn project_payload(
             let chart = held::chart_part(&work.next, part, &tree, at)
                 .ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
             let have = held::chart(&work.next, &chart).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
-            if !reshape::same_data(&have, payload) {
-                if *source == ChartSource::Cached {
-                    return Err(LiveError::Invalid(CACHED_CHART));
-                }
+            // Data that lived outside the chart's own workbook moves into a
+            // new one, as PowerPoint's Edit Data embeds it.
+            let moved = matches!(&have, NodePayload::Chart { source: from, .. } if from != source);
+            if moved || !reshape::same_data(&have, payload) {
                 // Same-length writes through the checked chart writer where
-                // they suffice; a shape change, a literal sequence or a
-                // refused write rewrites the chart whole.
-                let in_place =
-                    reshape::plan(&work.next, &chart, &have, payload).is_some_and(|writes| {
+                // they suffice; a shape or type change, moved data, a literal
+                // sequence or a refused write rewrites the chart whole.
+                let in_place = !moved
+                    && reshape::plan(&work.next, &chart, &have, payload).is_some_and(|writes| {
                         writes.iter().all(|(series, target, values)| {
                             native_patch(
                                 &mut work.next,
@@ -1057,18 +1075,32 @@ fn project_payload(
                         })
                     });
                 if !in_place {
-                    work.changed
-                        .extend(reshape::chart(&mut work.next, &chart, payload)?);
+                    let mut done = Vec::new();
+                    let changed = reshape::chart(&mut work.next, &chart, payload, &mut done)?;
+                    work.changed.extend(changed);
+                    work.converted(id, done);
                 }
             }
         }
-        Some(
-            NodePayload::HeldPicture { .. }
-            | NodePayload::SmartArt { .. }
-            | NodePayload::Ole { .. }
-            | NodePayload::CustomGeometry { .. },
-        )
-        | None => {}
+        Some(NodePayload::HeldPicture { media }) => {
+            if convert::show_held_media(&mut work.next, part, native, media)? {
+                work.changed.insert(part.to_owned());
+                work.converted(
+                    id,
+                    [Conversion::HeldMediaShown {
+                        part: media.part.clone(),
+                    }],
+                );
+            }
+        }
+        Some(NodePayload::SmartArt { nodes }) => {
+            let (changed, written) = convert::smart_art_text(&mut work.next, part, native, nodes)?;
+            if written > 0 {
+                work.changed.extend(changed);
+                work.converted(id, [Conversion::SmartArtTextWritten { nodes: written }]);
+            }
+        }
+        Some(NodePayload::Ole { .. } | NodePayload::CustomGeometry { .. }) | None => {}
     }
     Ok(())
 }
@@ -1160,30 +1192,46 @@ fn native_frame(
             )?
         }
         NodePayload::Chart {
-            family,
-            categories,
-            series,
-            ..
+            categories, series, ..
         } => {
-            let family = match family {
-                ChartKind::Bar => ChartFamily::Bar,
+            // The native writer seeds the chart as a bar, line or pie chart
+            // over its own workbook (categories 1 to n when it has none, one
+            // empty series when it has none); the chart rewrite then gives it
+            // its own family, plots, x values and categories, as PowerPoint
+            // inserts a chart of any type.
+            let family = match reshape::seed_family(payload) {
                 ChartKind::Line => ChartFamily::Line,
                 ChartKind::Pie => ChartFamily::Pie,
-                ChartKind::Area | ChartKind::Scatter | ChartKind::Doughnut | ChartKind::Radar => {
-                    return Err(LiveError::Invalid(BORN_CHART));
-                }
+                _ => ChartFamily::Bar,
+            };
+            let points = series
+                .iter()
+                .map(|line| line.values.len().max(line.x.as_ref().map_or(0, Vec::len)))
+                .max()
+                .unwrap_or(0)
+                .max(1);
+            let labels: Vec<String> = if categories.is_empty() {
+                (1..=points).map(|at| at.to_string()).collect()
+            } else {
+                categories.clone()
             };
             let mut columns = vec![column("", ColumnKind::Text)];
+            if series.is_empty() {
+                columns.push(column("", ColumnKind::Number));
+            }
             columns.extend(
                 series
                     .iter()
                     .map(|line| column(&line.name, ColumnKind::Number)),
             );
-            let rows = categories
+            let rows = labels
                 .iter()
                 .enumerate()
                 .map(|(at, category)| {
                     let mut row = vec![Cell::Text(category.clone())];
+                    if series.is_empty() {
+                        row.push(Cell::Missing);
+                    }
                     row.extend(series.iter().map(|line| {
                         line.values
                             .get(at)
@@ -1202,7 +1250,7 @@ fn native_frame(
                 "ppt/embeddings/Microsoft_Excel_Worksheet",
                 ".xlsx",
             )?;
-            native_patch(
+            let report = native_patch(
                 &mut work.next,
                 &NativeEdit::CreateChart {
                     frame: Frame {
@@ -1218,7 +1266,15 @@ fn native_frame(
                     workbook: &workbook,
                     sheet: CHART_SHEET,
                 },
-            )?
+            )?;
+            work.changed.extend(report.changed_parts);
+            if held::chart(&work.next, &chart)
+                .is_none_or(|read| !reshape::same_data(&read, payload))
+            {
+                let changed = reshape::chart(&mut work.next, &chart, payload, &mut Vec::new())?;
+                work.changed.extend(changed);
+            }
+            return Ok(id);
         }
         NodePayload::Picture { .. }
         | NodePayload::Connector { .. }
@@ -1230,7 +1286,9 @@ fn native_frame(
         NodePayload::HeldPicture { .. }
         | NodePayload::SmartArt { .. }
         | NodePayload::Ole { .. } => {
-            return Err(LiveError::Invalid(HELD));
+            return Err(LiveError::Invalid(
+                "a live-born graphic frame carries a table or chart",
+            ));
         }
     };
     work.changed.extend(report.changed_parts);

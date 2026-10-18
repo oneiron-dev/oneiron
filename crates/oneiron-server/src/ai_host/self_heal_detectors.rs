@@ -1,6 +1,6 @@
 //! The host's scheduled T2/T3 detector pass (ARCH-0066 #tiers, OF-418). For
-//! each `[self_heal.detectors.<family>]` the owner wrote, it reads the recent
-//! retrieval runs, cuts them into windows and asks the detector's question of
+//! each `[self_heal.detectors.<family>]` the owner wrote, it reads every
+//! retrieval run, cuts them into windows and asks the detector's question of
 //! each window not graded yet: each completed window of time for `t2` and
 //! `t3`, each conversation gone quiet for `session`. A raised window is a
 //! proposed diagnostic; nothing is repaired here. A `t2` detector whose
@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::limit_ask::EngineLimit;
 use oneiron::self_heal::detector_pass::{detector_window_key, minted_window_key};
 use oneiron::self_heal::distillation::{MintedExample, MintedT2};
 use oneiron::self_heal::tiered::{
@@ -24,14 +25,12 @@ use crate::config::{DetectorTier, SelfHealConfig};
 use crate::server::SyncServer;
 
 const TICK: Duration = Duration::from_secs(300);
-/// Newest runs one pass reads.
-const RECENT_RUNS: usize = 1_024;
 /// Windows one pass grades at most, across every detector.
 const ROUND: usize = 8;
 /// One question's budget.
 const DECIDE_BUDGET: Duration = Duration::from_secs(20);
-/// Runs one window holds at most: the engine's bound. A longer window keeps
-/// its newest runs.
+/// Runs one graded window holds at most: the engine's bound. A longer window
+/// is graded in parts of this many runs ([`parts`]).
 const WINDOW_RUNS: usize = 64;
 /// Bytes of run facts one window's state carries at most, under the ladder's
 /// state bound.
@@ -125,9 +124,10 @@ pub(crate) fn spawn(
 
 fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
     let vault = server.vault();
-    let mut runs = vault.retrieval_runs(RECENT_RUNS)?;
-    // A full read may have cut its oldest window short.
-    let full = runs.len() >= RECENT_RUNS;
+    // Every run is read: past `limits.maintenance_scan_rows` the pass asks
+    // and reads on.
+    let mut runs = vault.retrieval_runs(usize::MAX)?;
+    let _ = vault.measure_limit(EngineLimit::MaintenanceScanRows, runs.len() as u64);
     runs.sort_by_key(|run| (run.started_at, run.run_id.as_bytes()));
     let now = vault.now_recorded_at();
     let principal = vault
@@ -143,7 +143,7 @@ fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
     let mut graded = 0;
     for detector in &pass {
         let seed = detector.seed();
-        for window in windows(&runs, seed, full, now) {
+        for window in windows(&runs, seed, now) {
             if graded == ROUND {
                 return Ok(());
             }
@@ -256,12 +256,10 @@ fn grade(
 /// The windows one detector grades, each oldest first: the runs of each
 /// completed window of time for `t2` and `t3`, and the runs of each
 /// conversation quiet for a window for `session`. A window with too few runs
-/// is left out, and so is the one holding the oldest run of a full read,
-/// which the read may have cut short.
+/// is left out; one past the engine's bound is graded in parts.
 fn windows<'a>(
     runs: &'a [RetrievalRunRecord],
     detector: &Detector,
-    full: bool,
     now: u64,
 ) -> Vec<Vec<&'a RetrievalRunRecord>> {
     let span = detector.window_secs;
@@ -276,29 +274,33 @@ fn windows<'a>(
         };
         groups.entry(group).or_default().push(run);
     }
-    let oldest = runs
-        .first()
-        .filter(|_| full)
-        .map(|run| run.run_id.as_bytes());
     groups
         .into_iter()
-        .filter_map(|(group, mut window)| {
+        .filter(|(group, window)| {
             let done = match detector.tier {
                 DetectorTier::Session => window
                     .last()
                     .is_some_and(|last| last.started_at.saturating_add(span) <= now),
                 DetectorTier::T2 | DetectorTier::T3 => {
-                    (group as u64).saturating_add(1).saturating_mul(span) <= now
+                    (*group as u64).saturating_add(1).saturating_mul(span) <= now
                 }
             };
-            let cut = oldest.is_some_and(|oldest| window[0].run_id.as_bytes() == oldest);
-            if !done || cut || window.len() < detector.policy.consecutive {
-                return None;
-            }
-            let extra = window.len().saturating_sub(WINDOW_RUNS);
-            window.drain(..extra);
-            Some(window)
+            done && window.len() >= detector.policy.consecutive
         })
+        .flat_map(|(_, window)| parts(&window))
+        .collect()
+}
+
+/// A window in parts of at most [`WINDOW_RUNS`] runs, oldest first, the last
+/// part its newest runs. Every run is graded, each part under its own key,
+/// so a part not graded this pass waits for the next; a part may share runs
+/// with the one before it.
+fn parts<'a>(window: &[&'a RetrievalRunRecord]) -> Vec<Vec<&'a RetrievalRunRecord>> {
+    let last = window.len().saturating_sub(WINDOW_RUNS);
+    (0..=last)
+        .step_by(WINDOW_RUNS)
+        .chain((!last.is_multiple_of(WINDOW_RUNS)).then_some(last))
+        .map(|start| window[start..window.len().min(start + WINDOW_RUNS)].to_vec())
         .collect()
 }
 
