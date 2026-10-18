@@ -249,6 +249,17 @@ export type MemoryProvenance = {
   evidenceTurnIds: string[]
 }
 
+/** A retained foreign world's stale stamp, present only on an admitted recall item. */
+export type MemoryStaleStamp = {
+  /** Unix seconds; absent when the terminal fold is visible before its stamp sweep. */
+  staleSince?: number
+  /** Seconds since staleSince; absent when the stamp time is unknown. */
+  ageSecs?: number
+  /** The terminal reason: disconnected, dissolved or promoted. */
+  reason: string
+  pactEpoch: number
+}
+
 /** One ranked memory pack item. */
 export type MemoryItem = {
   /** The same `name:hash` a witness receipt returns. */
@@ -265,6 +276,8 @@ export type MemoryItem = {
   confidence: number
   hedgeBucket: string
   provenance: MemoryProvenance
+  /** Retained foreign content stopped refreshing; selecting its world grants no read authority. */
+  stale?: MemoryStaleStamp
   world?: string
   facet?: string
   salience?: number
@@ -527,6 +540,8 @@ class MemoryProvenance(TypedDict):
     source_revision_ids: list[str]
     evidence_turn_ids: list[str]
 
+MemoryStaleStamp = Facade.MemoryStaleStamp
+
 class MemoryItem(TypedDict):
     short_id: str
     source_revision_ref: NotRequired[str]
@@ -536,6 +551,7 @@ class MemoryItem(TypedDict):
     confidence: float
     hedge_bucket: str
     provenance: MemoryProvenance
+    stale: NotRequired[MemoryStaleStamp]
     world: str | None
     facet: str | None
     salience: float | None

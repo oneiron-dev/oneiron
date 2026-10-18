@@ -1716,7 +1716,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "tasks.accept": { description: "Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports.", scope: "Write", proposes: false, hostDoor: false, section: true },
   "vault.witness": { description: "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.claims.upsert": { description: "Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance.", scope: "Write", proposes: true, hostDoor: false, section: false },
-  "vault.recall": { description: "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.recall": { description: "Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.retrieval.aging.get": { description: "The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.retrieval.aging.configure": { description: "The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.retrieval.weights.get": { description: "The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -2685,7 +2685,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override. */
         supersede: (input: Facade.LiveRunRequest<Facade.MemorySupersedeInput>, options?: O): FacadeReturns<"vault.claims.supersede">[K] => invoke("vault.claims.supersede", input, options, newInvocation()),
       },
-      /** Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting. */
+      /** Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata. */
       recall: (input: Facade.RecallRequest, options?: O): FacadeReturns<"vault.recall">[K] => invoke("vault.recall", input, options, newInvocation()),
       retrieval: {
         aging: {
