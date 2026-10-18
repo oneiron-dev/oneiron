@@ -326,8 +326,8 @@ impl<'a> StructureBuilder<'a> {
 
 impl AuthorityStructure {
     /// Whether a key that may vouch for `entry` signed or cosigned it: an
-    /// admitter, or, for a world edit or a world key record, the install key
-    /// of the machine it names, as its primary signer. A root record vouches
+    /// admitter, or, for a world edit, a world key record or a residence
+    /// result, the install key of the machine it names, as its primary signer. A root record vouches
     /// for itself when its own anchor signed it alone, and an anchor signs
     /// machine marks alone; as the fold's anchor rules have it, an anchor
     /// vouches for nothing else. A genesis vouches for itself only in a log
@@ -345,6 +345,7 @@ impl AuthorityStructure {
             }
             AuthorityOp::WorldPrivacy(edit) => install_key(edit.machine),
             AuthorityOp::WorldKeyWraps(record) => install_key(record.machine),
+            AuthorityOp::ResidenceResult(result) => install_key(result.machine),
             AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
             AuthorityOp::MachineProfile(_)
                 if self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty() =>
@@ -358,9 +359,9 @@ impl AuthorityStructure {
     /// Whether `entry`, which a key may vouch for, vouches only as a
     /// stranger's: a root record of an anchor this install does not take as
     /// its own, unless its id is the pin's or an awaited root's; such an
-    /// anchor's mark, unless a pin door awaits its root; or a world row of an
-    /// install key only such marks name. Every such row counts toward one
-    /// shared bound (r23).
+    /// anchor's mark, unless a pin door awaits its root; or a world row or a
+    /// residence result of an install key only such marks name. Every such
+    /// row counts toward one shared bound (r23).
     pub(super) fn is_stranger(&self, entry: &AuthorityLogEntry) -> bool {
         let signer = entry.signer_key();
         if signed_by(entry, &self.admitters) {
@@ -379,6 +380,7 @@ impl AuthorityStructure {
             }
             AuthorityOp::WorldPrivacy(edit) => machine_key(edit.machine),
             AuthorityOp::WorldKeyWraps(record) => machine_key(record.machine),
+            AuthorityOp::ResidenceResult(result) => machine_key(result.machine),
             _ => false,
         }
     }

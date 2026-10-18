@@ -92,6 +92,10 @@ pub(super) fn apply_op(
         // The signed record of a shared-act change; the change itself is the
         // execution's (`federation::shared_act`).
         AuthorityOp::OwnerHandover(_) => {}
+        // A residence directive is applied by the machine it names
+        // (`sync::residence`); `fold_entry_state`'s result arm returns
+        // before reaching here.
+        AuthorityOp::ResidenceDirective(_) | AuthorityOp::ResidenceResult(_) => {}
     }
 }
 

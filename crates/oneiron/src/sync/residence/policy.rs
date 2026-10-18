@@ -63,17 +63,24 @@ pub fn set_device_sync_preference(
     vault: &Vault,
     mode: SyncResidenceMode,
 ) -> Result<DeviceSyncPreference> {
+    vault.with_write_txn_grouped(|txn| set_device_sync_preference_in_txn(vault, txn, mode))
+}
+
+/// [`set_device_sync_preference`] in the caller's transaction, for a door
+/// that records more in the same commit.
+pub(crate) fn set_device_sync_preference_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    mode: SyncResidenceMode,
+) -> Result<DeviceSyncPreference> {
     let preference = DeviceSyncPreference {
         mode,
         chosen_at: vault.store.clock.wall_now(),
     };
-    vault.with_write_txn_grouped(|txn| {
-        vault
-            .store
-            .sync_state
-            .put(txn, PREFERENCE_KEY, &preference.encode())?;
-        Ok(())
-    })?;
+    vault
+        .store
+        .sync_state
+        .put(txn, PREFERENCE_KEY, &preference.encode())?;
     Ok(preference)
 }
 

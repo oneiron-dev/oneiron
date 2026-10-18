@@ -204,6 +204,7 @@ async fn open(
             Arc::new(MeshSyncDialer::new(mesh.transport(), home)) as Arc<dyn SyncDialer>
         }),
         pin,
+        machine,
     };
     let connection = link.connection(link.client_config(&credential)?)?;
     let renewal = renewal::Renewal::new(&link.url, credential_file, Arc::clone(&server.vault));
@@ -248,6 +249,9 @@ struct Link {
     /// The checkpoint the enrolment's link pinned: the first authority
     /// catch-up adopts it, and a later connection finds it adopted.
     pin: Option<oneiron::authority::AuthorityCheckpointPin>,
+    /// This machine: each connection registers under it, so the owner's
+    /// residence rows reach this machine through it (FIX 531).
+    machine: oneiron::EntityId,
 }
 
 #[cfg(feature = "mesh")]
@@ -287,14 +291,16 @@ impl Link {
     fn connection(
         &self,
         client_config: oneiron::sync::SyncClientConfig,
-    ) -> anyhow::Result<oneiron::sync::SyncConnection> {
-        Ok(oneiron::sync::SyncConnection::new(
+    ) -> anyhow::Result<Arc<oneiron::sync::SyncConnection>> {
+        let connection = Arc::new(oneiron::sync::SyncConnection::new(
             Arc::clone(&self.windows),
             oneiron::sync::ConnectionConfig {
                 client_config,
                 auto_reconnect: true,
             },
-        )?)
+        )?);
+        crate::residence_machines::register(self.machine, &connection);
+        Ok(connection)
     }
 
     /// Runs `connection` until `stop`, and again on each renewed credential
@@ -303,7 +309,7 @@ impl Link {
     /// status goes to `statuses`, which closes when the last run ends.
     async fn run(
         self,
-        mut connection: oneiron::sync::SyncConnection,
+        mut connection: Arc<oneiron::sync::SyncConnection>,
         mut renewal: renewal::Renewal,
         mut stop: oneshot::Receiver<()>,
         statuses: tokio::sync::mpsc::UnboundedSender<oneiron::sync::SyncStatus>,

@@ -31,6 +31,7 @@
 //!   connection re-runs Phase 1-3 from scratch.
 
 mod converge;
+mod directives;
 mod handshake;
 mod home_search;
 mod node_batch;
@@ -74,6 +75,9 @@ pub struct SyncConnection {
     /// The residence mode this machine runs now. A change closes the live
     /// socket; the next connect negotiates the new hello.
     mode: tokio::sync::watch::Sender<SyncResidenceMode>,
+    /// Wakes the owner's residence directives naming this machine: the
+    /// residence upkeep rings it once the authority history is in (OF-534).
+    directive_wake: Arc<tokio::sync::Notify>,
     /// Whether this env's member left the shared vault it holds (OF-158): the
     /// lane ends for good and never reconnects.
     left: tokio::sync::watch::Sender<bool>,
@@ -143,6 +147,7 @@ impl SyncConnection {
             queue,
             config,
             mode,
+            directive_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
             running: tokio::sync::watch::channel(false).0,
             _home_search: home_search,
@@ -297,6 +302,18 @@ impl SyncConnection {
         &self,
         mode: SyncResidenceMode,
     ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
+        self.switch_residence_mode(mode, |_, _| Ok(())).await
+    }
+
+    /// [`Self::set_residence_mode`], with `finish` run in the transaction
+    /// that records the choice, beside the read caches a switch to sync-all
+    /// drops; the new mode is published once that commits. The owner's mode
+    /// directives record their result there (OF-534).
+    async fn switch_residence_mode(
+        &self,
+        mode: SyncResidenceMode,
+        finish: impl FnOnce(&mut heed::RwTxn<'_>, &ResidenceModeChange) -> crate::error::Result<()>,
+    ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
         let storage = |e: crate::Error| crate::sync::TransportError::Storage(e.to_string());
         if self.config.client_config.federation_peer.is_some() {
             return Err(crate::sync::TransportError::InvalidPayload(
@@ -315,33 +332,34 @@ impl SyncConnection {
             unsynced: Vec::new(),
             pruned_items: 0,
         };
-        if effective != *self.mode.borrow() {
-            match effective {
-                SyncResidenceMode::All => {
-                    // A cached id refuses local writes until promoted; the
-                    // full windows supersede every read cache.
-                    change.pruned_items = crate::sync::residence::prune_thin_items(vault, u64::MAX)
-                        .map_err(storage)?;
-                }
-                SyncResidenceMode::Opened => {
-                    let mut config = self.client_config();
-                    config.residence_mode = SyncResidenceMode::Opened;
-                    let (mut client, _events) =
-                        crate::sync::SyncClient::new(Arc::clone(&self.manager), config)
-                            .map_err(storage)?;
-                    for window in crate::sync::residence::discover_local_window_keys(vault)
-                        .map_err(storage)?
-                    {
-                        if client.retain_window(&window).await? {
-                            change.retained.push(window);
-                        } else {
-                            change.unsynced.push(window);
-                        }
-                    }
+        let switching = effective != *self.mode.borrow();
+        if switching && effective == SyncResidenceMode::Opened {
+            let mut config = self.client_config();
+            config.residence_mode = SyncResidenceMode::Opened;
+            let (mut client, _events) =
+                crate::sync::SyncClient::new(Arc::clone(&self.manager), config).map_err(storage)?;
+            for window in
+                crate::sync::residence::discover_local_window_keys(vault).map_err(storage)?
+            {
+                if client.retain_window(&window).await? {
+                    change.retained.push(window);
+                } else {
+                    change.unsynced.push(window);
                 }
             }
         }
-        crate::sync::residence::set_device_sync_preference(vault, mode).map_err(storage)?;
+        vault
+            .with_write_txn_grouped(|txn| {
+                if switching && effective == SyncResidenceMode::All {
+                    // A cached id refuses local writes until promoted; the
+                    // full windows supersede every read cache.
+                    change.pruned_items =
+                        crate::sync::residence::prune_thin_items_in_txn(vault, txn, u64::MAX)?;
+                }
+                crate::sync::residence::set_device_sync_preference_in_txn(vault, txn, mode)?;
+                finish(txn, &change)
+            })
+            .map_err(storage)?;
         self.mode.send_replace(effective);
         Ok(change)
     }
@@ -386,7 +404,24 @@ impl SyncConnection {
     /// (recorded-clock seconds). Promoted and sync-all windows are not
     /// pruned here: [`Self::demote_window`] demotes a promoted one.
     pub fn prune_opened_items(&self, before: u64) -> Result<usize, crate::sync::TransportError> {
-        crate::sync::residence::prune_thin_items(self.manager.vault(), before)
+        self.prune_opened_items_with(before, |_, _| Ok(()))
+    }
+
+    /// [`Self::prune_opened_items`], with `finish` run in the prune's
+    /// transaction with the count it dropped. The owner's prune directives
+    /// record their result there (OF-534).
+    fn prune_opened_items_with(
+        &self,
+        before: u64,
+        finish: impl FnOnce(&mut heed::RwTxn<'_>, usize) -> crate::error::Result<()>,
+    ) -> Result<usize, crate::sync::TransportError> {
+        let vault = self.manager.vault();
+        vault
+            .with_write_txn_grouped(|txn| {
+                let pruned = crate::sync::residence::prune_thin_items_in_txn(vault, txn, before)?;
+                finish(txn, pruned)?;
+                Ok(pruned)
+            })
             .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
     }
 

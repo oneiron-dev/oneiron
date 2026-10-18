@@ -628,6 +628,19 @@ impl Vault {
         handover.validate()?;
         self.append_hashed_slip_op_in_txn(txn, issuer, AuthorityOp::OwnerHandover(handover))
     }
+    /// Lands an owner's residence directive to one of their machines in the
+    /// issuing door's writer, answering the entry's hash. The fold admits it
+    /// as a roster-signed Owner action and keeps no state for it; the machine
+    /// it names applies it (`sync::residence`).
+    pub(crate) fn append_residence_directive_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        directive: ResidenceDirective,
+    ) -> Result<AuthorityEntryHash> {
+        directive.validate()?;
+        self.append_hashed_slip_op_in_txn(txn, issuer, AuthorityOp::ResidenceDirective(directive))
+    }
     pub(super) fn append_slip_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
