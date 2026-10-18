@@ -101,6 +101,8 @@ both bindings and their export-census tests in one change.
 - `vault.packs.setup.answer`
 - `vault.packs.setup.verify`
 - `vault.authority.audit`
+- `vault.authority.history.export`
+- `vault.authority.history.import`
 - `vault.mesh.path_receipts`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
@@ -212,6 +214,11 @@ both bindings and their export-census tests in one change.
 - `vault.code.blame`
 - `vault.code.proposal_view`
 - `vault.code.repo_diff`
+- `vault.code.export`
+- `vault.code.origin.authority.get`
+- `vault.code.origin.authority.set`
+- `vault.code.origin.publications`
+- `vault.code.checkout.bind`
 - `vault.artifacts.export`
 - `vault.agents.create`
 - `vault.agents.get`
@@ -309,6 +316,10 @@ both bindings and their export-census tests in one change.
 - `vault.claims.retract`
 - `vault.forget`
 - `vault.booking.page_token`
+- `vault.calendar.create`
+- `vault.calendar.ics.import`
+- `vault.calendar.occurrences`
+- `vault.calendar.instances.move`
 - `vault.calendar.read`
 - `vault.calendar.search`
 - `vault.calendar.freebusy`

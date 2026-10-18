@@ -359,6 +359,12 @@ impl OneironClient {
                 "vault.authority.audit" => remote_agent_verb_output::<
                     oneiron::receipt::AuthorityAuditPage,
                 >(client, verb, &input),
+                "vault.authority.history.export" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SignedAuthorityHistory,
+                >(client, verb, &input),
+                "vault.authority.history.import" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AuthorityHistoryImported,
+                >(client, verb, &input),
                 "vault.mesh.path_receipts" => remote_agent_verb_output::<
                     Vec<oneiron::sync::mesh_path::MeshPathReceipt>,
                 >(client, verb, &input),
@@ -698,6 +704,21 @@ impl OneironClient {
                 "vault.code.repo_diff" => remote_agent_verb_output::<
                     Option<oneiron::code_document::CodeRepoDiffView>,
                 >(client, verb, &input),
+                "vault.code.export" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::CodeExportResult,
+                >(client, verb, &input),
+                "vault.code.origin.authority.get" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::OriginAuthorityView,
+                >(client, verb, &input),
+                "vault.code.origin.authority.set" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::OriginAuthorityView,
+                >(client, verb, &input),
+                "vault.code.origin.publications" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::OriginPublicationsView,
+                >(client, verb, &input),
+                "vault.code.checkout.bind" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::CheckoutDoorBinding,
+                >(client, verb, &input),
                 "vault.artifacts.export" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactExportFile>,
                 >(client, verb, &input),
@@ -990,6 +1011,20 @@ impl OneironClient {
                 ),
                 "vault.booking.page_token" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BookingPageTokenResponse,
+                >(client, verb, &input),
+                "vault.calendar.create" => remote_agent_verb_output::<
+                    oneiron::calendar::door::CalendarEventCreated,
+                >(client, verb, &input),
+                "vault.calendar.ics.import" => remote_agent_verb_output::<
+                    oneiron::calendar::ingest::door::CalendarIcsImportReceipt,
+                >(client, verb, &input),
+                "vault.calendar.occurrences" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<
+                        Vec<oneiron::calendar::query::CalendarOccurrenceView>,
+                    >,
+                >(client, verb, &input),
+                "vault.calendar.instances.move" => remote_agent_verb_output::<
+                    oneiron::calendar::ingest::door::CalendarIcsImportReceipt,
                 >(client, verb, &input),
                 "vault.calendar.read" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::calendar::CalendarEventView>>,
@@ -2610,6 +2645,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.authority.audit", value)
     }
+    pub fn vault_authority_history_export(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::SignedAuthorityHistory, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.authority.history.export", value)
+    }
+    pub fn vault_authority_history_import(
+        &self,
+        input: &oneiron::task_verb::sdk::SignedAuthorityHistory,
+    ) -> Result<oneiron::task_verb::sdk::AuthorityHistoryImported, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.authority.history.import", value)
+    }
     pub fn vault_mesh_path_receipts(
         &self,
         input: &oneiron::task_verb::sdk::MeshPathReceiptsRequest,
@@ -3951,6 +4010,66 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.repo_diff", value)
     }
+    pub fn vault_code_export(
+        &self,
+        input: &oneiron::memory::origin_doors::CodeExportRequest,
+    ) -> Result<oneiron::memory::origin_doors::CodeExportResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.export", value)
+    }
+    pub fn vault_code_origin_authority_get(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginRepoRequest,
+    ) -> Result<oneiron::memory::origin_doors::OriginAuthorityView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.authority.get", value)
+    }
+    pub fn vault_code_origin_authority_set(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginAuthoritySetRequest,
+    ) -> Result<oneiron::memory::origin_doors::OriginAuthorityView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.authority.set", value)
+    }
+    pub fn vault_code_origin_publications(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginPublicationsRequest,
+    ) -> Result<oneiron::memory::origin_doors::OriginPublicationsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.publications", value)
+    }
+    pub fn vault_code_checkout_bind(
+        &self,
+        input: &oneiron::memory::origin_doors::CheckoutDoorBindRequest,
+    ) -> Result<oneiron::memory::origin_doors::CheckoutDoorBinding, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checkout.bind", value)
+    }
     /// One version's export file (base64), with its pinned name and media type.
     pub fn vault_artifacts_export(
         &self,
@@ -5133,6 +5252,57 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.booking.page_token", value)
+    }
+    pub fn vault_calendar_create(
+        &self,
+        input: &oneiron::calendar::door::CalendarEventCreateRequest,
+    ) -> Result<oneiron::calendar::door::CalendarEventCreated, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.create", value)
+    }
+    pub fn vault_calendar_ics_import(
+        &self,
+        input: &oneiron::calendar::ingest::door::CalendarIcsImportRequest,
+    ) -> Result<oneiron::calendar::ingest::door::CalendarIcsImportReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.ics.import", value)
+    }
+    pub fn vault_calendar_occurrences(
+        &self,
+        input: &oneiron::calendar::query::CalendarOccurrencesRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Vec<oneiron::calendar::query::CalendarOccurrenceView>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.occurrences", value)
+    }
+    pub fn vault_calendar_instances_move(
+        &self,
+        input: &oneiron::calendar::ingest::door::CalendarInstanceMoveRequest,
+    ) -> Result<oneiron::calendar::ingest::door::CalendarIcsImportReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.instances.move", value)
     }
     pub fn vault_calendar_read(
         &self,

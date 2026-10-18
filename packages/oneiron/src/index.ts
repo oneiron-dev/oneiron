@@ -580,6 +580,12 @@ export class Oneiron {
     authority: {
       /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
       audit: (input: Facade.AuthorityAuditQuery): Facade.AuthorityAuditPage => this.#call(() => this.#client.vaultAuthorityAudit(input) as Facade.AuthorityAuditPage),
+      history: {
+        /** Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves. */
+        export: (input: Facade.EmptyRequest = {}): Facade.SignedAuthorityHistory => this.#call(() => this.#client.vaultAuthorityHistoryExport(input) as Facade.SignedAuthorityHistory),
+        /** Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing. */
+        import: (input: Facade.SignedAuthorityHistory): Facade.AuthorityHistoryImported => this.#call(() => this.#client.vaultAuthorityHistoryImport(input) as Facade.AuthorityHistoryImported),
+      },
       /** Every saved authority handoff fork alarm, for the owner. */
       handoff_alarms: Object.assign((input: Facade.EmptyRequest = {}): Facade.AuthorityHandoffAlarm[] => this.#call(() => this.#client.vaultAuthorityHandoffAlarms(input) as Facade.AuthorityHandoffAlarm[]), {
         /** The owner acknowledges one saved handoff fork alarm. */
@@ -920,6 +926,22 @@ export class Oneiron {
       proposal_view: (request: Facade.CodeProposalViewRequest): Facade.CodeProposalView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeProposalView(keyedJson(request))) as Facade.CodeProposalView | null; return result === null ? null : result }),
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
+      /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
+      export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
+      origin: {
+        authority: {
+          /** Read one served origin authority and this host identity under the owner credential. */
+          get: (input: Facade.OriginRepoRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthorityGet(input) as Facade.OriginAuthorityView),
+          /** Cut over one existing served origin under the owner proof and expected authority epoch. */
+          set: (input: Facade.OriginAuthoritySetRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthoritySet(input) as Facade.OriginAuthorityView),
+        },
+        /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
+        publications: (input: Facade.OriginPublicationsRequest): Facade.OriginPublicationsView => this.#call(() => this.#client.vaultCodeOriginPublications(input) as Facade.OriginPublicationsView),
+      },
+      checkout: {
+        /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
+        bind: (input: Facade.CheckoutDoorBindRequest): Facade.CheckoutDoorBinding => this.#call(() => this.#client.vaultCodeCheckoutBind(input) as Facade.CheckoutDoorBinding),
+      },
     },
     agents: {
       /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
@@ -1083,6 +1105,18 @@ export class Oneiron {
       page_token: (input: Facade.BookingPageTokenRequest): Facade.BookingPageTokenResponse => this.#call(() => this.#client.vaultBookingPageToken(input) as Facade.BookingPageTokenResponse),
     },
     calendar: {
+      /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
+      create: (input: Facade.CalendarEventCreateRequest): Facade.CalendarEventCreated => this.#call(() => this.#client.vaultCalendarCreate(input) as Facade.CalendarEventCreated),
+      ics: {
+        /** The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent. */
+        import: (input: Facade.CalendarIcsImportRequest): Facade.CalendarIcsImportReceipt => this.#call(() => this.#client.vaultCalendarIcsImport(input) as Facade.CalendarIcsImportReceipt),
+      },
+      /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
+      occurrences: (input: Facade.CalendarOccurrencesRequest): Facade.ScopedReadResult<Facade.CalendarOccurrenceView[]> => this.#call(() => this.#client.vaultCalendarOccurrences(input) as Facade.ScopedReadResult<Facade.CalendarOccurrenceView[]>),
+      instances: {
+        /** The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances. */
+        move: (input: Facade.CalendarInstanceMoveRequest): Facade.CalendarIcsImportReceipt => this.#call(() => this.#client.vaultCalendarInstancesMove(input) as Facade.CalendarIcsImportReceipt),
+      },
       /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
       read: (input: Facade.CalendarReadRequest): Facade.ScopedReadResult<Facade.CalendarEventView | null> => this.#call(() => this.#client.vaultCalendarRead(input) as Facade.ScopedReadResult<Facade.CalendarEventView | null>),
       /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */

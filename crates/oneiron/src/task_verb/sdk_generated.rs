@@ -497,6 +497,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.authority.history.export",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.authority.history.import",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SignedAuthorityHistory,
+                >(),
+            ),
+            (
                 "vault.mesh.path_receipts",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::MeshPathReceiptsRequest,
@@ -1123,6 +1133,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.repo_diff",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_document::CodeRepoDiffRequest,
+                >(),
+            ),
+            (
+                "vault.code.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeExportRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.authority.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.authority.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginAuthoritySetRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.publications",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginPublicationsRequest,
+                >(),
+            ),
+            (
+                "vault.code.checkout.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CheckoutDoorBindRequest,
                 >(),
             ),
             (
@@ -1769,6 +1809,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.booking.page_token",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::BookingPageTokenRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::door::CalendarEventCreateRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.ics.import",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::ingest::door::CalendarIcsImportRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.occurrences",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::query::CalendarOccurrencesRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.instances.move",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::ingest::door::CalendarInstanceMoveRequest,
                 >(),
             ),
             (
@@ -3129,6 +3193,14 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.authority.history.export" => &[],
+        "vault.authority.history.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.mesh.path_receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3852,6 +3924,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.authority.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.authority.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.publications" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4557,6 +4664,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.booking.page_token" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.ics.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.occurrences" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.instances.move" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5557,6 +5692,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.authority.audit" => {
             let _input: crate::receipt::AuthorityAuditQuery = decode(value.clone())?;
         }
+        "vault.authority.history.export" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.authority.history.import" => {
+            let _input: crate::task_verb::sdk::SignedAuthorityHistory = decode(value.clone())?;
+        }
         "vault.mesh.path_receipts" => {
             let _input: crate::task_verb::sdk::MeshPathReceiptsRequest = decode(value.clone())?;
         }
@@ -5906,6 +6047,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.repo_diff" => {
             let _input: crate::code_document::CodeRepoDiffRequest = decode(value.clone())?;
+        }
+        "vault.code.export" => {
+            let _input: crate::memory::origin_doors::CodeExportRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.authority.get" => {
+            let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.authority.set" => {
+            let _input: crate::memory::origin_doors::OriginAuthoritySetRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.origin.publications" => {
+            let _input: crate::memory::origin_doors::OriginPublicationsRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.checkout.bind" => {
+            let _input: crate::memory::origin_doors::CheckoutDoorBindRequest =
+                decode(value.clone())?;
         }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
@@ -6325,6 +6484,20 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.booking.page_token" => {
             let _input: crate::task_verb::sdk::BookingPageTokenRequest = decode(value.clone())?;
+        }
+        "vault.calendar.create" => {
+            let _input: crate::calendar::door::CalendarEventCreateRequest = decode(value.clone())?;
+        }
+        "vault.calendar.ics.import" => {
+            let _input: crate::calendar::ingest::door::CalendarIcsImportRequest =
+                decode(value.clone())?;
+        }
+        "vault.calendar.occurrences" => {
+            let _input: crate::calendar::query::CalendarOccurrencesRequest = decode(value.clone())?;
+        }
+        "vault.calendar.instances.move" => {
+            let _input: crate::calendar::ingest::door::CalendarInstanceMoveRequest =
+                decode(value.clone())?;
         }
         "vault.calendar.read" => {
             let _input: crate::calendar::CalendarReadRequest = decode(value.clone())?;
@@ -6797,6 +6970,12 @@ pub fn invoke(
         "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
         "vault.packs.setup.verify" => encode(vault_packs_setup_verify(memory, decode(value)?)?),
         "vault.authority.audit" => encode(vault_authority_audit(memory, decode(value)?)?),
+        "vault.authority.history.export" => {
+            encode(vault_authority_history_export(memory, decode(value)?)?)
+        }
+        "vault.authority.history.import" => {
+            encode(vault_authority_history_import(memory, decode(value)?)?)
+        }
         "vault.mesh.path_receipts" => encode(vault_mesh_path_receipts(memory, decode(value)?)?),
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
@@ -6995,6 +7174,17 @@ pub fn invoke(
         "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
+        "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
+        "vault.code.origin.authority.get" => {
+            encode(vault_code_origin_authority_get(memory, decode(value)?)?)
+        }
+        "vault.code.origin.authority.set" => {
+            encode(vault_code_origin_authority_set(memory, decode(value)?)?)
+        }
+        "vault.code.origin.publications" => {
+            encode(vault_code_origin_publications(memory, decode(value)?)?)
+        }
+        "vault.code.checkout.bind" => encode(vault_code_checkout_bind(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
         "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
@@ -7126,6 +7316,12 @@ pub fn invoke(
         "vault.claims.retract" => encode(vault_claims_retract(memory, decode(value)?)?),
         "vault.forget" => encode(vault_forget(memory, decode(value)?)?),
         "vault.booking.page_token" => encode(vault_booking_page_token(memory, decode(value)?)?),
+        "vault.calendar.create" => encode(vault_calendar_create(memory, decode(value)?)?),
+        "vault.calendar.ics.import" => encode(vault_calendar_ics_import(memory, decode(value)?)?),
+        "vault.calendar.occurrences" => encode(vault_calendar_occurrences(memory, decode(value)?)?),
+        "vault.calendar.instances.move" => {
+            encode(vault_calendar_instances_move(memory, decode(value)?)?)
+        }
         "vault.calendar.read" => encode(vault_calendar_read(memory, decode(value)?)?),
         "vault.calendar.search" => encode(vault_calendar_search(memory, decode(value)?)?),
         "vault.calendar.freebusy" => encode(vault_calendar_freebusy(memory, decode(value)?)?),
@@ -8312,6 +8508,25 @@ pub fn vault_authority_audit(
 ) -> MemoryResult<crate::receipt::AuthorityAuditPage> {
     crate::receipt::authority_audit_embedded(memory, input)
 }
+pub fn vault_authority_history_export(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::SignedAuthorityHistory> {
+    crate::task_verb::sdk::export_authority_history_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.authority.history.export")?,
+    )
+}
+pub fn vault_authority_history_import(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SignedAuthorityHistory,
+) -> MemoryResult<crate::task_verb::sdk::AuthorityHistoryImported> {
+    crate::task_verb::sdk::import_authority_history_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.authority.history.import")?,
+        input,
+    )
+}
 pub fn vault_mesh_path_receipts(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::MeshPathReceiptsRequest,
@@ -9210,6 +9425,45 @@ pub fn vault_code_repo_diff(
     input: crate::code_document::CodeRepoDiffRequest,
 ) -> MemoryResult<Option<crate::code_document::CodeRepoDiffView>> {
     memory.code_repo_diff(&input)
+}
+pub fn vault_code_export(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeExportRequest,
+) -> MemoryResult<crate::memory::origin_doors::CodeExportResult> {
+    memory.code_export_as(&memory.embedded_owner("vault.code.export")?, input)
+}
+pub fn vault_code_origin_authority_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRepoRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginAuthorityView> {
+    memory.origin_authority_get_as(
+        &memory.embedded_owner("vault.code.origin.authority.get")?,
+        input,
+    )
+}
+pub fn vault_code_origin_authority_set(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginAuthoritySetRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginAuthorityView> {
+    memory.origin_authority_set_as(
+        &memory.embedded_owner("vault.code.origin.authority.set")?,
+        input,
+    )
+}
+pub fn vault_code_origin_publications(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginPublicationsRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginPublicationsView> {
+    memory.origin_publications_as(
+        &memory.embedded_owner("vault.code.origin.publications")?,
+        input,
+    )
+}
+pub fn vault_code_checkout_bind(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CheckoutDoorBindRequest,
+) -> MemoryResult<crate::memory::origin_doors::CheckoutDoorBinding> {
+    memory.checkout_door_bind_as(&memory.embedded_owner("vault.code.checkout.bind")?, input)
 }
 pub fn vault_artifacts_export(
     memory: &Memory<'_>,
@@ -10213,6 +10467,31 @@ pub fn vault_booking_page_token(
     input: crate::task_verb::sdk::BookingPageTokenRequest,
 ) -> MemoryResult<crate::task_verb::sdk::BookingPageTokenResponse> {
     crate::task_verb::sdk::host_only(memory, "vault.booking.page_token", &input)
+}
+pub fn vault_calendar_create(
+    memory: &Memory<'_>,
+    input: crate::calendar::door::CalendarEventCreateRequest,
+) -> MemoryResult<crate::calendar::door::CalendarEventCreated> {
+    memory.calendar_create(&input)
+}
+pub fn vault_calendar_ics_import(
+    memory: &Memory<'_>,
+    input: crate::calendar::ingest::door::CalendarIcsImportRequest,
+) -> MemoryResult<crate::calendar::ingest::door::CalendarIcsImportReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.ics.import", &input)
+}
+pub fn vault_calendar_occurrences(
+    memory: &Memory<'_>,
+    input: crate::calendar::query::CalendarOccurrencesRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::calendar::query::CalendarOccurrenceView>>>
+{
+    memory.calendar_occurrences(&input)
+}
+pub fn vault_calendar_instances_move(
+    memory: &Memory<'_>,
+    input: crate::calendar::ingest::door::CalendarInstanceMoveRequest,
+) -> MemoryResult<crate::calendar::ingest::door::CalendarIcsImportReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.instances.move", &input)
 }
 pub fn vault_calendar_read(
     memory: &Memory<'_>,

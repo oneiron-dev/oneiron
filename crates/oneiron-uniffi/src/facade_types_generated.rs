@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 401 facade rows, 1499 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 369.
+// UniFFI census: 412 facade rows, 1524 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 380.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -8373,6 +8373,22 @@ pub struct AuthorityAuditPage {
     pub cold_attested: Option<Vec<ColdAuthorityAuditRow>>,
 }
 
+/// `oneiron::task_verb::sdk_authority_history::SignedAuthorityHistory`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SignedAuthorityHistory {
+    #[serde(rename = "entries")]
+    pub entries: Vec<String>,
+}
+
+/// `oneiron::task_verb::sdk_authority_history::AuthorityHistoryImported`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityHistoryImported {
+    #[serde(rename = "entry_refs")]
+    pub entry_refs: Vec<String>,
+}
+
 /// `oneiron::task_verb::sdk_mesh::MeshPathReceiptsRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -14165,6 +14181,210 @@ pub struct CodeRepoDiffView {
     pub rendered: String,
 }
 
+/// `oneiron::memory::origin_doors::types::CodeExportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeExportRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(
+        rename = "expected_old_oid",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_old_oid: Option<String>,
+    #[serde(rename = "endpoint")]
+    pub endpoint: String,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginPublicationState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OriginPublicationState {
+    #[serde(rename = "prepared")]
+    Prepared,
+    #[serde(rename = "published")]
+    Published,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "conflicted")]
+    Conflicted,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginPublicationView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginPublicationView {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "repo_id")]
+    pub repo_id: String,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(rename = "git_commit")]
+    pub git_commit: String,
+    #[serde(rename = "provenance_receipt")]
+    pub provenance_receipt: String,
+    #[serde(
+        rename = "publication_claim",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub publication_claim: Option<String>,
+    #[serde(rename = "actor", default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+    #[serde(rename = "status")]
+    pub status: OriginPublicationState,
+    #[serde(rename = "failure", default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(
+        rename = "finished_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub finished_at: Option<u64>,
+}
+
+/// `oneiron::memory::origin_doors::types::CodeExportResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeExportResult {
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "git_commit")]
+    pub git_commit: String,
+    #[serde(rename = "remote_url")]
+    pub remote_url: String,
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "publication")]
+    pub publication: OriginPublicationView,
+    #[serde(rename = "ref_was_already_applied")]
+    pub ref_was_already_applied: bool,
+    #[serde(rename = "wire_replayed")]
+    pub wire_replayed: bool,
+    #[serde(rename = "wire_rejected")]
+    pub wire_rejected: bool,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginRepoRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OriginRepoRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+}
+
+/// `oneiron::origin::residence::OriginResidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OriginResidence {
+    #[serde(rename = "local-vault")]
+    LocalVault,
+    #[serde(rename = "cloud-vault")]
+    CloudVault,
+}
+
+/// `oneiron::origin::residence::OriginAuthority`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginAuthority {
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "residence")]
+    pub residence: OriginResidence,
+    #[serde(rename = "writer")]
+    pub writer: String,
+    #[serde(rename = "mirror")]
+    pub mirror: bool,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginAuthorityView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginAuthorityView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "host", default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(rename = "authority", default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<OriginAuthority>,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginAuthoritySetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OriginAuthoritySetRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(
+        rename = "expected_epoch",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_epoch: Option<u64>,
+    #[serde(rename = "residence")]
+    pub residence: OriginResidence,
+    #[serde(rename = "writer", default, skip_serializing_if = "Option::is_none")]
+    pub writer: Option<String>,
+    #[serde(rename = "mirror", default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<bool>,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginPublicationsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OriginPublicationsRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(rename = "git_commit")]
+    pub git_commit: String,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginPublicationsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginPublicationsView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "publications")]
+    pub publications: Vec<OriginPublicationView>,
+}
+
+/// `oneiron::memory::origin_doors::types::CheckoutDoorBindRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutDoorBindRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "endpoint")]
+    pub endpoint: String,
+}
+
+/// `oneiron::memory::origin_doors::types::CheckoutDoorBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CheckoutDoorBinding {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "checkout_path")]
+    pub checkout_path: String,
+    #[serde(rename = "remote_url")]
+    pub remote_url: String,
+}
+
 /// `oneiron::blob_artifact::verbs::ArtifactExportRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -19395,6 +19615,163 @@ pub struct BookingPageTokenResponse {
     pub page_token: String,
 }
 
+/// `oneiron::calendar::query::requests::CalendarRangeDto`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarRangeDto {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::calendar::door::CalendarEventCreateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "origin")]
+#[serde(deny_unknown_fields)]
+pub enum CalendarEventCreateRequest {
+    #[serde(rename = "native")]
+    Native {
+        #[serde(rename = "summary")]
+        summary: String,
+        #[serde(rename = "occurredAt")]
+        occurred_at: CalendarRangeDto,
+    },
+    #[serde(rename = "dreamer")]
+    Dreamer {
+        #[serde(rename = "summary")]
+        summary: String,
+        #[serde(rename = "occurredAt")]
+        occurred_at: CalendarRangeDto,
+        #[serde(rename = "evidenceTurnIds")]
+        evidence_turn_ids: Vec<String>,
+        #[serde(rename = "sourceFrontiers")]
+        source_frontiers: Vec<String>,
+    },
+}
+
+/// `oneiron::calendar::door::CalendarEventCreated`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarEventCreated {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "origin")]
+    pub origin: String,
+    #[serde(rename = "recorded_at")]
+    pub recorded_at: u64,
+}
+
+/// `oneiron::calendar::ingest::door::CalendarIcsImportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarIcsImportRequest {
+    #[serde(rename = "system")]
+    pub system: String,
+    #[serde(rename = "source_blob_ref")]
+    pub source_blob_ref: String,
+    #[serde(rename = "source_version")]
+    pub source_version: u64,
+}
+
+/// `oneiron::calendar::ingest::door::CalendarImportClaimReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarImportClaimReceipt {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "predicate")]
+    pub predicate: String,
+    #[serde(rename = "approval")]
+    pub approval: String,
+    #[serde(rename = "lifecycle")]
+    pub lifecycle: String,
+}
+
+/// `oneiron::calendar::ingest::door::CalendarImportedEvent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarImportedEvent {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "uid")]
+    pub uid: String,
+    #[serde(
+        rename = "original_start_utc",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub original_start_utc: Option<u64>,
+    #[serde(rename = "claims")]
+    pub claims: Vec<CalendarImportClaimReceipt>,
+}
+
+/// `oneiron::calendar::ingest::door::CalendarIcsImportReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarIcsImportReceipt {
+    #[serde(rename = "source_blob_ref")]
+    pub source_blob_ref: String,
+    #[serde(rename = "source_version")]
+    pub source_version: u64,
+    #[serde(rename = "events")]
+    pub events: Vec<CalendarImportedEvent>,
+    #[serde(rename = "screen_verdict")]
+    pub screen_verdict: String,
+}
+
+/// `oneiron::calendar::query::window::CalendarOccurrencesRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarOccurrencesRequest {
+    #[serde(rename = "master_ref")]
+    pub master_ref: String,
+    #[serde(rename = "range")]
+    pub range: CalendarRangeDto,
+}
+
+/// `oneiron::calendar::query::window::CalendarOccurrenceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarOccurrenceView {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "master_ref")]
+    pub master_ref: String,
+    #[serde(rename = "uid")]
+    pub uid: String,
+    #[serde(rename = "original_start_utc")]
+    pub original_start_utc: u64,
+    #[serde(rename = "start_utc")]
+    pub start_utc: u64,
+    #[serde(rename = "end_utc")]
+    pub end_utc: u64,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `CalendarOccurrenceViewList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultCalendarOccurrenceViewList {
+    #[serde(rename = "value")]
+    pub value: Vec<CalendarOccurrenceView>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::calendar::ingest::door::CalendarInstanceMoveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarInstanceMoveRequest {
+    #[serde(rename = "system")]
+    pub system: String,
+    #[serde(rename = "source_blob_ref")]
+    pub source_blob_ref: String,
+    #[serde(rename = "source_version")]
+    pub source_version: u64,
+    #[serde(rename = "uid")]
+    pub uid: String,
+    #[serde(rename = "original_start_utc")]
+    pub original_start_utc: u64,
+    #[serde(rename = "start_utc")]
+    pub start_utc: u64,
+    #[serde(rename = "end_utc")]
+    pub end_utc: u64,
+}
+
 /// `oneiron::calendar::query::requests::CalendarReadRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -19437,16 +19814,6 @@ pub struct ScopedReadResultOptionalCalendarEventView {
 pub struct CalendarSel {
     #[serde(rename = "system", default, skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
-}
-
-/// `oneiron::calendar::query::requests::CalendarRangeDto`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarRangeDto {
-    #[serde(rename = "start")]
-    pub start: u64,
-    #[serde(rename = "end")]
-    pub end: u64,
 }
 
 /// `oneiron::calendar::query::requests::CalendarSearchRequest`.

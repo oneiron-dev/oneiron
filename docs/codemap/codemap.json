@@ -702,6 +702,32 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AgentBudgetView",
+      "BudgetHoldRequest",
+      "BudgetLandRequest",
+      "LocalRunnerBudgetCounter",
+      "LocalRunnerBudgetRequest",
+      "LocalRunnerBudgetView",
+      "OpenSpendLeaseRequest",
+      "RunRungSettlement",
+      "RunSettlementsRequest",
+      "RunSettlementsView",
+      "SelfBudgetRequest",
+      "SpendLeaseView",
+      "SpendScopeRequest",
+      "TopUpSpendLeaseRequest"
+     ],
+     "path": "src/agent_dispatch/budget_doors.rs",
+     "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter",
+     "surface": {
+      "fn": 8,
+      "struct": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BudgetHoldLease",
       "BudgetHoldNotice",
       "BudgetHoldState",
@@ -907,7 +933,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 9,
-      "mod": 1,
+      "mod": 2,
       "re-export": 23
      }
     },
@@ -1071,7 +1097,7 @@
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
       "crate-vis": 12,
-      "fn": 16
+      "fn": 17
      }
     },
     {
@@ -7704,6 +7730,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CalendarEventCreateRequest",
+      "CalendarEventCreated"
+     ],
+     "path": "src/calendar/door.rs",
+     "purpose": "Typed, caller-bound calendar origin creation",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BusyInterval"
      ],
      "path": "src/calendar/freebusy.rs",
@@ -7828,6 +7869,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CalendarIcsImportReceipt",
+      "CalendarIcsImportRequest",
+      "CalendarImportClaimReceipt",
+      "CalendarImportedEvent",
+      "CalendarInstanceMoveRequest"
+     ],
+     "path": "src/calendar/ingest/door.rs",
+     "purpose": "Uploaded ICS import and a single imported-instance amendment",
+     "surface": {
+      "fn": 2,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CustodyDoorIcsFeedFetcher",
       "IcsFeedFetcher",
       "IcsFeedSource",
@@ -7853,6 +7911,7 @@
      "purpose": "ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784)",
      "surface": {
       "crate-vis": 7,
+      "mod": 1,
       "re-export": 3
      }
     },
@@ -8005,7 +8064,7 @@
      "surface": {
       "crate-vis": 8,
       "enum": 1,
-      "mod": 17,
+      "mod": 18,
       "re-export": 15
      }
     },
@@ -8175,7 +8234,7 @@
      "purpose": "Calendar EVENT query + projection core (CAL-09)",
      "surface": {
       "crate-vis": 4,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -8224,6 +8283,21 @@
      "path": "src/calendar/query/tests.rs",
      "purpose": "A claim awaiting its owner's critical confirm in the calendar's operational reads: free/busy, and the rows…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarOccurrenceView",
+      "CalendarOccurrencesRequest"
+     ],
+     "path": "src/calendar/query/window.rs",
+     "purpose": "Bounded, scoped series occurrences with stable original-instance identities",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 2
+     }
     },
     {
      "bucket": "s",
@@ -17008,7 +17082,7 @@
      "path": "src/credential_door/checkout_ticket.rs",
      "purpose": "Checkout redemption rights",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -17078,7 +17152,7 @@
      "path": "src/credential_door/mod.rs",
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -31012,7 +31086,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 3,
+      "mod": 4,
       "re-export": 40
      }
     },
@@ -31034,6 +31108,49 @@
      "purpose": "Agent-facing NOTE verbs; actor identity is bound to the memory facade",
      "surface": {
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/mod.rs",
+     "purpose": "Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/operations.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckoutDoorBindRequest",
+      "CheckoutDoorBinding",
+      "CodeExportRequest",
+      "CodeExportResult",
+      "OriginAuthoritySetRequest",
+      "OriginAuthorityView",
+      "OriginPublicationState",
+      "OriginPublicationView",
+      "OriginPublicationsRequest",
+      "OriginPublicationsView",
+      "OriginRepoRequest"
+     ],
+     "path": "src/memory/origin_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "struct": 10
      }
     },
     {
@@ -48756,7 +48873,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 31,
+      "re-export": 32,
       "struct": 36
      }
     },
@@ -48782,6 +48899,20 @@
       "enum": 3,
       "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityHistoryImported",
+      "SignedAuthorityHistory"
+     ],
+     "path": "src/task_verb/sdk_authority_history.rs",
+     "purpose": "Byte-preserving signed authority history transfer for the vault owner",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -48982,7 +49113,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "fn": 435
+      "fn": 455
      }
     },
     {
@@ -54245,7 +54376,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54364,7 +54495,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 61,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55071,7 +55202,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 144,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55582,7 +55713,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 142,
+     "files": 143,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55752,7 +55883,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3395,
+   "source_files": 3403,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64147,7 +64278,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 385
+      "fn": 405
      }
     },
     {
@@ -65195,7 +65326,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 386
+      "fn": 406
      }
     },
     {
@@ -68065,10 +68196,40 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/authority_history_doors.rs",
+     "purpose": "Owner-authenticated signed authority history transfer",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/booking_doors.rs",
      "purpose": "Owner discovery of the opaque address of an existing booking page",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/budget_doors.rs",
+     "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/calendar_doors.rs",
+     "purpose": "Owner-authorized calendar file imports through the credential's own handle",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -68258,7 +68419,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 81
      }
     },
     {
@@ -68299,6 +68460,16 @@
      "purpose": "Host-held NOTE editor bindings beside the ordinary scoped NOTE reads",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/origin_doors.rs",
+     "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -74875,7 +75046,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SeatUsage",
@@ -74886,7 +75057,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -75543,7 +75714,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 332,
+     "files": 336,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75958,7 +76129,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 654,
+   "source_files": 658,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76156,6 +76327,7 @@
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AgentBudgetView",
       "AgentCeilingInput",
       "AgentDefinitionCreateRequest",
       "AgentDefinitionLifecycle",
@@ -76235,8 +76407,13 @@
       "AskTo",
       "AsofScrubberAtom",
       "AssetRef",
+      "AttemptCancelReceipt",
+      "AttemptCancelReceiptKind",
       "AttemptHandle",
       "AttemptId",
+      "AttemptLanding",
+      "AttemptLandingReserve",
+      "AttemptResumePoint",
       "AttemptView",
       "AuthoringStrategyPin",
       "AuthorityAuditEventKind",
@@ -76246,6 +76423,7 @@
       "AuthorityAuditRow",
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
+      "AuthorityHistoryImported",
       "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
@@ -76267,13 +76445,26 @@
       "BriefIntent",
       "BriefStamp",
       "BudgetDenied",
+      "BudgetHoldNotice",
+      "BudgetHoldRequest",
+      "BudgetHoldState",
+      "BudgetLandRequest",
       "BudgetLease",
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
+      "CalendarEventCreateRequest",
+      "CalendarEventCreated",
       "CalendarEventView",
       "CalendarFreebusyIntervalDto",
       "CalendarFreebusyRequest",
+      "CalendarIcsImportReceipt",
+      "CalendarIcsImportRequest",
+      "CalendarImportClaimReceipt",
+      "CalendarImportedEvent",
+      "CalendarInstanceMoveRequest",
+      "CalendarOccurrenceView",
+      "CalendarOccurrencesRequest",
       "CalendarRangeDto",
       "CalendarReadRequest",
       "CalendarSearchRequest",
@@ -76307,8 +76498,10 @@
       "CampaignSplits",
       "CampaignTaste",
       "CancelRejectionPathology",
+      "CancelStanding",
       "CandidateRef",
       "Care",
+      "CareLevel",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -76344,6 +76537,8 @@
       "ChartSeries",
       "ChartSource",
       "ChatProjection",
+      "CheckoutDoorBindRequest",
+      "CheckoutDoorBinding",
       "ClaimApprovalStatus",
       "ClaimChangeVerdict",
       "ClaimLineAtom",
@@ -76362,6 +76557,8 @@
       "CodeChangeView",
       "CodeDiffRequest",
       "CodeDiffView",
+      "CodeExportRequest",
+      "CodeExportResult",
       "CodeFileChange",
       "CodeFileDiffView",
       "CodeOperationView",
@@ -76427,6 +76624,7 @@
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
       "CooperativeDeletionDispositionKind",
+      "CoordinationPattern",
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
@@ -76435,6 +76633,7 @@
       "CoreDagQuoteInput",
       "CoreEntityWriteReceipt",
       "CoreWriteTextField",
+      "CostEnvelope",
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
@@ -76638,6 +76837,7 @@
       "FoldUnfoldRequest",
       "FoldUnfolded",
       "FolderItemInput",
+      "ForceCancelGrounds",
       "ForkKind",
       "ForkState",
       "GateCheckerReceipt",
@@ -76677,6 +76877,7 @@
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
+      "HeldAttempt",
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
@@ -76765,6 +76966,7 @@
       "LadderTerminalDisposition",
       "Landing",
       "LandingReceipt",
+      "LandingTrigger",
       "LaunchStatement",
       "LeaderSplitInput",
       "LeaderSplitOutput",
@@ -76827,6 +77029,9 @@
       "LiveRunRequestLeaderSplitInput",
       "LlmCapability",
       "LlmError",
+      "LocalRunnerBudgetCounter",
+      "LocalRunnerBudgetRequest",
+      "LocalRunnerBudgetView",
       "MadeBy",
       "MadeByClass",
       "MadeByInput",
@@ -76956,8 +77161,18 @@
       "OfficeBodyView",
       "OmittedKnowledge",
       "OpaqueChange",
+      "OpenSpendLeaseRequest",
       "OracleReceipt",
       "OrganWaitView",
+      "OriginAuthority",
+      "OriginAuthoritySetRequest",
+      "OriginAuthorityView",
+      "OriginPublicationState",
+      "OriginPublicationView",
+      "OriginPublicationsRequest",
+      "OriginPublicationsView",
+      "OriginRepoRequest",
+      "OriginResidence",
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
@@ -76999,9 +77214,11 @@
       "PairedInterval",
       "PairedReading",
       "Paragraph",
+      "PartialResultHold",
       "ParticipantView",
       "ParticipantsPage",
       "ParticipantsRequest",
+      "PatternSkillRef",
       "PeerCount",
       "PendingActMatured",
       "PendingActStarted",
@@ -77016,6 +77233,7 @@
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
+      "PlannerRung",
       "PolicyActionOutcome",
       "PolicyAxes",
       "PolicyCeiling",
@@ -77095,6 +77313,7 @@
       "QuoteStripStatus",
       "Reasoning",
       "ReasoningCause",
+      "ReasoningEffort",
       "RecallWorlds",
       "ReceiptAtom",
       "ReceiptKind",
@@ -77215,6 +77434,9 @@
       "Run",
       "RunAttachRequest",
       "RunAttached",
+      "RunRungSettlement",
+      "RunSettlementsRequest",
+      "RunSettlementsView",
       "RunSignalState",
       "RunTree",
       "RunTreeEvent",
@@ -77243,6 +77465,7 @@
       "ScopedReadReceipt",
       "ScopedReadResultCalendarEventViewList",
       "ScopedReadResultCalendarFreebusyDto",
+      "ScopedReadResultCalendarOccurrenceViewList",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
@@ -77281,6 +77504,7 @@
       "SelectionReceipt",
       "SelectionRuleScope",
       "SelectionRuleWriterKind",
+      "SelfBudgetRequest",
       "SelfDurableWait",
       "SelfDurableWaitReason",
       "SelfEffect",
@@ -77362,6 +77586,7 @@
       "SharedVaultDeletion",
       "SharedVaultRequest",
       "SignatureRow",
+      "SignedAuthorityHistory",
       "SigningStatus",
       "SkillAuthoringReceipt",
       "SkillForkRequest",
@@ -77399,6 +77624,13 @@
       "SpendBasis",
       "SpendCapView",
       "SpendConsent",
+      "SpendLeaseView",
+      "SpendPayer",
+      "SpendRead",
+      "SpendScope",
+      "SpendScopeRequest",
+      "SpendSignal",
+      "SpendState",
       "SpentKind",
       "StateFamilyRef",
       "StatusDotAtom",
@@ -77478,6 +77710,8 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TeamPlan",
+      "TeamShape",
       "TextBlockAtom",
       "TextBody",
       "TextCommitReceipt",
@@ -77491,6 +77725,7 @@
       "ThreadPassportsView",
       "ThrobberAtom",
       "ToggleControl",
+      "TopUpSpendLeaseRequest",
       "TrackedHubRef",
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
@@ -77582,8 +77817,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 407,
-      "struct": 1020
+      "enum": 421,
+      "struct": 1070
      }
     },
     {

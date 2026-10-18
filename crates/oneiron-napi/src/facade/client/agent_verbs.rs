@@ -919,6 +919,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_authority_history_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.history.export", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_authority_history_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.history.import", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_mesh_path_receipts(
         &self,
         input: serde_json::Value,
@@ -1930,6 +1948,48 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn vault_code_export(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.export", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_authority_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.authority.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_authority_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.authority.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_publications(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.publications", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_checkout_bind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.bind", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_artifacts_export(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {
@@ -2843,6 +2903,42 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.booking.page_token", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_ics_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.ics.import", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_occurrences(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.occurrences", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_instances_move(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.instances.move", input)
             .map_err(facade_error)
     }
     #[napi]
