@@ -14,7 +14,7 @@ use crate::code_run::{
 use crate::context_projection::ContextSpec;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
-use crate::team::run::{member_spawn_key, record_led_team, start_stamp};
+use crate::team::run::{member_spawn_key, planned_start, record_led_team, start_stamp};
 use crate::team::{
     SelfTeamCall, TeamMemberAnswer, TeamRecordInput, TeamRunAnswer, TeamRunBinding, TeamStartInput,
     record_team_start,
@@ -45,6 +45,13 @@ impl HostSelfDispatcher<'_> {
             Ok(stamp) => stamp,
             Err(code) => return Ok(Err(code)),
         };
+        // A planned team's leader asking for that team gets it back, never a
+        // second launch (DOOR-111).
+        if let ExecutorStorage::Canonical(vault) = &self.storage
+            && let Some(answer) = planned_start(vault, leader, &input, stamp.pattern)?
+        {
+            return Ok(Ok(answer));
+        }
         // A tournament team joins its own campaign's run, checked before any
         // member spawns. An off-record run can't show its campaign.
         if let Some(run) = &input.tournament {
@@ -107,10 +114,19 @@ impl HostSelfDispatcher<'_> {
             });
         }
         self.keep_team_start(&observed)?;
-        Ok(Ok(TeamRunAnswer::Started {
-            team_ref: stamp.team_ref,
-            pattern: stamp.pattern,
-            members,
+        // Widenings asked and none launched: no team runs yet.
+        Ok(Ok(if observed.members.is_empty() {
+            TeamRunAnswer::ProposedWiden {
+                team_ref: stamp.team_ref,
+                pattern: stamp.pattern,
+                members,
+            }
+        } else {
+            TeamRunAnswer::Started {
+                team_ref: stamp.team_ref,
+                pattern: stamp.pattern,
+                members,
+            }
         }))
     }
 

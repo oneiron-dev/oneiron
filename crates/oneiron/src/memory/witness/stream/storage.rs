@@ -174,6 +174,34 @@ pub(super) fn finish(
     ACTIVE.delete(&vault.store, txn, &seed.message_id)?;
     Ok(())
 }
+/// A message's terminal generations, ordered by generation id, not by its latest join.
+/// The caller admits the MESSAGE in this same snapshot before reading this side table.
+pub(super) fn receipt_history(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+    after: Option<EntityId>,
+    limit: usize,
+) -> Result<(Vec<MessageStreamReceipt>, Option<String>)> {
+    use std::ops::Bound;
+    let prefix = format!("{}:", message.to_hex());
+    let start = after.map_or_else(|| prefix.clone(), |id| format!("{prefix}{}", id.to_hex()));
+    let end = format!("{};", message.to_hex());
+    let lower = if after.is_some() { Bound::Excluded(&start) } else { Bound::Included(&start) };
+    let mut rows = Vec::new();
+    let mut more = false;
+    for row in RECEIPT_BY_REF.iter_range(&vault.store, txn, lower, Bound::Excluded(&end))? {
+        let (_, receipt) = row?;
+        if rows.len() == limit {
+            more = true;
+            break;
+        }
+        rows.push(receipt);
+    }
+    let next = if more { rows.last().map(|row| row.generation.to_hex()) } else { None };
+    Ok((rows, next))
+}
+
 impl Vault {
     /// Joins the latest stream finality onto a MESSAGE. Atomic commits have none.
     pub fn message_stream_receipt(

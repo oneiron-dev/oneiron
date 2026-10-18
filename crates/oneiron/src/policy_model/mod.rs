@@ -106,9 +106,10 @@ pub use owner_rows::{
     PolicyChangedEvent, PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
     PolicyNotificationTarget, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt,
     PolicyRowSubmission, SecretScanReceipt, WORLD_PRIVACY_ROW_REF, WidenUnanimity,
-    WorldPrivacyAnswer, WorldPrivacyOutcome, WorldPrivacyReceipt, WorldPrivacyRequest,
-    WorldPrivacyRequestKind, WorldPrivacyRequestStatus, WorldPrivacySetInput,
-    WorldPrivacySetOutput, WorldReadInput, WorldSealedInput, policy_row_grant_target,
+    WidenUnanimityOffRequest, WidenUnanimityOutcome, WorldPrivacyAnswer, WorldPrivacyOutcome,
+    WorldPrivacyReceipt, WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyRequestStatus,
+    WorldPrivacySetInput, WorldPrivacySetOutput, WorldReadInput, WorldSealedInput,
+    policy_row_grant_target,
 };
 pub(crate) use owner_rows::{is_live_vault_owner_in_txn, owners_in_txn};
 mod notes;

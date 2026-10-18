@@ -3,11 +3,13 @@
 use serde::{Deserialize, Serialize};
 
 use super::{DemotionReason, RampScope, RampState, ScopeOutcomeStats};
+use crate::Vault;
 use crate::consent::{AuthenticatedOwner, lifecycle::ConsentActReceipt};
-use crate::edit_distance::graduation::{self, OfferAnswer, OfferAnswerOutcome, SnoozeState, ThresholdRow};
+use crate::edit_distance::graduation::{
+    self, OfferAnswer, OfferAnswerOutcome, SnoozeState, ThresholdRow,
+};
 use crate::identity_topology::ProposalOutcome;
 use crate::memory::{Memory, MemoryResult};
-use crate::Vault;
 
 /// The exact operation kind × target class × skill/agent tuple.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -30,7 +32,11 @@ impl GraduationScope {
 
 impl From<RampScope> for GraduationScope {
     fn from(scope: RampScope) -> Self {
-        Self { op_kind: scope.op_kind, target_class: scope.target_class, actor: scope.actor }
+        Self {
+            op_kind: scope.op_kind,
+            target_class: scope.target_class,
+            actor: scope.actor,
+        }
     }
 }
 
@@ -178,7 +184,13 @@ impl From<SnoozeState> for GraduationSnooze {
     fn from(state: SnoozeState) -> Self {
         match state {
             SnoozeState::None => Self::None,
-            SnoozeState::Snoozed { count, next_eligible_at } => Self::Snoozed { count, next_eligible_at },
+            SnoozeState::Snoozed {
+                count,
+                next_eligible_at,
+            } => Self::Snoozed {
+                count,
+                next_eligible_at,
+            },
             SnoozeState::ManualPinned => Self::ManualPinned,
         }
     }
@@ -259,22 +271,32 @@ pub struct GraduationDemoteRequest {
 }
 
 pub fn policies(
-    vault: &Vault, owner: &AuthenticatedOwner, input: GraduationPolicyRequest,
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: GraduationPolicyRequest,
 ) -> MemoryResult<GraduationPolicies> {
     vault.recheck_owner(owner)?;
-    let effective = input.scope.map(|scope| {
-        let scope = scope.scope();
-        scope.validate()?;
-        graduation::graduation_policy_for(vault, &scope).map(Into::into)
-    }).transpose()?;
+    let effective = input
+        .scope
+        .map(|scope| {
+            let scope = scope.scope();
+            scope.validate()?;
+            graduation::graduation_policy_for(vault, &scope).map(Into::into)
+        })
+        .transpose()?;
     Ok(GraduationPolicies {
-        rows: graduation::graduation_policy_rows(vault)?.into_iter().map(Into::into).collect(),
+        rows: graduation::graduation_policy_rows(vault)?
+            .into_iter()
+            .map(Into::into)
+            .collect(),
         effective,
     })
 }
 
 pub fn set_policy(
-    vault: &Vault, owner: &AuthenticatedOwner, input: GraduationPolicySetRequest,
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: GraduationPolicySetRequest,
 ) -> MemoryResult<GraduationChanged> {
     let row = ThresholdRow {
         scope_pattern: input.policy.scope_pattern,
@@ -287,7 +309,9 @@ pub fn set_policy(
 }
 
 pub fn clear_policy(
-    vault: &Vault, owner: &AuthenticatedOwner, input: GraduationPolicyClearRequest,
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: GraduationPolicyClearRequest,
 ) -> MemoryResult<GraduationChanged> {
     Ok(GraduationChanged {
         changed: graduation::clear_graduation_policy_as_owner(vault, owner, &input.scope_pattern)?,
@@ -295,7 +319,9 @@ pub fn clear_policy(
 }
 
 pub fn stats(
-    vault: &Vault, owner: &AuthenticatedOwner, input: GraduationScopeRequest,
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: GraduationScopeRequest,
 ) -> MemoryResult<Option<GraduationStats>> {
     vault.recheck_owner(owner)?;
     let scope = input.scope.scope();
@@ -304,14 +330,24 @@ pub fn stats(
 }
 
 pub fn record_outcome(
-    vault: &Vault, owner: &AuthenticatedOwner, input: GraduationOutcomeRequest,
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: GraduationOutcomeRequest,
 ) -> MemoryResult<GraduationStats> {
-    Ok(vault.record_proposal_outcome_for_ramp(owner, &input.scope.scope(), input.outcome.into())?.into())
+    Ok(vault
+        .record_proposal_outcome_for_ramp(owner, &input.scope.scope(), input.outcome.into())?
+        .into())
 }
 
-pub fn trust_table(vault: &Vault, owner: &AuthenticatedOwner) -> MemoryResult<Vec<GraduationTrustRow>> {
+pub fn trust_table(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+) -> MemoryResult<Vec<GraduationTrustRow>> {
     vault.recheck_owner(owner)?;
-    Ok(graduation::trust_table(vault)?.into_iter().map(Into::into).collect())
+    Ok(graduation::trust_table(vault)?
+        .into_iter()
+        .map(Into::into)
+        .collect())
 }
 
 pub fn offers(vault: &Vault, owner: &AuthenticatedOwner) -> MemoryResult<Vec<GraduationOffer>> {
@@ -332,30 +368,42 @@ pub fn offers(vault: &Vault, owner: &AuthenticatedOwner) -> MemoryResult<Vec<Gra
 }
 
 pub fn answer(
-    vault: &Vault, owner: &AuthenticatedOwner, input: GraduationAnswerRequest,
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: GraduationAnswerRequest,
 ) -> MemoryResult<GraduationAnswerReceipt> {
     let answer = match input.answer {
         GraduationAnswer::Auto => OfferAnswer::GoAuto(owner),
         GraduationAnswer::NotNow => OfferAnswer::NotNow,
         GraduationAnswer::ManualPinned => OfferAnswer::ManualPinned,
     };
-    let result = graduation::answer_graduation_offer_as_owner(vault, owner, &input.scope.scope(), answer)?;
+    let result =
+        graduation::answer_graduation_offer_as_owner(vault, owner, &input.scope.scope(), answer)?;
     let (grant, snooze) = match result {
         OfferAnswerOutcome::Graduated(receipt) => (Some(receipt.into()), GraduationSnooze::None),
         OfferAnswerOutcome::Snoozed(state) => (None, state.into()),
     };
-    Ok(GraduationAnswerReceipt { scope: input.scope, answer: input.answer, grant, snooze })
+    Ok(GraduationAnswerReceipt {
+        scope: input.scope,
+        answer: input.answer,
+        grant,
+        snooze,
+    })
 }
 
 pub fn unpin(
-    vault: &Vault, owner: &AuthenticatedOwner, input: GraduationScopeRequest,
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: GraduationScopeRequest,
 ) -> MemoryResult<GraduationChanged> {
     graduation::unpin_scope_as_owner(vault, owner, &input.scope.scope())?;
     Ok(GraduationChanged { changed: true })
 }
 
 pub fn demote(
-    vault: &Vault, owner: &AuthenticatedOwner, input: GraduationDemoteRequest,
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: GraduationDemoteRequest,
 ) -> MemoryResult<GraduationChanged> {
     let reason = match input.reason {
         GraduationDemotionReason::Rejected => DemotionReason::Rejected,
@@ -366,7 +414,10 @@ pub fn demote(
     Ok(GraduationChanged { changed: true })
 }
 
-pub fn demote_own(memory: &Memory<'_>, input: GraduationScopeRequest) -> MemoryResult<GraduationChanged> {
+pub fn demote_own(
+    memory: &Memory<'_>,
+    input: GraduationScopeRequest,
+) -> MemoryResult<GraduationChanged> {
     memory.demote_own_ramp_scope(&input.scope.scope())?;
     Ok(GraduationChanged { changed: true })
 }
