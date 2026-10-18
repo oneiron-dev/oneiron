@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, HashMap};
 use loro::LoroDoc;
 
 use crate::Vault;
-use crate::authority::{AuthorityFold, FederationGrantActivation, federation_grant_activation};
+use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -106,7 +106,9 @@ pub(super) fn authorize_selector_export(
     let raw = live_federation_grant(vault, &selector.grant_id)?;
 
     let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    if grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+    // A shared-vault member grant or a Connect guest grant (FIX 3016); an Ask
+    // guest grant never backs a selector.
+    if !crate::federation::grant_serves_selector(&grant) {
         return Err(selector_err(SelectorError::GrantScopeMismatch));
     }
     if grant.scope != grant_scope {
@@ -117,14 +119,13 @@ pub(super) fn authorize_selector_export(
     }
     // Pact activation gate (ONE-1408): grants without lifecycle entries stay
     // authorized (Unpacted legacy-allow — shipped guest grants must not
-    // brick); pact-bound grants confer access only while Active. The fold is
-    // recomputed on every call by design (no caching in this chain).
+    // brick); pact-bound grants confer access only while Active. A Connect
+    // grant is inert until one Active pact with its peer binds it (FIX 3016).
+    // The fold is recomputed on every call by design (no caching in this
+    // chain).
     let fold = vault.authority_fold()?;
-    match federation_grant_activation(&fold, &selector.grant_id) {
-        FederationGrantActivation::Unpacted | FederationGrantActivation::Active => {}
-        FederationGrantActivation::Inactive(_) => {
-            return Err(selector_err(SelectorError::GrantInactive));
-        }
+    if !crate::federation::pact_admits_grant(&fold, &selector.grant_id, &grant) {
+        return Err(selector_err(SelectorError::GrantInactive));
     }
     // Pact scope ceiling (ONE-1591): an operative pact-bound grant carries no
     // more than the meet of every bound pact's effective scope. The flat
