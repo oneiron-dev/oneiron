@@ -112,7 +112,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
