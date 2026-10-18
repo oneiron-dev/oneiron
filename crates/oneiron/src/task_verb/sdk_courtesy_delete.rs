@@ -139,6 +139,6 @@ pub fn courtesy_delete_host_only<T, I>(
         format!(
             "{verb} runs on a server's own authority key and courtesy outbox; an embedded vault has neither"
         ),
-        &["Call it through a remote client of a server that serves it."],
+        &[super::sdk_host::SERVED_CLIENT_HINT],
     ))
 }

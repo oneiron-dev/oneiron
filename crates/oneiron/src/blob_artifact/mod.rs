@@ -26,6 +26,7 @@
 mod body;
 mod born_from;
 mod create;
+mod deck_doors;
 mod family;
 mod holders;
 mod lifecycle;
@@ -46,6 +47,11 @@ pub use self::body::{
 pub(crate) use self::born_from::archive_born_from_table;
 pub use self::born_from::{BornFromArtifact, BornFromSource};
 pub use self::create::ArtifactCreateRequest;
+pub use self::deck_doors::{
+    DeckCommentInspection, DeckInspectRequest, DeckInspectionView, DeckProposeRejection,
+    DeckRejectionCheck, DeckRejectionReport, DeckRejectionSheet, DeckRejectionSheetDependency,
+    DeckRejectionSummary,
+};
 pub(crate) use self::family::hash_hex;
 pub use self::family::{ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView};
 pub(crate) use self::holders::{
@@ -74,6 +80,9 @@ pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 pub use self::versions::{
     BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, BlobBytes, CalcEngineStamp,
 };
+
+/// The closed deck transaction grammar a deck proposal carries.
+pub use oneiron_docedit::edit::transaction::DeckTransaction;
 
 #[cfg(test)]
 mod tests;

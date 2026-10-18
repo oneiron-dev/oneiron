@@ -188,6 +188,26 @@ impl AttemptQueue<'_> {
         Ok(records)
     }
 
+    /// [`Self::list_task_in_write_txn`] for a reader that holds no writer:
+    /// every row realizing one TASK, archived ones too, in creation order.
+    pub(crate) fn list_task_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task_ref: &str,
+    ) -> Result<Vec<AttemptRecord>> {
+        let mut records = Vec::new();
+        for row in self.store.attempt_records.iter(txn)? {
+            let (key, raw_record) = row?;
+            let id = AttemptId::from_bytes(&key)?;
+            let record = decode_record(&raw_record, id)?;
+            if record.task_ref.as_deref() == Some(task_ref) {
+                records.push(record);
+            }
+        }
+        records.sort_by(attempt_record_order);
+        Ok(records)
+    }
+
     /// Reads working-set attempts in creation order; archived rows remain readable by id.
     pub fn list(&self) -> Result<Vec<AttemptRecord>> {
         let rtxn = self.store.env.read_txn()?;

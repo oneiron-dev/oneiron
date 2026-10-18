@@ -83,6 +83,10 @@ pub enum Purpose {
     SealedVaultBundle = 13,
     /// The sealed copy of the vault's world key pads beside each bundle generation.
     SealedKeyPads = 14,
+    /// One private world's signed settings and key wraps inside a sealed bundle,
+    /// sealed to the machines that read the world and to the recovery root, so a
+    /// publisher that may not read the world carries it unchanged (FIX 4211).
+    SealedWorldAuthority = 15,
 }
 
 impl Purpose {
@@ -102,6 +106,7 @@ impl Purpose {
             12 => Self::SealedWorldContent,
             13 => Self::SealedVaultBundle,
             14 => Self::SealedKeyPads,
+            15 => Self::SealedWorldAuthority,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

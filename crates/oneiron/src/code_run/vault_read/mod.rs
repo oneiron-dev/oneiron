@@ -3,8 +3,9 @@
 //!
 //! The same typed call reaches the same accepted vault-read operation through
 //! an in-process adapter ([`InProcessVaultReadAdapter`]), a transport-injected
-//! adapter ([`WireTransportVaultReadAdapter`]), or the cloud placeholder
-//! ([`CloudVaultReadAdapter`]). The contract is engine-side Rust: no HTTP, MCP,
+//! adapter ([`WireTransportVaultReadAdapter`]), or the cloud adapter
+//! ([`CloudVaultReadAdapter`], the wire adapter over the host's authenticated
+//! transport to a hosted engine). The contract is engine-side Rust: no HTTP, MCP,
 //! async, or cloud dependency enters this crate, and no TypeScript ships here.
 //!
 //! The v1 inventory is CLOSED at eight methods — five structured reads mapped

@@ -131,6 +131,28 @@ fn settle_connector_calls(
     let deliveries = WaitDeliveries::canonical(vault);
     let mut settled = 0;
     for call in due {
+        // An answered code consent wait's call runs only on its host's
+        // answered pass (DOOR-079 1a): its original caller's instrument
+        // checked, then its own gate under the code-bound approval. The
+        // engine settles the wait and wakes the run; a later pass here
+        // acknowledges the settled call.
+        match vault.answered_code_consent_wait_for_call(&call.call_ref) {
+            Ok(None) => {}
+            Ok(Some(wait_id)) => {
+                if let Err(error) =
+                    crate::code_consent_host::resume_answered(server, vault, wait_id)
+                {
+                    tracing::warn!(wait = %wait_id.to_hex(), %error, "code consent effect not settled");
+                }
+                backoffs.defer(call.call_ref, now);
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(call_ref = %call.call_ref.to_hex(), %error, "code consent wait not read");
+                backoffs.defer(call.call_ref, now);
+                continue;
+            }
+        }
         let outcome = match vault.resume_connector_call(&call.call_ref, &mut host) {
             Ok(outcome) => outcome,
             Err(error) => {

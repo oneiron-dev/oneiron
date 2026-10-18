@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 553 facade rows, 2085 declarations.
-Inputs: 501 of 553 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 490 of 553 fully typed, 63 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 92; unread shapes: 0.
+Census: 580 facade rows, 2204 declarations.
+Inputs: 529 of 580 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 512 of 580 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2651,6 +2651,119 @@ class HubSkillReceipts(TypedDict):
     sources: list[HubRef]
     imports: list[HubImportReceipt]
     admission: NotRequired[HubAdmissionReceipt | None]
+class SkillConvertRequest(TypedDict):
+    message_refs: list[EntityId]
+    hint: NotRequired[str | None]
+class SkillConvertReceiptCreated(TypedDict):
+    outcome: Literal["created"]
+    entity: EntityId
+class SkillConvertReceiptDupPointer(TypedDict):
+    outcome: Literal["dup_pointer"]
+    entity: EntityId
+class SkillConvertReceiptMergeProposed(TypedDict):
+    outcome: Literal["merge_proposed"]
+    existing: EntityId
+    proposal: EntityId
+SkillConvertReceipt = SkillConvertReceiptCreated | SkillConvertReceiptDupPointer | SkillConvertReceiptMergeProposed
+SkillLibraryLifecycle = Literal["candidate", "active", "stale", "archived", "superseded"]
+class SkillLibraryCall(TypedDict):
+    reference: str
+    arguments: Any
+    returns: Any
+class SkillLibraryDependency(TypedDict):
+    skill_id: str
+    min_version: NotRequired[str | None]
+class SkillSourceEvidence(TypedDict):
+    message_ref: EntityId
+    available: bool
+class SkillStaleView(TypedDict):
+    reason: str
+    deleted_refs: list[EntityId]
+class SkillForkLineage(TypedDict):
+    parent: EntityId
+    parent_version: NotRequired[str | None]
+    parent_document: NotRequired[EntityId | None]
+    parent_frontier: NotRequired[list[int] | None]
+    parent_available: bool
+    hub_sources: list[HubRef]
+class SkillLibraryFile(TypedDict):
+    path: str
+    content: list[int]
+class SkillCapabilityView(TypedDict):
+    bins: list[str]
+    env: list[str]
+    mcp: list[str]
+    allowed_tools: list[str]
+class SkillLibraryScan(TypedDict):
+    contentHash: str
+    provider: str
+    scannedAt: int
+    verdict: str
+    riskLevel: str
+    completeness: str
+    governance: str
+    scannedAtDeclared: NotRequired[int | None]
+class SkillLibraryView(TypedDict):
+    entity: EntityId
+    skill_id: str
+    desc: str
+    version: str
+    content_hash: NotRequired[str | None]
+    lifecycle: SkillLibraryLifecycle
+    approval: ClaimApprovalStatus
+    loadable: bool
+    source: str
+    role: str
+    call: NotRequired[SkillLibraryCall | None]
+    governance_tier: NotRequired[str | None]
+    generated: bool
+    human_authored: bool
+    dependencies: list[SkillLibraryDependency]
+    provenance: Any
+    source_messages: list[SkillSourceEvidence]
+    stale: NotRequired[SkillStaleView | None]
+    lineage: list[SkillForkLineage]
+    files: NotRequired[list[SkillLibraryFile] | None]
+    capabilities: NotRequired[SkillCapabilityView | None]
+    scans: list[SkillLibraryScan]
+    receipts: HubSkillReceipts
+class SkillLibraryListRequest(TypedDict):
+    after: NotRequired[EntityId | None]
+    limit: int
+class SkillLibraryPage(TypedDict):
+    skills: list[SkillLibraryView]
+    next_after: NotRequired[EntityId | None]
+class SkillRestoreAdmission(TypedDict):
+    source: HubRef
+    publisher: str
+    evidence_skill: EntityId
+    effect_digest: NotRequired[str | None]
+class SkillLibraryRestoreRequest(TypedDict):
+    entity: EntityId
+    admission: NotRequired[SkillRestoreAdmission | None]
+class SkillLibraryRestoreReceiptRestored(TypedDict):
+    outcome: Literal["restored"]
+    skill: SkillLibraryView
+    admission: NotRequired[HubAdmissionReceipt | None]
+class SkillLibraryRestoreReceiptPendingAdmission(TypedDict):
+    outcome: Literal["pending_admission"]
+    entity: EntityId
+    content_hash: str
+    effect_digest: str
+class SkillLibraryRestoreReceiptRefused(TypedDict):
+    outcome: Literal["refused"]
+    entity: EntityId
+    admission: HubAdmissionReceipt
+SkillLibraryRestoreReceipt = SkillLibraryRestoreReceiptRestored | SkillLibraryRestoreReceiptPendingAdmission | SkillLibraryRestoreReceiptRefused
+class SkillLibraryForkRequest(TypedDict):
+    parent: EntityId
+    entity: NotRequired[EntityId | None]
+    skill_id: str
+class SkillHashRuleRequest(TypedDict):
+    content_hash: str
+    blocked: bool
+class SkillCodeAutoInstallRequest(TypedDict):
+    enabled: bool
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef
@@ -3093,6 +3206,104 @@ class SignedAuthorityHistory(TypedDict):
     entries: list[str]
 class AuthorityHistoryImported(TypedDict):
     entry_refs: list[str]
+class SlimIdlePolicy(TypedDict):
+    long_outbound_wait_secs: int
+    exits_on_idle: bool
+    lazy_rebuild: bool
+class SlimResumeStepOutboundIntent(TypedDict):
+    kind: Literal["outbound_intent"]
+    intent_id: str
+    attempt_id: str
+    call_seq: int
+    updated_ms: int
+class SlimResumeStepModel(TypedDict):
+    kind: Literal["model"]
+    attempt_id: str
+    step_hash: str
+    updated_ms: int
+SlimResumeStep = SlimResumeStepOutboundIntent | SlimResumeStepModel
+class SlimResidueView(TypedDict):
+    step: SlimResumeStep
+    entered_at_ms: int
+class SlimStateViewFull(TypedDict):
+    residency: Literal["full"]
+class SlimStateViewSlim(TypedDict):
+    residency: Literal["slim"]
+    residue: SlimResidueView
+SlimStateView = SlimStateViewFull | SlimStateViewSlim
+class SlimStateSnapshot(TypedDict):
+    process_id: int
+    state: SlimStateView
+class SlimResumeStepRequestModel(TypedDict):
+    kind: Literal["model"]
+    attempt_id: str
+    step_hash: str
+class SlimResumeStepRequestOutboundIntent(TypedDict):
+    kind: Literal["outbound_intent"]
+    intent_id: str
+SlimResumeStepRequest = SlimResumeStepRequestModel | SlimResumeStepRequestOutboundIntent
+StepProgression = Literal["started", "response_received", "logged", "finished"]
+class ModelStepCheckpoint(TypedDict):
+    progression: StepProgression
+    updated_ms: NotRequired[int | None]
+    claim_ref: NotRequired[str | None]
+SavedIntentState = Literal["pending", "done", "abandoned"]
+class SavedResumeStepModel(TypedDict):
+    kind: Literal["model"]
+    attempt_id: str
+    step_hash: str
+    checkpoint: ModelStepCheckpoint
+class SavedResumeStepOutboundIntent(TypedDict):
+    kind: Literal["outbound_intent"]
+    step: SlimResumeStep
+    state: SavedIntentState
+SavedResumeStep = SavedResumeStepModel | SavedResumeStepOutboundIntent
+ShedCause = Literal["long_outbound_wait", "memory_pressure"]
+class SlimDropRequest(TypedDict):
+    cause: ShedCause
+    waited_secs: int
+class HeapDropReport(TypedDict):
+    sync_windows: int
+    ppr_cache_rows: int
+    ppr_dependency_rows: int
+    hnsw_nodes: int
+    estimated_reclaimed_bytes: int
+class ShedBlockerNoPendingOutboundStep(TypedDict):
+    kind: Literal["no_pending_outbound_step"]
+class ShedBlockerMultiplePendingOutboundSteps(TypedDict):
+    kind: Literal["multiple_pending_outbound_steps"]
+    count: int
+class ShedBlockerSyncWindowBusy(TypedDict):
+    kind: Literal["sync_window_busy"]
+    window_key: str
+    outstanding_handles: int
+class ShedBlockerAlreadySlimForDifferentStep(TypedDict):
+    kind: Literal["already_slim_for_different_step"]
+ShedBlocker = ShedBlockerNoPendingOutboundStep | ShedBlockerMultiplePendingOutboundSteps | ShedBlockerSyncWindowBusy | ShedBlockerAlreadySlimForDifferentStep
+class SlimDropOutcomeEntered(TypedDict):
+    status: Literal["entered"]
+    residue: SlimResidueView
+    dropped: HeapDropReport
+class SlimDropOutcomeAlreadySlim(TypedDict):
+    status: Literal["already_slim"]
+    residue: SlimResidueView
+    dropped: HeapDropReport
+class SlimDropOutcomeRefused(TypedDict):
+    status: Literal["refused"]
+    blocker: ShedBlocker
+SlimDropOutcome = SlimDropOutcomeEntered | SlimDropOutcomeAlreadySlim | SlimDropOutcomeRefused
+class SlimDropReceipt(TypedDict):
+    process_id: int
+    outcome: SlimDropOutcome
+class SlimResumeOutcomeAlreadyFull(TypedDict):
+    status: Literal["already_full"]
+class SlimResumeOutcomeResumed(TypedDict):
+    status: Literal["resumed"]
+    residue: SlimResidueView
+SlimResumeOutcome = SlimResumeOutcomeAlreadyFull | SlimResumeOutcomeResumed
+class SlimResumeReceipt(TypedDict):
+    process_id: int
+    outcome: SlimResumeOutcome
 class MeshPathReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 MeshPathDirection = Literal["inbound", "outbound"]
@@ -6324,6 +6535,9 @@ class AgentScopeInputWorld(TypedDict):
     world: EntityId
 AgentScopeInput = AgentScopeInputAll | AgentScopeInputBase | AgentScopeInputWorld
 AgentCeilingInput = Literal["auto", "proposed"]
+class AgentModel(TypedDict):
+    model_ref: ModelId
+    when: str
 class AgentDefinitionSpec(TypedDict):
     agent_id: str
     desc: str
@@ -6338,6 +6552,8 @@ class AgentDefinitionSpec(TypedDict):
     forked_from: NotRequired[EntityId | None]
     enabled: NotRequired[bool]
     display_name: NotRequired[str | None]
+    models: NotRequired[list[AgentModel]]
+    compaction_model: NotRequired[ModelId | None]
 class AgentDefinitionCreateRequest(TypedDict):
     agent_def_ref: EntityId
     definition: AgentDefinitionSpec
@@ -6593,6 +6809,94 @@ class PlannedSpawnObservation(TypedDict):
     critics: list[CriticObservation]
     learning: list[LearningObservation]
     issues: list[ObservationIssue]
+class CancelForceRequest(TypedDict):
+    task_ref: EntityId
+    reason: NotRequired[str | None]
+AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Cancelled", "Scheduled", "Landing", "Abandoned"]
+AgentRunStatus = Literal["spawned", "working", "needs_input", "delivered", "archived", "failed", "abandoned"]
+class RunAskQuestion(TypedDict):
+    who: str
+    prompt: str
+    options: list[str]
+    deadline: NotRequired[int | None]
+RunAskAnswerKind = Literal["Word", "Companion", "Default", "Unknown"]
+class RunAskAnswer(TypedDict):
+    who: str
+    answer: str
+    kind: RunAskAnswerKind
+    at: int
+class RunAsk(TypedDict):
+    handle: str
+    questions: list[RunAskQuestion]
+    answers: list[RunAskAnswer]
+class RunSignalKindSteerBody(TypedDict):
+    instruction: str
+class RunSignalKindSteer(TypedDict):
+    Steer: RunSignalKindSteerBody
+class RunSignalKindInterjectBody(TypedDict):
+    content: str
+class RunSignalKindInterject(TypedDict):
+    Interject: RunSignalKindInterjectBody
+class RunSignalKindCancelBody(TypedDict):
+    standing: CancelStanding
+    reason: NotRequired[str | None]
+class RunSignalKindCancel(TypedDict):
+    Cancel: RunSignalKindCancelBody
+class RunSignalKindAskAnswerBody(TypedDict):
+    handle: str
+    who: str
+    answer: str
+    kind: RunAskAnswerKind
+class RunSignalKindAskAnswer(TypedDict):
+    AskAnswer: RunSignalKindAskAnswerBody
+RunSignalKind = RunSignalKindSteer | RunSignalKindInterject | RunSignalKindCancel | RunSignalKindAskAnswer
+class RunBranchSignal(TypedDict):
+    key: str
+    actor: str
+    kind: RunSignalKind
+    state: RunSignalState
+CancelMode = Literal["landed", "forced"]
+class AttemptCancellation(TypedDict):
+    mode: CancelMode
+    grounds: NotRequired[ForceCancelGrounds | None]
+    actor: str
+    at: int
+    reason: NotRequired[str | None]
+    trigger: NotRequired[LandingTrigger | None]
+    reserve_units: int
+    reserve_spent_units: int
+class AttemptCancelPressure(TypedDict):
+    requests: NotRequired[int]
+    rejections: NotRequired[int]
+    pending: NotRequired[int]
+class AttemptCancelState(TypedDict):
+    landing: NotRequired[AttemptLanding | None]
+    resume_point: NotRequired[AttemptResumePoint | None]
+    cancellation: NotRequired[AttemptCancellation | None]
+    pressure: NotRequired[AttemptCancelPressure]
+    receipts: NotRequired[list[AttemptCancelReceipt]]
+    reserve: NotRequired[AttemptLandingReserve]
+class RunBranchView(TypedDict):
+    branch: str
+    run_id: NotRequired[str | None]
+    state: AttemptState
+    agent_status: AgentRunStatus
+    attempt_count: int
+    result_ref: NotRequired[str | None]
+    last_error: NotRequired[str | None]
+    asks: list[RunAsk]
+    signals: list[RunBranchSignal]
+    cancel_state: AttemptCancelState
+class CancelForceReceipt(TypedDict):
+    task_ref: EntityId
+    effected: bool
+    forced: int
+    branches: list[RunBranchView]
+class RunBranchesRequest(TypedDict):
+    task_ref: EntityId
+class RunBranchesView(TypedDict):
+    task_ref: EntityId
+    branches: list[RunBranchView]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str
@@ -6860,15 +7164,365 @@ class CriticReviewOutcome(TypedDict):
     triage: CritiqueTriage
     artifacts: list[CritiqueArtifact]
     receipts: list[DecisionReceipt]
+class DeckInspectRequest(TypedDict):
+    artifact_ref: str
+    version: NotRequired[int | None]
+Digest = str
+class IdMarks(TypedDict):
+    slide: NotRequired[int]
+    shapes: NotRequired[dict[str, int]]
+DeckShapeKind = Literal["shape", "picture", "graphic_frame", "connector", "group"]
+class DeckShapeInspection(TypedDict):
+    kind: DeckShapeKind
+    id: NotRequired[int | None]
+    creation_id: NotRequired[str | None]
+    name: NotRequired[str | None]
+    group_path: list[int]
+    content_fingerprint: Digest
+class DeckSlideInspection(TypedDict):
+    part: str
+    sld_id: int
+    creation_id: NotRequired[int | None]
+    content_fingerprint: Digest
+    render_fingerprint: Digest
+    shapes: list[DeckShapeInspection]
+class DeckIdentityAmbiguityDuplicateSlideCreationId(TypedDict):
+    kind: Literal["duplicate_slide_creation_id"]
+    creation_id: int
+    slides: list[int]
+class DeckIdentityAmbiguityDuplicateShapeId(TypedDict):
+    kind: Literal["duplicate_shape_id"]
+    slide: int
+    id: int
+    shapes: list[int]
+class DeckIdentityAmbiguityDuplicateShapeCreationId(TypedDict):
+    kind: Literal["duplicate_shape_creation_id"]
+    slide: int
+    id: str
+    shapes: list[int]
+DeckIdentityAmbiguity = DeckIdentityAmbiguityDuplicateSlideCreationId | DeckIdentityAmbiguityDuplicateShapeId | DeckIdentityAmbiguityDuplicateShapeCreationId
+class PptxShapeIdentity(TypedDict):
+    shape_id: int
+    creation_id: NotRequired[str | None]
+    fingerprint: list[int]
+    position: NotRequired[tuple[int, int] | None]
+class PptxSlideIdentity(TypedDict):
+    slide: int
+    part: str
+    sld_id: int
+    creation_id: NotRequired[int | None]
+    fingerprint: list[int]
+    shapes: list[PptxShapeIdentity]
+class PptxInspection(TypedDict):
+    slides: list[PptxSlideIdentity]
+    signature_parts: list[str]
+class DeckCommentInspectionInspected(TypedDict):
+    state: Literal["inspected"]
+    inspection: PptxInspection
+class DeckCommentInspectionRefused(TypedDict):
+    state: Literal["refused"]
+    reason: str
+DeckCommentInspection = DeckCommentInspectionInspected | DeckCommentInspectionRefused
+class DeckInspectionView(TypedDict):
+    artifact_id: EntityId
+    version: int
+    base: Digest
+    marks: IdMarks
+    slides: list[DeckSlideInspection]
+    ambiguities: list[DeckIdentityAmbiguity]
+    comments: DeckCommentInspection
+class StepTarget(TypedDict):
+    slide: str
+    shape: int
+    expected: Digest
+class StepXfrm(TypedDict):
+    offset: NotRequired[list[int] | None]
+    extent: NotRequired[list[int] | None]
+    rotation: NotRequired[int | None]
+    flip_h: NotRequired[bool | None]
+    flip_v: NotRequired[bool | None]
+StepAssetKind = Literal["factual", "illustration"]
+class AssetRef(TypedDict):
+    artifact: str
+    version: int
+    hash: Digest
+    kind: StepAssetKind
+    description: str
+StepPreset = Literal["rect", "roundRect", "ellipse", "triangle", "rightArrow"]
+StepSequence = Literal["name", "categories", "values"]
+class StepCellNumber(TypedDict):
+    number: float
+class StepCellText(TypedDict):
+    text: str
+class StepCellDate(TypedDict):
+    date: str
+StepCell = Literal["missing"] | StepCellNumber | StepCellText | StepCellDate
+class DeckStepSetTextBody(TypedDict):
+    target: StepTarget
+    text: str
+class DeckStepSetText(TypedDict):
+    set_text: DeckStepSetTextBody
+class DeckStepReplaceRunTextBody(TypedDict):
+    target: StepTarget
+    paragraph: int
+    run: int
+    expected: str
+    text: str
+class DeckStepReplaceRunText(TypedDict):
+    replace_run_text: DeckStepReplaceRunTextBody
+class DeckStepSetXfrmBody(TypedDict):
+    target: StepTarget
+    xfrm: StepXfrm
+class DeckStepSetXfrm(TypedDict):
+    set_xfrm: DeckStepSetXfrmBody
+class DeckStepMoveInSlideSpaceBody(TypedDict):
+    target: StepTarget
+    dx: int
+    dy: int
+class DeckStepMoveInSlideSpace(TypedDict):
+    move_in_slide_space: DeckStepMoveInSlideSpaceBody
+class DeckStepSetPictureBody(TypedDict):
+    target: StepTarget
+    asset: AssetRef
+class DeckStepSetPicture(TypedDict):
+    set_picture: DeckStepSetPictureBody
+class DeckStepSetNotesBody(TypedDict):
+    slide: str
+    expected: NotRequired[str | None]
+    text: str
+class DeckStepSetNotes(TypedDict):
+    set_notes: DeckStepSetNotesBody
+class DeckStepAddShapeBody(TypedDict):
+    slide: str
+    preset: StepPreset
+    name: str
+    offset: list[int]
+    extent: list[int]
+class DeckStepAddShape(TypedDict):
+    add_shape: DeckStepAddShapeBody
+class DeckStepDeleteShapeBody(TypedDict):
+    target: StepTarget
+    cascade: NotRequired[bool]
+class DeckStepDeleteShape(TypedDict):
+    delete_shape: DeckStepDeleteShapeBody
+class DeckStepReparentBody(TypedDict):
+    target: StepTarget
+    parent: NotRequired[int | None]
+class DeckStepReparent(TypedDict):
+    reparent: DeckStepReparentBody
+class DeckStepDuplicateSlideBody(TypedDict):
+    slide: str
+    expected: Digest
+class DeckStepDuplicateSlide(TypedDict):
+    duplicate_slide: DeckStepDuplicateSlideBody
+class DeckStepReorderSlidesBody(TypedDict):
+    order: list[int]
+class DeckStepReorderSlides(TypedDict):
+    reorder_slides: DeckStepReorderSlidesBody
+class DeckStepSetTableCellBody(TypedDict):
+    slide: str
+    table: int
+    row: int
+    col: int
+    expected: str
+    value: str
+class DeckStepSetTableCell(TypedDict):
+    set_table_cell: DeckStepSetTableCellBody
+class DeckStepSetSeriesValuesBody(TypedDict):
+    chart: str
+    series: int
+    sequence: StepSequence
+    values: list[StepCell]
+class DeckStepSetSeriesValues(TypedDict):
+    set_series_values: DeckStepSetSeriesValuesBody
+DeckStep = DeckStepSetText | DeckStepReplaceRunText | DeckStepSetXfrm | DeckStepMoveInSlideSpace | DeckStepSetPicture | DeckStepSetNotes | DeckStepAddShape | DeckStepDeleteShape | DeckStepReparent | DeckStepDuplicateSlide | DeckStepReorderSlides | DeckStepSetTableCell | DeckStepSetSeriesValues
+class DeckTransaction(TypedDict):
+    schema: int
+    base: Digest
+    marks: NotRequired[IdMarks]
+    seed: str
+    steps: list[DeckStep]
+DeckRenderSide = Literal["base", "candidate"]
+class DeckRender(TypedDict):
+    side: DeckRenderSide
+    slide: str
+    image_hash: list[int]
+    renderer: str
+class DeckEditContext(TypedDict):
+    made_by: NotRequired[EntityId | None]
+    thread: NotRequired[EntityId | None]
+    renders: NotRequired[list[DeckRender]]
 class DeckProposeRequest(TypedDict):
     artifact_ref: str
-    transaction: Any
+    transaction: DeckTransaction
     run_ref: str
-    context: NotRequired[Any]
-    made_by: NotRequired[Any | None]
+    context: NotRequired[DeckEditContext]
+    made_by: NotRequired[MadeBy | None]
+OfficeFormat = Literal["xlsx", "docx", "pptx"]
+class DeckRejectionSheet(TypedDict):
+    name: str
+    index: int
+class DeckRejectionSheetDependency(TypedDict):
+    from_sheet: str
+    to_sheet: str
+class DeckRejectionSummary(TypedDict):
+    format: OfficeFormat
+    sheets: list[DeckRejectionSheet]
+    defined_names: list[str]
+    has_pivots: bool
+    has_charts: bool
+    has_macros: bool
+    cross_sheet_dependencies: list[DeckRejectionSheetDependency]
+    unknown_parts: list[str]
+class DeckRejectionCheck(TypedDict):
+    name: str
+    passed: bool
+    detail: str
+class DeckRejectionReport(TypedDict):
+    ok: bool
+    checks: list[DeckRejectionCheck]
+class DeckNativeRefusalExternalChartSource(TypedDict):
+    kind: Literal["external_chart_source"]
+    detail: str
+class DeckNativeRefusalFormulaBackedSeries(TypedDict):
+    kind: Literal["formula_backed_series"]
+    detail: str
+class DeckNativeRefusalAmbiguousChartData(TypedDict):
+    kind: Literal["ambiguous_chart_data"]
+    detail: str
+class DeckNativeRefusalSharedChartData(TypedDict):
+    kind: Literal["shared_chart_data"]
+class DeckNativeRefusalUnsupportedChartFamily(TypedDict):
+    kind: Literal["unsupported_chart_family"]
+    detail: str
+class DeckNativeRefusalMergedContinuationCell(TypedDict):
+    kind: Literal["merged_continuation_cell"]
+class DeckNativeRefusalUnsupportedMergeTopology(TypedDict):
+    kind: Literal["unsupported_merge_topology"]
+    detail: str
+class DeckNativeRefusalLengthChange(TypedDict):
+    kind: Literal["length_change"]
+    have: int
+    want: int
+class DeckNativeRefusalStale(TypedDict):
+    kind: Literal["stale"]
+    detail: str
+class DeckNativeRefusalInvalid(TypedDict):
+    kind: Literal["invalid"]
+    detail: str
+class DeckNativeRefusalCacheMismatch(TypedDict):
+    kind: Literal["cache_mismatch"]
+class DeckNativeRefusalOutsideAllowedParts(TypedDict):
+    kind: Literal["outside_allowed_parts"]
+    part: str
+class DeckNativeRefusalWorkbook(TypedDict):
+    kind: Literal["workbook"]
+    detail: str
+class DeckNativeRefusalPackage(TypedDict):
+    kind: Literal["package"]
+    detail: str
+class DeckNativeRefusalXml(TypedDict):
+    kind: Literal["xml"]
+    detail: str
+DeckNativeRefusal = DeckNativeRefusalExternalChartSource | DeckNativeRefusalFormulaBackedSeries | DeckNativeRefusalAmbiguousChartData | DeckNativeRefusalSharedChartData | DeckNativeRefusalUnsupportedChartFamily | DeckNativeRefusalMergedContinuationCell | DeckNativeRefusalUnsupportedMergeTopology | DeckNativeRefusalLengthChange | DeckNativeRefusalStale | DeckNativeRefusalInvalid | DeckNativeRefusalCacheMismatch | DeckNativeRefusalOutsideAllowedParts | DeckNativeRefusalWorkbook | DeckNativeRefusalPackage | DeckNativeRefusalXml
+class DeckStepRefusalTargetChanged(TypedDict):
+    kind: Literal["target_changed"]
+class DeckStepRefusalAmbiguousAnchor(TypedDict):
+    kind: Literal["ambiguous_anchor"]
+    detail: str
+class DeckStepRefusalAnimatedTextStructureChanged(TypedDict):
+    kind: Literal["animated_text_structure_changed"]
+class DeckStepRefusalAnimationDependencyUnsupported(TypedDict):
+    kind: Literal["animation_dependency_unsupported"]
+    detail: str
+class DeckStepRefusalNonInvertibleGroupTransform(TypedDict):
+    kind: Literal["non_invertible_group_transform"]
+class DeckStepRefusalUnrepresentableTransform(TypedDict):
+    kind: Literal["unrepresentable_transform"]
+    detail: str
+class DeckStepRefusalInheritedTransform(TypedDict):
+    kind: Literal["inherited_transform"]
+class DeckStepRefusalPartDiffOutsideTransaction(TypedDict):
+    kind: Literal["part_diff_outside_transaction"]
+    part: str
+class DeckStepRefusalWriteOutsideTarget(TypedDict):
+    kind: Literal["write_outside_target"]
+    part: str
+    why: str
+class DeckStepRefusalTextMapping(TypedDict):
+    kind: Literal["text_mapping"]
+    detail: str
+class DeckStepRefusalMissing(TypedDict):
+    kind: Literal["missing"]
+    detail: str
+class DeckStepRefusalIdSpaceExhausted(TypedDict):
+    kind: Literal["id_space_exhausted"]
+class DeckStepRefusalReparentUnsupported(TypedDict):
+    kind: Literal["reparent_unsupported"]
+    detail: str
+class DeckStepRefusalCloneDependencyUnsupported(TypedDict):
+    kind: Literal["clone_dependency_unsupported"]
+    relationship: str
+class DeckStepRefusalReorderUnsupported(TypedDict):
+    kind: Literal["reorder_unsupported"]
+    detail: str
+class DeckStepRefusalGluedConnector(TypedDict):
+    kind: Literal["glued_connector"]
+    connector: NotRequired[int | None]
+class DeckStepRefusalInvalid(TypedDict):
+    kind: Literal["invalid"]
+    detail: str
+class DeckStepRefusalPicture(TypedDict):
+    kind: Literal["picture"]
+    detail: str
+class DeckStepRefusalReadBack(TypedDict):
+    kind: Literal["read_back"]
+    detail: str
+class DeckStepRefusalPackage(TypedDict):
+    kind: Literal["package"]
+    detail: str
+class DeckStepRefusalXml(TypedDict):
+    kind: Literal["xml"]
+    detail: str
+class DeckStepRefusalDeck(TypedDict):
+    kind: Literal["deck"]
+    detail: str
+class DeckStepRefusalNative(TypedDict):
+    kind: Literal["native"]
+    refusal: DeckNativeRefusal
+class DeckStepRefusalAsset(TypedDict):
+    kind: Literal["asset"]
+    detail: str
+DeckStepRefusal = DeckStepRefusalTargetChanged | DeckStepRefusalAmbiguousAnchor | DeckStepRefusalAnimatedTextStructureChanged | DeckStepRefusalAnimationDependencyUnsupported | DeckStepRefusalNonInvertibleGroupTransform | DeckStepRefusalUnrepresentableTransform | DeckStepRefusalInheritedTransform | DeckStepRefusalPartDiffOutsideTransaction | DeckStepRefusalWriteOutsideTarget | DeckStepRefusalTextMapping | DeckStepRefusalMissing | DeckStepRefusalIdSpaceExhausted | DeckStepRefusalReparentUnsupported | DeckStepRefusalCloneDependencyUnsupported | DeckStepRefusalReorderUnsupported | DeckStepRefusalGluedConnector | DeckStepRefusalInvalid | DeckStepRefusalPicture | DeckStepRefusalReadBack | DeckStepRefusalPackage | DeckStepRefusalXml | DeckStepRefusalDeck | DeckStepRefusalNative | DeckStepRefusalAsset
+class DeckTransactionRefusalInvalid(TypedDict):
+    kind: Literal["invalid"]
+    detail: str
+class DeckTransactionRefusalBaseChanged(TypedDict):
+    kind: Literal["base_changed"]
+class DeckTransactionRefusalNotEditable(TypedDict):
+    kind: Literal["not_editable"]
+class DeckTransactionRefusalStep(TypedDict):
+    kind: Literal["step"]
+    step: int
+    verb: str
+    refusal: DeckStepRefusal
+class DeckTransactionRefusalPartDiffOutsideTransaction(TypedDict):
+    kind: Literal["part_diff_outside_transaction"]
+    part: str
+class DeckTransactionRefusalPackage(TypedDict):
+    kind: Literal["package"]
+    detail: str
+class DeckTransactionRefusalDeck(TypedDict):
+    kind: Literal["deck"]
+    detail: str
+DeckTransactionRefusal = DeckTransactionRefusalInvalid | DeckTransactionRefusalBaseChanged | DeckTransactionRefusalNotEditable | DeckTransactionRefusalStep | DeckTransactionRefusalPartDiffOutsideTransaction | DeckTransactionRefusalPackage | DeckTransactionRefusalDeck
+class DeckProposeRejection(TypedDict):
+    inspection: DeckRejectionSummary
+    report: DeckRejectionReport
+    refusal: DeckTransactionRefusal
 class DeckProposeOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
-    rejected: NotRequired[Any | None]
+    rejected: NotRequired[DeckProposeRejection | None]
 class NativeOutputRequest(TypedDict):
     artifact_ref: str
     run_ref: str
@@ -7713,7 +8367,6 @@ class ModelStepSubmit(TypedDict):
     step_key: str
     request: LlmRequest
     retry: NotRequired[ModelStepRetryPolicy]
-StepProgression = Literal["started", "response_received", "logged", "finished"]
 class LlmInputUsage(TypedDict):
     total: int
     cache_read: int
@@ -9230,14 +9883,6 @@ class GeometryProps(TypedDict):
     flip_h: NotRequired[bool | None]
     flip_v: NotRequired[bool | None]
 Preset = Literal["rect", "round_rect", "ellipse", "triangle", "right_arrow"]
-Digest = str
-StepAssetKind = Literal["factual", "illustration"]
-class AssetRef(TypedDict):
-    artifact: str
-    version: int
-    hash: Digest
-    kind: StepAssetKind
-    description: str
 class HeldMedia(TypedDict):
     part: str
     hash: Digest
@@ -9542,22 +10187,23 @@ class OfficeBodyForkOpenRequest(TypedDict):
     artifact_ref: str
     run_root_ref: NotRequired[str | None]
     proposal_ref: NotRequired[str | None]
+BodyActor = str
 class ForkStateOpen(TypedDict):
     state: Literal["open"]
 class ForkStateMerged(TypedDict):
     state: Literal["merged"]
-    by: EntityId
+    by: BodyActor
     at: int
     head: list[int]
 class ForkStateDiscarded(TypedDict):
     state: Literal["discarded"]
-    by: EntityId
+    by: BodyActor
     at: int
 ForkState = ForkStateOpen | ForkStateMerged | ForkStateDiscarded
 class OfficeBodyFork(TypedDict):
     id: EntityId
     artifact: EntityId
-    opener: EntityId
+    opener: BodyActor
     base: list[int]
     commits: int
     opened_at: int
@@ -9597,13 +10243,13 @@ class OfficeBodyProposalRequest(TypedDict):
 class ProposalHeader(TypedDict):
     proposal: EntityId
     artifact: EntityId
-    opener: EntityId
+    opener: BodyActor
     run_root: NotRequired[EntityId | None]
     opened_at: int
 MemberVerdict = Literal["waiting", "landed", "rejected", "let_go"]
 class AnsweringAuthorityWord(TypedDict):
     kind: Literal["word"]
-    person: EntityId
+    person: BodyActor
 class AnsweringAuthorityGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: str
@@ -9611,14 +10257,14 @@ class AnsweringAuthorityGrant(TypedDict):
 AnsweringAuthority = AnsweringAuthorityWord | AnsweringAuthorityGrant
 class MemberAnswer(TypedDict):
     by: AnsweringAuthority
-    caller: EntityId
+    caller: BodyActor
     head: list[int]
     fork_head: list[int]
     landed: NotRequired[list[int] | None]
     at: int
 class ProposalMember(TypedDict):
     fork: EntityId
-    opener: EntityId
+    opener: BodyActor
     run_root: NotRequired[EntityId | None]
     verdict: MemberVerdict
     answer: NotRequired[MemberAnswer | None]
@@ -9672,7 +10318,7 @@ class OfficeBodyExportRecord(TypedDict):
     version: int
     frontier: list[int]
     source_version: int
-    actor: EntityId
+    actor: BodyActor
     author: str
     at: int
     changes: int
@@ -10267,6 +10913,180 @@ class OutboundIntentReceipt(TypedDict):
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
     deduped: bool
+class SummaryPathBranch(TypedDict):
+    branch: str
+class SummaryPathBranchSpanBody(TypedDict):
+    after: str
+    through: str
+class SummaryPathBranchSpan(TypedDict):
+    branch_span: SummaryPathBranchSpanBody
+class SummaryPathSubSession(TypedDict):
+    sub_session: str
+SummaryPath = Literal["canonical"] | SummaryPathBranch | SummaryPathBranchSpan | SummaryPathSubSession
+class SummaryScope(TypedDict):
+    conversation_ref: str
+    path: SummaryPath
+    session: NotRequired[str | None]
+    include_forks: NotRequired[bool]
+class SummaryCreateRequest(TypedDict):
+    scope: SummaryScope
+    purpose: NotRequired[str | None]
+    land_on: NotRequired[str | None]
+    as_record: NotRequired[bool]
+class SummaryQueued(TypedDict):
+    attempt: str
+    status: str
+    coalesced: bool
+class SummarySpan(TypedDict):
+    start: int
+    end: int
+class SummaryReadRequest(TypedDict):
+    summary_ref: str
+    spans: NotRequired[list[SummarySpan]]
+class SummaryPurpose(TypedDict):
+    id: str
+    description: str
+class SummarySourceVersion(TypedDict):
+    id: str
+    entity_type: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    revision: NotRequired[list[int] | None]
+    record_hash: NotRequired[list[int] | None]
+    frontier: NotRequired[list[int] | None]
+    projected_text: NotRequired[list[int] | None]
+class SummaryDerivation(TypedDict):
+    request: list[int]
+    trigger: list[int]
+    content_hash: list[int]
+    params_hash: list[int]
+    instruction: str
+    model: str
+    policy_frontier: list[int]
+    sources: list[SummarySourceVersion]
+    previous: NotRequired[str | None]
+    recorded_at: int
+    generated_text_hash: list[int]
+    generated_keep_hash: list[int]
+class ScopeSummaryMetadata(TypedDict):
+    purpose: SummaryPurpose
+    keep: str
+    derivation: SummaryDerivation
+class TextAnchor(TypedDict):
+    entity: str
+    frontier: list[int]
+    start: list[int]
+    end: list[int]
+    quote: str
+    hash: list[int]
+class Birth(TypedDict):
+    entity: str
+    actor: str
+    at: int
+class SummaryReadView(TypedDict):
+    summary_ref: str
+    document: str
+    frontier: list[int]
+    text: str
+    metadata: ScopeSummaryMetadata
+    covers: list[str]
+    read_refs: list[str]
+    anchors: list[TextAnchor]
+    birth: Birth
+class SummaryStatusRequest(TypedDict):
+    attempt: str
+class ScopeSummaryResult(TypedDict):
+    summary: str
+    claim: NotRequired[str | None]
+    record: NotRequired[str | None]
+class ScopeSummaryStatus(TypedDict):
+    attempt: str
+    requester: str
+    current_attempt: str
+    state: str
+    result: NotRequired[ScopeSummaryResult | None]
+    failure: NotRequired[str | None]
+    retry_at: NotRequired[int | None]
+    updated_at: int
+class SummaryKeepRequest(TypedDict):
+    summary_ref: str
+    frontier: list[int]
+    keep: str
+class SummaryKeepResult(TypedDict):
+    summary_ref: str
+    frontier: list[int]
+    keep: str
+class SummaryEditAppendToSection(TypedDict):
+    kind: Literal["append_to_section"]
+    section: TextAnchor
+    text: str
+class SummaryEditReplaceQuotedSpan(TypedDict):
+    kind: Literal["replace_quoted_span"]
+    span: TextAnchor
+    text: str
+class SummaryEditInsertAfterAnchor(TypedDict):
+    kind: Literal["insert_after_anchor"]
+    anchor: TextAnchor
+    text: str
+SummaryEdit = SummaryEditAppendToSection | SummaryEditReplaceQuotedSpan | SummaryEditInsertAfterAnchor
+class SummaryEditRequest(TypedDict):
+    summary_ref: str
+    base: list[int]
+    edits: list[SummaryEdit]
+DocActor = str
+ForkStatus = Literal["Pending", "Merged", "Switched", "Rejected"]
+class ForkRecord(TypedDict):
+    fork: str
+    proposal: str
+    entity: str
+    parent_document: str
+    base: list[int]
+    actor: DocActor
+    opened_at: int
+    rewrite: bool
+    status: ForkStatus
+    read_refs: list[str]
+    keep: NotRequired[str | None]
+class ProposalBundle(TypedDict):
+    proposal: str
+    author: DocActor
+    forks: list[ForkRecord]
+    settled: bool
+class SummaryForkView(TypedDict):
+    record: ForkRecord
+    text: NotRequired[str | None]
+SettleVerb = Literal["Merge", "Switch", "Reject"]
+class TextReceipt(TypedDict):
+    receipt: str
+    proposal: str
+    fork: str
+    entity: str
+    actor: DocActor
+    verb: SettleVerb
+    at: int
+    before: list[int]
+    after: list[int]
+    read_refs: list[str]
+class SummaryProposalView(TypedDict):
+    bundle: ProposalBundle
+    forks: list[SummaryForkView]
+    receipts: list[TextReceipt]
+class SummaryPatchRequest(TypedDict):
+    summary_ref: str
+    base: list[int]
+    keep: str
+    edits: list[SummaryEdit]
+    read_refs: list[str]
+class SummaryMutationResult(TypedDict):
+    proposal: SummaryProposalView
+    read_refs: list[str]
+class SummaryRegenerateRequest(TypedDict):
+    summary_ref: str
+    base: list[int]
+    keep: str
+    text: str
+    read_refs: list[str]
+class SummaryProposalRequest(TypedDict):
+    proposal_ref: str
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str

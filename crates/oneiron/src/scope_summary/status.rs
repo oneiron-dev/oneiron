@@ -14,7 +14,7 @@ const RESULT: SideTable<AttemptId, ScopeSummaryResult, Named> =
     SideTable::new(&side_table::SCOPE_SUMMARY_RESULT);
 
 /// Atomic durable landing result, retained across worker replay.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScopeSummaryResult {
     pub summary: String,
@@ -23,7 +23,7 @@ pub struct ScopeSummaryResult {
 }
 
 /// The declaration's public state; parked and failed attempts name their reason.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScopeSummaryStatus {
     pub attempt: String,
     pub requester: String,

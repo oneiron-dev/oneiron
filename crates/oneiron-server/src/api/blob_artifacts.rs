@@ -28,10 +28,10 @@ use oneiron::EntityId;
 use oneiron::anchored_annotation::Locator;
 use oneiron::blob_artifact::{
     ArtifactCreateRequest, ArtifactVersionView, BlobArtifactVersion, BlobVersionProvenance,
-    BornFromSource,
+    BornFromSource, DeckProposeRejection, DeckTransaction,
 };
 use oneiron::edge::EdgeActorClass;
-use oneiron::edit_roundtrip::{DeckEditContext, EditOutcome};
+use oneiron::edit_roundtrip::{DeckEditContext, DeckEditOutcome};
 use oneiron::edit_settle::{NativeOutput, SettleConsent};
 use oneiron::provenance::made_by::{MadeBy, MadeByTrigger};
 use oneiron::task_verb::sdk::AgentVerb;
@@ -124,8 +124,8 @@ pub(super) struct AppendVersion {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ProposeDeck {
-    /// The deck transaction: a JSON object, or its exact canonical text.
-    transaction: Value,
+    /// The deck transaction, in its closed grammar.
+    transaction: DeckTransaction,
     run_ref: String,
     #[serde(default)]
     context: DeckEditContext,
@@ -637,7 +637,7 @@ pub(super) async fn proposals(
     request_body(content = Object, content_type = "application/json"),
     responses(
         (status = 201, description = "`proposed`: the retained pending proposal.", body = Object, content_type = "application/json"),
-        (status = 422, description = "`rejected`: the inspection and report of a transaction the editor refused.", body = Object, content_type = "application/json"),
+        (status = 422, description = "`rejected`: the refusal by name (a step's index, verb and canon refusal), with the inspection and report of a transaction the editor refused.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed body.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write, or names no actor.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -654,10 +654,7 @@ pub(super) async fn propose_deck(
     let actor = actor(&auth, None)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let request = json_payload(payload)?;
-    let transaction = match request.transaction {
-        Value::String(text) => text,
-        other => other.to_string(),
-    };
+    let transaction = request.transaction.canonical();
     let outcome = blocking("deck proposal failed", move || {
         let vault = server.vault();
         match vault.propose_blob_artifact_deck_edit(
@@ -666,14 +663,14 @@ pub(super) async fn propose_deck(
             &request.run_ref,
             request.context,
         )? {
-            EditOutcome::Proposed(proposal) => {
+            DeckEditOutcome::Proposed(proposal) => {
                 let now = vault.now_recorded_at();
                 vault
                     .retain_edit_proposal(&id, &proposal, request.made_by.as_ref(), actor, now)
                     .map(|pending| Ok(json!(pending)))
             }
-            EditOutcome::Rejected { inspection, report } => {
-                Ok(Err(json!({ "inspection": inspection, "report": report })))
+            DeckEditOutcome::Rejected(rejection) => {
+                Ok(Err(json!(DeckProposeRejection::from(*rejection))))
             }
         }
     })

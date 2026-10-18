@@ -58,6 +58,9 @@ side_tables! {
     /// Frozen source-tree identity (source id + skill content hash, 48 raw bytes) recorded at an
     /// agent's genuine local birth. Key: id16.
     AGENT_DEF_PORTABLE_BIRTH: VaultMeta b"agent_def/portable-birth/v1\0" Raw;
+    /// FIX 4472: the model an agent's last wake ran on, so a wake on another model notes it in
+    /// the agent's own diary. Key: id16(agent).
+    AGENT_DEF_WAKE_MODEL: VaultMeta b"agent_def/wake-model/v1\0" Named;
     /// Pre-1890 reserved-actor census row, deleted with the census it served; not written by current
     /// code, only deleted once on seed. Key: ().
     AGENT_DEF_DEFAULT_RESERVED_ACTOR_CENSUS_V1: VaultMeta b"agent_def:default_reserved_actor_census:v1" Raw;
@@ -415,6 +418,12 @@ side_tables! {
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
     /// id16(run) + id16(summary).
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
+    /// One code consent wait (DOOR-079): the binding minted beside its held effect (run and
+    /// write site, request and frozen digests, original caller and instrument, the pending
+    /// connector call), its ask, the parked step's seal, the owner's first answer, the effect
+    /// gate's admission and the settlement. Only `code_run::consent_wait` writes it. Key:
+    /// id16(wait).
+    CODE_RUN_CONSENT_WAIT: VaultMeta b"code_run:consent_wait:v1:" Named Engine;
     /// A successor attempt's approved continuation of a failed run (FIX 3694): the Failed
     /// predecessor, its run, the step the child starts at, the owner's approval, the approved
     /// prompt and its digest, the start body's digest and its capsule's lease generation. Key:

@@ -14,6 +14,7 @@ use crate::memory::{
 use crate::outbound::{
     OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
 };
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::run_tree::GateConsentBundleAction;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord};
@@ -67,8 +68,45 @@ impl RepresentationReview {
 struct ApprovalRecord {
     witness: OwnerWitness,
     revision: [u8; 32],
-    #[serde(with = "crate::serialize::entity_ref")]
-    owner: EntityId,
+    owner: ApprovalOwner,
+}
+/// The owner an arm names: an actor, or no one once that actor was erased
+/// (FIX 3520), and then the arm stands on no receipt. It reads and writes as
+/// the actor's hex id, or as [`ERASED_CALL_IDENTITY`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovalOwner {
+    Actor(EntityId),
+    Erased,
+}
+impl ApprovalOwner {
+    /// Whether this is `actor`.
+    fn is(self, actor: EntityId) -> bool {
+        self == Self::Actor(actor)
+    }
+}
+impl Serialize for ApprovalOwner {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
+            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
+        }
+    }
+}
+impl<'de> Deserialize<'de> for ApprovalOwner {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        if value == ERASED_CALL_IDENTITY {
+            return Ok(Self::Erased);
+        }
+        EntityId::from_hex(&value)
+            .map(Self::Actor)
+            .map_err(serde::de::Error::custom)
+    }
 }
 /// The owner's receipt an arm stands on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,9 +205,9 @@ impl Vault {
             let approval = ApprovalRecord {
                 witness: OwnerWitness::Bundle(bundle_id),
                 revision: record.revision,
-                owner: crate::dreamer_runner::maintenance::validate_owner_in_txn(
-                    self, &*txn, owner,
-                )?,
+                owner: ApprovalOwner::Actor(
+                    crate::dreamer_runner::maintenance::validate_owner_in_txn(self, &*txn, owner)?,
+                ),
             };
             require_owner_witness_in(self, txn, review.id, &approval)?;
             // The exact reviewed body must still be live at the local arm.
@@ -240,7 +278,7 @@ impl Vault {
                 return Err(invalid());
             }
             if let Some(held) = APPROVAL.get(&self.store, &*txn, &review.id)?
-                && held.owner == actor
+                && held.owner.is(actor)
                 && held.revision == review.record.revision
                 && require_owner_witness_in(self, txn, review.id, &held).is_ok()
             {
@@ -259,7 +297,7 @@ impl Vault {
             let approval = ApprovalRecord {
                 witness: OwnerWitness::SendReview(receipt.decision_id),
                 revision: review.record.revision,
-                owner: actor,
+                owner: ApprovalOwner::Actor(actor),
             };
             APPROVAL.put(&self.store, txn, &review.id, &approval)
         })
@@ -287,7 +325,7 @@ impl Vault {
             }
             approval
         };
-        if approval.owner != record.packet.request.owner || approval.revision != record.revision {
+        if !approval.owner.is(record.packet.request.owner) || approval.revision != record.revision {
             return Err(invalid());
         }
         Ok(ApprovedRepresentation {
@@ -339,6 +377,10 @@ fn saved(vault: &Vault, id: EntityId) -> Result<bool> {
     applied::standing_in_txn(vault, &txn, id)
 }
 fn is_owner_witness(receipt: &GateDecisionRecord, approval: &ApprovalRecord) -> bool {
+    // An erased owner's arm stands on no receipt, so it never reads as armed.
+    let ApprovalOwner::Actor(owner) = approval.owner else {
+        return false;
+    };
     if receipt.outcome != "approved" || receipt.redacted_at.is_some() {
         return false;
     }
@@ -357,7 +399,7 @@ fn is_owner_witness(receipt: &GateDecisionRecord, approval: &ApprovalRecord) -> 
         OwnerWitness::SendReview(decision) => {
             receipt.decision_id == decision
                 && receipt.content_kind == SEND_REVIEW_KIND
-                && receipt.actor_ref.as_deref() == Some(approval.owner.to_hex().as_str())
+                && receipt.actor_ref.as_deref() == Some(owner.to_hex().as_str())
                 && receipt.diff_handle == approval.revision
         }
     }
@@ -394,6 +436,42 @@ pub(crate) fn representation_approval_is_live_in_txn(
         return Ok(false);
     };
     Ok(is_owner_witness(receipt, &approval))
+}
+/// Erasing `actor` from the representation arms (FIX 3520): an arm keeps its
+/// witness and revision and names no one, so it no longer arms a send, and
+/// a queued or retried send of it refuses. One-way, in the erase's own
+/// transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or an arm row that cannot be read.
+pub(crate) fn erase_approval_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if let Some(raw) = vault.get_raw_in(wtxn, actor)?
+        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+        && !matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_PERSON
+                | crate::registry::ENTITY_TYPE_MACHINE
+                | crate::registry::ENTITY_TYPE_AGENT_DEF
+        )
+    {
+        return Ok(());
+    }
+    let mut arms = Vec::new();
+    for (key, mut approval) in APPROVAL.scan(&vault.store, wtxn)? {
+        if approval.owner.is(*actor) {
+            approval.owner = ApprovalOwner::Erased;
+            arms.push((key, approval));
+        }
+    }
+    for (key, approval) in arms {
+        APPROVAL.put(&vault.store, wtxn, &key, &approval)?;
+    }
+    Ok(())
 }
 fn content_proposal_id(reference: &str) -> Result<EntityId> {
     let suffix = reference.strip_prefix(CONTENT_PREFIX).ok_or_else(invalid)?;

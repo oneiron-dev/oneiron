@@ -117,6 +117,8 @@ pub struct SyncServerConfig {
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
+    /// `[skills]`: resolved skill settings, including the conversion prompt.
+    pub skills: SkillsConfig,
     /// `[line]`: the plan of the LINE Official Account the built-in LINE
     /// pack serves, and the pushes it includes each month.
     pub line: LineConfig,
@@ -154,6 +156,7 @@ impl Default for SyncServerConfig {
             limits: LimitsConfig::default(),
             feedback_inbox: FeedbackInboxConfig::default(),
             runtime: RuntimeConfig::default(),
+            skills: SkillsConfig::default(),
             line: LineConfig::default(),
         }
     }
@@ -230,6 +233,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("limits", &self.limits)
             .field("feedback_inbox", &self.feedback_inbox)
             .field("runtime", &self.runtime)
+            .field("skills", &self.skills)
             .field("line", &self.line)
             .finish()
     }
@@ -548,6 +552,7 @@ impl ServeConfig {
             limits: self.limits.clone(),
             feedback_inbox: self.feedback.inbox,
             runtime: self.runtime.clone(),
+            skills: self.skills.clone(),
             line: self.line,
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
@@ -653,18 +658,13 @@ impl ServeConfig {
     /// The resolver clears only lower-precedence references when self-host/local
     /// wins. A reference still present here must survive conversion so
     /// `VaultPrivacyConfig::validate` refuses contradictory custody before any
-    /// store opens. Hosted without a reference retains an invalid empty one.
+    /// store opens. No reference is an owner-held key on any posture.
     fn vault_privacy_config(&self) -> VaultPrivacyConfig {
-        let data_key_custody = match (self.privacy_posture, &self.hosted_kms_key_ref) {
-            (_, Some(key_ref)) => VaultDataKeyCustody::HostManagedKms {
+        let data_key_custody = match &self.hosted_kms_key_ref {
+            Some(key_ref) => VaultDataKeyCustody::HostManagedKms {
                 key_ref: key_ref.clone(),
             },
-            (HostingPrivacyPosture::Hosted, None) => VaultDataKeyCustody::HostManagedKms {
-                key_ref: String::new(),
-            },
-            (HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay, None) => {
-                VaultDataKeyCustody::OwnerHeldLocal
-            }
+            None => VaultDataKeyCustody::OwnerHeldLocal,
         };
         VaultPrivacyConfig {
             posture: self.privacy_posture,
