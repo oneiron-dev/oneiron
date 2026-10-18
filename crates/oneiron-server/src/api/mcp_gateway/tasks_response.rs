@@ -1129,6 +1129,7 @@ fn mcp_agent_verb_input(
         "self.off_record.execute" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_preview" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_confirm" => a.spec.clone().ok_or_else(invalid),
+        "vault.records.erase_sweep" => a.spec.clone().ok_or_else(invalid),
         "vault.research.create_child" => a.spec.clone().ok_or_else(invalid),
         "vault.research.archive" => a.spec.clone().ok_or_else(invalid),
         "vault.research.archive.install" => a.spec.clone().ok_or_else(invalid),
@@ -2691,6 +2692,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.records.erase_confirm" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.records.erase_sweep" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.create_child" => {
@@ -9300,6 +9304,25 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_records_erase_confirm(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.records.erase_sweep" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.records.erase_sweep", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::erase_sweep::RecordEraseSweepRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_records_erase_sweep(server, auth, input)
                     .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(

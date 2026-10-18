@@ -6484,6 +6484,30 @@ async fn vault_records_erase_confirm(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_records_erase_sweep(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.records.erase_sweep")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.records.erase_sweep", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.records.erase_sweep", value).await?;
+    let (output, listed) = super::host_doors::vault_records_erase_sweep(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_research_create_child(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -19931,6 +19955,7 @@ pub(crate) async fn call_verb(
         "self.off_record.execute" => self_off_record_execute(server, call, input).await,
         "vault.records.erase_preview" => vault_records_erase_preview(server, call, input).await,
         "vault.records.erase_confirm" => vault_records_erase_confirm(server, call, input).await,
+        "vault.records.erase_sweep" => vault_records_erase_sweep(server, call, input).await,
         "vault.research.create_child" => vault_research_create_child(server, call, input).await,
         "vault.research.archive" => vault_research_archive(server, call, input).await,
         "vault.research.archive.install" => {

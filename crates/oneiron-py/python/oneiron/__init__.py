@@ -1990,6 +1990,9 @@ class Oneiron:
         def erase_confirm(self, spec):
             """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
             return json.loads(_translate(lambda: self._client.vault_records_erase_confirm(json.dumps(spec))))
+        def erase_sweep(self, spec):
+            """Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep."""
+            return json.loads(_translate(lambda: self._client.vault_records_erase_sweep(json.dumps(spec))))
     class _VaultResearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
