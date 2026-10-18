@@ -965,7 +965,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/emission.rs` | src | s | 3 crate-vis | — | Code-emission admission and the deterministic admission record the free lane cites |
 | `src/code_run/dispatcher/envelope.rs` | src | m | 10 crate-vis | — | Write-envelope construction, gate bodies and the write-gate checks every memory verb clears |
 | `src/code_run/dispatcher/fold_verbs.rs` | src | s | 2 crate-vis | — | The fold verbs (ARCH-0067 §2.2): `self.fold`, `self.compact`, `self.unfold`, `self.folds` and… |
-| `src/code_run/dispatcher/host_doors.rs` | src | s | 5 fn | — | Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door |
+| `src/code_run/dispatcher/host_doors.rs` | src | s | 6 fn | — | Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door |
 | `src/code_run/dispatcher/human_speech.rs` | src | s | 5 crate-vis | — | Ask-human durable waits and executor speech witnessing |
 | `src/code_run/dispatcher/leader.rs` | src | m | 2 struct · 9 fn · 6 crate-vis | HostPlannerBinding, HostPlannerDecisions | Host entry points for the CEO starter on a leased, task-bound leader |
 | `src/code_run/dispatcher/memory_verbs.rs` | src | m | 1 const · 6 crate-vis | — | The four durable memory writes, search, and the off-record policy that refuses them |
@@ -3937,8 +3937,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/dormant_magistrate.rs` | src | m | 8 fn · 1 crate-vis | — | Dormant subsystem — zero production callers as of 2026-08-19 |
 | `src/task_verb/entity_delta_facade.rs` | src | s | 1 fn · 6 crate-vis | — | — |
 | `src/task_verb/external_attempt.rs` | src | s | 3 crate-vis | — | The payload of one external try on a TASK (OF-220, OF-540) |
+| `src/task_verb/fanout_batch.rs` | src | m | 8 struct · 1 enum · 3 fn | FanoutBatchInput, FanoutBatchView, FanoutChildInput, FanoutChildSlot, FanoutLeaseView, FanoutSharedAccounting, FanoutSlotAttempt, FanoutSlotState +1 | Typed batched child admission and input-order observations over the wave launch gate |
 | `src/task_verb/fanout_check.rs` | src | s | 1 crate-vis | — | The exceptional-width check of fan-outs that go out with no hold: a `tasks.ask` census and a wave plan… |
-| `src/task_verb/fanout_launch.rs` | src | XL | 1 struct · 1 enum · 5 fn · 22 crate-vis | FanoutCheckChoice, FanoutLaunchReceipt | Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode… |
+| `src/task_verb/fanout_launch.rs` | src | XL | 1 struct · 1 enum · 5 fn · 24 crate-vis | FanoutCheckChoice, FanoutLaunchReceipt | Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode… |
 | `src/task_verb/follow_up.rs` | src | s | 2 fn · 7 crate-vis | — | — |
 | `src/task_verb/highway.rs` | src | m | 6 fn · 16 crate-vis | — | The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and… |
 | `src/task_verb/highway_accept.rs` | src | m | 8 crate-vis | — | The highway's Accept arm (OF-220): take a TASK addressed to you |
@@ -3974,7 +3975,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/run_verb_catalog.rs` | src | s | 1 enum · 4 fn · 1 const | RunVerb | — |
 | `src/task_verb/runner_done.rs` | src | s | 2 struct · 2 fn · 1 crate-vis | RunnerDoneAnswer, RunnerDoneQuestion | A runner's "Done means met?", answered before it settles (OF-533) |
 | `src/task_verb/scheduling.rs` | src | s | 4 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
-| `src/task_verb/sdk.rs` | src | L | 36 struct · 1 enum · 13 fn · 52 re-export | BoardRefreshRequest, BoardSubscriptionRequest, CompanionSharingRequest, CompanionSharingSetRequest, DescribeRequest, EmptyRequest, InboxListRequest, InboxMarkRequest +29 | Shared typed agent-verb inputs and generated transport dispatch |
+| `src/task_verb/sdk.rs` | src | L | 36 struct · 1 enum · 13 fn · 53 re-export | BoardRefreshRequest, BoardSubscriptionRequest, CompanionSharingRequest, CompanionSharingSetRequest, DescribeRequest, EmptyRequest, InboxListRequest, InboxMarkRequest +29 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/task_verb/sdk_agents.rs` | src | m | 7 struct · 3 enum · 3 fn · 1 crate-vis | AgentCeilingInput, AgentDefinitionCreateRequest, AgentDefinitionLifecycle, AgentDefinitionRequest, AgentDefinitionSpec, AgentDefinitionUpdateRequest, AgentDefinitionView, AgentMcpInput +2 | Typed custom AGENT_DEF authoring |
 | `src/task_verb/sdk_anonymous_chat.rs` | src | s | 2 struct · 3 enum | AnonymousChatBlockReasonView, AnonymousChatRequest, AnonymousChatRequestTarget, AnonymousChatResponse, AnonymousChatSkippedCheckView | The anonymous-chat wire contract (OF-500, PRIVACY-08), shared by the standalone HTTP handler, OpenAPI and… |
 | `src/task_verb/sdk_asr.rs` | src | s | 7 struct · 2 enum · 2 fn | AsrCloseRequest, AsrClosed, AsrFinalDecision, AsrFinalReceipt, AsrFireDecision, AsrHypothesisReceipt, AsrHypothesisRequest, AsrOpenRequest +1 | Host-enriched ASR observations over one owner-bound speculative recall session |
@@ -3995,7 +3996,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_explain.rs` | src | s | 6 struct | ExplainGateNotice, ExplainGateReply, ExplainGateRequest, ExplainMemoryReply, ExplainMemoryRequest, ExplainScoreEvidence | The wire shapes of `vault.explain.memory` and `vault.explain.gate` (OF-278): why a memory appeared in the… |
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
-| `src/task_verb/sdk_generated.rs` | src | XL | 668 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 670 fn · 4 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 27 struct · 6 enum · 25 fn · 4 const · 1 crate-vis | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +25 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`… |
 | `src/task_verb/sdk_hub.rs` | src | m | 20 struct · 2 enum · 17 fn | HubConsentOutcome, HubConsentReceipt, HubHookBindRequest, HubHookBindingRow, HubHookQualificationReceipt, HubHookQualifyRequest, HubHookReplay, HubImportRequest +14 | Typed owner doors over configured hubs, foreign publishers and pinned imports |
@@ -4054,7 +4055,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/verb_catalog.rs` | src | XL | 1 enum · 16 fn · 1 const | AgentVerb | — |
 | `src/task_verb/verb_hook_boundary.rs` | src | s | 7 fn | — | The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1) |
 | `src/task_verb/verb_kind.rs` | src | s | 1 struct · 2 enum · 7 fn · 2 crate-vis | TaskAssignee, TaskKind, TaskTtl | — |
-| `src/task_verb/wave_port.rs` | src | L | 2 struct · 1 enum · 9 fn · 2 crate-vis | VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage | Vault-backed, atomic wave plan application through the ordinary TASK doors |
+| `src/task_verb/wave_port.rs` | src | L | 2 struct · 1 enum · 9 fn · 3 crate-vis | VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage | Vault-backed, atomic wave plan application through the ordinary TASK doors |
 | `src/task_verb/wire_decode.rs` | src | L | 20 crate-vis | — | Read side of the hand-rolled rmpv wire format for typed TASK bodies |
 | `src/task_verb/wire_encode.rs` | src | m | 8 crate-vis | — | Write side of the hand-rolled rmpv wire format for typed TASK bodies |
 | `src/team/door_reads.rs` | src | m | 1 crate-vis | — | The joins behind the owner's spawn observation (DOOR-111, S6): what the stores hold for one spawned agent… |

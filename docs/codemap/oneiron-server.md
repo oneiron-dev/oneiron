@@ -205,7 +205,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/learning_doors.rs` | src | s | 2 crate-vis | — | Read-only measured-learning doors under the vault owner's existing proof |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/linear_doors.rs` | src | s | 1 crate-vis | — | The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6) |
-| `src/api/facade/live_run_doors.rs` | src | s | 4 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
+| `src/api/facade/live_run_doors.rs` | src | s | 5 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/live_voice_doors.rs` | src | s | 8 crate-vis | — | Typed public live media doors |
 | `src/api/facade/merge_queue_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed speculative merge queue doors (DOOR-132) |
 | `src/api/facade/model_step_doors.rs` | src | s | 2 crate-vis | — | Owner-proof model steps; HTTP, SDK and MCP reach the same typed door |
