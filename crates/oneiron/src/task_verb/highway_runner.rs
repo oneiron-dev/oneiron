@@ -13,12 +13,15 @@
 //! [`RunnerTaskEffects`]: run after commit where the caller has a point for
 //! it, and otherwise replayed from the binding index by the next wake pass.
 
+use std::sync::Arc;
+
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::work_line::TaskWorkTurn;
 use crate::write_envelope::WriteActor;
 
 use super::consts::TASK_REALIZE_ATTEMPT_KIND;
@@ -121,10 +124,16 @@ pub(crate) fn accept_runner_task_in_txn(
 }
 
 /// A runner's Host Report, inside its transaction and before it clears
-/// its lease. The queue row is the runner's to settle.
+/// its lease. The queue row is the runner's to settle. `turn` is the
+/// task-work turn the runner took before it opened that transaction
+/// ([`runner_report_turn`]): the report runs on it and waits for no other.
 ///
 /// `Ok(None)`, with nothing written, when the row realizes no TASK, or the
 /// TASK is missing, not standard, already terminal or cancelled.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the leased row, the report and its runner's turn are independent inputs"
+)]
 pub(crate) fn report_runner_task_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -134,11 +143,14 @@ pub(crate) fn report_runner_task_in_txn(
     report_key: &str,
     body: TaskReportBody,
     judged: Option<RunnerDoneAnswer>,
+    turn: &Arc<TaskWorkTurn>,
 ) -> MemoryResult<Option<TaskCallReceipt>> {
     let Some(task_ref) = runner_task_in(vault, txn, record)? else {
         return Ok(None);
     };
-    let memory = vault.memory(actor.entity_ref(), actor.actor_class());
+    let memory = vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .with_task_work_turn(Arc::clone(turn));
     memory.verify_actor_write_in_txn(txn)?;
     let via = TaskVia::Host(HostBinding::from_leased(record, run_ref)?);
     let attempt = AttemptHandle {
@@ -249,6 +261,54 @@ fn runner_actor_in(
     Ok(None)
 }
 
+/// [`runner_actor_in`]'s actor, read without writing: who a runner's report
+/// on `record` runs as, `None` when the row owes its TASK no report. A TASK
+/// realization's Dreamer is its fixed id; the writer still seeds and checks
+/// its binding.
+fn runner_caller_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<Option<EntityId>> {
+    if record.task_ref.is_none() || !record.state.is_running() {
+        return Ok(None);
+    }
+    if record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+        && let Ok(payload) = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
+        && payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+    {
+        let input = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input)?;
+        return crate::agent_dispatch::agent_dispatch_actor(&input)
+            .map(|actor| Some(actor.entity_ref()));
+    }
+    if let Some(stamp) = vault.dreamer_attempt_authority_in_txn(txn, record.id)? {
+        return Ok(Some(stamp.actor));
+    }
+    if record.kind == TASK_REALIZE_ATTEMPT_KIND {
+        return crate::dreamer_runner::authority::dreamer_actor_id().map(Some);
+    }
+    Ok(None)
+}
+
+/// The task-work turn a runner's report on its held row runs on (Rule 5):
+/// its reporting actor's turn in the vault's line, read and waited for
+/// before the runner opens the writer it settles the try in, never inside
+/// it. `None`, with no wait, when the row owes its TASK no report. An
+/// operation that holds a turn already passes that one instead.
+pub(crate) fn runner_report_turn(
+    vault: &Vault,
+    attempt: AttemptId,
+) -> Result<Option<Arc<TaskWorkTurn>>> {
+    let caller = {
+        let txn = vault.store.env.read_txn()?;
+        match AttemptQueue::new(vault).get_in_txn(&txn, attempt)? {
+            Some(record) => runner_caller_in(vault, &txn, &record)?,
+            None => None,
+        }
+    };
+    Ok(caller.map(|caller| Arc::new(vault.admit_task_work_blocking(caller))))
+}
+
 pub(super) fn runner_refusal(error: MemoryError) -> Error {
     Error::InvalidConfig(format!("runner task transition refused: {}", error.message))
 }
@@ -275,12 +335,16 @@ pub(crate) fn accept_leased_task_in_txn(
 /// [`report_runner_task_in_txn`] as the runner's own actor, in the
 /// transaction that settles the try and before it clears the lease. A row
 /// that realizes no TASK, or holds no live lease, is left alone; a Done
-/// without a durable result entity reports nothing.
+/// without a durable result entity reports nothing. `turn` is the
+/// [`runner_report_turn`] the runner took before this transaction; a row
+/// that came to owe a report after that read, with no turn taken, is
+/// refused rather than reported without one.
 pub(crate) fn report_leased_task_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     attempt: AttemptId,
     settle: RunnerSettle<'_>,
+    turn: Option<&Arc<TaskWorkTurn>>,
 ) -> Result<()> {
     let Some(record) = AttemptQueue::new(vault).get_in_txn(txn, attempt)? else {
         return Ok(());
@@ -328,6 +392,11 @@ pub(crate) fn report_leased_task_in_txn(
     let Some(actor) = runner_actor_in(vault, txn, &record)? else {
         return Ok(());
     };
+    let Some(turn) = turn else {
+        return Err(Error::InvalidConfig(
+            "runner task report refused: its runner took no task-work turn".to_owned(),
+        ));
+    };
     report_runner_task_in_txn(
         vault,
         txn,
@@ -337,6 +406,7 @@ pub(crate) fn report_leased_task_in_txn(
         &runner_task_key(&record, transition),
         body,
         judged,
+        turn,
     )
     .map_err(runner_refusal)?;
     Ok(())

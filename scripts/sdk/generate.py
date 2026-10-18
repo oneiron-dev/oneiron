@@ -98,8 +98,9 @@ for row in ROWS:
         raise ValueError(f'{row["name"]}: only a host door takes a lens owner')
     # Rule 5: `task_work` marks a row whose run is one piece of task work. The
     # server's dispatch and its MCP dispatch take one turn for it
-    # (`SyncServer::admit_task_work`, never refused) before the engine call and
-    # hold it until the call returns; the embedded SDK takes none. Only a plain
+    # (`SyncServer::admit_task_work`, never refused) before the engine call,
+    # bind it on the surface that call runs on, so the engine's task work
+    # waits for no other, and hold it until the call returns. Only a plain
     # memory row's doors all reach that one engine call.
     if row.get('task_work') and (row.get('host_door') or row.get('server_door') or row.get('admission', {}).get('owner_grade')
                                  or 'rows' in row.get('admission', {}).get('readable', []) or row.get('context', 'memory') != 'memory'):
@@ -624,6 +625,25 @@ def mcp_argument_projection(row):
 # on a credential surface built there with the ladder bound.
 TASK_DECISION_ROWS = ('tasks.create', 'tasks.update')
 
+# Rule 5 (FIX 2166): plain memory rows whose engine call is a task-work producer
+# the engine queues in the vault's task-work line, though the row is not
+# classified task work: a highway accept, a project tradeoff's routing, an
+# office fork's merge and a proposal's settlement. The server's dispatch and
+# its MCP dispatch await their turn as for a task-work row and bind it, so the
+# engine never waits for one on the server's runtime.
+TASK_PRODUCER_ROWS = ('tasks.accept', 'vault.projects.route_tradeoff',
+                      'vault.artifacts.body.fork.merge', 'vault.artifacts.body.proposal.settle')
+
+def takes_task_work_turn(row):
+    'Whether the served doors await a task-work turn for this row and bind it.'
+    if row['name'] not in TASK_PRODUCER_ROWS:
+        return bool(row.get('task_work'))
+    if (row.get('host_door') or row.get('server_door') or row.get('context', 'memory') != 'memory'
+            or row.get('admission', {}).get('born_record_scope') or 'rows' in row.get('admission', {}).get('readable', [])
+            or row['name'] in TASK_DECISION_ROWS):
+        raise ValueError(f'{row["name"]}: a task-work producer row is a plain memory row')
+    return True
+
 def mcp_input_dispatch(row):
     'One row of the input dispatcher every MCP door shares.'
     name, method = row['name'], row['name'].replace('.', '_')
@@ -803,20 +823,24 @@ async fn execute_agent_verb_listing(
         position.facet = Some(facet);
     }
     let invocation = actor.invocation.unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
-    let surface = McpRowSurface { position, invocation, run };
-    // The direct caller's own proof, on the rows whose HTTP door binds it
-    // outside a room turn (OF-417, OF-365).
-    let memory = mcp_direct_authorship(server, tool, actor, surface.memory(server, actor, producers))?;
-    // Rule 5: a task-work row takes its one turn here, for MCP and code mode
-    // alike, and holds it through its hooks and its row.
-    let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work) {
-        Some(server.admit_task_work(actor.actor_ref).await)
+    // Rule 5: a task-work row, or a row whose engine call produces task work,
+    // takes its one turn here, for MCP and code mode alike, binds it on the
+    // surface its row runs on and holds it through its hooks and its row.
+    let task_work_turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work)
+        || matches!(tool, ''' + ' | '.join(json.dumps(name) for name in TASK_PRODUCER_ROWS) + ''') {
+        Some(Arc::new(server.admit_task_work(actor.actor_ref).await))
     } else {
         None
     };
+    let surface = McpRowSurface { position, invocation, run, task_work_turn: task_work_turn.clone() };
+    // The direct caller's own proof, on the rows whose HTTP door binds it
+    // outside a room turn (OF-417, OF-365).
+    let memory = mcp_direct_authorship(server, tool, actor, surface.memory(server, actor, producers))?;
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
     let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
+    // The row's turn ends after its post hooks.
+    drop(task_work_turn);
     Ok((output, source, carrier, epoch))
     }
 
@@ -1167,6 +1191,9 @@ def facade_dispatch(facade_rows):
         # A task-decision row invokes on its worker's own server and call.
         on = '&server, &call' if name in TASK_DECISION_ROWS else 'server, call'
         result = f'facade_invoke({on}, actor, class, "{name}", value, &producers)?'
+        if takes_task_work_turn(r):
+            # Rule 5: the engine call runs on the turn the dispatch awaited.
+            result = f'facade_invoke_in_turn({on}, actor, class, "{name}", value, &producers, Some(turn))?'
         if r.get('admission', {}).get('born_record_scope'):
             result = f'facade_invoke_born({on}, actor, class, "{name}", value, position, &producers)?'
         result += ';'
@@ -1222,8 +1249,9 @@ def facade_dispatch(facade_rows):
         Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows }})
         }}\n'''
             continue
-        # Rule 5: a task-work row's turn, held until its engine call returns.
-        turn = '\nlet _turn = server.admit_task_work(actor).await;' if r.get('task_work') else ''
+        # Rule 5: a task-work row's turn, bound on the surface its engine call
+        # runs on and held until that call returns.
+        turn = '\nlet turn = Arc::new(server.admit_task_work(actor).await);' if takes_task_work_turn(r) else ''
         if name in TASK_DECISION_ROWS:
             # OF-533: after the call's own refusals, the whole invoke runs on a
             # blocking thread, its surface, rewrite admission, drain, room turn
@@ -1473,6 +1501,13 @@ def outputs():
     # event, so it is a root here; their reply's `$state` and receipt are
     # reached already.
     INVENTORY.root_ir('crate::lens::GeneratedUiActionEvent')
+    # FIX 365: the hand-written transcript route (`GET
+    # /v1/core/conversations/{conversation_id}/transcript`, no verb row)
+    # answers with the engine's page, whose MESSAGE carries a typed result;
+    # the result is a root of its own for `POST
+    # /v1/core/messages/{message}/result`, which reads the body it names.
+    INVENTORY.root_ir('crate::memory::TranscriptPage')
+    INVENTORY.root_ir('crate::memory::MessageResultAttachment')
     census = INVENTORY.census(FACADE_ROWS)
     facade_types = INVENTORY.typescript(census)
     files['packages/oneiron/src/facade-types.ts'] = facade_types

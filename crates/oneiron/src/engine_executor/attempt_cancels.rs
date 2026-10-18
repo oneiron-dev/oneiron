@@ -1,8 +1,9 @@
 //! The step loops leased attempts are running in this vault (FIX 600), each
 //! under its attempt's root token, so a hard queue control that already
 //! committed stops the step that is running: a force cancel, or a lease the
-//! attempt lost to a redirect or to its landing's expiry. In memory only:
-//! no table, and nothing outlives the vault handle.
+//! attempt lost to a redirect, to a lease timeout's reclaim or to its
+//! landing's expiry. In memory only: no table, and nothing outlives the
+//! vault handle.
 //!
 //! The signal follows the commit and never authorizes anything; the queue
 //! already terminalized or fenced the attempt. Soft controls (a cancel
