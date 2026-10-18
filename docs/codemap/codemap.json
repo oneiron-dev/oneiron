@@ -31483,7 +31483,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 9,
+      "fn": 11,
       "struct": 4
      }
     },
