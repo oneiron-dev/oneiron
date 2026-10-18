@@ -2042,6 +2042,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_rooms_invite(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.invite", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_consent(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.consent", input)
