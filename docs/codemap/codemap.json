@@ -24042,7 +24042,7 @@
      "path": "src/gate/mail_policy.rs",
      "purpose": "Vault-resident native-mail posture and CID-5 graduation policy rows",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -24334,7 +24334,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_narrowing.rs",
@@ -24419,7 +24419,7 @@
      "path": "src/gate/room_policy.rs",
      "purpose": "Typed room authority policy rows",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
