@@ -57,7 +57,7 @@ const MAX_ALTERNATIVES: usize = 16;
 
 /// A model asset as offered: identity, revision and, for a download, the
 /// content hash it must load at.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfferModelPin {
     pub model: String,
@@ -66,7 +66,7 @@ pub struct OfferModelPin {
 }
 
 /// Where a pilot or a training run would execute, and what leaves the device.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ComputeDestination {
     OnDevice,
@@ -75,7 +75,7 @@ pub enum ComputeDestination {
 }
 
 /// What the offer proposes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OfferCandidate {
     /// Switch the seat to a stock model that scores as well for less, or
@@ -94,7 +94,7 @@ pub enum OfferCandidate {
 }
 
 /// One option priced on the same projected workload. `None` is unknown.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfferCost {
     pub currency: String,
@@ -106,7 +106,7 @@ pub struct OfferCost {
 }
 
 /// The seat's dated workload the prices are projected from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SeatWorkload {
     pub from: u64,
@@ -122,7 +122,7 @@ pub struct SeatWorkload {
 
 /// A comparison row: the baseline, the cheapest local option or an outside
 /// one, in the same columns as the candidate.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfferOption {
     pub label: String,
@@ -133,7 +133,7 @@ pub struct OfferOption {
 }
 
 /// The measured evidence behind the offer, read from OF-578's ledgers.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfferEvidence {
     pub cohort: Option<EntityId>,
@@ -167,7 +167,7 @@ pub struct TrainingOfferDraft {
 }
 
 /// One immutable offer snapshot.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TrainingOffer {
     pub id: EntityId,
@@ -194,7 +194,7 @@ pub struct TrainingOffer {
     pub digest: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OfferAnswer {
     KeepBaseline,
@@ -206,7 +206,7 @@ pub enum OfferAnswer {
 
 /// What an approval asked for. A switch is bound with the answer; a train
 /// intent waits for its training handoff.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OfferIntent {
     /// Bind the stock model; the old binding stays for undo.
@@ -224,7 +224,7 @@ pub enum OfferIntent {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfferAnswerRecord {
     pub offer: EntityId,
@@ -247,7 +247,7 @@ pub struct OfferCheckInput {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfferCheck {
     pub id: EntityId,
@@ -507,6 +507,7 @@ pub fn record_training_offer(
                 return Err(invalid("a repeated offer is for the same seat"));
             }
         }
+        super::offer_pilot::validate_snapshot_in_txn(vault, txn, &offer)?;
         OFFER.put(&vault.store, txn, &offer.id, &offer)?;
         Ok(offer)
     })
