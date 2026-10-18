@@ -395,6 +395,46 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.affect.coping.record",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::coping_doors::CopingOutcomeRecordRequest,
+                >(),
+            ),
+            (
+                "vault.affect.coping.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::coping_doors::CopingOutcomeUpdateRequest,
+                >(),
+            ),
+            (
+                "vault.affect.coping.aggregate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::coping_doors::CopingAggregateRequest,
+                >(),
+            ),
+            (
+                "vault.affect.wellness.policy.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.affect.wellness.policy.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::wellness_doors::WellnessPolicyConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.affect.wellness.derive",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::wellness_doors::WellnessPersonRequest,
+                >(),
+            ),
+            (
+                "vault.affect.wellness.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::wellness_doors::WellnessPersonRequest,
+                >(),
+            ),
+            (
                 "vault.retrieval.recall",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RecallRequest>(
                 ),
@@ -4514,6 +4554,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.tagging.history",
     "vault.tagging.mentions",
     "vault.affect.claims.consolidate",
+    "vault.affect.coping.record",
+    "vault.affect.coping.update",
+    "vault.affect.coping.aggregate",
+    "vault.affect.wellness.policy.get",
+    "vault.affect.wellness.policy.configure",
+    "vault.affect.wellness.derive",
+    "vault.affect.wellness.get",
     "vault.retrieval.runs",
     "vault.retrieval.run",
     "vault.retrieval.turn",
@@ -5033,6 +5080,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.affect.claims.consolidate" => crate::code_run::vault_read::request_schema::<
             crate::memory::affect::AffectClaimConsolidation,
+        >(),
+        "vault.affect.coping.record" => crate::code_run::vault_read::request_schema::<
+            crate::memory::coping_doors::CopingOutcomeReceipt,
+        >(),
+        "vault.affect.coping.update" => crate::code_run::vault_read::request_schema::<
+            crate::memory::coping_doors::CopingOutcomeReceipt,
+        >(),
+        "vault.affect.coping.aggregate" => crate::code_run::vault_read::request_schema::<
+            crate::memory::coping_doors::CopingAggregate,
+        >(),
+        "vault.affect.wellness.policy.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>,
+        >(),
+        "vault.affect.wellness.policy.configure" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>,
+        >(),
+        "vault.affect.wellness.derive" => crate::code_run::vault_read::request_schema::<
+            crate::memory::wellness_doors::WellnessProjection,
+        >(),
+        "vault.affect.wellness.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::wellness_doors::WellnessProjection,
         >(),
         "vault.retrieval.runs" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::RetrievalRunEvidence>,
@@ -6874,6 +6942,55 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.affect.claims.consolidate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.coping.record" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.coping.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.coping.aggregate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.wellness.policy.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.wellness.policy.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.wellness.derive" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.wellness.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12155,6 +12272,33 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::affect::AffectClaimConsolidateRequest =
                 decode(value.clone())?;
         }
+        "vault.affect.coping.record" => {
+            let _input: crate::memory::coping_doors::CopingOutcomeRecordRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.coping.update" => {
+            let _input: crate::memory::coping_doors::CopingOutcomeUpdateRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.coping.aggregate" => {
+            let _input: crate::memory::coping_doors::CopingAggregateRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.wellness.policy.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.affect.wellness.policy.configure" => {
+            let _input: crate::memory::wellness_doors::WellnessPolicyConfigureRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.wellness.derive" => {
+            let _input: crate::memory::wellness_doors::WellnessPersonRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.wellness.get" => {
+            let _input: crate::memory::wellness_doors::WellnessPersonRequest =
+                decode(value.clone())?;
+        }
         "vault.retrieval.recall" => {
             let _input: crate::task_verb::sdk::RecallRequest = decode(value.clone())?;
         }
@@ -14857,6 +15001,22 @@ pub fn invoke(
         "vault.affect.claims.consolidate" => {
             encode(vault_affect_claims_consolidate(memory, decode(value)?)?)
         }
+        "vault.affect.coping.record" => encode(vault_affect_coping_record(memory, decode(value)?)?),
+        "vault.affect.coping.update" => encode(vault_affect_coping_update(memory, decode(value)?)?),
+        "vault.affect.coping.aggregate" => {
+            encode(vault_affect_coping_aggregate(memory, decode(value)?)?)
+        }
+        "vault.affect.wellness.policy.get" => {
+            encode(vault_affect_wellness_policy_get(memory, decode(value)?)?)
+        }
+        "vault.affect.wellness.policy.configure" => encode(vault_affect_wellness_policy_configure(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.affect.wellness.derive" => {
+            encode(vault_affect_wellness_derive(memory, decode(value)?)?)
+        }
+        "vault.affect.wellness.get" => encode(vault_affect_wellness_get(memory, decode(value)?)?),
         "vault.retrieval.recall" => encode(vault_retrieval_recall(memory, decode(value)?)?),
         "vault.retrieval.runs" => encode(vault_retrieval_runs(memory, decode(value)?)?),
         "vault.retrieval.run" => encode(vault_retrieval_run(memory, decode(value)?)?),
@@ -17020,6 +17180,63 @@ pub fn vault_affect_claims_consolidate(
         &memory.embedded_owner("vault.affect.claims.consolidate")?,
         &input,
     )
+}
+pub fn vault_affect_coping_record(
+    memory: &Memory<'_>,
+    input: crate::memory::coping_doors::CopingOutcomeRecordRequest,
+) -> MemoryResult<crate::memory::coping_doors::CopingOutcomeReceipt> {
+    memory.coping_outcome_record_as_owner(
+        &memory.embedded_owner("vault.affect.coping.record")?,
+        &input,
+    )
+}
+pub fn vault_affect_coping_update(
+    memory: &Memory<'_>,
+    input: crate::memory::coping_doors::CopingOutcomeUpdateRequest,
+) -> MemoryResult<crate::memory::coping_doors::CopingOutcomeReceipt> {
+    memory.coping_outcome_update_as_owner(
+        &memory.embedded_owner("vault.affect.coping.update")?,
+        &input,
+    )
+}
+pub fn vault_affect_coping_aggregate(
+    memory: &Memory<'_>,
+    input: crate::memory::coping_doors::CopingAggregateRequest,
+) -> MemoryResult<crate::memory::coping_doors::CopingAggregate> {
+    memory.coping_aggregate_as_owner(
+        &memory.embedded_owner("vault.affect.coping.aggregate")?,
+        &input,
+    )
+}
+pub fn vault_affect_wellness_policy_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>> {
+    memory.wellness_policy_as_owner(&memory.embedded_owner("vault.affect.wellness.policy.get")?)
+}
+pub fn vault_affect_wellness_policy_configure(
+    memory: &Memory<'_>,
+    input: crate::memory::wellness_doors::WellnessPolicyConfigureRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>> {
+    memory.wellness_policy_configure_as_owner(
+        &memory.embedded_owner("vault.affect.wellness.policy.configure")?,
+        &input,
+    )
+}
+pub fn vault_affect_wellness_derive(
+    memory: &Memory<'_>,
+    input: crate::memory::wellness_doors::WellnessPersonRequest,
+) -> MemoryResult<crate::memory::wellness_doors::WellnessProjection> {
+    memory.wellness_derive_as_owner(
+        &memory.embedded_owner("vault.affect.wellness.derive")?,
+        &input,
+    )
+}
+pub fn vault_affect_wellness_get(
+    memory: &Memory<'_>,
+    input: crate::memory::wellness_doors::WellnessPersonRequest,
+) -> MemoryResult<crate::memory::wellness_doors::WellnessProjection> {
+    memory.wellness_get_as_owner(&memory.embedded_owner("vault.affect.wellness.get")?, &input)
 }
 pub fn vault_retrieval_recall(
     memory: &Memory<'_>,

@@ -985,6 +985,12 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultAffectClaimsVerbs":
             return Oneiron._VaultAffectClaimsVerbs(self._client)
+        @property
+        def coping(self) -> "Oneiron._VaultAffectCopingVerbs":
+            return Oneiron._VaultAffectCopingVerbs(self._client)
+        @property
+        def wellness(self) -> "Oneiron._VaultAffectWellnessVerbs":
+            return Oneiron._VaultAffectWellnessVerbs(self._client)
     class _VaultAffectAnnotationsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -997,6 +1003,39 @@ class Oneiron:
         def consolidate(self, spec):
             """The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."""
             return json.loads(_translate(lambda: self._client.vault_affect_claims_consolidate(json.dumps(spec))))
+    class _VaultAffectCopingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def record(self, spec):
+            """Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded."""
+            return json.loads(_translate(lambda: self._client.vault_affect_coping_record(json.dumps(spec))))
+        def update(self, spec):
+            """Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs."""
+            return json.loads(_translate(lambda: self._client.vault_affect_coping_update(json.dumps(spec))))
+        def aggregate(self, spec):
+            """Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs."""
+            return json.loads(_translate(lambda: self._client.vault_affect_coping_aggregate(json.dumps(spec))))
+    class _VaultAffectWellnessVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def policy(self) -> "Oneiron._VaultAffectWellnessPolicyVerbs":
+            return Oneiron._VaultAffectWellnessPolicyVerbs(self._client)
+        def derive(self, spec):
+            """Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs."""
+            return json.loads(_translate(lambda: self._client.vault_affect_wellness_derive(json.dumps(spec))))
+        def get(self, spec):
+            """Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims."""
+            return json.loads(_translate(lambda: self._client.vault_affect_wellness_get(json.dumps(spec))))
+    class _VaultAffectWellnessPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent."""
+            return json.loads(_translate(lambda: self._client.vault_affect_wellness_policy_get(json.dumps({} if spec is None else spec))))
+        def configure(self, spec):
+            """Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine."""
+            return json.loads(_translate(lambda: self._client.vault_affect_wellness_policy_configure(json.dumps(spec))))
     class _VaultTaggingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

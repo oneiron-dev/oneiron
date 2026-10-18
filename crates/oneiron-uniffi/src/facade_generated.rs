@@ -362,6 +362,41 @@ export_facade! {
     let output = client.vault_affect_claims_consolidate(&input)?;
     crate::codec::lift_record("vault.affect.claims.consolidate", &output)
 };
+"vault.affect.coping.record" => fn vault_affect_coping_record(&self, input: CopingOutcomeRecordRequest) -> CopingOutcomeReceipt = |client| {
+    let input: oneiron::memory::coping_doors::CopingOutcomeRecordRequest = crate::codec::lower_record("vault.affect.coping.record", input)?;
+    let output = client.vault_affect_coping_record(&input)?;
+    crate::codec::lift_record("vault.affect.coping.record", &output)
+};
+"vault.affect.coping.update" => fn vault_affect_coping_update(&self, input: CopingOutcomeUpdateRequest) -> CopingOutcomeReceipt = |client| {
+    let input: oneiron::memory::coping_doors::CopingOutcomeUpdateRequest = crate::codec::lower_record("vault.affect.coping.update", input)?;
+    let output = client.vault_affect_coping_update(&input)?;
+    crate::codec::lift_record("vault.affect.coping.update", &output)
+};
+"vault.affect.coping.aggregate" => fn vault_affect_coping_aggregate(&self, input: CopingAggregateRequest) -> CopingAggregate = |client| {
+    let input: oneiron::memory::coping_doors::CopingAggregateRequest = crate::codec::lower_record("vault.affect.coping.aggregate", input)?;
+    let output = client.vault_affect_coping_aggregate(&input)?;
+    crate::codec::lift_record("vault.affect.coping.aggregate", &output)
+};
+"vault.affect.wellness.policy.get" => fn vault_affect_wellness_policy_get(&self) -> Option<ActionModePolicy> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.affect.wellness.policy.get")?;
+    let output = client.vault_affect_wellness_policy_get(&input)?;
+    crate::codec::lift_record("vault.affect.wellness.policy.get", &output)
+};
+"vault.affect.wellness.policy.configure" => fn vault_affect_wellness_policy_configure(&self, input: WellnessPolicyConfigureRequest) -> Option<ActionModePolicy> = |client| {
+    let input: oneiron::memory::wellness_doors::WellnessPolicyConfigureRequest = crate::codec::lower_record("vault.affect.wellness.policy.configure", input)?;
+    let output = client.vault_affect_wellness_policy_configure(&input)?;
+    crate::codec::lift_record("vault.affect.wellness.policy.configure", &output)
+};
+"vault.affect.wellness.derive" => fn vault_affect_wellness_derive(&self, input: WellnessPersonRequest) -> WellnessProjection = |client| {
+    let input: oneiron::memory::wellness_doors::WellnessPersonRequest = crate::codec::lower_record("vault.affect.wellness.derive", input)?;
+    let output = client.vault_affect_wellness_derive(&input)?;
+    crate::codec::lift_record("vault.affect.wellness.derive", &output)
+};
+"vault.affect.wellness.get" => fn vault_affect_wellness_get(&self, input: WellnessPersonRequest) -> WellnessProjection = |client| {
+    let input: oneiron::memory::wellness_doors::WellnessPersonRequest = crate::codec::lower_record("vault.affect.wellness.get", input)?;
+    let output = client.vault_affect_wellness_get(&input)?;
+    crate::codec::lift_record("vault.affect.wellness.get", &output)
+};
 "vault.retrieval.recall" => fn vault_retrieval_recall(&self, input: RecallRequest) -> MemoryPack = |client| {
     let input: oneiron::task_verb::sdk::RecallRequest = crate::codec::lower_record("vault.retrieval.recall", input)?;
     let output = client.vault_retrieval_recall(&input)?;
