@@ -498,7 +498,8 @@ fn run_bound(
     // run whose skill does not load is refused, never run unskilled. The
     // body is tagged where it went, so the run's first step is captured with
     // it marked for a contribution check (FIX 3028). A continued run loads
-    // it too, and its task already holds the body.
+    // it too, and its task already holds the body: it is tagged where its
+    // source's append put it.
     let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
     let mut exposures = Vec::new();
     if let Some(skill) = AgentDispatcher::new(vault)
@@ -509,7 +510,6 @@ fn run_bound(
             unix_now(),
         )
         .map_err(text)?
-        && !continues
         && let Some(body) = skill
             .source_files
             .iter()
@@ -518,13 +518,23 @@ fn run_bound(
             .and_then(|file| std::str::from_utf8(&file.content).ok())
     {
         let revision = format!("{}@{}", skill.record.skill_id, skill.record.version);
-        exposures.push(TaskExposure::append(
-            &mut config.task,
-            "\n\n",
-            body.trim(),
-            skill.entity,
-            revision,
-        ));
+        if continues {
+            exposures.extend(appended_exposure(
+                &config.task,
+                SKILL_SEPARATOR,
+                body.trim(),
+                skill.entity,
+                revision,
+            ));
+        } else {
+            exposures.push(TaskExposure::append(
+                &mut config.task,
+                SKILL_SEPARATOR,
+                body.trim(),
+                skill.entity,
+                revision,
+            ));
+        }
     }
     // Its model calls and its reader children spend under the attempt's
     // scope. An unmetered attempt's calls stay on the provider's meter, and
@@ -601,6 +611,31 @@ fn run_bound(
             _ => return Ok(outcome),
         }
     }
+}
+
+/// What a project conversation run's task puts before its skill's body.
+const SKILL_SEPARATOR: &str = "\n\n";
+
+/// The exposure a source run's [`TaskExposure::append`] left at the end of
+/// a continued run's forked task (FIX 3694): the separator and `body`.
+/// `None` when the task does not end with them, as when the skill changed
+/// since the source ran.
+fn appended_exposure(
+    task: &str,
+    separator: &str,
+    body: &str,
+    skill: EntityId,
+    revision: String,
+) -> Option<TaskExposure> {
+    let start = task.len().checked_sub(separator.len() + body.len())?;
+    let tail = task.get(start..)?;
+    (tail.strip_prefix(separator)? == body).then(|| TaskExposure {
+        skill,
+        revision,
+        content_hash: *blake3::hash(tail.as_bytes()).as_bytes(),
+        start,
+        end: task.len(),
+    })
 }
 
 /// The config a leased successor runs under when it carries the owner's
