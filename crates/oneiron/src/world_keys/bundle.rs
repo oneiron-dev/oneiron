@@ -25,6 +25,10 @@
 //!   world key is a root wrap from the base section's authority joined with its
 //!   pad, so the kit alone restores. The base section therefore carries no pad
 //!   row.
+//! - The pad object also indexes each section's tag under the key it is sealed
+//!   under, where its publisher knew it (FIX 3359), so a publisher that cannot
+//!   read a world still knows which section is that world's and stops carrying
+//!   it once the world is deleted here or no longer eligible.
 //! - Erase rewrites every kept pad object without the world's pads: that world's
 //!   section in every kept bundle stops opening, and every other world's still
 //!   does. Delete rewrites nothing; a deleted world restores from the bundles it is
@@ -334,14 +338,15 @@ impl SealedKeyPads {
 
     fn open_with(&self, vault_id: &[u8; 32], secret: &HybridSecretKey) -> Result<OpenedKeyPads> {
         let opened = open_outer(PADS, vault_id, &self.0.bytes, secret)?;
-        let entries = decode_pads_body(vault_id, opened.generation, &opened.body)?;
+        let body = decode_pads_body(vault_id, opened.generation, &opened.body)?;
         Ok(OpenedKeyPads {
             vault_id: *vault_id,
             generation: opened.generation,
             total: self.0.bytes.len(),
             slots: opened.slots,
             outer: opened.outer,
-            entries,
+            entries: body.pads,
+            index: body.index,
         })
     }
 }
@@ -511,6 +516,39 @@ impl OpenedVaultBundle {
             .transpose()
     }
 
+    /// Each world section, still sealed, with the key it is sealed under where
+    /// this machine knows it (FIX 3359): one of `keys`, which it holds, else
+    /// the key `pads`, this generation's pad object, indexes the section's tag
+    /// under. A publisher judges what it carries on by it, read here or not.
+    #[cfg(feature = "sync")]
+    #[must_use]
+    pub(crate) fn sections_known(
+        &self,
+        keys: &[WorldKey],
+        pads: &OpenedKeyPads,
+    ) -> Vec<(Option<WorldKeyId>, &SealedBundleSection)> {
+        let held: Vec<(WorldKeyId, [u8; 32])> = keys
+            .iter()
+            .map(|key| {
+                (
+                    *key.id(),
+                    section_digest(SECTION_TAG_CONTEXT, &self.vault_id, key),
+                )
+            })
+            .collect();
+        self.sections
+            .iter()
+            .map(|section| {
+                let known = held
+                    .iter()
+                    .chain(&pads.index)
+                    .find(|(_, tag)| *tag == section.tag)
+                    .map(|(key, _)| *key);
+                (known, section)
+            })
+            .collect()
+    }
+
     /// The world sections not sealed under any of `keys`, still sealed: what a
     /// publisher carries on when it replaces or drops the sections of those
     /// keys.
@@ -553,6 +591,8 @@ pub struct OpenedKeyPads {
     slots: Vec<Envelope>,
     outer: Zeroizing<[u8; 32]>,
     entries: Vec<(WorldKeyId, Zeroizing<[u8; 32]>)>,
+    /// Each section's tag, by the key it is sealed under (FIX 3359).
+    index: Vec<(WorldKeyId, [u8; 32])>,
 }
 
 impl std::fmt::Debug for OpenedKeyPads {
@@ -579,7 +619,13 @@ impl OpenedKeyPads {
     /// length, sealed afresh without `world`'s pads. It replaces the old object,
     /// which the holder deletes.
     pub fn without_world(&self, world: EntityId) -> Result<SealedKeyPads> {
-        let body = encode_pads_body(&self.vault_id, self.generation, &self.entries, Some(world))?;
+        let body = encode_pads_body(
+            &self.vault_id,
+            self.generation,
+            &self.entries,
+            &self.index,
+            Some(world),
+        )?;
         let bytes = seal_outer(
             PADS,
             &self.vault_id,
@@ -643,21 +689,24 @@ impl Vault {
         worlds: &[(EntityId, &[u8])],
         carried: &[SealedBundleSection],
     ) -> Result<SealedVaultUpload> {
-        self.seal_vault_bundle_carrying(slot, holder, base, worlds, carried, None)
+        let carried: Vec<_> = carried.iter().map(|section| (None, section)).collect();
+        self.seal_vault_bundle_carrying(slot, holder, base, worlds, &carried, None)
     }
 
     /// [`Self::seal_vault_bundle`] for a publisher that carries `carried` on
     /// from the generation whose pad object is `latest`: the new pad object
     /// also holds each pad of `latest` this machine has no row for, of a world
     /// the bundle still carries for `holder` whose keys were not destroyed here,
-    /// so a carried section's key still restores with the kit.
+    /// so a carried section's key still restores with the kit. Its index files
+    /// each fresh section's tag under its key, and each carried one's under
+    /// the key it names, where known ([`OpenedVaultBundle::sections_known`]).
     pub(crate) fn seal_vault_bundle_carrying(
         &self,
         slot: u64,
         holder: Destination,
         base: &[u8],
         worlds: &[(EntityId, &[u8])],
-        carried: &[SealedBundleSection],
+        carried: &[(Option<WorldKeyId>, &SealedBundleSection)],
         latest: Option<&OpenedKeyPads>,
     ) -> Result<SealedVaultUpload> {
         let secret = self.machine_secret_outside_txn()?;
@@ -671,21 +720,27 @@ impl Vault {
         let plan = self.seal_plan(&secret, holder, &keys, latest)?;
         let generation = SealedBundleGeneration::fresh(slot)?;
         let mut sections = Vec::with_capacity(keys.len() + carried.len());
+        let mut index = Vec::with_capacity(keys.len() + carried.len());
         for (key, payload) in &keys {
-            sections.push(SealedBundleSection::seal(&plan.vault_id, key, payload)?);
+            let section = SealedBundleSection::seal(&plan.vault_id, key, payload)?;
+            index.push((*key.id(), section.tag));
+            sections.push(section);
         }
-        for section in carried {
+        for (known, section) in carried {
             if !sections
                 .iter()
                 .any(|kept: &SealedBundleSection| kept.tag == section.tag)
             {
-                sections.push(section.clone());
+                if let Some(key) = known {
+                    index.push((*key, section.tag));
+                }
+                sections.push((*section).clone());
             }
         }
         let body = encode_bundle_body(&plan, generation, base, &sections)?;
         drop(sections);
         let bundle = seal_object(BUNDLE, &plan, generation, body)?;
-        let pads_body = encode_pads_body(&plan.vault_id, generation, &plan.pads, None)?;
+        let pads_body = encode_pads_body(&plan.vault_id, generation, &plan.pads, &index, None)?;
         let pads = seal_object(PADS, &plan, generation, pads_body)?;
         Ok(SealedVaultUpload {
             bundle: SealedVaultBundle(bundle),
@@ -810,13 +865,19 @@ impl Vault {
     pub(crate) fn sealed_bundle_worlds(&self, holder: Destination) -> Result<BTreeSet<EntityId>> {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        Ok(fold
-            .worlds
-            .keys()
-            .copied()
-            .chain(fold.all_world_keys().map(|key| key.id.world))
+        Ok(known_worlds(&fold)
             .filter(|world| bundle_carries(&fold, *world, holder))
             .collect())
+    }
+
+    /// Every world this machine's authority names, by its settings or a key:
+    /// the worlds a publisher knows whether a holder's bundle carries (FIX
+    /// 3359). A section of any other world rides on.
+    #[cfg(feature = "sync")]
+    pub(crate) fn sealed_bundle_known_worlds(&self) -> Result<BTreeSet<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(known_worlds(&fold).collect())
     }
 
     /// Kit restore: stores each pad of `pads` whose key this vault's authority
@@ -989,6 +1050,15 @@ impl Vault {
             .vault_id
             .ok_or_else(|| refused("the vault has no authority genesis yet"))
     }
+}
+
+/// Every world `fold` names, by its settings or a key.
+#[cfg(feature = "sync")]
+fn known_worlds(fold: &AuthorityFold) -> impl Iterator<Item = EntityId> + '_ {
+    fold.worlds
+        .keys()
+        .copied()
+        .chain(fold.all_world_keys().map(|key| key.id.world))
 }
 
 /// Whether a bundle `holder` keeps carries `world` (owner ruling Q1, FIX 922):
@@ -1593,21 +1663,33 @@ fn decode_section_body(
     Ok(OpenedBundleSection { key: *key, payload })
 }
 
-/// label ‖ vault (32) ‖ generation (24) ‖ count (4) ‖ each key id (40) ‖ pad (32),
-/// leaving out `without`'s keys.
+/// label ‖ vault (32) ‖ generation (24) ‖ count (4) ‖ each key id (40) ‖ pad (32)
+/// ‖ index count (4) ‖ each key id (40) ‖ the tag of the section sealed under it
+/// (32), leaving out `without`'s keys.
 fn encode_pads_body(
     vault_id: &[u8; 32],
     generation: SealedBundleGeneration,
     entries: &[(WorldKeyId, Zeroizing<[u8; 32]>)],
+    index: &[(WorldKeyId, [u8; 32])],
     without: Option<EntityId>,
 ) -> Result<Zeroizing<Vec<u8>>> {
     let kept: Vec<_> = entries
         .iter()
         .filter(|(key, _)| Some(key.world) != without)
         .collect();
+    let indexed: Vec<_> = index
+        .iter()
+        .filter(|(key, _)| Some(key.world) != without)
+        .collect();
     let count = u32::try_from(kept.len()).map_err(|_| refused("too many pads"))?;
+    let indexed_count =
+        u32::try_from(indexed.len()).map_err(|_| refused("too many indexed sections"))?;
     let mut body = Zeroizing::new(Vec::with_capacity(
-        PADS_LABEL.len() + 32 + GENERATION_LEN + 4 + kept.len() * (KEY_ID_LEN + 32),
+        PADS_LABEL.len()
+            + 32
+            + GENERATION_LEN
+            + 8
+            + (kept.len() + indexed.len()) * (KEY_ID_LEN + 32),
     ));
     body.extend_from_slice(PADS_LABEL);
     body.extend_from_slice(vault_id);
@@ -1617,14 +1699,25 @@ fn encode_pads_body(
         body.extend_from_slice(&key.envelope_key_id());
         body.extend_from_slice(&pad[..]);
     }
+    body.extend_from_slice(&indexed_count.to_be_bytes());
+    for (key, tag) in indexed {
+        body.extend_from_slice(&key.envelope_key_id());
+        body.extend_from_slice(tag);
+    }
     Ok(body)
+}
+
+/// A pad object's body, opened.
+struct PadsBody {
+    pads: Vec<(WorldKeyId, Zeroizing<[u8; 32]>)>,
+    index: Vec<(WorldKeyId, [u8; 32])>,
 }
 
 fn decode_pads_body(
     vault_id: &[u8; 32],
     generation: SealedBundleGeneration,
     body: &[u8],
-) -> Result<Vec<(WorldKeyId, Zeroizing<[u8; 32]>)>> {
+) -> Result<PadsBody> {
     let malformed = || refused("the pad object's body is malformed");
     let mut cursor = Cursor { bytes: body, at: 0 };
     if cursor.take(PADS_LABEL.len()) != Some(PADS_LABEL)
@@ -1634,22 +1727,22 @@ fn decode_pads_body(
         return Err(refused("the pad object names another vault or generation"));
     }
     let count = u32::from_be_bytes(cursor.array().ok_or_else(malformed)?);
-    let mut entries = Vec::new();
+    let mut pads = Vec::new();
     for _ in 0..count {
-        let world =
-            EntityId::from_bytes(cursor.array().ok_or_else(malformed)?).map_err(|_| malformed())?;
-        let key = WorldKeyId {
-            world,
-            generation: u64::from_be_bytes(cursor.array().ok_or_else(malformed)?),
-            mint: cursor.array().ok_or_else(malformed)?,
-        };
+        let key = cursor.key_id().ok_or_else(malformed)?;
         let pad = Zeroizing::new(cursor.array().ok_or_else(malformed)?);
-        entries.push((key, pad));
+        pads.push((key, pad));
+    }
+    let indexed = u32::from_be_bytes(cursor.array().ok_or_else(malformed)?);
+    let mut index = Vec::new();
+    for _ in 0..indexed {
+        let key = cursor.key_id().ok_or_else(malformed)?;
+        index.push((key, cursor.array().ok_or_else(malformed)?));
     }
     if !cursor.rest_is_zero() {
         return Err(malformed());
     }
-    Ok(entries)
+    Ok(PadsBody { pads, index })
 }
 
 fn put_counted(out: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
@@ -1681,6 +1774,15 @@ impl<'a> Cursor<'a> {
     fn counted(&mut self) -> Option<&'a [u8]> {
         let len = u32::from_be_bytes(self.array()?);
         self.take(len as usize)
+    }
+
+    /// A key id as [`WorldKeyId::envelope_key_id`] spells it.
+    fn key_id(&mut self) -> Option<WorldKeyId> {
+        Some(WorldKeyId {
+            world: EntityId::from_bytes(self.array()?).ok()?,
+            generation: u64::from_be_bytes(self.array()?),
+            mint: self.array()?,
+        })
     }
 
     fn rest_is_zero(&self) -> bool {
