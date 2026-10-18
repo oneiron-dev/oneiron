@@ -24,7 +24,7 @@ mod serve_bindings;
 mod speech;
 mod wire;
 
-pub(crate) use boot::{ManagedVoiceVerifier, VoiceBoot};
+pub(crate) use boot::VoiceBoot;
 pub use brain::{ChatBrain, ChatBrainBindings};
 pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
