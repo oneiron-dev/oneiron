@@ -1,0 +1,697 @@
+{
+  "version": 1,
+  "area": "surfaces",
+  "binding": {
+    "head": "0072f2bffa22ca3cacb6b719d26f8b13ba02e246",
+    "files": {
+      "scripts/sdk/agent-verbs.json": "d4fa36be976e4195323bf342a0e21a49f8965a2533536d7f6c0c2b9f2570911a",
+      "packages/oneiron-client/src/facade.ts": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76",
+      "packages/oneiron-client/src/facade-types.ts": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a",
+      "packages/oneiron-client/src/index.ts": "a7d217a0c748bbfdb1cf0a3fcca20de8a03e71844e739fc148465420205eb149",
+      "crates/oneiron-server/src/cli.rs": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33",
+      "crates/oneiron-server/src/api/openapi_registry.rs": "38a4872df012265d0df3d2d749585957ecd57826b1478e29ff06962eccb1e145",
+      "crates/oneiron-server/src/api/core/hydrate.rs": "92bc04416612e8ab4831bad3345ec06ae6726f8749a71c16d9c6378ec74f9acf",
+      "crates/oneiron-server/src/api/conversation_dag/types.rs": "9771ad6d1f8b966019cf9c63062d1670f43c985ba9e1103aa79ad678983f9b91",
+      "crates/oneiron-server/src/lens_frames.rs": "73e3c7de03f494cba70897417dd280f12ededfae412432f0df376f81932a2917",
+      "crates/oneiron-server/src/api/openai_proxy/mod.rs": "44fafe81248de60426f3107953f34e2f1f887a03a98dc8fa1b3a301c845061b2",
+      "crates/oneiron-server/src/api/openai_proxy/wire.rs": "5ec3ea84c93e7028875575a50b652d42db6db955e85eefcfb40cb5bd71940094"
+    }
+  },
+  "canon": {
+    "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle": {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1.md#r4-lifecycle",
+      "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
+    },
+    "/oneiron/agents/oneiron-arch-0067-context-board-v1/#room": {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md#room",
+      "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
+    },
+    "/oneiron/agents/oneiron-arch-0067-context-board-v1/#what": {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md#what",
+      "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
+    },
+    "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work": {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0079-agent-coordination-v1.md#work",
+      "sha256": "d9261a0833eab70dfde34cd7195a6fd268ea34054c1f5c8f966e92dfea65cade"
+    },
+    "/oneiron/core/oneiron-arch-0003-semantic-memory/#learning": {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0003-semantic-memory.md#learning",
+      "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
+    },
+    "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings": {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md#mcp-actor-ceilings",
+      "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+    },
+    "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#access": {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/retrieval/oneiron-arch-0004-retrieval-graph.md#access",
+      "sha256": "b214b7c1dd31851c0feae51a9c79a3e913ff7aab3f7ddd5021f46b36be7ae740"
+    },
+    "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#part-a": {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0044-public-surface-ws.md#part-a",
+      "sha256": "e29ef93a3f343377411b6226964f0e9d3da0ca7b85df4a8845f859bf1af0b48b"
+    },
+    "/oneiron/surfaces/oneiron-arch-0048-genui-protocol/#g3": {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0048-genui-protocol.md#g3",
+      "sha256": "ef38b61eae6c9c329f84679069f5f9dbcb0ee807eea15f57e586784b491cbd66"
+    },
+    "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract": {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1.md#contract",
+      "sha256": "b3bb0a5ee003e3baf6cd3b43bccc30bd26571b6af3c5ab40a403378db29d4538"
+    }
+  },
+  "registry": {
+    "rows": [
+      "OF-042",
+      "OF-069",
+      "OF-225",
+      "OF-230",
+      "OF-231",
+      "OF-235",
+      "OF-242",
+      "OF-244",
+      "OF-248",
+      "OF-249",
+      "OF-293",
+      "OF-325",
+      "OF-334",
+      "OF-336",
+      "OF-365",
+      "OF-414",
+      "OF-417",
+      "OF-439",
+      "OF-445",
+      "OF-499"
+    ],
+    "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7"
+  },
+  "assumptions": [
+    "Fixture labels bind only through named public setup results.",
+    "No browser, UI navigation, private seeds or internal clocks.",
+    "Fixtures are synthetic, owner-authored for this suite, Apache-2.0.",
+    "Existing shared harness profile, deadlines and one-slot declaration are unchanged.",
+    "No runtime score or engine-generated text is an expected-value oracle."
+  ],
+  "ledger": {
+    "title": "Observatory inspection",
+    "conversationName": "Maple observation log",
+    "predicate": "identity.name",
+    "firstName": "Maple old log",
+    "currentName": "Maple observatory log",
+    "dossierTitle": "Observation source",
+    "oldAt": 1790812800,
+    "currentAt": 1790899200,
+    "messages": [
+      "The Maple observation log starts with the north dome.",
+      "The Maple observation log now records the south dome."
+    ],
+    "pageLimit": 8,
+    "neighborLimit": 1,
+    "expected": {
+      "approval": "auto",
+      "oldLifecycle": "superseded",
+      "currentLifecycle": "active",
+      "claimSource": "user_stated",
+      "claimKind": "CLAIM",
+      "messageKind": "MESSAGE",
+      "conversationKind": "CONVERSATION",
+      "claimEdge": "claim_of",
+      "turnCount": 2,
+      "messageCount": 2,
+      "messageConversationEdge": "belongs_to",
+      "messageTurnEdge": "part_of"
+    }
+  },
+  "cases": [
+    {
+      "id": "SURFACES-01",
+      "name": "Generated card lowers to client capabilities should work",
+      "surface": "HTTP + MCP",
+      "setup": "Rich and text-only declared capability profiles.",
+      "steps": [
+        "emit card",
+        "inspect each lowered envelope",
+        "submit unknown component",
+        "complete state transition"
+      ],
+      "expect": "One envelope down-compiles to supported capabilities or fallbackText; engine owns no app component set.",
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#part-a",
+        "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract",
+        "/oneiron/surfaces/oneiron-arch-0048-genui-protocol/#g3",
+        "/registry/oneiron/#OF-336",
+        "/registry/oneiron/#OF-231"
+      ],
+      "rows": [
+        "OF-336",
+        "OF-231"
+      ],
+      "status": "blocked",
+      "waitsOn": "typed generated-card emit/capability-lowering HTTP and SDK calls",
+      "fixture": {
+        "profiles": {
+          "rich": {
+            "catalogVersion": "1.0.0",
+            "supportedTypes": [
+              "fixture.container",
+              "fixture.choice"
+            ],
+            "features": {
+              "streaming": true,
+              "interactivity": true,
+              "media": false,
+              "webArtifacts": false
+            }
+          },
+          "text": {
+            "catalogVersion": "1.0.0",
+            "supportedTypes": [],
+            "features": {
+              "streaming": false,
+              "interactivity": false,
+              "media": false,
+              "webArtifacts": false
+            }
+          }
+        },
+        "card": {
+          "protocolVersion": 1,
+          "catalogVersion": "1.0.0",
+          "root": "root",
+          "fallbackText": "Choose a dome.",
+          "nodes": [
+            {
+              "id": "root",
+              "type": "fixture.container",
+              "children": [
+                "pick"
+              ],
+              "fallbackText": "Choose a dome."
+            },
+            {
+              "id": "pick",
+              "type": "fixture.choice",
+              "fallbackText": "North dome or south dome."
+            }
+          ]
+        },
+        "unknownType": "fixture.unsupported",
+        "stateTransition": [
+          "pending",
+          "submitted",
+          "archived"
+        ],
+        "expectedText": [
+          "Choose a dome.",
+          "North dome or south dome."
+        ]
+      }
+    },
+    {
+      "id": "SURFACES-02",
+      "name": "Selection handle cannot grant access should work",
+      "surface": "HTTP",
+      "setup": "Viewer with narrow key, wider author and forged backing reference.",
+      "steps": [
+        "resolve selected span",
+        "act through card",
+        "swap principal/key and ref",
+        "inspect refusal"
+      ],
+      "expect": "Selection and action refs are host-authored and resolve under viewer’s live key; rendering cannot widen authority.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#access",
+        "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#part-a",
+        "/registry/oneiron/#OF-242",
+        "/registry/oneiron/#OF-244",
+        "/registry/oneiron/#OF-248",
+        "/registry/oneiron/#OF-439"
+      ],
+      "rows": [
+        "OF-242",
+        "OF-244",
+        "OF-248",
+        "OF-439"
+      ],
+      "status": "blocked",
+      "waitsOn": "typed frame-bound span-selection and result-set action HTTP and SDK calls",
+      "fixture": {
+        "viewer": "narrow-viewer",
+        "emitter": "wide-author",
+        "visible": "public-observation",
+        "hidden": "private-observation",
+        "span": {
+          "text": "North 🧭 dome",
+          "start": 6,
+          "end": 7,
+          "unit": "Unicode scalar values"
+        },
+        "attacks": [
+          "swap-principal",
+          "swap-key",
+          "foreign-frame-backing-ref",
+          "hidden-record-ref",
+          "result-set-id-not-selected"
+        ],
+        "expected": {
+          "writeAuthorityFromSelection": false,
+          "hiddenTextVisible": false,
+          "hostAuthoredRefsOnly": true
+        }
+      }
+    },
+    {
+      "id": "SURFACES-03",
+      "name": "Brief citation redaction at view time should work",
+      "surface": "HTTP",
+      "setup": "Claim-citing brief shared to recipient then source narrowed/deleted.",
+      "steps": [
+        "view",
+        "follow citation handle",
+        "change permission",
+        "view again",
+        "revoke share"
+      ],
+      "expect": "Brief recomputes stale/confidence/redaction view from live scope, and revocation disables link rather than merely hiding it.",
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract",
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#access",
+        "/registry/oneiron/#OF-225",
+        "/registry/oneiron/#OF-069",
+        "/registry/oneiron/#OF-235"
+      ],
+      "rows": [
+        "OF-225",
+        "OF-069",
+        "OF-235"
+      ],
+      "status": "blocked",
+      "waitsOn": "typed claim-citing brief authoring and live citation-follow HTTP and SDK calls",
+      "fixture": {
+        "briefMarkdown": "The observation uses the north dome.",
+        "loadBearingSentence": "The observation uses the north dome.",
+        "sourceClaimValue": "north dome",
+        "recipient": "brief-recipient",
+        "stages": [
+          "visible",
+          "permission-narrowed",
+          "source-deleted",
+          "share-revoked"
+        ],
+        "expected": {
+          "visible": {
+            "redacted": false,
+            "stale": false
+          },
+          "permissionNarrowed": {
+            "redacted": true,
+            "sourceTextPresent": false
+          },
+          "sourceDeleted": {
+            "sourceTextPresent": false
+          },
+          "shareRevoked": {
+            "resolvesContent": false
+          }
+        }
+      }
+    },
+    {
+      "id": "SURFACES-04",
+      "name": "Ledger dossier and thread inspection should work",
+      "surface": "HTTP",
+      "setup": "Entity with claim timeline, DAG and bounded connections.",
+      "steps": [
+        "query ledger",
+        "hydrate dossier",
+        "inspect past state and conversation trail through returned refs"
+      ],
+      "expect": "All inspection layers point to same scoped source and history; UI navigation itself is not asserted by engine tests.",
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#part-a",
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#access",
+        "/registry/oneiron/#OF-249",
+        "/registry/oneiron/#OF-235"
+      ],
+      "rows": [
+        "OF-249",
+        "OF-235"
+      ],
+      "status": "runnable",
+      "waitsOn": null,
+      "fixture": {
+        "title": "Observatory inspection",
+        "conversationName": "Maple observation log",
+        "predicate": "identity.name",
+        "firstName": "Maple old log",
+        "currentName": "Maple observatory log",
+        "dossierTitle": "Observation source",
+        "oldAt": 1790812800,
+        "currentAt": 1790899200,
+        "messages": [
+          "The Maple observation log starts with the north dome.",
+          "The Maple observation log now records the south dome."
+        ],
+        "pageLimit": 8,
+        "neighborLimit": 1,
+        "expected": {
+          "approval": "auto",
+          "oldLifecycle": "superseded",
+          "currentLifecycle": "active",
+          "claimSource": "user_stated",
+          "claimKind": "CLAIM",
+          "messageKind": "MESSAGE",
+          "conversationKind": "CONVERSATION",
+          "claimEdge": "claim_of",
+          "turnCount": 2,
+          "messageCount": 2,
+          "messageConversationEdge": "belongs_to",
+          "messageTurnEdge": "part_of"
+        }
+      }
+    },
+    {
+      "id": "SURFACES-05",
+      "name": "Audience intersection and speaker identity should work",
+      "surface": "HTTP",
+      "setup": "Room with owner, two guests with overlapping clearances and unauthenticated speaker.",
+      "steps": [
+        "assemble context with each presence set",
+        "remove owner",
+        "change speaker proof",
+        "inspect disclosure receipt"
+      ],
+      "expect": "Disclosure is public union common permitted scope of non-owner audience; presence/spoken assertion alone cannot raise clearance.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#access",
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#room",
+        "/registry/oneiron/#OF-365",
+        "/registry/oneiron/#OF-293"
+      ],
+      "rows": [
+        "OF-365",
+        "OF-293"
+      ],
+      "status": "blocked",
+      "waitsOn": "typed PERSON/contact onboarding and authenticated room-speaker evidence fixture doors",
+      "fixture": {
+        "owner": "room-owner",
+        "guests": [
+          "guest-a",
+          "guest-b"
+        ],
+        "records": {
+          "public": "Public opening time is noon.",
+          "common": "The common visit uses the north dome.",
+          "aOnly": "Guest A uses the east gate.",
+          "bOnly": "Guest B uses the west gate.",
+          "private": "Owner-only journal about the observatory."
+        },
+        "clearances": {
+          "guest-a": [
+            "common",
+            "aOnly"
+          ],
+          "guest-b": [
+            "common",
+            "bOnly"
+          ]
+        },
+        "cases": [
+          {
+            "present": [
+              "room-owner",
+              "guest-a"
+            ],
+            "visible": [
+              "public",
+              "common",
+              "aOnly"
+            ]
+          },
+          {
+            "present": [
+              "room-owner",
+              "guest-a",
+              "guest-b"
+            ],
+            "visible": [
+              "public",
+              "common"
+            ]
+          },
+          {
+            "present": [
+              "guest-a",
+              "guest-b"
+            ],
+            "visible": [
+              "public",
+              "common"
+            ]
+          },
+          {
+            "present": [
+              "unverified-speaker"
+            ],
+            "claimedIdentity": "room-owner",
+            "visible": [
+              "public"
+            ]
+          }
+        ],
+        "expected": {
+          "publicUnionNonOwnerIntersection": true,
+          "spokenAssertionCanWiden": false,
+          "presenceCanWiden": false,
+          "receiptRequired": true
+        }
+      }
+    },
+    {
+      "id": "SURFACES-06",
+      "name": "Persona snapshot under explicit access should work",
+      "surface": "HTTP",
+      "setup": "Two persona profiles, scoped access request and owner edits.",
+      "steps": [
+        "request profile access",
+        "approve then revoke",
+        "export persona snapshot",
+        "edit accepted copy"
+      ],
+      "expect": "Request is auditable/revocable, snapshot cites source and owner final edits, private unrelated diary never joins it.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#access",
+        "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract",
+        "/registry/oneiron/#OF-325",
+        "/registry/oneiron/#OF-042"
+      ],
+      "rows": [
+        "OF-325",
+        "OF-042"
+      ],
+      "status": "blocked",
+      "waitsOn": "typed companion profile-access request-answer and accepted persona-copy edit calls",
+      "fixture": {
+        "profiles": [
+          "profile-a",
+          "profile-b"
+        ],
+        "requester": "persona-reader",
+        "requestedFacet": "observatory-work",
+        "identityLine": "A careful observer.",
+        "includedFact": "Maintains the north dome log.",
+        "struckFact": "Prefers late-night visits.",
+        "unrelatedDiary": "An unrelated private diary about travel.",
+        "ownerEdit": "Maintains the revised north dome log.",
+        "expected": {
+          "unrelatedDiaryIncluded": false,
+          "requestAuditable": true,
+          "grantRevocable": true,
+          "mode": "A",
+          "handedCopyRemotelyRevocable": false,
+          "struckRowsReissued": false
+        }
+      }
+    },
+    {
+      "id": "SURFACES-07",
+      "name": "Custom agents and saved workflow should work",
+      "surface": "HTTP + MCP",
+      "setup": "Two generic agent definitions and workflow with read/propose tasks.",
+      "steps": [
+        "create definitions",
+        "dispatch workflow",
+        "inspect inherited ceilings",
+        "edit one definition",
+        "repeat"
+      ],
+      "expect": "Definition binds capabilities and read ceiling at dispatch, reusable composition keeps task/attempt provenance and cannot self-widen.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle",
+        "/registry/oneiron/#OF-334",
+        "/registry/oneiron/#OF-417"
+      ],
+      "rows": [
+        "OF-334",
+        "OF-417"
+      ],
+      "status": "blocked",
+      "waitsOn": "typed AGENT_DEF create/edit and saved-workflow save/dispatch HTTP and SDK calls",
+      "fixture": {
+        "definitions": [
+          {
+            "name": "Observation Reader",
+            "skills": [
+              "read-observations"
+            ],
+            "connectors": [],
+            "mcps": [],
+            "scope": [
+              "common"
+            ],
+            "ceiling": "read"
+          },
+          {
+            "name": "Observation Proposer",
+            "skills": [
+              "propose-summary"
+            ],
+            "connectors": [],
+            "mcps": [],
+            "scope": [
+              "common"
+            ],
+            "ceiling": "propose"
+          }
+        ],
+        "workflow": {
+          "name": "Observation review",
+          "steps": [
+            "Observation Reader",
+            "Observation Proposer"
+          ]
+        },
+        "edit": {
+          "name": "Observation Reader",
+          "revision": 2,
+          "scope": []
+        },
+        "expected": {
+          "attemptsRetainDispatchedRevision": true,
+          "repeatUsesEditedRevision": true,
+          "selfWideningAllowed": false,
+          "taskAttemptProvenanceRequired": true
+        }
+      }
+    },
+    {
+      "id": "SURFACES-08",
+      "name": "Inbox and weave report respect reader scope should work",
+      "surface": "HTTP",
+      "setup": "Two actors, private project, concern/consent items and completed weave.",
+      "steps": [
+        "query inbox for each",
+        "render live report",
+        "render scheduled digest",
+        "correct one link",
+        "inspect learning label"
+      ],
+      "expect": "Inbox groups by run/identity, report and digest use same scoped projection, correction feeds evidence without exposing others’ private content.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#what",
+        "/oneiron/core/oneiron-arch-0003-semantic-memory/#learning",
+        "/registry/oneiron/#OF-414",
+        "/registry/oneiron/#OF-499"
+      ],
+      "rows": [
+        "OF-414",
+        "OF-499"
+      ],
+      "status": "blocked",
+      "waitsOn": "typed completed-weave/digest trigger and grouped identity-inbox fixture doors",
+      "fixture": {
+        "actors": [
+          "reader-a",
+          "reader-b"
+        ],
+        "privateProject": "reader-a-private-project",
+        "privateText": "Reader A private dome repair cost.",
+        "commonText": "The shared observatory schedule changed.",
+        "items": [
+          "concern",
+          "consent"
+        ],
+        "wrongLink": {
+          "source": "shared-schedule",
+          "kind": "related_to",
+          "target": "shared-weather"
+        },
+        "expected": {
+          "liveDigestProjectionSame": true,
+          "foreignPrivateTextVisible": false,
+          "wrongLabelDeletesEdge": false,
+          "correctionActor": "reader-a",
+          "learningSource": "anchored owner/person correction, not agent agreement"
+        }
+      }
+    },
+    {
+      "id": "SURFACES-09",
+      "name": "Memory injection proxy follows connector ceiling should work",
+      "surface": "HTTP OpenAI-compatible proxy",
+      "setup": "Fake model downstream and connector denied one private memory.",
+      "steps": [
+        "send normal chat",
+        "inspect downstream admitted context",
+        "return response",
+        "inspect stored memory",
+        "revoke write grant"
+      ],
+      "expect": "Proxy adds only scoped memory and persists only within connector write ceiling; protocol adaptation is not an authority bypass.",
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#part-a",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/registry/oneiron/#OF-445",
+        "/registry/oneiron/#OF-230"
+      ],
+      "rows": [
+        "OF-445",
+        "OF-230"
+      ],
+      "status": "blocked",
+      "waitsOn": "typed OpenAPI/SDK memory-injection proxy and connector write-grant revocation contracts",
+      "fixture": {
+        "connector": "openai_proxy",
+        "model": "fixture/surfaces-proxy@1",
+        "query": "What is the observatory opening time?",
+        "admittedMemory": "The observatory opens at noon.",
+        "privateMemory": "The observatory private access phrase is plum-moon.",
+        "assistantReply": "The observatory opens at noon.",
+        "usage": {
+          "prompt_tokens": 36,
+          "completion_tokens": 9,
+          "total_tokens": 45
+        },
+        "request": {
+          "stream": false,
+          "n": 1,
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the observatory opening time?"
+            }
+          ]
+        },
+        "expected": {
+          "exchangePredicate": "integration.exchange",
+          "approval": "proposed",
+          "source": "tool_output",
+          "privateTextDownstream": false,
+          "writeAfterRevocation": false,
+          "downstreamCallsAfterWriteRevocation": 0
+        }
+      }
+    }
+  ]
+}
