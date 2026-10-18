@@ -2287,6 +2287,7 @@
      "path": "src/authority/federation_activation.rs",
      "purpose": "Grant activation under the folded pact states",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -2448,7 +2449,7 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -2712,7 +2713,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 39
      }
     },
@@ -4108,7 +4109,7 @@
      "path": "src/batch/builder/commit.rs",
      "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -4282,9 +4283,41 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/archive_read.rs",
-     "purpose": "Reads the whole-vault archive (OF-222) back into its typed document",
+     "purpose": "Reads the whole-vault archive (OF-222) member by member from a seekable source (FIX 2766, rule 5): only the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "ArchiveLfsObject",
+      "ArchiveSideFamily",
+      "ArchiveSideKeyPart",
+      "ArchiveSideRow",
+      "ArchiveSideTree",
+      "ArchiveSideValue",
+      "ArchiveSideWithheld",
+      "ArchiveSideWithheldReason"
+     ],
+     "path": "src/batch/export/archive_side_tables.rs",
+     "purpose": "OF-222 (FIX 2768): the side tables a whole-vault archive carries beside the records they index",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/archive_spool.rs",
+     "purpose": "FIX 2766 (rule 5): the whole-vault archive is built through spool files and read member by member, so no…",
+     "surface": {
+      "crate-vis": 19,
+      "fn": 1
      }
     },
     {
@@ -4346,7 +4379,7 @@
      "path": "src/batch/export/bundle_validation.rs",
      "purpose": "Validate source identities, facet/body agreement and explicit archive-only omissions",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 8
      }
     },
     {
@@ -4368,7 +4401,7 @@
      "purpose": "Validating archive import through ordinary admission doors, never sync replay",
      "surface": {
       "crate-vis": 3,
-      "fn": 3
+      "fn": 6
      }
     },
     {
@@ -4378,8 +4411,8 @@
      "path": "src/batch/export/document_snapshot.rs",
      "purpose": "Snapshot enumeration for whole-vault export",
      "surface": {
-      "crate-vis": 7,
-      "fn": 2
+      "crate-vis": 6,
+      "fn": 4
      }
     },
     {
@@ -4411,6 +4444,7 @@
       "WholeVaultDocument",
       "WholeVaultDocumentManifest",
       "WholeVaultExport",
+      "WholeVaultExportReceipt",
       "WholeVaultImportReceipt"
      ],
      "path": "src/batch/export/document_types.rs",
@@ -4419,8 +4453,8 @@
       "const": 1,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 5,
-      "struct": 17
+      "fn": 7,
+      "struct": 18
      }
     },
     {
@@ -4592,8 +4626,8 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
-      "re-export": 12
+      "crate-vis": 8,
+      "re-export": 13
      }
     },
     {
@@ -5349,7 +5383,7 @@
      "path": "src/blob_artifact/born_from.rs",
      "purpose": "Born-from (ARCH-0078 section 4): every artifact answers \"born from what\" the same way",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -5938,7 +5972,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "mod": 1,
       "re-export": 9
      }
@@ -6050,7 +6084,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 16,
       "struct": 3
      }
@@ -10773,7 +10807,7 @@
      "path": "src/code_document/mod.rs",
      "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 5
      }
     },
@@ -10818,7 +10852,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 9
      }
     },
@@ -11061,7 +11095,7 @@
      "path": "src/code_revision/keys.rs",
      "purpose": "Typed side tables for the code-revision row families: finalized records, forks, per-revision integrity…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -11071,7 +11105,7 @@
      "path": "src/code_revision/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "re-export": 5
      }
     },
@@ -11085,7 +11119,7 @@
      "path": "src/code_revision/promotion.rs",
      "purpose": "Session provenance claims and promotion guarded by verified revision history",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 2
      }
@@ -11100,7 +11134,7 @@
      "path": "src/code_revision/proposals.rs",
      "purpose": "Durable stranded revisions against the new head; reconciliation is explicit",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -12894,7 +12928,7 @@
      "path": "src/codebase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 4
      }
     },
@@ -12978,7 +13012,7 @@
      "path": "src/codebase/store/mod.rs",
      "purpose": "Vault persistence for codebase snapshots: ingest methods, transactions, and index keys",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 9
      }
     },
@@ -16389,7 +16423,7 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 1,
       "struct": 1
      }
@@ -17920,6 +17954,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/confession.rs",
+     "purpose": "The confession ask and its parse (OF-544, ARCH-0079): after a DONE line, one fenced block naming each…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -18054,8 +18098,8 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 20,
-      "mod": 3,
+      "crate-vis": 21,
+      "mod": 4,
       "re-export": 18
      }
     },
@@ -18435,7 +18479,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "TaskRealizeModel"
@@ -18444,6 +18488,7 @@
      "purpose": "A Dreamer-lane TASK's realization: the one row `tasks.create` queues for a TASK routed to the Dreamer",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -19152,9 +19197,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 26,
+      "const": 27,
       "crate-vis": 8,
-      "fn": 12,
+      "fn": 13,
       "trait": 1
      }
     },
@@ -22015,6 +22060,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/stack_floor.rs",
+     "purpose": "The native stack a callable skill's call leaves its thread (FIX 600)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22531,7 +22586,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FailureLadder"
@@ -22823,6 +22878,20 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectGrantMinted"
+     ],
+     "path": "src/federation/connect_grant.rs",
+     "purpose": "The guest grant a vault-to-vault Connect pact governs (FIX 3016, ARCH-0043 #guest-grants…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -22879,6 +22948,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/foreign_world.rs",
+     "purpose": "Where a guest's content lands here (FIX 3497)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -22892,9 +22972,9 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 3,
-      "fn": 18,
+      "fn": 19,
       "struct": 2
      }
     },
@@ -22905,7 +22985,7 @@
      "path": "src/federation/grant_policy.rs",
      "purpose": "Vault-resident default capability rows for member-grant minting",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -22972,9 +23052,9 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 24,
       "mod": 2,
-      "re-export": 16
+      "re-export": 18
      }
     },
     {
@@ -23976,7 +24056,7 @@
      "path": "src/gate/mail_policy.rs",
      "purpose": "Vault-resident native-mail posture and CID-5 graduation policy rows",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -24268,7 +24348,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_narrowing.rs",
@@ -24353,7 +24433,7 @@
      "path": "src/gate/room_policy.rs",
      "purpose": "Typed room authority policy rows",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -30006,7 +30086,7 @@
      "path": "src/memory/caps.rs",
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
-      "const": 13,
+      "const": 12,
       "crate-vis": 1,
       "fn": 14
      }
@@ -30248,15 +30328,16 @@
      "notable": [
       "ExportOptions",
       "ExportReceipt",
-      "MemoryExport"
+      "MemoryExport",
+      "MemoryExportReceipt"
      ],
      "path": "src/memory/export.rs",
      "purpose": "Full-vault memory export: the whole-vault archive (OF-222)",
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 7,
-      "struct": 3
+      "fn": 8,
+      "struct": 4
      }
     },
     {
@@ -30864,8 +30945,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 45,
-      "fn": 31,
+      "crate-vis": 47,
+      "fn": 32,
       "struct": 2,
       "type": 1
      }
@@ -32574,7 +32655,7 @@
      "purpose": "Canonical BLAKE3 chunk manifests and vault-private FastCDC parameters",
      "surface": {
       "const": 3,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 7,
       "struct": 3
      }
@@ -32608,7 +32689,7 @@
      "path": "src/origin/lfs/mod.rs",
      "purpose": "Vault-scoped FastCDC/BLAKE3 object plane over ordinary ASSET storage",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 7
      }
     },
@@ -37320,7 +37401,7 @@
      "path": "src/receipt/reference_refusal.rs",
      "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -40366,7 +40447,7 @@
      "path": "src/serialize/credential_nulling.rs",
      "purpose": "Unconditional credential removal before any context/export format writer",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -40390,7 +40471,7 @@
      "path": "src/serialize/export_value.rs",
      "purpose": "Credential-safe, type-preserving MessagePack values for whole-vault JSON",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "struct": 1
      }
@@ -40611,7 +40692,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/serialize/vault_archive.rs",
-     "purpose": "Writes the whole-vault archive (OF-222) from the credential-nulled document value: every JSONL row is cut…",
+     "purpose": "Writes the whole-vault archive (OF-222) from the document's spools (FIX 2766): the manifest first, then each…",
      "surface": {
       "crate-vis": 1
      }
@@ -40623,17 +40704,17 @@
      "path": "src/serialize/vault_bundles.rs",
      "purpose": "Build portable facets after every native body has passed credential nulling",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/serialize/vault_document.rs",
-     "purpose": "Whole-vault export: the snapshot becomes the typed document, the document passes the credential-nulling…",
+     "purpose": "Whole-vault export (OF-222), written row by row (FIX 2766, rule 5): each snapshot row becomes its typed…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 11
      }
     },
     {
@@ -41102,7 +41183,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill/call.rs",
@@ -42826,10 +42907,10 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 7,
-      "re-export": 2,
+      "re-export": 4,
       "struct": 4
      }
     },
@@ -42837,6 +42918,58 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CandidateLabel",
+      "CohortSummary",
+      "EvalAuthoringInventory",
+      "EvalCandidate",
+      "EvalSourceGroup",
+      "PurposeCounts",
+      "SeatInventory",
+      "UncutFamily"
+     ],
+     "path": "src/skill_optimize/eval_set/authoring.rs",
+     "purpose": "The eval-authoring pass (OF-578, ARCH-0053 \"Eval authoring\"): the Coach's nightly upkeep of each seat's test…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CaseDecision",
+      "CutDecision",
+      "EvalAuthoringPlan",
+      "EvalAuthoringReport",
+      "EvalAuthoringSkip",
+      "EvalCohortDecision",
+      "FamilyDecision"
+     ],
+     "path": "src/skill_optimize/eval_set/authoring/apply.rs",
+     "purpose": "The plan the eval-authoring skill answers with, checked whole against its inventory and applied in order…",
+     "surface": {
+      "fn": 1,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/authoring/lineage.rs",
+     "purpose": "The lineage fixed code resolves for a candidate, from the existing readers' explicit links only: the…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CohortRetirement",
       "EvalCohort",
       "EvalExposure",
       "EvalExposureCounts",
@@ -42846,10 +42979,30 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 5,
-      "struct": 4
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AuditCase",
+      "AuditCoverage",
+      "AuditMethodPin",
+      "CoverageGap",
+      "EvalCutAudit",
+      "EvalCutAuditDraft",
+      "NearCopyFlag"
+     ],
+     "path": "src/skill_optimize/eval_set/cut_audit.rs",
+     "purpose": "The near-copy audit every cohort cut commits with (ARCH-0053: \"At each cut, a near-copy audit runs across…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 7
      }
     },
     {
@@ -43192,7 +43345,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 10
      }
     },
@@ -44865,7 +45018,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 14,
       "fn": 16,
       "struct": 1
      }
@@ -44889,7 +45042,7 @@
      "path": "src/sync/client/federated.rs",
      "purpose": "Federated admission and staged vault-import confirmation",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 5
      }
@@ -44963,7 +45116,7 @@
       "crate-vis": 5,
       "enum": 2,
       "fn": 7,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -44987,7 +45140,7 @@
      "path": "src/sync/client/residence/bundle.rs",
      "purpose": "The vault's sealed cloud bundle through the home (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -45003,6 +45156,17 @@
      "surface": {
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/kit_fetch.rs",
+     "purpose": "A restore's read of the sealed cloud bundle from the home with the kit alone (FIX 922): no session, slip or…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -45841,7 +46005,7 @@
       "const": 2,
       "crate-vis": 9,
       "fn": 14,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 2
      }
     },
@@ -45878,6 +46042,7 @@
      "kind": "src",
      "notable": [
       "SealedBundleEntry",
+      "SealedBundleKitRoot",
       "SealedBundleObject",
       "SealedBundleStage"
      ],
@@ -45885,9 +46050,10 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 12,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -45926,6 +46092,20 @@
      "purpose": "Discover locally held world/month partitions without loading their Docs",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KitBundleFetch"
+     ],
+     "path": "src/sync/residence/kit_fetch.rs",
+     "purpose": "The kit door to the home's sealed cloud bundle (FIX 922; owner ruling 10-18: the recovery kit alone must…",
+     "surface": {
+      "const": 3,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -45989,7 +46169,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/room_turns.rs",
@@ -46005,7 +46185,7 @@
      "path": "src/sync/row_birth.rs",
      "purpose": "Rule A row births on sync",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -46028,7 +46208,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "enum": 1,
       "fn": 2
      }
@@ -46886,7 +47066,7 @@
      "purpose": "Per-revision, per-person bearer ingress for generic ask options (no page UI)",
      "surface": {
       "crate-vis": 6,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -47477,7 +47657,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -47851,8 +48031,21 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 25,
+      "re-export": 26,
       "struct": 36
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CampaignSplitWire"
+     ],
+     "path": "src/task_verb/sdk_campaign_split.rs",
+     "purpose": "`vault.research.evaluate_split` (FIX 655): the vault owner scores one arm of a bound claim-authoring…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -48023,7 +48216,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 364
+      "fn": 365
      }
     },
     {
@@ -49541,7 +49734,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
       "crate-vis": 13,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 1
      }
     },
@@ -49584,6 +49777,19 @@
      "purpose": "Geographic entity doors consume PlaceStore, never concrete database handles",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RawEntityPut"
+     ],
+     "path": "src/vault/raw_writes.rs",
+     "purpose": "The raw storage writes a bound caller makes (OF-063, FIX 3387)",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -50417,7 +50623,7 @@
      "path": "src/voice_cascade/uds.rs",
      "purpose": "Private, synchronous per-vault Unix socket adapter for the real retrieval bridge",
      "surface": {
-      "const": 3,
+      "const": 1,
       "re-export": 2,
       "struct": 1
      }
@@ -53197,7 +53403,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 125,
+     "files": 127,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53596,7 +53802,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53680,7 +53886,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53717,7 +53923,7 @@
     "failure_ladder": {
      "files": 16,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
@@ -53736,7 +53942,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 34,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54380,7 +54586,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 35,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54443,7 +54649,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 168,
+     "files": 170,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54471,7 +54677,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 132,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54555,7 +54761,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54639,9 +54845,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 189,
+   "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3323,
+   "source_files": 3337,
    "test_files": 902
   },
   "oneiron-android": {
@@ -54663,7 +54869,7 @@
      "path": "src/lib.rs",
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "mod": 1
      }
     }
@@ -57574,7 +57780,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 50,
+      "const": 52,
       "crate-vis": 1
      }
     },
@@ -59887,6 +60093,7 @@
       "XlsxChange",
       "XlsxLock",
       "XlsxName",
+      "XlsxProjection",
       "XlsxSheet",
       "XlsxSheetPlan",
       "XlsxSheetVisibility",
@@ -59902,7 +60109,7 @@
       "enum": 5,
       "fn": 16,
       "re-export": 2,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -60555,7 +60762,7 @@
      "path": "src/lib/entity.rs",
      "purpose": "Free fns plus vault lifecycle, health, and entity entry points",
      "surface": {
-      "fn": 12
+      "fn": 13
      }
     },
     {
@@ -60585,7 +60792,7 @@
      "path": "src/lib/parse.rs",
      "purpose": "ID/enum/limit/query/format parsing and validation helpers",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -60625,7 +60832,7 @@
      "path": "src/lib/types.rs",
      "purpose": "repr(C) status/types/handles and ABI limit constants",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "enum": 1,
       "struct": 10
      }
@@ -62883,7 +63090,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 315
+      "fn": 316
      }
     },
     {
@@ -63076,7 +63283,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
-      "fn": 27,
+      "fn": 28,
       "struct": 1
      }
     },
@@ -63903,7 +64110,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 316
+      "fn": 317
      }
     },
     {
@@ -65471,6 +65678,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/eval_authoring.rs",
+     "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/failure_signals.rs",
      "purpose": "The host's failure-signal sender (OF-380)",
      "surface": {
@@ -65554,13 +65771,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/payer_funding.rs",
      "purpose": "Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -66170,7 +66387,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 26
      }
     },
     {
@@ -66743,6 +66960,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/campaign_split_doors.rs",
+     "purpose": "The host door of a campaign split's evaluation, `vault.research.evaluate_split` (FIX 655): the owner scores…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
@@ -66856,7 +67083,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 62
+      "crate-vis": 63
      }
     },
     {
@@ -67646,7 +67873,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -68107,6 +68334,16 @@
      "purpose": "Reactive local-first read contract (ONE-1437 — the on-device half of OF-241)",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/recovery_bundle.rs",
+     "purpose": "The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -70306,7 +70543,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 24,
       "struct": 1
      }
@@ -71008,7 +71245,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 32
      }
     },
     {
@@ -71028,7 +71265,7 @@
      "path": "src/livequery/connection.rs",
      "purpose": "Socket attachment and bounded reconnect retention",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -71046,7 +71283,7 @@
      "path": "src/livequery/error.rs",
      "purpose": "The HTTP facade error body on app frames",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -71144,7 +71381,7 @@
      "path": "src/livequery/rpc.rs",
      "purpose": "The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -71220,7 +71457,7 @@
      "path": "src/livequery/wire.rs",
      "purpose": "Version-8 app envelopes",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -72517,7 +72754,7 @@
      "path": "src/owner/federation_connect.rs",
      "purpose": "Connect (ARCH-0043 #relationship-lifecycle, FIX 323): the owner offers a pact to a peer vault and accepts…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -74003,14 +74240,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 315,
+     "files": 317,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74418,7 +74655,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 630,
+   "source_files": 633,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -74680,6 +74917,7 @@
       "AttemptHandle",
       "AttemptId",
       "AttemptView",
+      "AuthoringStrategyPin",
       "AuthorityAuditEventKind",
       "AuthorityAuditOrder",
       "AuthorityAuditPage",
@@ -74687,6 +74925,7 @@
       "AuthorityAuditRow",
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
+      "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
       "BodyCell",
@@ -74717,7 +74956,11 @@
       "CallableCardView",
       "CampaignArchivePin",
       "CampaignConfig",
+      "CampaignCost",
       "CampaignDatasetRef",
+      "CampaignEvaluationSplit",
+      "CampaignExecutableArm",
+      "CampaignGoldAnchor",
       "CampaignKnobs",
       "CampaignProgramAudienceSpec",
       "CampaignProgramDefinitionView",
@@ -74728,7 +74971,11 @@
       "CampaignProgramRecord",
       "CampaignProgramStepSpec",
       "CampaignPromotionReceipt",
+      "CampaignSmokeOutcome",
+      "CampaignSplitReport",
+      "CampaignSplitWire",
       "CampaignSplits",
+      "CampaignTaste",
       "CancelRejectionPathology",
       "CandidateRef",
       "Care",
@@ -75173,6 +75420,29 @@
       "NotificationPage",
       "NotificationRow",
       "NotificationSource",
+      "Of360Ar3MetricTier",
+      "Of360CaseEvalReport",
+      "Of360CaseExtractionOutput",
+      "Of360ConversationTurn",
+      "Of360DatasetCompleteness",
+      "Of360DerivationEnvelope",
+      "Of360EvalReport",
+      "Of360ExtractedClaim",
+      "Of360ExtractionRun",
+      "Of360ExtractionScore",
+      "Of360GoldCase",
+      "Of360GoldDataset",
+      "Of360GoldMatch",
+      "Of360GoldMemoryPoint",
+      "Of360GoldQa",
+      "Of360MemoryKind",
+      "Of360MetricDefinition",
+      "Of360MetricDefinitionSet",
+      "Of360MetricDirection",
+      "Of360ParsedMetrics",
+      "Of360QaAnswer",
+      "Of360RateMetric",
+      "Of360Speaker",
       "OfferAnswer",
       "OfferAnswerRequest",
       "OfferCard",
@@ -75755,8 +76025,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 313,
-      "struct": 827
+      "enum": 321,
+      "struct": 852
      }
     },
     {

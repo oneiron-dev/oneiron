@@ -183,7 +183,6 @@ pub(super) fn canonical_witness_executor_turn(
             &crate::memory::WitnessTurn {
                 conversation_ref: conversation_id.to_hex(),
                 turn_ref: Some(turn_id.to_hex()),
-                quote: None,
                 thread_audience: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message_id.to_hex()),
@@ -193,6 +192,7 @@ pub(super) fn canonical_witness_executor_turn(
                     metadata: result.map(|result| result.metadata()).transpose()?,
                     is_visible: kind.is_visible(),
                     order,
+                    quote: None,
                 }],
                 occurred_at,
                 assertions: Default::default(),

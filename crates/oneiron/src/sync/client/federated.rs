@@ -5,6 +5,7 @@ use crate::batch::export::{
     StagedVaultImport, VaultImportConfirmation, VaultImportStageReceipt, VaultImportStageStatus,
 };
 use crate::error::SyncProtocolValidation;
+use crate::federation::PactDelivery;
 use crate::sync::federation_burst::{
     FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
@@ -156,10 +157,20 @@ impl SyncClient {
         let standing = peer
             .membership(&self.vault)
             .map_err(map_federated_admission_err)?;
+        // The pact the grant delivers through, read once: a guest's CLAIMs
+        // land in the foreign WORLD copies its source vault names (FIX 3497).
+        let delivery = self.pact_delivery(peer.grant())?;
         // Validate before retaining bytes. Malformed rows never become durable
         // deferred work, and they cannot reach an observed Loro document.
         let sender = (peer.principal(), standing);
-        let admitted = match admit_peer_window_update_as(&self.vault, &key, update, role, sender) {
+        let admitted = match admit_peer_window_update_as(
+            &self.vault,
+            &key,
+            update,
+            role,
+            sender,
+            delivery.as_ref(),
+        ) {
             Ok(admitted) => admitted,
             Err(error) => {
                 let error = map_federated_admission_err(error);
@@ -201,7 +212,7 @@ impl SyncClient {
                 });
             return Ok(());
         }
-        self.import_peer_update(window_key, &key, &admitted, peer.grant())?;
+        self.import_peer_update(&admitted, peer.grant(), delivery)?;
         match work {
             Some(work) => work.complete(&self.vault, &peer),
             None => record_outcome(&self.vault, &peer, false),
@@ -369,51 +380,79 @@ impl SyncClient {
 }
 
 impl SyncClient {
+    /// The pact `grant` delivers through, that pact's epoch and the source
+    /// vault its fold state names (FIX 321, FIX 3497), read once before
+    /// admission. An unpacted grant, or one bound to several pacts or to a
+    /// pact that is not Active, has none.
+    pub(super) fn pact_delivery(
+        &self,
+        grant: crate::EntityId,
+    ) -> std::result::Result<Option<PactDelivery>, TransportError> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|e| map_federated_admission_err(e.into()))?;
+        Ok(self
+            .vault
+            .authority_view_readonly_in_txn(&txn)
+            .map_err(map_federated_admission_err)?
+            .active_pact_delivery(&grant)
+            .ok())
+    }
+
     /// Imports an update a federation peer sent under `grant`: holds the
     /// facet stamps it sent ahead of their rows, records the rows whose door
     /// judges a peer's row apart from this vault's own, imports it, then
     /// releases each stamp whose row that import's entity door birthed from
-    /// the peer's bytes. Under a pact-bound grant, each row the import writes
-    /// is attributed to the pact and its epoch as it is written (FIX 321).
+    /// the peer's bytes. Under a pact-bound grant (`delivery`), each row the
+    /// import writes is attributed to the pact and its epoch as it is written
+    /// (FIX 321). Each part imports into its own window, the update's own
+    /// first, so a guest's CLAIM moved into its foreign WORLD window finds the
+    /// rows its edges name (FIX 3497).
     pub(super) fn import_peer_update(
         &mut self,
-        window_key: &str,
-        key: &WindowKey,
         admitted: &AdmittedUpdate,
         grant: crate::EntityId,
+        delivery: Option<PactDelivery>,
     ) -> std::result::Result<(), TransportError> {
-        admitted
-            .hold_from_peer(&self.vault, key, grant)
-            .map_err(map_federated_admission_err)?;
-        crate::sync::ingest::record_peer_rows(&self.vault, window_key, admitted.peer_rows())
-            .map_err(map_federated_admission_err)?;
-        // The pact the grant delivers through, and its epoch. An unpacted
-        // grant, or one bound to several pacts, delivers unattributed.
-        let delivery = {
-            let txn = self
-                .vault
-                .store
-                .env
-                .read_txn()
-                .map_err(|e| map_federated_admission_err(e.into()))?;
-            self.vault
-                .authority_view_readonly_in_txn(&txn)
-                .map_err(map_federated_admission_err)?
-                .active_pact_delivery_context(&grant)
-                .ok()
+        for part in admitted.parts() {
+            self.import_peer_part(part, grant, delivery)?;
         }
-        .map(|context| Delivery::new(&self.vault, context, admitted.delivered()));
+        Ok(())
+    }
+
+    /// [`Self::import_peer_update`] for one part, into the window it names.
+    fn import_peer_part(
+        &mut self,
+        part: &AdmittedUpdate,
+        grant: crate::EntityId,
+        delivery: Option<PactDelivery>,
+    ) -> std::result::Result<(), TransportError> {
+        let key = part.key();
+        let window_key = key.as_str();
+        part.hold_from_peer(&self.vault, key, grant)
+            .map_err(map_federated_admission_err)?;
+        crate::sync::ingest::record_peer_rows(&self.vault, window_key, part.peer_rows())
+            .map_err(map_federated_admission_err)?;
+        let delivery = delivery.map(|delivery| {
+            Delivery::new(
+                &self.vault,
+                (delivery.pact, delivery.epoch),
+                part.delivered(),
+            )
+        });
         let window = self.ensure_window(window_key)?;
         let vault = std::sync::Arc::clone(&self.vault);
-        let born = watch_births(&vault, admitted.births(), || {
+        let born = watch_births(&vault, part.births(), || {
             with_delivery(delivery, || {
-                self.import_accepted_window_update(window_key, &window, admitted.bytes())
+                self.import_accepted_window_update(window_key, &window, part.bytes())
             })
         })?;
-        admitted
-            .keep_born_with(&self.vault)
+        part.keep_born_with(&self.vault)
             .map_err(map_federated_admission_err)?;
-        let released = admitted
+        let released = part
             .release(&self.vault, key, &born)
             .map_err(map_federated_admission_err)?;
         self.import_released_stamps(window_key, released)

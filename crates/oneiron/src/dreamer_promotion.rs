@@ -65,7 +65,7 @@ use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
-use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
@@ -323,7 +323,7 @@ fn promote_one(
 
     // Rule A: the claim is concluded from the evidence that survived
     // admission, the head it supersedes and the MESSAGEs its evidence cites,
-    // the first MAX_BIRTH_INPUTS of them, taken before `surviving` moves.
+    // every one of them, taken before `surviving` moves.
     let birth = {
         let cited = verified
             .map(VerifiedEvidenceSet::cited_messages)
@@ -333,7 +333,6 @@ fn promote_one(
             .chain(&candidate.supersedes)
             .chain(&cited)
             .copied()
-            .take(MAX_BIRTH_INPUTS)
             .collect();
         RowBirth::written(
             run.agent_actor,

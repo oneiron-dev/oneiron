@@ -40,6 +40,10 @@ struct WitnessMessageInput {
     metadata: Option<serde_json::Value>,
     is_visible: Option<bool>,
     order: u32,
+    /// This message's quote (OF-460): a span of one MESSAGE in the same
+    /// room, cited by this message; omitted ⇒ no quote.
+    #[serde(default)]
+    quote: Option<oneiron::conversation_dag::QuoteSpan>,
 }
 
 /// One turn to witness, with an OPTIONAL timestamp (I14).
@@ -49,10 +53,6 @@ struct WitnessTurnInput {
     turn_ref: Option<String>,
     messages: Vec<WitnessMessageInput>,
     occurred_at: Option<f64>,
-    /// A quote on a project room's thread reply (OF-460): a span of one
-    /// MESSAGE in the room; omitted ⇒ no quote.
-    #[serde(default)]
-    quote: Option<oneiron::conversation_dag::QuoteSpan>,
     /// A new project room thread root's audience; omitted ⇒ it reads as its
     /// room does.
     #[serde(default)]
@@ -79,12 +79,12 @@ impl WitnessTurnInput {
                 metadata: message.metadata,
                 is_visible: message.is_visible.unwrap_or(true),
                 order: message.order,
+                quote: message.quote,
             })
             .collect();
         Ok(WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
-            quote: self.quote,
             thread_audience: self.thread_audience,
             messages,
             occurred_at,
@@ -1151,6 +1151,16 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.research.measure_held_out", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_evaluate_split(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.evaluate_split")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.research.evaluate_split", input)
             })
             .map_err(raise)?;
         encode(&output)
