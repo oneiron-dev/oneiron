@@ -1,7 +1,7 @@
 //! Retained ZIP records: unchanged entries keep compression, metadata and local bytes.
 
-use super::super::opc;
-use super::package::{PatchResult, PptxError};
+use super::model::{PatchResult, PptxCommentLimits, PptxError};
+use crate::retained_opc::Package;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct Archive<'a> {
@@ -11,8 +11,18 @@ pub(super) struct Archive<'a> {
     comment: Vec<u8>,
 }
 impl<'a> Archive<'a> {
-    pub(super) fn read(bytes: &'a [u8]) -> PatchResult<Self> {
-        let package = opc::read(bytes).map_err(|_| PptxError::InvalidPackage)?;
+    pub(super) fn read(bytes: &'a [u8], limits: &PptxCommentLimits) -> PatchResult<Self> {
+        let package =
+            Package::open(bytes, limits.package()).map_err(|_| PptxError::InvalidPackage)?;
+        let mut parts = BTreeMap::new();
+        for name in package.names() {
+            let data = package
+                .part(name)
+                .map_err(|_| PptxError::InvalidPackage)?
+                .ok_or(PptxError::InvalidPackage)?;
+            parts.insert(name.to_owned(), data);
+        }
+        let names: Vec<String> = package.names().map(str::to_owned).collect();
         let minimum = bytes
             .len()
             .checked_sub(22)
@@ -33,8 +43,8 @@ impl<'a> Archive<'a> {
         let mut entries = Vec::new();
         let mut cursor = directory;
         let mut ranges = Vec::new();
-        for part in package.parts() {
-            validate_name(&part.name)?;
+        for name in names {
+            validate_name(&name)?;
             let name_len = usize::from(u16_at(bytes, cursor + 28)?);
             let length = 46
                 + name_len
@@ -52,7 +62,7 @@ impl<'a> Archive<'a> {
                 .and_then(|n| n.checked_add(u32_at(&central, 20).ok()? as usize))
                 .ok_or(PptxError::InvalidPackage)?;
             if end > directory
-                || bytes.get(local + 30..local + 30 + ln) != Some(part.name.as_bytes())
+                || bytes.get(local + 30..local + 30 + ln) != Some(name.as_bytes())
                 || u16_at(bytes, local + 6)? != u16_at(&central, 8)?
                 || u16_at(bytes, local + 8)? != u16_at(&central, 10)?
             {
@@ -76,7 +86,7 @@ impl<'a> Archive<'a> {
                 return Err(PptxError::InvalidPackage);
             }
             ranges.push((local, end));
-            entries.push((part.name.clone(), central, local..end));
+            entries.push((name, central, local..end));
             cursor += length;
         }
         ranges.sort_unstable();
@@ -91,11 +101,7 @@ impl<'a> Archive<'a> {
         }
         Ok(Self {
             bytes,
-            parts: package
-                .parts()
-                .iter()
-                .map(|p| (p.name.clone(), p.data.clone()))
-                .collect(),
+            parts,
             entries,
             comment: bytes[eocd + 22..].to_vec(),
         })

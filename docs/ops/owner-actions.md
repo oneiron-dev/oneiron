@@ -42,6 +42,11 @@ Both also print an `embedder` section, which keeps three things apart:
 running server's `GET /v1/owner/status` is what says which model serves, and `serve` logs the same
 facts once the vault admits the model (`embedder model loaded and admitted`).
 
+The server's status also carries `link_bytes`: what every sync link moved since the process
+started, one row per inner frame tag (`tag`; 63 also holds every higher tag). Each row has
+`out_frames`, `out_raw` and `out_sent` (bytes before and after the link's codec), and
+`in_frames`, `in_raw` and `in_received`. `doctor` has no such field: it runs no links.
+
 ## Back up
 
 ```sh
@@ -969,6 +974,16 @@ period, by id in `judge_ask_ids`. `POST /v1/owner/coach/judge-asks/pick` with `{
 "a" | "b"}` picks one option. The pick is a final label in the judged skill's anchor: the next
 shadow pass sides with it, and a pick against a judge that already took over re-pins the old
 one, with a notice.
+
+The judge's rubric is the `judge` skill's text, and the replay judge reads it beside every case.
+When that text changes, the judge re-pins on it and every label in the anchor is marked for a
+re-check. A marked label stays in the anchor, its pick time unchanged. On its next nightly pass
+the Coach asks its model whether each marked pick still fits the new rubric. A pick that fits is
+unmarked. A pick that conflicts, or that the model cannot judge, leaves the anchor and comes back
+to you as a `rubric_recheck` ask in your digest. `POST /v1/owner/coach/judge-asks/regrade` with
+`{"ask", "still_fits": true | false}` answers it. `true` puts the pick back in the anchor. `false`
+drops it for good and asks the case again, as a `rubric_regrade` A/B ask in a later digest, which
+you pick like any other.
 
 ## Answer the decision ladder's asks
 

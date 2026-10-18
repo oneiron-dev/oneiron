@@ -240,6 +240,10 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             super::owner_handover::owner_handover_value(handover)
         }
         AuthorityOp::WorldKeyWraps(record) => super::world_key_wraps::world_key_wraps_value(record),
+        AuthorityOp::ResidenceDirective(directive) => {
+            super::residence::residence_directive_value(directive)
+        }
+        AuthorityOp::ResidenceResult(result) => super::residence::residence_result_value(result),
     }
 }
 
