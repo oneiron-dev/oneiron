@@ -113,6 +113,17 @@ both bindings and their export-census tests in one change.
 - `vault.weave.owner.link.wrong`
 - `vault.weave.item.wrong`
 - `vault.weave.owner.item.wrong`
+- `vault.weave.enqueue`
+- `vault.weave.schedules.list`
+- `vault.weave.schedules.put`
+- `vault.weave.schedules.clear`
+- `vault.weave.owner.digest.render`
+- `vault.inbox.concerns.review`
+- `vault.inbox.lens`
+- `vault.inbox.groups`
+- `vault.weave.digest.render`
+- `vault.weave.link.corrections`
+- `self.inbox.lens`
 - `vault.skill_hubs.put`
 - `vault.skill_hubs.get`
 - `vault.skill_hubs.publishers.admit`

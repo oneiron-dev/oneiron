@@ -573,6 +573,59 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.weave.enqueue",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WeaveEnqueueRequest,
+                >(),
+            ),
+            (
+                "vault.weave.schedules.list",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.weave.schedules.put",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveScheduleView>(),
+            ),
+            (
+                "vault.weave.schedules.clear",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveReaderRef>(),
+            ),
+            (
+                "vault.weave.owner.digest.render",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.inbox.concerns.review",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.inbox.lens",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxLensRequest,
+                >(),
+            ),
+            (
+                "vault.inbox.groups",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxRunGroupsRequest,
+                >(),
+            ),
+            (
+                "vault.weave.digest.render",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.weave.link.corrections",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongLinkRequest>(
+                ),
+            ),
+            (
+                "self.inbox.lens",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxLensRequest,
+                >(),
+            ),
+            (
                 "vault.skill_hubs.put",
                 crate::code_run::vault_read::request_schema::<SkillHubPutRequest>(),
             ),
@@ -4108,6 +4161,17 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.campaign.enroll",
     "vault.campaign.stage.evidence",
     "vault.campaign.unsubscribe",
+    "vault.weave.enqueue",
+    "vault.weave.schedules.list",
+    "vault.weave.schedules.put",
+    "vault.weave.schedules.clear",
+    "vault.weave.owner.digest.render",
+    "vault.inbox.concerns.review",
+    "vault.inbox.lens",
+    "vault.inbox.groups",
+    "vault.weave.digest.render",
+    "vault.weave.link.corrections",
+    "self.inbox.lens",
     "vault.skill_hubs.put",
     "vault.skill_hubs.get",
     "vault.skill_hubs.publishers.admit",
@@ -4577,6 +4641,39 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.campaign.unsubscribe" => crate::code_run::vault_read::request_schema::<
             crate::campaign::surface::CampaignUnsubscribeReceipt,
         >(),
+        "vault.weave.enqueue" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::DreamerAttemptRef>()
+        }
+        "vault.weave.schedules.list" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::claim::WeaveScheduleView>>()
+        }
+        "vault.weave.schedules.put" => {
+            crate::code_run::vault_read::request_schema::<crate::claim::WeaveScheduleView>()
+        }
+        "vault.weave.schedules.clear" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::WeaveScheduleCleared,
+        >(),
+        "vault.weave.owner.digest.render" => crate::code_run::vault_read::request_schema::<
+            Option<crate::claim::WeaveDigestRendered>,
+        >(),
+        "vault.inbox.concerns.review" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::DreamerAttemptRef>()
+        }
+        "vault.inbox.lens" => {
+            crate::code_run::vault_read::request_schema::<crate::agent_inbox_lens::InboxLensPage>()
+        }
+        "vault.inbox.groups" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::inbox::InboxGroup>>()
+        }
+        "vault.weave.digest.render" => crate::code_run::vault_read::request_schema::<
+            Option<crate::claim::WeaveDigestRendered>,
+        >(),
+        "vault.weave.link.corrections" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::claim::WeaveLinkCorrectionView>,
+        >(),
+        "self.inbox.lens" => {
+            crate::code_run::vault_read::request_schema::<crate::agent_inbox_lens::InboxLensPage>()
+        }
         "vault.skill_hubs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SkillHubConfigured,
         >(),
@@ -6395,6 +6492,83 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.owner.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.enqueue" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.schedules.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.schedules.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.schedules.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.owner.digest.render" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.inbox.concerns.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.inbox.lens" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.inbox.groups" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.digest.render" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.link.corrections" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.lens" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11022,6 +11196,39 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.owner.item.wrong" => {
             let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
         }
+        "vault.weave.enqueue" => {
+            let _input: crate::task_verb::sdk::WeaveEnqueueRequest = decode(value.clone())?;
+        }
+        "vault.weave.schedules.list" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.weave.schedules.put" => {
+            let _input: crate::claim::WeaveScheduleView = decode(value.clone())?;
+        }
+        "vault.weave.schedules.clear" => {
+            let _input: crate::claim::WeaveReaderRef = decode(value.clone())?;
+        }
+        "vault.weave.owner.digest.render" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.inbox.concerns.review" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.inbox.lens" => {
+            let _input: crate::agent_inbox_lens::InboxLensRequest = decode(value.clone())?;
+        }
+        "vault.inbox.groups" => {
+            let _input: crate::agent_inbox_lens::InboxRunGroupsRequest = decode(value.clone())?;
+        }
+        "vault.weave.digest.render" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.weave.link.corrections" => {
+            let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
+        }
+        "self.inbox.lens" => {
+            let _input: crate::agent_inbox_lens::InboxLensRequest = decode(value.clone())?;
+        }
         "vault.skill_hubs.put" => {
             let _input: SkillHubPutRequest = decode(value.clone())?;
         }
@@ -13403,6 +13610,25 @@ pub fn invoke(
         "vault.weave.owner.item.wrong" => {
             encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
         }
+        "vault.weave.enqueue" => encode(vault_weave_enqueue(memory, decode(value)?)?),
+        "vault.weave.schedules.list" => encode(vault_weave_schedules_list(memory, decode(value)?)?),
+        "vault.weave.schedules.put" => encode(vault_weave_schedules_put(memory, decode(value)?)?),
+        "vault.weave.schedules.clear" => {
+            encode(vault_weave_schedules_clear(memory, decode(value)?)?)
+        }
+        "vault.weave.owner.digest.render" => {
+            encode(vault_weave_owner_digest_render(memory, decode(value)?)?)
+        }
+        "vault.inbox.concerns.review" => {
+            encode(vault_inbox_concerns_review(memory, decode(value)?)?)
+        }
+        "vault.inbox.lens" => encode(vault_inbox_lens(memory, decode(value)?)?),
+        "vault.inbox.groups" => encode(vault_inbox_groups(memory, decode(value)?)?),
+        "vault.weave.digest.render" => encode(vault_weave_digest_render(memory, decode(value)?)?),
+        "vault.weave.link.corrections" => {
+            encode(vault_weave_link_corrections(memory, decode(value)?)?)
+        }
+        "self.inbox.lens" => encode(self_inbox_lens(memory, decode(value)?)?),
         "vault.skill_hubs.put" => encode(vault_skill_hubs_put(memory, decode(value)?)?),
         "vault.skill_hubs.get" => encode(vault_skill_hubs_get(memory, decode(value)?)?),
         "vault.skill_hubs.publishers.admit" => {
@@ -15627,6 +15853,92 @@ pub fn vault_weave_owner_item_wrong(
         &memory.embedded_owner("vault.weave.owner.item.wrong")?,
         &input,
     )
+}
+pub fn vault_weave_enqueue(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WeaveEnqueueRequest,
+) -> MemoryResult<crate::memory::DreamerAttemptRef> {
+    crate::task_verb::sdk::weave_enqueue(
+        memory,
+        &memory.embedded_owner("vault.weave.enqueue")?,
+        input,
+    )
+}
+pub fn vault_weave_schedules_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::claim::WeaveScheduleView>> {
+    crate::task_verb::sdk::weave_schedules(
+        memory,
+        &memory.embedded_owner("vault.weave.schedules.list")?,
+    )
+}
+pub fn vault_weave_schedules_put(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveScheduleView,
+) -> MemoryResult<crate::claim::WeaveScheduleView> {
+    crate::task_verb::sdk::weave_schedule_put(
+        memory,
+        &memory.embedded_owner("vault.weave.schedules.put")?,
+        input,
+    )
+}
+pub fn vault_weave_schedules_clear(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveReaderRef,
+) -> MemoryResult<crate::task_verb::sdk::WeaveScheduleCleared> {
+    crate::task_verb::sdk::weave_schedule_clear(
+        memory,
+        &memory.embedded_owner("vault.weave.schedules.clear")?,
+        input,
+    )
+}
+pub fn vault_weave_owner_digest_render(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Option<crate::claim::WeaveDigestRendered>> {
+    memory.weave_digest_render(Some(
+        &memory.embedded_owner("vault.weave.owner.digest.render")?,
+    ))
+}
+pub fn vault_inbox_concerns_review(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::memory::DreamerAttemptRef> {
+    crate::task_verb::sdk::inbox_concerns_review(
+        memory,
+        &memory.embedded_owner("vault.inbox.concerns.review")?,
+    )
+}
+pub fn vault_inbox_lens(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxLensRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxLensPage> {
+    memory.inbox_lens_as_owner(&memory.embedded_owner("vault.inbox.lens")?, &input)
+}
+pub fn vault_inbox_groups(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxRunGroupsRequest,
+) -> MemoryResult<Vec<crate::inbox::InboxGroup>> {
+    memory.inbox_run_groups(&memory.embedded_owner("vault.inbox.groups")?, &input)
+}
+pub fn vault_weave_digest_render(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Option<crate::claim::WeaveDigestRendered>> {
+    memory.weave_digest_render(None)
+}
+pub fn vault_weave_link_corrections(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongLinkRequest,
+) -> MemoryResult<Vec<crate::claim::WeaveLinkCorrectionView>> {
+    memory.weave_link_corrections(&input)
+}
+pub fn self_inbox_lens(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxLensRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxLensPage> {
+    memory.inbox_lens(&input)
 }
 pub fn vault_skill_hubs_put(
     memory: &Memory<'_>,

@@ -428,6 +428,9 @@ class Oneiron:
         def weave(self) -> "Oneiron._VaultWeaveVerbs":
             return Oneiron._VaultWeaveVerbs(self._client)
         @property
+        def inbox(self) -> "Oneiron._VaultInboxVerbs":
+            return Oneiron._VaultInboxVerbs(self._client)
+        @property
         def skill_hubs(self) -> "Oneiron._VaultSkillHubsVerbs":
             return Oneiron._VaultSkillHubsVerbs(self._client)
         @property
@@ -1036,9 +1039,9 @@ class Oneiron:
         def report(self, spec):
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
             return json.loads(_translate(lambda: self._client.vault_weave_report(json.dumps(spec))))
-        def digest(self, spec):
-            """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
-            return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
+        @property
+        def digest(self) -> "Oneiron._VaultWeaveDigestVerbs":
+            return Oneiron._VaultWeaveDigestVerbs(self._client)
         def lens(self, spec):
             """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
             return json.loads(_translate(lambda: self._client.vault_weave_lens(json.dumps(spec))))
@@ -1051,12 +1054,30 @@ class Oneiron:
         @property
         def item(self) -> "Oneiron._VaultWeaveItemVerbs":
             return Oneiron._VaultWeaveItemVerbs(self._client)
+        def enqueue(self, spec):
+            """Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."""
+            return json.loads(_translate(lambda: self._client.vault_weave_enqueue(json.dumps(spec))))
+        @property
+        def schedules(self) -> "Oneiron._VaultWeaveSchedulesVerbs":
+            return Oneiron._VaultWeaveSchedulesVerbs(self._client)
+    class _VaultWeaveDigestVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
+            return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
+        def render(self, spec=None):
+            """Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due."""
+            return json.loads(_translate(lambda: self._client.vault_weave_digest_render(json.dumps({} if spec is None else spec))))
     class _VaultWeaveLinkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def wrong(self, spec):
             """A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_link_wrong(json.dumps(spec))))
+        def corrections(self, spec):
+            """Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link."""
+            return json.loads(_translate(lambda: self._client.vault_weave_link_corrections(json.dumps(spec))))
     class _VaultWeaveOwnerVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1066,6 +1087,9 @@ class Oneiron:
         @property
         def item(self) -> "Oneiron._VaultWeaveOwnerItemVerbs":
             return Oneiron._VaultWeaveOwnerItemVerbs(self._client)
+        @property
+        def digest(self) -> "Oneiron._VaultWeaveOwnerDigestVerbs":
+            return Oneiron._VaultWeaveOwnerDigestVerbs(self._client)
     class _VaultWeaveOwnerLinkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1078,12 +1102,48 @@ class Oneiron:
         def wrong(self, spec):
             """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_owner_item_wrong(json.dumps(spec))))
+    class _VaultWeaveOwnerDigestVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def render(self, spec=None):
+            """Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due."""
+            return json.loads(_translate(lambda: self._client.vault_weave_owner_digest_render(json.dumps({} if spec is None else spec))))
     class _VaultWeaveItemVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def wrong(self, spec):
             """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_item_wrong(json.dumps(spec))))
+    class _VaultWeaveSchedulesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec=None):
+            """Lists every reader's daily or weekly weave digest schedule under the owner's proof."""
+            return json.loads(_translate(lambda: self._client.vault_weave_schedules_list(json.dumps({} if spec is None else spec))))
+        def put(self, spec):
+            """Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof."""
+            return json.loads(_translate(lambda: self._client.vault_weave_schedules_put(json.dumps(spec))))
+        def clear(self, spec):
+            """Stops one reader's digest schedule under the owner's proof, keeping its saved periods."""
+            return json.loads(_translate(lambda: self._client.vault_weave_schedules_clear(json.dumps(spec))))
+    class _VaultInboxVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs":
+            return Oneiron._VaultInboxConcernsVerbs(self._client)
+        def lens(self, spec):
+            """Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."""
+            return json.loads(_translate(lambda: self._client.vault_inbox_lens(json.dumps(spec))))
+        def groups(self, spec):
+            """Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof."""
+            return json.loads(_translate(lambda: self._client.vault_inbox_groups(json.dumps(spec))))
+    class _VaultInboxConcernsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def review(self, spec=None):
+            """Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."""
+            return json.loads(_translate(lambda: self._client.vault_inbox_concerns_review(json.dumps({} if spec is None else spec))))
     class _VaultSkillHubsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3433,6 +3493,9 @@ class Oneiron:
         @property
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs":
             return Oneiron._SelfInboxConcernVerbs(self._client)
+        def lens(self, spec):
+            """Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."""
+            return json.loads(_translate(lambda: self._client.self_inbox_lens(json.dumps(spec))))
     class _SelfInboxConcernVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -98,7 +98,7 @@ impl RawValue for InboxReviewDial {
 }
 
 /// Why a row surfaces in the exception queue.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InboxExceptionClass {
     /// The auto_checker held this write on a low-confidence/hedged verdict.
@@ -175,7 +175,7 @@ impl InboxQuery {
 }
 
 /// One dreamer-run group card over open pending proposals.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxGroup {
     /// Group key: the run-tree ROOT attempt id (OF-193) when the run resolves in
     /// the attempt queue, otherwise the provenance-stamped run id.
@@ -204,7 +204,7 @@ pub struct InboxGroup {
 }
 
 /// One open proposal inside a group.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxGroupMember {
     pub claim_id: String,
     pub created_at: u64,
@@ -223,7 +223,7 @@ pub struct InboxGroupMember {
 
 /// Pointer row shown by the LATER group when a duplicate collapsed into an
 /// earlier one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxPointerRow {
     /// The later run's duplicate claim.
     pub claim_id: String,
@@ -234,7 +234,7 @@ pub struct InboxPointerRow {
 }
 
 /// Entity/theme sub-cluster over surfaced members.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxSubCluster {
     /// `entity:<subject id>` or `theme:<predicate layer>`.
     pub key: String,

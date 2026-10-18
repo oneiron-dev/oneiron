@@ -536,6 +536,61 @@ export_facade! {
     let output = client.vault_weave_owner_item_wrong(&input)?;
     crate::codec::lift_record("vault.weave.owner.item.wrong", &output)
 };
+"vault.weave.enqueue" => fn vault_weave_enqueue(&self, input: WeaveEnqueueRequest) -> DreamerAttemptRef = |client| {
+    let input: oneiron::task_verb::sdk::WeaveEnqueueRequest = crate::codec::lower_record("vault.weave.enqueue", input)?;
+    let output = client.vault_weave_enqueue(&input)?;
+    crate::codec::lift_record("vault.weave.enqueue", &output)
+};
+"vault.weave.schedules.list" => fn vault_weave_schedules_list(&self) -> Vec<WeaveScheduleView> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.weave.schedules.list")?;
+    let output = client.vault_weave_schedules_list(&input)?;
+    crate::codec::lift_record("vault.weave.schedules.list", &output)
+};
+"vault.weave.schedules.put" => fn vault_weave_schedules_put(&self, input: WeaveScheduleView) -> WeaveScheduleView = |client| {
+    let input: oneiron::claim::WeaveScheduleView = crate::codec::lower_record("vault.weave.schedules.put", input)?;
+    let output = client.vault_weave_schedules_put(&input)?;
+    crate::codec::lift_record("vault.weave.schedules.put", &output)
+};
+"vault.weave.schedules.clear" => fn vault_weave_schedules_clear(&self, input: WeaveReaderRef) -> WeaveScheduleCleared = |client| {
+    let input: oneiron::claim::WeaveReaderRef = crate::codec::lower_record("vault.weave.schedules.clear", input)?;
+    let output = client.vault_weave_schedules_clear(&input)?;
+    crate::codec::lift_record("vault.weave.schedules.clear", &output)
+};
+"vault.weave.owner.digest.render" => fn vault_weave_owner_digest_render(&self) -> Option<WeaveDigestRendered> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.weave.owner.digest.render")?;
+    let output = client.vault_weave_owner_digest_render(&input)?;
+    crate::codec::lift_record("vault.weave.owner.digest.render", &output)
+};
+"vault.inbox.concerns.review" => fn vault_inbox_concerns_review(&self) -> DreamerAttemptRef = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.inbox.concerns.review")?;
+    let output = client.vault_inbox_concerns_review(&input)?;
+    crate::codec::lift_record("vault.inbox.concerns.review", &output)
+};
+"vault.inbox.lens" => fn vault_inbox_lens(&self, input: InboxLensRequest) -> InboxLensPage = |client| {
+    let input: oneiron::agent_inbox_lens::InboxLensRequest = crate::codec::lower_record("vault.inbox.lens", input)?;
+    let output = client.vault_inbox_lens(&input)?;
+    crate::codec::lift_record("vault.inbox.lens", &output)
+};
+"vault.inbox.groups" => fn vault_inbox_groups(&self, input: InboxRunGroupsRequest) -> Vec<InboxGroup> = |client| {
+    let input: oneiron::agent_inbox_lens::InboxRunGroupsRequest = crate::codec::lower_record("vault.inbox.groups", input)?;
+    let output = client.vault_inbox_groups(&input)?;
+    crate::codec::lift_record("vault.inbox.groups", &output)
+};
+"vault.weave.digest.render" => fn vault_weave_digest_render(&self) -> Option<WeaveDigestRendered> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.weave.digest.render")?;
+    let output = client.vault_weave_digest_render(&input)?;
+    crate::codec::lift_record("vault.weave.digest.render", &output)
+};
+"vault.weave.link.corrections" => fn vault_weave_link_corrections(&self, input: WeaveWrongLinkRequest) -> Vec<WeaveLinkCorrectionView> = |client| {
+    let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::lower_record("vault.weave.link.corrections", input)?;
+    let output = client.vault_weave_link_corrections(&input)?;
+    crate::codec::lift_record("vault.weave.link.corrections", &output)
+};
+"self.inbox.lens" => fn self_inbox_lens(&self, input: InboxLensRequest) -> InboxLensPage = |client| {
+    let input: oneiron::agent_inbox_lens::InboxLensRequest = crate::codec::lower_record("self.inbox.lens", input)?;
+    let output = client.self_inbox_lens(&input)?;
+    crate::codec::lift_record("self.inbox.lens", &output)
+};
 "vault.skill_hubs.put" => fn vault_skill_hubs_put(&self, input: SkillHubPutRequest) -> SkillHubConfigured = |client| {
     let input: oneiron::task_verb::sdk::SkillHubPutRequest = crate::codec::lower_record("vault.skill_hubs.put", input)?;
     let output = client.vault_skill_hubs_put(&input)?;
