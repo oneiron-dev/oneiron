@@ -16,6 +16,81 @@
       "server_door": "report_off_runtime"
     },
     {
+      "name": "feedback.preview",
+      "description": "The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval.",
+      "input": "crate::task_verb::sdk::FeedbackPreviewRequest",
+      "output": "crate::task_verb::sdk::FeedbackSubjectPreview",
+      "call": "crate::task_verb::sdk::host_only(memory, \"feedback.preview\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "feedback.send",
+      "description": "The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate.",
+      "input": "crate::task_verb::sdk::FeedbackSendSubjectRequest",
+      "output": "crate::task_verb::sdk::FeedbackSubjectSent",
+      "call": "crate::task_verb::sdk::host_only(memory, \"feedback.send\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.reports.disclosure",
+      "description": "The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny.",
+      "input": "crate::task_verb::sdk::ReportDisclosureRequest",
+      "output": "crate::feedback::ReportIssue",
+      "call": "crate::task_verb::sdk::decide_report_disclosure_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.disclosure\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.reports.route",
+      "description": "The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to.",
+      "input": "crate::task_verb::sdk::ReportRouteRequest",
+      "output": "crate::task_verb::sdk::ReportRouteReceipt",
+      "call": "crate::task_verb::sdk::set_report_route_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.route\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.reports.outbound",
+      "description": "The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it.",
+      "input": "crate::task_verb::sdk::ReportOutboundRequest",
+      "output": "crate::task_verb::sdk::ReportOutboundView",
+      "call": "crate::task_verb::sdk::report_outbound_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.outbound\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "self.focus.refresh",
       "description": "Re-renders the run's context board as one frame, at the frame epoch the caller last saw.",
       "input": "BoardRefreshRequest",
@@ -3450,6 +3525,84 @@
       "section": false
     },
     {
+      "name": "vault.research.archive.install",
+      "description": "Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveInstall",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
+      "call": "crate::task_verb::sdk::research_archive_install(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.archive.record",
+      "description": "Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveOutput",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
+      "call": "crate::task_verb::sdk::research_archive_record(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.archive.get",
+      "description": "Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveRequest",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveRecord",
+      "call": "crate::task_verb::sdk::research_archive_get(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.archive.best",
+      "description": "Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveRequest",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
+      "call": "crate::task_verb::sdk::research_archive_best(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.archive.repropose",
+      "description": "Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveReproposal",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
+      "call": "crate::task_verb::sdk::research_archive_repropose(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.archive.coverage",
+      "description": "Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveCoverage",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveAdmission",
+      "call": "crate::task_verb::sdk::research_archive_coverage(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.evals.inventory",
       "description": "The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup.",
       "input": "crate::task_verb::sdk::EvalInventoryWire",
@@ -4127,6 +4280,21 @@
       "input": "crate::consent::lifecycle::ApproveOnceRequest",
       "output": "crate::consent::lifecycle::ConsentActReceipt",
       "call": "crate::consent::lifecycle::approve_once(memory.vault(), &memory.embedded_owner(\"vault.consent.approve_once\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.deny",
+      "description": "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority.",
+      "input": "crate::consent::lifecycle::DenyConsentRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::consent::lifecycle::deny(memory.vault(), &memory.embedded_owner(\"vault.consent.deny\")?, input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5281,6 +5449,36 @@
       "openapi": true
     },
     {
+      "name": "vault.code.waits.resolve",
+      "description": "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.",
+      "input": "crate::memory::code_wait_doors::CodeWaitResolveRequest",
+      "output": "crate::memory::code_wait_doors::CodeWaitReceiptView",
+      "call": "memory.code_wait_resolve_as(&memory.embedded_owner(\"vault.code.waits.resolve\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.waits.receipt",
+      "description": "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.",
+      "input": "crate::memory::code_wait_doors::CodeWaitReceiptRequest",
+      "output": "Option<crate::memory::code_wait_doors::CodeWaitReceiptView>",
+      "call": "memory.code_wait_receipt_as(&memory.embedded_owner(\"vault.code.waits.receipt\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.results.status",
       "description": "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run.",
       "input": "crate::memory::result_doors::ResultRunRequest",
@@ -5994,6 +6192,21 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.agents.spawn",
+      "description": "The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept.",
+      "input": "crate::team::doors::SpawnIntentRequest",
+      "output": "crate::team::doors::SpawnIntentReply",
+      "call": "crate::team::doors::spawn_as_owner(memory.vault(), &memory.embedded_owner(\"vault.agents.spawn\")?, input, None, None, crate::unix_seconds_now())?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -7897,6 +8110,51 @@
       "section": false
     },
     {
+      "name": "vault.questions.outcomes",
+      "description": "Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label.",
+      "input": "crate::receipt::QuestionOutcomesRequest",
+      "output": "crate::receipt::QuestionOutcomes",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcomes\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.questions.outcomes.project",
+      "description": "Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label.",
+      "input": "crate::receipt::QuestionOutcomesProjectRequest",
+      "output": "crate::receipt::QuestionOutcomesProjected",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcomes.project\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.questions.schedule",
+      "description": "Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold.",
+      "input": "crate::receipt::QuestionScheduleRequest",
+      "output": "Option<crate::llm::decision::questions::QuestionScheduleHead>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.schedule\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.decisions.bands.read",
       "description": "The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero.",
       "input": "crate::llm::decision::DecisionBandReadRequest",
@@ -8051,156 +8309,240 @@
     {
       "name": "self.browser.open",
       "description": "Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor.",
-      "input": "oneiron_browser::OpenInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserOpenInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.open(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserOpenInput>",
+        "description": "Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.observe",
       "description": "Observes the current page of the run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched.",
-      "input": "oneiron_browser::ObserveInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserObserveInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "driver.observe_page(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserObserveInput>",
+        "description": "Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.find",
       "description": "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page.",
-      "input": "oneiron_browser::FindInput",
-      "output": "oneiron_browser::FindOutput",
+      "input": "crate::task_verb::sdk::BrowserFindInput",
+      "output": "crate::task_verb::sdk::BrowserFindOutput",
       "call": "driver.find(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserFindInput>",
+        "description": "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.click",
       "description": "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
-      "input": "oneiron_browser::ClickInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserClickInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.click(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserClickInput>",
+        "description": "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.click_at",
       "description": "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor.",
-      "input": "oneiron_browser::PointInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserPointInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.click_at(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserPointInput>",
+        "description": "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.type",
       "description": "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
-      "input": "oneiron_browser::TypeInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserTypeInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.type_text(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserTypeInput>",
+        "description": "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.select",
       "description": "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor.",
-      "input": "oneiron_browser::SelectInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserSelectInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.select(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSelectInput>",
+        "description": "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.wait_for",
       "description": "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor.",
-      "input": "oneiron_browser::WaitForInput",
-      "output": "oneiron_browser::WaitForOutput",
+      "input": "crate::task_verb::sdk::BrowserWaitForInput",
+      "output": "crate::task_verb::sdk::BrowserWaitForOutput",
       "call": "driver.wait_for(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserWaitForInput>",
+        "description": "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.expect",
       "description": "Checks that a page row is present or absent, and holds a given value.",
-      "input": "oneiron_browser::ExpectInput",
-      "output": "oneiron_browser::ExpectOutput",
+      "input": "crate::task_verb::sdk::BrowserExpectInput",
+      "output": "crate::task_verb::sdk::BrowserExpectOutput",
       "call": "driver.expect(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserExpectInput>",
+        "description": "Checks that a page row is present or absent, and holds a given value.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.screenshot",
       "description": "Takes a screenshot the session holds, by image ref and never captioned.",
-      "input": "oneiron_browser::ScreenshotInput",
-      "output": "oneiron_browser::ScreenshotOutput",
+      "input": "crate::task_verb::sdk::BrowserScreenshotInput",
+      "output": "crate::task_verb::sdk::BrowserScreenshotOutput",
       "call": "driver.screenshot(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserScreenshotInput>",
+        "description": "Takes a screenshot the session holds, by image ref and never captioned.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.view",
       "description": "Reads back a held image by its ref.",
-      "input": "oneiron_browser::ViewInput",
-      "output": "oneiron_browser::ImageOutput",
+      "input": "crate::task_verb::sdk::BrowserViewInput",
+      "output": "crate::task_verb::sdk::BrowserImageOutput",
       "call": "driver.view(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserViewInput>",
+        "description": "Reads back a held image by its ref.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.crop",
       "description": "Crops a held image to a rectangle.",
-      "input": "oneiron_browser::CropInput",
-      "output": "oneiron_browser::ImageOutput",
+      "input": "crate::task_verb::sdk::BrowserCropInput",
+      "output": "crate::task_verb::sdk::BrowserImageOutput",
       "call": "driver.crop(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserCropInput>",
+        "description": "Crops a held image to a rectangle.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.zoom",
       "description": "Zooms into a rectangle of a held image.",
-      "input": "oneiron_browser::ZoomInput",
-      "output": "oneiron_browser::ImageOutput",
+      "input": "crate::task_verb::sdk::BrowserZoomInput",
+      "output": "crate::task_verb::sdk::BrowserImageOutput",
       "call": "driver.zoom(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserZoomInput>",
+        "description": "Zooms into a rectangle of a held image.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.batch",
       "description": "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor.",
-      "input": "oneiron_browser::BatchInput",
-      "output": "oneiron_browser::BatchOutput",
+      "input": "crate::task_verb::sdk::BrowserBatchInput",
+      "output": "crate::task_verb::sdk::BrowserBatchOutput",
       "call": "driver.batch(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>",
+        "description": "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.library.find",
@@ -8260,13 +8602,19 @@
     {
       "name": "self.browser.handover",
       "description": "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record.",
-      "input": "oneiron_browser::HandoverInput",
-      "output": "oneiron_browser::HandoverOutput",
+      "input": "crate::task_verb::sdk::BrowserHandoverInput",
+      "output": "crate::task_verb::sdk::BrowserHandoverOutput",
       "call": "driver.handover(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserHandoverInput>",
+        "description": "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.desktop.open",
@@ -8753,6 +9101,61 @@
         "request": true
       },
       "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.claims.demote",
+      "description": "Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it.",
+      "refs": [
+        "/claim_ref"
+      ],
+      "input": "crate::memory::ClaimDemoteRequest",
+      "output": "crate::memory::ClaimDemoteView",
+      "call": "memory.claim_demote(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.claims.list_filtered",
+      "description": "Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt.",
+      "input": "crate::memory::ClaimFilteredListRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
+      "call": "memory.claim_list_filtered(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.claims.read_filtered",
+      "description": "Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt.",
+      "input": "crate::memory::ClaimFilteredReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>",
+      "call": "memory.claim_read_filtered(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
     },
     {
       "name": "vault.claims.history",

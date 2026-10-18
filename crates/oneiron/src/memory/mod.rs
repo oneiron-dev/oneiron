@@ -33,6 +33,7 @@ mod birth_position;
 mod booking;
 mod claim_admission;
 mod claim_conflict;
+mod claim_stale;
 mod conflict_settle;
 pub mod consolidation;
 mod diary_read;
@@ -50,6 +51,7 @@ mod claims;
 pub mod checkout_doors;
 pub mod code_doors;
 pub mod code_run_doors;
+pub mod code_wait_doors;
 pub mod codebase_doors;
 mod conversation_list;
 mod credential_key;
@@ -117,6 +119,10 @@ pub use chat::{
 };
 pub use claim_admission::{
     AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest,
+};
+pub use claim_stale::{
+    ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest,
+    ClaimFilteredReadRequest, ReadFilterInput,
 };
 pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
