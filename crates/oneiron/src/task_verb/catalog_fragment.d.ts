@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 673 code-mode rows (652 host rows, 21 run rows), 2389 declarations.
-// Replies: 594 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 681 code-mode rows (660 host rows, 21 run rows), 2402 declarations.
+// Replies: 602 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1958,6 +1958,20 @@ declare namespace Sdk {
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
   type BookingPageTokenRequest = { page_ref: string };
   type BookingPageTokenResponse = { page_token: string };
+  type CalendarInviteSurfaceMethod = "REQUEST" | "CANCEL";
+  type CalendarInviteSurfaceInput = { method: CalendarInviteSurfaceMethod; uid: string; sequence: number; ics_blob_ref: string; recipient: string; mention?: MentionProvenance | null };
+  type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
+  type CalendarConnectorSeatConfig = { seat_ref: string; secret_ref: string; system: string; calendar_ref: string; cadence_jitter_min_seconds: number; cadence_jitter_max_seconds: number };
+  type CalendarConnectorConfigureRequest = { config: CalendarConnectorSeatConfig; endpoint: string };
+  type CalendarConnectorKillSwitchState = { killed_at: number; verbs_revoked: boolean; polling_stopped: boolean; reason_ref: string };
+  type CalendarConnectorSeatState = { config: CalendarConnectorSeatConfig; cursor?: string | null; kill_switch?: CalendarConnectorKillSwitchState | null };
+  type CalendarSyncOutcome = { Reenqueued: { next_cursor?: string | null; next_not_before: number; applied: number; acknowledged: number; source_absences: number; status_cancellations: number } } | "Killed";
+  type CalendarConnectorRegistration = { endpoint: string; seat: CalendarConnectorSeatState; last_sync?: CalendarSyncOutcome | null };
+  type CalendarConnectorRequest = { seat_ref: string };
+  type CalendarConnectorWriteRequest = { seat_ref: string; event_ref: string };
+  type RemoteWriteReceipt = { href: string; etag?: string | null; uid: string; sequence: number; content_hash: number[] };
+  type CalendarConnectorKillRequest = { seat_ref: string; reason_ref: string };
+  type CalendarImipTransportConfig = { endpoint: string; secret_ref: string };
   type CalendarRangeDto = { start: number; end: number };
   type CalendarEventCreateRequest = { origin: "native"; summary: string; occurredAt: CalendarRangeDto } | { origin: "dreamer"; summary: string; occurredAt: CalendarRangeDto; evidenceTurnIds: string[]; sourceFrontiers: string[] };
   type CalendarEventCreated = { event_ref: string; origin: string; recorded_at: number };
@@ -2252,7 +2266,6 @@ declare namespace Sdk {
   type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effective: DeliveryWindowDecision; matched: DeliveryWindowMatch[]; rung: DeliveryWindowLadderRung };
   type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
   type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
-  type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
   type SummaryPath = "canonical" | { branch: string } | { branch_span: { after: string; through: string } } | { sub_session: string };
   type SummaryScope = { conversation_ref: string; path: SummaryPath; session?: string | null; include_forks?: boolean };
   type SummaryCreateRequest = { scope: SummaryScope; purpose?: string | null; land_on?: string | null; as_record?: boolean };
@@ -2467,6 +2480,28 @@ declare const ai: {
 };
 /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
 declare function ask(input: Sdk.TaskAskRequest): Promise<Sdk.TaskAskReceipt | StoredResult>;
+declare const calendar: {
+  connector: {
+    /** Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence. */
+    configure(input: Sdk.CalendarConnectorConfigureRequest): Promise<Sdk.CalendarConnectorRegistration | StoredResult>;
+    /** Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof. */
+    get(input: Sdk.CalendarConnectorRequest): Promise<Sdk.CalendarConnectorRegistration | null | StoredResult>;
+    /** Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence. */
+    kill(input: Sdk.CalendarConnectorKillRequest): Promise<Sdk.CalendarConnectorRegistration | StoredResult>;
+    /** Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof. */
+    pull(input: Sdk.CalendarConnectorRequest): Promise<Sdk.CalendarSyncOutcome | StoredResult>;
+    /** Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite. */
+    write(input: Sdk.CalendarConnectorWriteRequest): Promise<Sdk.RemoteWriteReceipt | StoredResult>;
+  };
+  imip: {
+    /** Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity. */
+    configure(input: Sdk.CalendarImipTransportConfig): Promise<Sdk.CalendarImipTransportConfig | StoredResult>;
+    /** Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value. */
+    get(input: Sdk.EmptyRequest): Promise<Sdk.CalendarImipTransportConfig | null | StoredResult>;
+  };
+  /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */
+  invite(input: Sdk.CalendarInviteSurfaceInput): Promise<Sdk.OutboundIntentReceipt | StoredResult>;
+};
 /** Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything. */
 declare function can(input: Sdk.TaskCanAskRequest): Promise<Sdk.TaskAskPreflight | StoredResult>;
 /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */

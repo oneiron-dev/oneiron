@@ -1449,6 +1449,14 @@ fn mcp_agent_verb_input(
         "vault.claims.retract" => a.spec.clone().ok_or_else(invalid),
         "vault.forget" => a.spec.clone().ok_or_else(invalid),
         "vault.booking.page_token" => a.spec.clone().ok_or_else(invalid),
+        "calendar.invite" => a.spec.clone().ok_or_else(invalid),
+        "calendar.connector.configure" => a.spec.clone().ok_or_else(invalid),
+        "calendar.connector.get" => a.spec.clone().ok_or_else(invalid),
+        "calendar.connector.pull" => a.spec.clone().ok_or_else(invalid),
+        "calendar.connector.write" => a.spec.clone().ok_or_else(invalid),
+        "calendar.connector.kill" => a.spec.clone().ok_or_else(invalid),
+        "calendar.imip.configure" => a.spec.clone().ok_or_else(invalid),
+        "calendar.imip.get" => a.spec.clone().ok_or_else(invalid),
         "vault.calendar.create" => a.spec.clone().ok_or_else(invalid),
         "vault.calendar.ics.import" => a.spec.clone().ok_or_else(invalid),
         "vault.calendar.occurrences" => a.spec.clone().ok_or_else(invalid),
@@ -3142,6 +3150,30 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.booking.page_token" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "calendar.invite" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "calendar.connector.configure" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "calendar.connector.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "calendar.connector.pull" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "calendar.connector.write" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "calendar.connector.kill" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "calendar.imip.configure" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "calendar.imip.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.calendar.create" => {
@@ -11487,6 +11519,141 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_booking_page_token(server, auth, input)
                     .await
                     .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.invite" => {
+            let input: oneiron::memory::CalendarInviteSurfaceInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::calendar_invite(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.connector.configure" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("calendar.connector.configure", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::calendar::connectors::door::CalendarConnectorConfigureRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::calendar_connector_configure(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.connector.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("calendar.connector.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::calendar::connectors::door::CalendarConnectorRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::calendar_connector_get(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.connector.pull" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("calendar.connector.pull", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::calendar::connectors::door::CalendarConnectorRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::calendar_connector_pull(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.connector.write" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("calendar.connector.write", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::calendar::connectors::door::CalendarConnectorWriteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::calendar_connector_write(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.connector.kill" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("calendar.connector.kill", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::calendar::connectors::door::CalendarConnectorKillRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::calendar_connector_kill(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.imip.configure" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("calendar.imip.configure", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::calendar::connectors::door::CalendarImipTransportConfig =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::calendar_imip_configure(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.imip.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("calendar.imip.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::calendar_imip_get(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

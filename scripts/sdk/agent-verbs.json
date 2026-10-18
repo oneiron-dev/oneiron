@@ -8250,6 +8250,124 @@
       "openapi": true
     },
     {
+      "name": "calendar.invite",
+      "description": "Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe.",
+      "input": "crate::memory::CalendarInviteSurfaceInput",
+      "output": "crate::memory::OutboundIntentReceipt",
+      "call": "memory.calendar_invite(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.configure",
+      "description": "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorConfigureRequest",
+      "output": "crate::calendar::connectors::door::CalendarConnectorRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.configure\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.get",
+      "description": "Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorRequest",
+      "output": "Option<crate::calendar::connectors::door::CalendarConnectorRegistration>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.pull",
+      "description": "Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorRequest",
+      "output": "crate::calendar::CalendarSyncOutcome",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.pull\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.write",
+      "description": "Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorWriteRequest",
+      "output": "crate::calendar::RemoteWriteReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.write\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.kill",
+      "description": "Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorKillRequest",
+      "output": "crate::calendar::connectors::door::CalendarConnectorRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.kill\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.imip.configure",
+      "description": "Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity.",
+      "input": "crate::calendar::connectors::door::CalendarImipTransportConfig",
+      "output": "crate::calendar::connectors::door::CalendarImipTransportConfig",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.imip.configure\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.imip.get",
+      "description": "Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value.",
+      "input": "EmptyRequest",
+      "output": "Option<crate::calendar::connectors::door::CalendarImipTransportConfig>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.imip.get\", &_input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.calendar.create",
       "description": "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time.",
       "input": "crate::calendar::door::CalendarEventCreateRequest",

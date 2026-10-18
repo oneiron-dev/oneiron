@@ -4337,6 +4337,72 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn calendar_invite(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.invite", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_connector_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.connector.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_connector_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.connector.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_connector_pull(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.connector.pull", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_connector_write(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.connector.write", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_connector_kill(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.connector.kill", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_imip_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.imip.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_imip_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.imip.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_calendar_create(
         &self,
         input: serde_json::Value,

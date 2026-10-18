@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 618 facade rows, 2303 declarations.
-Inputs: 566 of 618 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 549 of 618 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 626 facade rows, 2316 declarations.
+Inputs: 574 of 626 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 557 of 626 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -9563,6 +9563,71 @@ class BookingPageTokenRequest(TypedDict):
     page_ref: str
 class BookingPageTokenResponse(TypedDict):
     page_token: str
+CalendarInviteSurfaceMethod = Literal["REQUEST", "CANCEL"]
+class CalendarInviteSurfaceInput(TypedDict):
+    method: CalendarInviteSurfaceMethod
+    uid: str
+    sequence: int
+    ics_blob_ref: str
+    recipient: str
+    mention: NotRequired[MentionProvenance | None]
+class OutboundIntentReceipt(TypedDict):
+    intent_ref: str
+    outcome: str
+    gate_outcome: NotRequired[str | None]
+    gate_decision_ref: NotRequired[str | None]
+    gate_reason_codes: list[str]
+    deduped: bool
+class CalendarConnectorSeatConfig(TypedDict):
+    seat_ref: str
+    secret_ref: str
+    system: str
+    calendar_ref: str
+    cadence_jitter_min_seconds: int
+    cadence_jitter_max_seconds: int
+class CalendarConnectorConfigureRequest(TypedDict):
+    config: CalendarConnectorSeatConfig
+    endpoint: str
+class CalendarConnectorKillSwitchState(TypedDict):
+    killed_at: int
+    verbs_revoked: bool
+    polling_stopped: bool
+    reason_ref: str
+class CalendarConnectorSeatState(TypedDict):
+    config: CalendarConnectorSeatConfig
+    cursor: NotRequired[str | None]
+    kill_switch: NotRequired[CalendarConnectorKillSwitchState | None]
+class CalendarSyncOutcomeReenqueuedBody(TypedDict):
+    next_cursor: NotRequired[str | None]
+    next_not_before: int
+    applied: int
+    acknowledged: int
+    source_absences: int
+    status_cancellations: int
+class CalendarSyncOutcomeReenqueued(TypedDict):
+    Reenqueued: CalendarSyncOutcomeReenqueuedBody
+CalendarSyncOutcome = Literal["Killed"] | CalendarSyncOutcomeReenqueued
+class CalendarConnectorRegistration(TypedDict):
+    endpoint: str
+    seat: CalendarConnectorSeatState
+    last_sync: NotRequired[CalendarSyncOutcome | None]
+class CalendarConnectorRequest(TypedDict):
+    seat_ref: str
+class CalendarConnectorWriteRequest(TypedDict):
+    seat_ref: str
+    event_ref: str
+class RemoteWriteReceipt(TypedDict):
+    href: str
+    etag: NotRequired[str | None]
+    uid: str
+    sequence: int
+    content_hash: list[int]
+class CalendarConnectorKillRequest(TypedDict):
+    seat_ref: str
+    reason_ref: str
+class CalendarImipTransportConfig(TypedDict):
+    endpoint: str
+    secret_ref: str
 class CalendarRangeDto(TypedDict):
     start: int
     end: int
@@ -11281,13 +11346,6 @@ class OutboundScheduleRequest(TypedDict):
     job_ref: NotRequired[str | None]
     occurred_at: NotRequired[int | None]
     mention: NotRequired[MentionProvenance | None]
-class OutboundIntentReceipt(TypedDict):
-    intent_ref: str
-    outcome: str
-    gate_outcome: NotRequired[str | None]
-    gate_decision_ref: NotRequired[str | None]
-    gate_reason_codes: list[str]
-    deduped: bool
 class SummaryPathBranch(TypedDict):
     branch: str
 class SummaryPathBranchSpanBody(TypedDict):

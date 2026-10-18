@@ -390,6 +390,8 @@ class Oneiron:
     def ai(self) -> "Oneiron._AiVerbs": ...
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs": ...
+    @property
+    def calendar(self) -> "Oneiron._CalendarVerbs": ...
     class _SelfVerbs:
         @property
         def focus(self) -> "Oneiron._SelfFocusVerbs": ...
@@ -2143,5 +2145,28 @@ class Oneiron:
     class _ConnectorOutboundVerbs:
         def schedule(self, spec: Facade.OutboundScheduleRequest) -> Facade.OutboundIntentReceipt:
             """Schedules one send through a granted outbound connector, gated and held for delivery."""
+    class _CalendarVerbs:
+        def invite(self, spec: Facade.CalendarInviteSurfaceInput) -> Facade.OutboundIntentReceipt:
+            """Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."""
+        @property
+        def connector(self) -> "Oneiron._CalendarConnectorVerbs": ...
+        @property
+        def imip(self) -> "Oneiron._CalendarImipVerbs": ...
+    class _CalendarConnectorVerbs:
+        def configure(self, spec: Facade.CalendarConnectorConfigureRequest) -> Facade.CalendarConnectorRegistration:
+            """Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."""
+        def get(self, spec: Facade.CalendarConnectorRequest) -> Facade.CalendarConnectorRegistration | None:
+            """Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof."""
+        def pull(self, spec: Facade.CalendarConnectorRequest) -> Facade.CalendarSyncOutcome:
+            """Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof."""
+        def write(self, spec: Facade.CalendarConnectorWriteRequest) -> Facade.RemoteWriteReceipt:
+            """Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite."""
+        def kill(self, spec: Facade.CalendarConnectorKillRequest) -> Facade.CalendarConnectorRegistration:
+            """Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence."""
+    class _CalendarImipVerbs:
+        def configure(self, spec: Facade.CalendarImipTransportConfig) -> Facade.CalendarImipTransportConfig:
+            """Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity."""
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.CalendarImipTransportConfig | None:
+            """Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value."""
 
 # END GENERATED FACADE VERBS

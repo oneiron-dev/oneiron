@@ -1870,6 +1870,28 @@ export class Oneiron {
       schedule: (input: Facade.OutboundScheduleRequest): Facade.OutboundIntentReceipt => this.#call(() => this.#client.connectorOutboundSchedule(input) as Facade.OutboundIntentReceipt),
     },
   }
+  readonly calendar = {
+    /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */
+    invite: (input: Facade.CalendarInviteSurfaceInput): Facade.OutboundIntentReceipt => this.#call(() => this.#client.calendarInvite(input) as Facade.OutboundIntentReceipt),
+    connector: {
+      /** Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence. */
+      configure: (input: Facade.CalendarConnectorConfigureRequest): Facade.CalendarConnectorRegistration => this.#call(() => this.#client.calendarConnectorConfigure(input) as Facade.CalendarConnectorRegistration),
+      /** Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof. */
+      get: (input: Facade.CalendarConnectorRequest): Facade.CalendarConnectorRegistration | null => this.#call(() => this.#client.calendarConnectorGet(input) as Facade.CalendarConnectorRegistration | null),
+      /** Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof. */
+      pull: (input: Facade.CalendarConnectorRequest): Facade.CalendarSyncOutcome => this.#call(() => this.#client.calendarConnectorPull(input) as Facade.CalendarSyncOutcome),
+      /** Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite. */
+      write: (input: Facade.CalendarConnectorWriteRequest): Facade.RemoteWriteReceipt => this.#call(() => this.#client.calendarConnectorWrite(input) as Facade.RemoteWriteReceipt),
+      /** Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence. */
+      kill: (input: Facade.CalendarConnectorKillRequest): Facade.CalendarConnectorRegistration => this.#call(() => this.#client.calendarConnectorKill(input) as Facade.CalendarConnectorRegistration),
+    },
+    imip: {
+      /** Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity. */
+      configure: (input: Facade.CalendarImipTransportConfig): Facade.CalendarImipTransportConfig => this.#call(() => this.#client.calendarImipConfigure(input) as Facade.CalendarImipTransportConfig),
+      /** Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value. */
+      get: (input: Facade.EmptyRequest = {}): Facade.CalendarImipTransportConfig | null => this.#call(() => this.#client.calendarImipGet(input) as Facade.CalendarImipTransportConfig | null),
+    },
+  }
 
 // END GENERATED FACADE VERBS
 
