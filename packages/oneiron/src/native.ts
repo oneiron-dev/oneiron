@@ -612,6 +612,7 @@ selfFold(input: unknown): unknown
 selfCompact(input: unknown): unknown
 selfUnfold(input: unknown): unknown
 selfFolds(input: unknown): unknown
+tasksRefuse(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 selfSkillsCall(input: unknown): unknown

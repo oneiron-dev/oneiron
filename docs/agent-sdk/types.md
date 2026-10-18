@@ -1972,11 +1972,11 @@ class Oneiron:
             """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
-            """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
+            """The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
         def get(self, spec: Facade.AgentDefinitionRequest) -> Facade.AgentDefinitionView:
-            """The owner reads one saved agent composition and its version and approval state."""
+            """The owner reads one saved agent composition, including its declared refusal dial, version and approval state."""
         def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
-            """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
+            """The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."""
         @property
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs": ...
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
@@ -2408,6 +2408,8 @@ class Oneiron:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+        def refuse(self, spec: Facade.LiveRunRequest[Facade.TaskRefuseInput]) -> Facade.TaskRefuseOutput:
+            """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
     class _RevealVerbs:
         def __call__(self, spec: Facade.RevealRequest) -> Facade.RevealPending:
             """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""

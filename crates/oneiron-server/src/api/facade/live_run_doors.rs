@@ -5,6 +5,7 @@ use oneiron::WriteActor;
 use oneiron::code_run::live_run::LiveRunCredential;
 use oneiron::code_run::{
     AgentSpawnInput, AgentSpawnOutput, HostSelfDispatcher, LeaderSplitInput, LeaderSplitOutput,
+    TaskRefuseInput, TaskRefuseOutput,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::LiveRunRequest;
@@ -13,6 +14,23 @@ use super::host_doors::internal;
 use super::{FacadeApiError, facade_actor};
 use crate::auth::CoreAuth;
 use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer, seated_planner};
+
+pub(crate) async fn tasks_refuse(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<TaskRefuseInput>,
+) -> MemoryResult<TaskRefuseOutput> {
+    on_live_run(
+        server,
+        auth,
+        session,
+        input.live_run,
+        "tasks.refuse",
+        move |dispatcher| dispatcher.refuse_task_from_host(input.spec),
+    )
+    .await
+}
 
 pub(crate) async fn self_agents_spawn(
     server: &Arc<SyncServer>,

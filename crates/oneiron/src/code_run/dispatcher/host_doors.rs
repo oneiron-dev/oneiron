@@ -5,7 +5,7 @@ use super::HostSelfDispatcher;
 use crate::EntityId;
 use crate::code_run::{
     AgentSpawnInput, AgentSpawnKind, AgentSpawnOutput, LeaderSplitInput, LeaderSplitOutput,
-    SelfAgentSpawnResult, SelfDispatchOutcome,
+    SelfAgentSpawnResult, SelfDispatchOutcome, TaskRefuseInput, TaskRefuseOutput,
 };
 use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 
@@ -93,6 +93,28 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfDispatchOutcome::Leader(output) => {
                 serde_json::from_str(&output).map_err(|_| host_result_mismatch())
             }
+            SelfDispatchOutcome::Failed(failed) => {
+                Err(MemoryError::new(&failed.error, &failed.error, &[]))
+            }
+            _ => Err(host_result_mismatch()),
+        }
+    }
+
+    /// Applies the attached agent's refusal only to the TASK of her live
+    /// attempt. The existing engine door resolves the dial and owns replay.
+    pub fn refuse_task_from_host(&self, input: TaskRefuseInput) -> MemoryResult<TaskRefuseOutput> {
+        self.live_parent()?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        match self.dispatch_tasks_refuse(input.into_call(crate::unix_seconds_now())?)? {
+            SelfDispatchOutcome::TaskRefusal(refusal) => Ok(TaskRefuseOutput {
+                task: refusal.task_ref,
+                level: refusal.level,
+                outcome: refusal.level.outcome(),
+                replay: refusal.replay,
+            }),
             SelfDispatchOutcome::Failed(failed) => {
                 Err(MemoryError::new(&failed.error, &failed.error, &[]))
             }

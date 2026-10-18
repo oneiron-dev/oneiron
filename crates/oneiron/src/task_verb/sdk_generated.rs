@@ -3265,6 +3265,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "tasks.refuse",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>,
+                >(),
+            ),
+            (
                 "self.agents.spawn",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
@@ -3299,10 +3305,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.edges.put",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
-            ),
-            (
-                "tasks.refuse",
-                crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
             (
                 "self.leader.advice",
@@ -8411,6 +8413,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "tasks.refuse" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.agents.spawn" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -10448,6 +10457,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.folds" => {
             let _input: crate::code_run::fold_api::FoldRunRequest = decode(value.clone())?;
         }
+        "tasks.refuse" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput> =
+                decode(value.clone())?;
+        }
         "self.agents.spawn" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput> =
                 decode(value.clone())?;
@@ -11472,6 +11485,7 @@ pub fn invoke(
         "self.compact" => encode(self_compact(memory, decode(value)?)?),
         "self.unfold" => encode(self_unfold(memory, decode(value)?)?),
         "self.folds" => encode(self_folds(memory, decode(value)?)?),
+        "tasks.refuse" => encode(tasks_refuse(memory, decode(value)?)?),
         "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
         "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
         "self.skills.call" => encode(self_skills_call(memory, decode(value)?)?),
@@ -16748,6 +16762,12 @@ pub fn self_folds(
     input: crate::code_run::fold_api::FoldRunRequest,
 ) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldList>> {
     crate::task_verb::sdk::host_only(memory, "self.folds", &input)
+}
+pub fn tasks_refuse(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>,
+) -> MemoryResult<crate::code_run::TaskRefuseOutput> {
+    crate::task_verb::sdk::host_only(memory, "tasks.refuse", &input)
 }
 pub fn self_agents_spawn(
     memory: &Memory<'_>,

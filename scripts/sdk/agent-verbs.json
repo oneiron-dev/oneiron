@@ -5072,7 +5072,7 @@
     },
     {
       "name": "vault.agents.create",
-      "description": "The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched.",
+      "description": "The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched.",
       "input": "crate::task_verb::sdk::AgentDefinitionCreateRequest",
       "output": "crate::task_verb::sdk::AgentDefinitionView",
       "call": "crate::task_verb::sdk::create_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.create\")?, input)?",
@@ -5087,7 +5087,7 @@
     },
     {
       "name": "vault.agents.get",
-      "description": "The owner reads one saved agent composition and its version and approval state.",
+      "description": "The owner reads one saved agent composition, including its declared refusal dial, version and approval state.",
       "input": "crate::task_verb::sdk::AgentDefinitionRequest",
       "output": "crate::task_verb::sdk::AgentDefinitionView",
       "call": "crate::task_verb::sdk::read_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.get\")?, input)?",
@@ -5102,7 +5102,7 @@
     },
     {
       "name": "vault.agents.update",
-      "description": "The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision.",
+      "description": "The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial.",
       "input": "crate::task_verb::sdk::AgentDefinitionUpdateRequest",
       "output": "crate::task_verb::sdk::AgentDefinitionView",
       "call": "crate::task_verb::sdk::update_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.update\")?, input)?",
@@ -10457,7 +10457,11 @@
       "output": "crate::code_run::TaskRefuseOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "TasksRefuse"
+      "effect": "TasksRefuse",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>",
+        "description": "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."
+      }
     },
     {
       "name": "self.agents.spawn",
