@@ -84,10 +84,10 @@ impl SideKey for HexSeqKey {
 }
 
 /// Pending-tombstone marker (`pt:{window}:{entity_hex}`), value = the v2
-/// tombstone wire value. `deletion::tombstone` owns the row family (see its
-/// `PENDING_TOMBSTONE` doc comment: "other modules keep using
-/// `pending_tombstone_key` plus their own... access") and is not reachable
-/// from here, so this binds the SAME declaration independently for every
+/// tombstone wire value. `deletion::tombstone` owns the row family and reads
+/// and writes it through its own `PENDING_TOMBSTONE`, which is not reachable
+/// from here. Other readers go through the window deletion-row port, or this
+/// table: the sync layer's own binding of the SAME declaration for every
 /// sync-layer reader/writer of the row (two typed tables, one declaration).
 pub(crate) const PENDING_TOMBSTONE: SideTable<WindowEntityHexKey, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_PENDING_TOMBSTONE);

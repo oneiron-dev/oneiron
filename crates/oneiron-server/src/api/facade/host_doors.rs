@@ -50,9 +50,9 @@ use crate::server::SyncServer;
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::authority_history_doors::*;
-pub(crate) use super::credential_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::calendar_doors::*;
+pub(crate) use super::credential_doors::*;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
@@ -70,6 +70,7 @@ pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
+pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -77,6 +78,8 @@ pub(crate) use super::courtesy_delete_doors::*;
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
+// The owner's support grant doors (OF-606), as the guest ones are.
+pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
@@ -112,11 +115,14 @@ pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::gate_policy_doors::*;
+pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::codebase_doors::*;
+// The owner's task-type tree doors (DOOR-111), likewise.
+pub(crate) use super::coordination_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
@@ -125,6 +131,7 @@ pub(crate) use super::secret_use_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
 pub(crate) use super::reply_doors::*;
+pub(crate) use super::result_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
@@ -139,6 +146,8 @@ pub(crate) use super::claim_settle_doors::*;
 pub(crate) use super::consolidation_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
+// The owner's per-model code-run heal count door (DOOR-093), likewise.
+pub(crate) use super::code_run_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -1130,6 +1139,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.workflows.get"
         | "vault.workflows.dispatch"
         | "vault.workflows.status"
+        | "vault.task_types.pin"
+        | "vault.task_types.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
@@ -1140,6 +1151,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.channel_identities.route_inbound"
         | "vault.delivery_window.policy.put"
         | "vault.delivery_window.policy.retract"
+        | "vault.policy.owner.get"
+        | "vault.policy.owner.configure"
+        | "vault.policy.owner.row.change"
         | "vault.gate.policy.get"
         | "vault.gate.policy.put"
         | "vault.gate.checker.get"
@@ -1171,6 +1185,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.federation.connect.rejoin"
         | "vault.guests.revoke"
         | "vault.guests.mint_slip"
+        | "vault.support_grants.mint"
+        | "vault.support_grants.list"
+        | "vault.support_grants.revoke"
         | "vault.projects.confirm"
         | "vault.weave.owner.link.wrong"
         | "vault.weave.owner.item.wrong"
@@ -1190,6 +1207,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.symbols.release"
         | "vault.code.proposal_submit"
         | "vault.code.oplog"
+        | "vault.results.status"
+        | "vault.results.recover"
+        | "vault.results.read"
+        | "vault.results.slice"
+        | "vault.code.model_heal_count"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
@@ -1219,6 +1241,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.trusted_contacts.tier.set"
         | "vault.trusted_contacts.concern.asks"
         | "vault.trusted_contacts.concern.authorize"
+        | "vault.trusted_contacts.concern.propose"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
         | "vault.notes.history_purge"
@@ -1228,7 +1251,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.voices.render_consent"
         | "vault.voices.targets.provision"
         | "vault.voices.targets.evict"
-        | "vault.voices.inspect" => owner_proof(auth, server, verb).map(drop),
+        | "vault.voices.inspect"
+        | "ai.voice.start"
+        | "ai.voice.audio"
+        | "ai.voice.events"
+        | "ai.voice.ack"
+        | "ai.voice.usage"
+        | "ai.voice.tool"
+        | "ai.voice.end"
+        | "ai.voice.close" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

@@ -86,6 +86,7 @@ pub struct SyncServer {
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
+    pub(crate) policy_doors: super::policy_doors::PolicyDoors,
     /// Node-side account API key verifier (OF-448), installed by a host
     /// that supplies the control-plane checker. `None`: account keys are
     /// never admitted.
@@ -104,6 +105,7 @@ pub struct SyncServer {
     pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Live NOTE editors explicitly bound by their own principals.
     pub(crate) note_editors: super::NoteEditors,
+    pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -394,6 +396,7 @@ impl SyncServer {
         super::desktop_seats::clear_stale_asks(&vault);
         Ok(Self {
             note_editors: super::NoteEditors::default(),
+            live_voice: Default::default(),
             lens_frames,
             retained,
             presence,
@@ -423,6 +426,7 @@ impl SyncServer {
             query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
+            policy_doors: Default::default(),
             account_keys: None,
             mcp_registry,
             mcp_code_host: None,

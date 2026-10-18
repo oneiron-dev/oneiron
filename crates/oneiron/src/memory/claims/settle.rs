@@ -252,7 +252,10 @@ impl ReviewedProposal {
 
     fn is_vettable(&self) -> bool {
         crate::claim::claim_generated_origin(&self.body)
-            && matches!(self.body.approval, ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed)
+            && matches!(
+                self.body.approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
+            )
             && self.body.lifecycle == ClaimLifecycleStatus::Active
     }
 
@@ -266,7 +269,11 @@ impl ReviewedProposal {
         action: GateConsentBundleAction,
         vetting: bool,
     ) -> MemoryResult<()> {
-        if !(if vetting { self.is_vettable() } else { self.is_open() }) {
+        if !(if vetting {
+            self.is_vettable()
+        } else {
+            self.is_open()
+        }) {
             return Err(not_open());
         }
         if !self.review_id().eq_ignore_ascii_case(review_id) {
@@ -351,7 +358,11 @@ impl Memory<'_> {
             let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
             ReviewedProposal::read_in_txn(self.vault, &rtxn, &id)?
         };
-        if !(if vetting { reviewed.is_vettable() } else { reviewed.is_open() }) {
+        if !(if vetting {
+            reviewed.is_vettable()
+        } else {
+            reviewed.is_open()
+        }) {
             return Err(not_open());
         }
         self.produced_from([id]);
@@ -440,11 +451,21 @@ impl Memory<'_> {
                 let actor = WriteActor::new(person, EdgeActorClass::Human);
                 let settled = if vetting {
                     self.vault.vet_generated_claim_in_txn(
-                        wtxn, id, action, actor, owner_answer.as_ref(), now,
+                        wtxn,
+                        id,
+                        action,
+                        actor,
+                        owner_answer.as_ref(),
+                        now,
                     )?
                 } else {
                     self.vault.settle_proposed_claim_in_txn(
-                        wtxn, id, action, actor, owner_answer.as_ref(), now,
+                        wtxn,
+                        id,
+                        action,
+                        actor,
+                        owner_answer.as_ref(),
+                        now,
                     )?
                 };
                 let mut record = crate::memory::authorship::decision(

@@ -47,6 +47,7 @@ pub use self::trusted_contact::{
 };
 pub use self::trusted_contact_notice::{
     TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND, TRUSTED_CONTACT_NOTICE_CONTENT_REF, TrustedContactNotice,
+    TrustedContactNoticeAuthorization,
 };
 pub use self::types::{
     COUNTERPARTY_CONTACT_BODY_KEYS, COUNTERPARTY_CONTACT_CLAIM_PREDICATES,

@@ -415,17 +415,34 @@ impl DecisionProvider for HeuristicRung<'_> {
     }
 }
 
+/// The law on a read verdict: an unsure one is the root, whatever node its
+/// rung read. The answering rung stays on it, and its rationale keeps what
+/// the unsure reading was.
+fn unsure_is_root(tree: &TaskTypeTree, outcome: PlacementOutcome) -> PlacementOutcome {
+    if outcome.confident {
+        return outcome;
+    }
+    PlacementOutcome {
+        type_ref: tree.root_ref(),
+        rationale: format!("unsure ({}); root", outcome.rationale),
+        ..outcome
+    }
+}
+
 /// The rule rung's reading as the verdict.
 fn rule_outcome(tree: &TaskTypeTree, read: Option<&RuleRead>) -> PlacementOutcome {
     let pin = heuristic_pin();
     match read {
-        Some(read) => PlacementOutcome {
-            type_ref: tree.type_ref(&read.node_id),
-            confident: read.evidence,
-            executor: executor_of(&pin),
-            rationale: read.rationale.clone(),
-            providers: vec![pin],
-        },
+        Some(read) => {
+            let outcome = PlacementOutcome {
+                type_ref: tree.type_ref(&read.node_id),
+                confident: read.evidence,
+                executor: executor_of(&pin),
+                rationale: read.rationale.clone(),
+                providers: vec![pin],
+            };
+            unsure_is_root(tree, outcome)
+        }
         None => PlacementOutcome::unsure(tree, vec![pin], "no placement evidence"),
     }
 }
@@ -434,7 +451,8 @@ fn rule_outcome(tree: &TaskTypeTree, read: Option<&RuleRead>) -> PlacementOutcom
 /// With the host's `decisions`, the dial routes [`PLACEMENT_QUESTION`] from
 /// the rule rung up through the host's rungs, never to a person; an
 /// abstention is the root, and a failed run keeps the rule rung's reading.
-/// Without them, the rule rung reads alone.
+/// Without them, the rule rung reads alone. Whatever answers, an unsure
+/// verdict is the root.
 #[must_use]
 pub fn place_task(
     tree: &TaskTypeTree,
@@ -501,13 +519,14 @@ pub fn place_task(
                 Some(read) if answering == heuristic_pin() => read.rationale.clone(),
                 _ => format!("placed by {}", executor_of(&answering)),
             };
-            PlacementOutcome {
+            let outcome = PlacementOutcome {
                 type_ref: tree.type_ref(&node_id),
                 confident: !decision.in_band,
                 executor: executor_of(&answering),
                 rationale,
                 providers,
-            }
+            };
+            unsure_is_root(tree, outcome)
         }
         _ => PlacementOutcome::unsure(tree, providers, "no rung placed it"),
     }

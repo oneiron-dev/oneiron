@@ -4,22 +4,19 @@
 //! applied. `vault.code.repo_diff` shows every file changed between two
 //! trees, a tree being a code revision's tested files or a git snapshot's.
 //! A rename is one document at a new path. A document's units name the
-//! operations that wrote them; a git snapshot names none, since it holds no
-//! operations and no authorship is made up for it.
+//! operations that wrote them, each ref as the caller reads it; a git
+//! snapshot names none, since it holds no operations and no authorship is
+//! made up for it.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::verbs::{
-    CodeChangeView, CodeOperationView, CodeStateView, change_view, operation_view, state_view,
-};
+use super::verbs::{CodeChangeView, CodeOperationView, CodeStateView, OpRefs, state_view};
 use super::{CodeDocumentFrontier, CodeOpAttribution};
 use crate::batch::secret_scan::LiftedKeys;
-use crate::code_symbol::{
-    CodeAttributedChange, render_attributed_semantic_diff, semantic_code_diff,
-};
-use crate::codebase::RepoRef;
+use crate::code_symbol::{CodeAttributedChange, semantic_code_diff};
+use crate::codebase::{RepoRef, snapshot_asset_entity_id};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -36,12 +33,13 @@ pub struct CodeProposalViewRequest {
     pub proposal_ref: String,
 }
 
-/// Who proposed a change, and why: the stamp its landed operation carries.
+/// Who proposed a change, and why: the stamp its landed operation carries,
+/// each ref as the caller reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeProposedStamp {
-    pub actor_ref: String,
-    pub session_ref: String,
-    pub provenance_claim_ref: String,
+    pub actor_ref: Option<String>,
+    pub session_ref: Option<String>,
+    pub provenance_claim_ref: Option<String>,
     pub turn_ref: Option<String>,
     pub activity_ref: Option<String>,
     pub intent_ref: Option<String>,
@@ -154,7 +152,7 @@ impl Memory<'_> {
         if self.get_entity(&proposal.id.to_hex())?.value.is_none() {
             return Ok(None);
         }
-        self.produced_from([proposal.id, proposal.session, proposal.provenance_claim]);
+        self.produced_from([proposal.id]);
         let repo = RepoRef::parse(&proposal.repo)?;
         let base =
             vault.mount_repo_ref(&repo, RepoMountRef::Fork(proposal.pre_action_fork_hash))?;
@@ -185,29 +183,32 @@ impl Memory<'_> {
                 change,
             })
             .collect();
-        let id = |id: Option<EntityId>| id.map(|id| id.to_hex());
+        let mut refs = OpRefs::new(self);
+        let (changes, diff) = refs.changes(changes)?;
+        let landed = landed.as_ref().map(|op| refs.operation(op)).transpose()?;
+        // The stamp's refs come from the proposal record, so each is shown,
+        // and listed as a producer, only when the caller reads it (FIX 4446).
         let provenance = &proposal.op_provenance;
         let proposed = CodeProposedStamp {
-            actor_ref: proposal.actor.to_hex(),
-            session_ref: proposal.session.to_hex(),
-            provenance_claim_ref: proposal.provenance_claim.to_hex(),
-            turn_ref: id(provenance.turn),
-            activity_ref: id(provenance.activity),
-            intent_ref: id(provenance.intent),
-            model_ref: id(provenance.substrate_ref),
+            actor_ref: refs.admitted(Some(proposal.actor))?,
+            session_ref: refs.admitted(Some(proposal.session))?,
+            provenance_claim_ref: refs.admitted(Some(proposal.provenance_claim))?,
+            turn_ref: refs.admitted(provenance.turn)?,
+            activity_ref: refs.admitted(provenance.activity)?,
+            intent_ref: refs.admitted(provenance.intent)?,
+            model_ref: refs.admitted(provenance.substrate_ref)?,
             reasoning_effort: provenance.reasoning_effort.clone(),
         };
         let shown = |id: &Option<String>| id.clone().unwrap_or_else(|| "-".to_owned());
         let rendered = format!(
-            "# proposed actor:{} session:{} turn:{} activity:{} intent:{} model:{} effort:{}\n{}",
-            proposed.actor_ref,
-            proposed.session_ref,
+            "# proposed actor:{} session:{} turn:{} activity:{} intent:{} model:{} effort:{}\n{diff}",
+            shown(&proposed.actor_ref),
+            shown(&proposed.session_ref),
             shown(&proposed.turn_ref),
             shown(&proposed.activity_ref),
             shown(&proposed.intent_ref),
             shown(&proposed.model_ref),
             shown(&proposed.reasoning_effort),
-            render_attributed_semantic_diff(&changes),
         );
         Ok(Some(CodeProposalView {
             proposal_ref: proposal.id.to_hex(),
@@ -216,8 +217,8 @@ impl Memory<'_> {
             message: proposal.message,
             status: proposal.status,
             proposed,
-            changes: changes.into_iter().map(change_view).collect(),
-            landed: landed.as_ref().map(operation_view),
+            changes,
+            landed,
             rendered,
         }))
     }
@@ -268,25 +269,24 @@ impl Memory<'_> {
             }
         }
         files.sort_by(|a, b| a.0.path.cmp(&b.0.path));
+        let mut refs = OpRefs::new(self);
+        let mut views = Vec::with_capacity(files.len());
         let mut rendered = String::new();
-        for (file, changes) in &files {
+        for (mut file, changes) in files {
             rendered.push_str(&format!("## {:?} {}", file.change, file.path));
             if let Some(from) = &file.renamed_from {
                 rendered.push_str(&format!(" (from {from})"));
             }
             rendered.push('\n');
-            rendered.push_str(&render_attributed_semantic_diff(changes));
+            let (changes, diff) = refs.changes(changes)?;
+            rendered.push_str(&diff);
+            file.changes = changes;
+            views.push(file);
         }
         not_text.sort();
         not_text.dedup();
         let view = CodeRepoDiffView {
-            files: files
-                .into_iter()
-                .map(|(mut file, changes)| {
-                    file.changes = changes.into_iter().map(change_view).collect();
-                    file
-                })
-                .collect(),
+            files: views,
             not_text,
             rendered,
         };
@@ -339,6 +339,17 @@ impl Memory<'_> {
                 let mut files = Vec::new();
                 for path in mount.list_files() {
                     let bytes = mount.read_file(path)?.unwrap_or_default();
+                    // Each file's ASSET is read through the caller's
+                    // credential before its bytes enter the diff, as
+                    // `vault.code.snapshots.read` admits it: one withheld is
+                    // absent from this side. The mount read the bytes by
+                    // the manifest's content hash, their BLAKE3, which names
+                    // the ASSET.
+                    let asset = snapshot_asset_entity_id(blake3::hash(bytes).as_bytes())?;
+                    if self.get_entity(&asset.to_hex())?.value.is_none() {
+                        continue;
+                    }
+                    self.produced_from([asset]);
                     match std::str::from_utf8(bytes) {
                         Ok(text) => files.push(TreeFile {
                             path: path.to_owned(),

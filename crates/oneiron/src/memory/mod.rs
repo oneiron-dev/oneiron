@@ -31,8 +31,8 @@ mod birth_position;
 mod booking;
 mod claim_admission;
 mod claim_conflict;
-pub mod consolidation;
 mod conflict_settle;
+pub mod consolidation;
 mod diary_read;
 mod dreamer_revert;
 mod people_verbs;
@@ -46,6 +46,8 @@ pub mod channel_doors;
 mod chat;
 mod claims;
 pub mod code_doors;
+pub mod code_run_doors;
+pub mod result_doors;
 pub mod codebase_doors;
 mod conversation_list;
 mod credential_key;
@@ -205,7 +207,9 @@ pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live
 pub(crate) use structural::append_agent_diary_in_txn;
 pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
-    HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
+    HabitCheckinInput, ProductivityCreateRequest, ProductivityCreateRole, ProductivityNode,
+    ProductivityRole, ProductivityTree, ProductivityTreeRequest, StructuralEdgeSpec,
+    StructuralPutInput, TextIndexField,
 };
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
 pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};

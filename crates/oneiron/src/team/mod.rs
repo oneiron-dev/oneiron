@@ -12,6 +12,7 @@
 //! before the work. Patterns are compared at equal budget, in Phase 2;
 //! nothing here adds a runtime task kind.
 
+pub mod doors;
 pub mod market;
 pub mod observations;
 pub mod owner_outcome;
@@ -22,6 +23,11 @@ pub mod run;
 pub mod run_binding;
 pub mod stack;
 
+pub use doors::{
+    FIXTURE_TREE_VERSION_MAX, TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin,
+    TaskTypeTreePinReceipt, TaskTypeTreeRead, TaskTypeTreeReadReply, TaskTypeTreeView, TypeStamp,
+    pin_tree_as, read_tree_as,
+};
 pub use market::{
     LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind,
     SignedReferee, Submission, close_market, halving_round, market, open_market, peek_island,

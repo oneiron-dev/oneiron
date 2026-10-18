@@ -10,7 +10,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::trusted_contact_notice::{consent_change_guard, stage_notice_in_txn};
+use super::trusted_contact_notice::{
+    TrustedContactNoticeAuthorization, consent_change_guard, inform_inboxes_in_txn,
+    stage_notice_in_txn,
+};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -366,10 +369,11 @@ impl Vault {
             .collect())
     }
 
-    /// The person answers one ask, once. A yes stages the notice and returns
-    /// the notices that tell the person and the model it was sent, each
-    /// body as `config` words it. An ask whose naming was revoked or replaced
-    /// is superseded, whatever the answer.
+    /// The person answers one ask, once. A yes stages the notice, authorized
+    /// by this ask, and returns the notices that tell the person and the
+    /// model it was sent, each body as `config` words it; the same notices
+    /// land in the person's and the sending agent's inboxes. An ask whose
+    /// naming was revoked or replaced is superseded, whatever the answer.
     pub fn answer_trusted_contact_ask(
         &self,
         person: &AuthenticatedOwner,
@@ -406,23 +410,34 @@ impl Vault {
             if !yes {
                 return Ok(TrustedContactAskOutcome::Declined);
             }
-            stage_notice_in_txn(self, wtxn, &relation, ask, now)?;
-            Ok(TrustedContactAskOutcome::Notified(
-                crate::policy_model::trusted_contact_notices(
-                    TrustedContactFire {
-                        notified: 1,
-                        asked: 0,
-                    },
-                    config,
-                ),
-            ))
+            stage_notice_in_txn(
+                self,
+                wtxn,
+                &relation,
+                ask,
+                TrustedContactNoticeAuthorization::Ask {
+                    ask_ref: ask.to_hex(),
+                },
+                now,
+            )?;
+            let notices = crate::policy_model::trusted_contact_notices(
+                TrustedContactFire {
+                    notified: 1,
+                    asked: 0,
+                },
+                config,
+            );
+            inform_inboxes_in_txn(self, wtxn, &relation, ask, &notices, now)?;
+            Ok(TrustedContactAskOutcome::Notified(notices))
         })
     }
 
     /// Fires `person`'s trusted contacts for one `RouteToHelp` the gate
     /// settled, in the gate's own transaction. Each live relation is notified
-    /// at once on the imminent tier with just-call, and asked about otherwise.
-    /// A proof that no longer stands binds no one: the help card still shows.
+    /// at once on the imminent tier with just-call, authorized by the firing
+    /// row, and asked about otherwise; either way the person and the sending
+    /// agent are told in their inboxes. A proof that no longer stands binds
+    /// no one: the help card still shows.
     pub(crate) fn fire_trusted_contacts_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -442,43 +457,75 @@ impl Vault {
             None => None,
         }
         .unwrap_or(TrustedContactTier::Concern);
+        // A notice sent without asking is authorized by the policy row that
+        // fired it, at the tier the owner named for that row.
+        let origin = row_ref.map(|row_ref| TrustedContactNoticeAuthorization::Policy {
+            row_ref: row_ref.to_owned(),
+            tier,
+        });
+        // What the person and the agent are told, per relation, in the
+        // engine's own words: the gate's receipt carries the host's.
+        let told = |fire: TrustedContactFire| {
+            crate::policy_model::trusted_contact_notices(fire, &PolicyModelConfig::default())
+        };
         let mut fire = TrustedContactFire::default();
         for (_, relation) in RELATIONS.scan_from(&self.store, wtxn, person.as_bytes())? {
             if relation.person != person || !relation.is_live() {
                 continue;
             }
-            if relation.dial == TrustedContactDial::JustCall && tier == TrustedContactTier::Imminent
+            if relation.dial == TrustedContactDial::JustCall
+                && tier == TrustedContactTier::Imminent
+                && let Some(origin) = origin.clone()
             {
-                stage_notice_in_txn(self, wtxn, &relation, EntityId::now(), now)?;
+                let sent = EntityId::now();
+                stage_notice_in_txn(self, wtxn, &relation, sent, origin, now)?;
+                let notices = told(TrustedContactFire {
+                    notified: 1,
+                    asked: 0,
+                });
+                inform_inboxes_in_txn(self, wtxn, &relation, sent, &notices, now)?;
                 fire.notified += 1;
                 continue;
             }
             // One open ask per naming: a second crisis before the person
             // answers is told to them, not asked twice.
-            let open = ASKS.scan(&self.store, wtxn)?.into_iter().any(|(_, ask)| {
-                ask.person == person
-                    && ask.contact == relation.contact
-                    && ask.version == relation.version
-                    && ask.is_open()
+            let open = ASKS
+                .scan(&self.store, wtxn)?
+                .into_iter()
+                .find(|(_, ask)| {
+                    ask.person == person
+                        && ask.contact == relation.contact
+                        && ask.version == relation.version
+                        && ask.is_open()
+                })
+                .map(|(key, _)| key);
+            let asked = match open {
+                Some(open) => open,
+                None => {
+                    let ask = EntityId::now();
+                    ASKS.put(
+                        &self.store,
+                        wtxn,
+                        &ask,
+                        &TrustedContactAsk {
+                            ask,
+                            person,
+                            contact: relation.contact,
+                            version: relation.version,
+                            tier,
+                            asked_at: now,
+                            answer: None,
+                            superseded: None,
+                        },
+                    )?;
+                    ask
+                }
+            };
+            let notices = told(TrustedContactFire {
+                notified: 0,
+                asked: 1,
             });
-            if !open {
-                let ask = EntityId::now();
-                ASKS.put(
-                    &self.store,
-                    wtxn,
-                    &ask,
-                    &TrustedContactAsk {
-                        ask,
-                        person,
-                        contact: relation.contact,
-                        version: relation.version,
-                        tier,
-                        asked_at: now,
-                        answer: None,
-                        superseded: None,
-                    },
-                )?;
-            }
+            inform_inboxes_in_txn(self, wtxn, &relation, asked, &notices, now)?;
             fire.asked += 1;
         }
         Ok(fire)
