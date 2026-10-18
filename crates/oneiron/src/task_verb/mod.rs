@@ -306,6 +306,7 @@ mod sdk_explain;
 mod sdk_fanout_launch;
 mod sdk_federation;
 mod sdk_feedback;
+mod sdk_guest_document;
 mod sdk_guest_revoke;
 mod sdk_goal_optimize;
 mod sdk_host;

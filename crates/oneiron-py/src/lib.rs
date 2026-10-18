@@ -2546,6 +2546,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_guests_share(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.guests.share")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.guests.share", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_guests_export_envelope(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.guests.export_envelope")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.guests.export_envelope", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_guests_reshare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.guests.reshare")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.guests.reshare", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_guests_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.guests.revoke")?;
         let output = py

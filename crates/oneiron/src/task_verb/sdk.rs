@@ -559,6 +559,7 @@ pub use super::sdk_explain::*;
 pub use super::sdk_fanout_launch::*;
 pub use super::sdk_federation::*;
 pub use super::sdk_feedback::*;
+pub use super::sdk_guest_document::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_goal_optimize::*;
 pub use super::sdk_host::*;

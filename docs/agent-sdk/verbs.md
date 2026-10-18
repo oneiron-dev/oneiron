@@ -261,6 +261,9 @@ both bindings and their export-census tests in one change.
 - `vault.trusted_contacts.concern.authorize`
 - `vault.trusted_contacts.concern.propose`
 - `vault.trusted_contacts.concern.deliver`
+- `vault.guests.share`
+- `vault.guests.export_envelope`
+- `vault.guests.reshare`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
 - `vault.support_grants.mint`

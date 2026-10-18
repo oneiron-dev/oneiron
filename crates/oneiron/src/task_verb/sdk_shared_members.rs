@@ -233,7 +233,7 @@ pub fn close_shared_erase_ask_as(
     )
 }
 
-/// `vault.guests.mint_slip`'s input: the ask guest's FEDERATION_GRANT, the
+/// `vault.guests.mint_slip`'s input: the Ask or active Connect guest's FEDERATION_GRANT, the
 /// public key (64 hex) the guest generated on their own device, and when the
 /// slip ends (Unix seconds).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -246,7 +246,7 @@ pub struct GuestSlipMintRequest {
 
 /// `vault.guests.mint_slip`'s answer: the slip credential for the guest, who
 /// proves each request with their own key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GuestSlipMinted {
     /// The slip id, hex.
     pub slip_id: String,
