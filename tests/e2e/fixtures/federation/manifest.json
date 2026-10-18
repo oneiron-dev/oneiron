@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "area": "federation",
+  "assets": [
+    {
+      "id": "federation-canon-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-federation-canon",
+        "revision": "sha256:3230ba5e8a0377bf99d8c98db1b65a6ad9a4fa961223b1bf0df8633a113f5ac0"
+      },
+      "licence": "CC0-1.0 (authored synthetic scenario data; source documents are referenced, not redistributed)",
+      "sha256": "0bd3e9c84114ef1f051bc35281eafd27317e0dce2300a5b2ca0e77f6e0e5b6ea",
+      "expectedFacts": {
+        "source": "Pinned canon and owner rulings listed in scenarios.json, never engine output",
+        "defaultVetoWaitSeconds": 604800,
+        "defaultVetoActs": [
+          "delete_vault",
+          "erase",
+          "transfer_ownership",
+          "remove_owner"
+        ],
+        "exportUsesVeto": false,
+        "fixtureVetoWaitSeconds": 2,
+        "guestMayWidenOrReshare": false,
+        "identityLinksPoolClaims": false,
+        "copiesRecallable": false,
+        "peerAnomalyOracle": "configured routed outcome and receipt (G11=B)",
+        "noRetiredDeviceKeyTierFloor": true
+      },
+      "scenarios": [
+        "FEDERATION-01",
+        "FEDERATION-02",
+        "FEDERATION-03",
+        "FEDERATION-04",
+        "FEDERATION-05",
+        "FEDERATION-06",
+        "FEDERATION-07",
+        "FEDERATION-08"
+      ],
+      "requires": []
+    }
+  ]
+}

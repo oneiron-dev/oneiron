@@ -1,0 +1,498 @@
+{
+  "version": 1,
+  "oracle": "Independently authored from the pinned canon and binding owner rulings; no engine responses are expected values.",
+  "sourcePins": [
+    {
+      "uri": "/oneiron/sync/oneiron-arch-0043-federation-membership-v1/",
+      "sha256": "9a9f83242578b5e90c6faf5cec009ef1c9e6d0b1633e3e4c92476a2f170433e7"
+    },
+    {
+      "uri": "/oneiron/identity/",
+      "sha256": "cfce80cc03e867bf2a2340c01372bae03330271b740de8f012ab2f87b5f7730c"
+    },
+    {
+      "uri": "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/",
+      "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+    },
+    {
+      "uri": "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/",
+      "sha256": "92160a74ea205a7d4e6cdbc9fcaa642dc31f0230ff5e71f116dc32f32a2dbcc4"
+    },
+    {
+      "uri": "/registry/oneiron/",
+      "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7"
+    },
+    {
+      "uri": "owner-rulings:e2e-rulings-2026-10-18",
+      "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df"
+    }
+  ],
+  "setup": {
+    "vaults": [
+      "host",
+      "guest",
+      "third"
+    ],
+    "separatePersonalVault": "personal-member",
+    "principals": [
+      {
+        "label": "owner-a",
+        "role": "owner"
+      },
+      {
+        "label": "owner-b",
+        "role": "owner"
+      },
+      {
+        "label": "admin-person",
+        "role": "admin"
+      },
+      {
+        "label": "member-person",
+        "role": "member"
+      },
+      {
+        "label": "viewer-person",
+        "role": "viewer"
+      },
+      {
+        "label": "delegate-person",
+        "role": "delegate"
+      },
+      {
+        "label": "guest-person",
+        "role": "guest",
+        "namespace": "guest_not_member_roster"
+      }
+    ],
+    "reciprocalPact": "host-guest-only",
+    "thirdVaultAuthority": "none_until_explicit_control_share",
+    "seeding": "Only future named public calls; labels are not engine identifiers, persisted records or signed fixtures."
+  },
+  "cases": [
+    {
+      "id": "FEDERATION-01",
+      "inputs": {
+        "sharedPreset": "org",
+        "memberRelationship": {
+          "person": "member-person",
+          "label": "coworker"
+        },
+        "adminNamedActions": [
+          "add_member",
+          "remove_member",
+          "assign_role",
+          "reset_shared_project_access",
+          "rule_on_conflict_review"
+        ],
+        "delegate": {
+          "scope": "shared-document-only",
+          "expires": true,
+          "onwardDelegation": false
+        },
+        "privateSentence": "The personal observatory notebook names the silver comet.",
+        "memberChangeSequence": [
+          "invite",
+          "accept",
+          "assign_viewer",
+          "remove"
+        ],
+        "forbiddenAdminAttempts": [
+          "self_grant_blanket_access",
+          "change_org_root",
+          "object_to_owner_act",
+          "read_personal_vault"
+        ],
+        "forbiddenRoleAttempts": {
+          "member": [
+            "widen_role"
+          ],
+          "viewer": [
+            "propose",
+            "commit",
+            "widen"
+          ],
+          "delegate": [
+            "onward_delegate",
+            "widen",
+            "use_after_expiry"
+          ],
+          "guest": [
+            "join_member_roster",
+            "widen",
+            "reshare_foreign_world"
+          ]
+        }
+      },
+      "expected": {
+        "roleNames": [
+          "owner",
+          "admin",
+          "member",
+          "viewer",
+          "delegate",
+          "guest"
+        ],
+        "ownersEqual": true,
+        "guestRosterAuthority": false,
+        "missingPowersImplicit": false,
+        "adminPersonalRead": false,
+        "sharedRemovalAffectsPersonalRoot": false,
+        "relationshipLabelGrantsAuthority": false,
+        "projectionPreserves": [
+          "role",
+          "person",
+          "relationship",
+          "named_grant_powers"
+        ]
+      },
+      "blockingPrerequisites": [
+        "typed Admin named-power setup/read and reset-project-access",
+        "typed bounded Delegate grant with expiry and no onward delegation",
+        "typed relationship-tagged role projection"
+      ]
+    },
+    {
+      "id": "FEDERATION-02",
+      "inputs": {
+        "liveOwners": [
+          "owner-a",
+          "owner-b"
+        ],
+        "formerOwner": "owner-former",
+        "fixtureVetoWaitSeconds": 2,
+        "acts": [
+          "delete_vault",
+          "erase",
+          "transfer_ownership",
+          "remove_owner"
+        ],
+        "removeOwnerExportFirstAnswers": [
+          true,
+          false
+        ],
+        "ordinaryControlAct": "export"
+      },
+      "expected": {
+        "defaultVetoWaitSeconds": 604800,
+        "defaultActs": [
+          "delete_vault",
+          "erase",
+          "transfer_ownership",
+          "remove_owner"
+        ],
+        "ordinaryExportUsesVeto": false,
+        "ordinaryExportNotifiesAllOwners": true,
+        "otherOwnersNotifiedAtStart": true,
+        "starterMaySupplyClock": false,
+        "unobjectedActWaitsUntilDeadline": true,
+        "objectionHoldsBeyondDeadline": true,
+        "releaseGovernedBy": "all_live_owners",
+        "adminMayObject": false,
+        "policyEditedBy": "all_live_owners",
+        "removeWithoutExportFirstExportsNothing": true,
+        "lastOwnerExitRequires": "successor_or_own_signed_removal",
+        "recordDeleteUsesVeto": false,
+        "ownLegalErasureUsesVeto": false
+      },
+      "blockingPrerequisites": [
+        "typed default shared-act policy read",
+        "typed all-live-Owner policy change for a declared short veto wait"
+      ]
+    },
+    {
+      "id": "FEDERATION-03",
+      "inputs": {
+        "proposalA": {
+          "hostToGuestWorlds": [
+            "shared-document"
+          ],
+          "guestToHostWorlds": [
+            "guest-project"
+          ]
+        },
+        "proposalB": {
+          "hostToGuestWorlds": [
+            "shared-document",
+            "unshared-document"
+          ],
+          "guestToHostWorlds": [
+            "guest-project"
+          ]
+        },
+        "matchingProposal": {
+          "hostToGuestWorlds": [
+            "shared-document"
+          ],
+          "guestToHostWorlds": [
+            "guest-project"
+          ]
+        },
+        "narrowTo": {
+          "hostToGuestWorlds": [
+            "shared-document"
+          ],
+          "guestToHostCeiling": {
+            "kind": "bottom"
+          }
+        },
+        "widenProposal": {
+          "hostToGuestWorlds": [
+            "shared-document",
+            "unshared-document"
+          ],
+          "guestToHostWorlds": [
+            "guest-project"
+          ]
+        },
+        "disconnectingSide": "host"
+      },
+      "expected": {
+        "mismatchedConsentActivates": false,
+        "bothOwnersSignExactDisclosedScopes": true,
+        "digestConstruction": "keyed_commitment_under_per_grant_nonce",
+        "bareScopeHashAcceptable": false,
+        "widenRequiresNewEpoch": true,
+        "widenRequiresFreshReciprocalOwnerActs": true,
+        "narrowRequiresBreakup": false,
+        "disconnectRevokesDirections": [
+          "host_to_guest",
+          "guest_to_host"
+        ],
+        "peerCooperationRequiredToRevoke": false,
+        "emptyRequestedAxisNarrowsNothing": true,
+        "emptyGrantCeilingGrantsNothing": true
+      },
+      "blockingPrerequisites": [
+        "generated typed SDK Connect binding",
+        "typed reciprocal re-scope and both-direction disconnect"
+      ]
+    },
+    {
+      "id": "FEDERATION-04",
+      "inputs": {
+        "sharedDocument": "The shared observatory opens at dusk.",
+        "unsharedDocument": "The inner observatory map stays in the host.",
+        "hiddenMembers": [
+          "hidden-astronomer-pine",
+          "hidden-astronomer-cedar"
+        ],
+        "hiddenTopology": {
+          "edgeLabel": "hidden-orbit-route",
+          "countLabel": "hidden-roster-count"
+        },
+        "ceiling": {
+          "worlds": [
+            "shared-document"
+          ],
+          "facets": [
+            "public-work"
+          ],
+          "bands": [
+            "document"
+          ],
+          "actions": [
+            "read",
+            "propose"
+          ]
+        },
+        "reshareTarget": "third",
+        "positiveControl": "host-authored-share-to-third"
+      },
+      "expected": {
+        "guestIsRosterMember": false,
+        "guestMayReadBase": false,
+        "guestMayWiden": false,
+        "guestMayReshareReceivedForeignWorld": false,
+        "thirdReceivesTransitiveCopy": false,
+        "envelopeOmits": [
+          "hidden_memberships",
+          "authority_rosters",
+          "hidden_topology",
+          "membership_counts",
+          "unshared_content"
+        ],
+        "revocationStopsFuture": [
+          "read",
+          "propose",
+          "sync"
+        ],
+        "copiedBytesRecallable": false,
+        "recipientCopyState": "unknown",
+        "preventsManualOwnerReauthoring": false
+      },
+      "blockingPrerequisites": [
+        "typed guest document share and signed envelope projection",
+        "typed foreign-world reshare attempt over HTTP/WS with SDK binding"
+      ]
+    },
+    {
+      "id": "FEDERATION-05",
+      "inputs": {
+        "personName": "Mira Chen",
+        "hostClaim": {
+          "city": "Helsinki",
+          "sourceVault": "host",
+          "world": "host-local"
+        },
+        "guestClaim": {
+          "city": "Lisbon",
+          "sourceVault": "guest",
+          "world": "guest-project"
+        },
+        "privateDetail": "Mira keeps the private violet telescope log.",
+        "identityLinkStatusSequence": [
+          "proposed",
+          "confirmed",
+          "unlinked"
+        ],
+        "shareConsentPact": "host-guest-only"
+      },
+      "expected": {
+        "hostCity": "Helsinki",
+        "guestCity": "Lisbon",
+        "poolClaims": false,
+        "rewriteSourceAttribution": false,
+        "rewriteWorldAttribution": false,
+        "linkWidensReadScope": false,
+        "linkExportsWithoutSeparateConsent": false,
+        "consentAppliesToOtherPacts": false,
+        "unlinkDeletesOriginalClaims": false,
+        "sourceLabelsSurvive": [
+          "before_link",
+          "after_link",
+          "after_unlink"
+        ]
+      },
+      "blockingPrerequisites": [
+        "typed atomic cross-vault identity link/status",
+        "typed owner confirmation and pact-specific share consent",
+        "typed unlink preserving source claims"
+      ]
+    },
+    {
+      "id": "FEDERATION-06",
+      "inputs": {
+        "receivedSentence": "The guest received the amber observatory schedule.",
+        "laterSentence": "The later cobalt schedule was not in the cutoff.",
+        "offlineClient": "guest",
+        "disconnectingSide": "host",
+        "unsyncedEdit": "An unsent edit to the amber schedule.",
+        "courtesyCutoff": "last_acknowledged_pact_epoch",
+        "courtesyResponses": [
+          "delete",
+          "decline"
+        ]
+      },
+      "expected": {
+        "normalRecallIncludesDisconnectedWorld": false,
+        "explicitWorldRecallIncludesRetainedContent": true,
+        "explicitRetainedContentMarkedStale": true,
+        "staleMetadata": [
+          "stale_since",
+          "age",
+          "reason",
+          "pact_epoch"
+        ],
+        "revokedAccessMeansCopiesRecalled": false,
+        "courtesyDeletionGuaranteed": false,
+        "remoteDeletionAttestationExists": false,
+        "beyondCutoffDeleted": false,
+        "declinedCourtesyRestoresAccess": false,
+        "clientRejoinReportsDiscardedUnsyncedEdits": true,
+        "sendStatusProvesRecipientDeletion": false
+      },
+      "blockingPrerequisites": [
+        "typed disconnect and foreign-world admission/rejoin",
+        "typed stale metadata on explicit recall"
+      ]
+    },
+    {
+      "id": "FEDERATION-07",
+      "inputs": {
+        "peers": [
+          "ordinary-peer",
+          "burst-peer",
+          "unaffected-peer"
+        ],
+        "ordinaryBatch": [
+          "Ordinary scoped observatory note."
+        ],
+        "anomalousBatch": [
+          "Unexpected but authorized observatory content."
+        ],
+        "outOfGrantAttempt": "Private host-root authority mutation.",
+        "configuredRoutes": [
+          "allow",
+          "isolate-and-propose",
+          "defer"
+        ],
+        "baselineComparison": "same_batch_different_peer_baselines_and_vault_size",
+        "maintenanceBudget": "explicit_per_peer_per_window_owner_policy"
+      },
+      "expected": {
+        "ownerRuling": "G11=B",
+        "oracle": "configured_routed_outcome_and_receipt",
+        "universalModelScoreCutoff": null,
+        "absoluteBurstConstant": null,
+        "plainBlockOfAuthorizedBurst": false,
+        "pauseForHumanApproval": false,
+        "isolationReviewBundleCount": 1,
+        "deferredWorkLost": false,
+        "ownerReleaseWidensRejectedAuthority": false,
+        "otherPeersBlocked": false,
+        "maintenanceIngestIsBounded": true,
+        "maintenanceQuotaAloneProvesRelativeBurstResponse": false,
+        "deferredReplayPreserves": [
+          "batch_identity",
+          "authorized_content",
+          "source_provenance"
+        ]
+      },
+      "blockingPrerequisites": [
+        "typed peer baseline/relative-burst policy",
+        "typed allow/isolate-and-propose/defer disposition and owner review",
+        "typed durable deferred-batch replay and receipt"
+      ]
+    },
+    {
+      "id": "FEDERATION-08",
+      "inputs": {
+        "modes": [
+          "managed",
+          "self-host",
+          "relay"
+        ],
+        "adapters": "local_real_host_processes_with_no_external_network",
+        "relayAttempt": "mint_authority_from_forwarded_proposal",
+        "selfHostRecovery": "host_owner_proof_of_control"
+      },
+      "expected": {
+        "managed": {
+          "authorityRoot": "trusted_managed_host",
+          "hostReadable": true
+        },
+        "self-host": {
+          "authorityRoot": "owner_box",
+          "serviceIsBlindRelayAtMost": true
+        },
+        "relay": {
+          "authorityRoot": "owner_devices",
+          "relayHoldsKeys": false,
+          "relayMintsAuthority": false,
+          "relayHasEngine": false
+        },
+        "recoveryWidensCeiling": false,
+        "crossVaultRecoveryStanding": false,
+        "deviceKeyTierFloorRequired": false,
+        "cloudAsMemberCeremonyRequired": false,
+        "retiredDeviceKeyQuorumRequired": false,
+        "cloudKmsOrDiskEncryptionCertified": false
+      },
+      "blockingPrerequisites": [
+        "typed public hosting root/readability/privacy declaration",
+        "prepared local managed and blind-relay host lifecycle fixtures"
+      ]
+    }
+  ]
+}
