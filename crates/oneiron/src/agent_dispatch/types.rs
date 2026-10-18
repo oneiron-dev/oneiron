@@ -471,7 +471,16 @@ pub struct DispatchHealer {
 /// explanation. On one call it sets reasoning effort; on a spawn the planner
 /// reads it with the need and the budget.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]

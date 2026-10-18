@@ -822,6 +822,8 @@ class Oneiron:
     def ai(self) -> "Oneiron._AiVerbs": ...
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs": ...
+    @property
+    def calendar(self) -> "Oneiron._CalendarVerbs": ...
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
@@ -1821,6 +1823,15 @@ class Oneiron:
     class _VaultHooksVerbs:
         def replay(self, spec: Facade.HooksReplayRequest) -> list[Facade.HookReplayRow]:
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
+        @property
+        def regen(self) -> "Oneiron._VaultHooksRegenVerbs": ...
+    class _VaultHooksRegenVerbs:
+        def due(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.EntityId]:
+            """List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen."""
+        def get(self, spec: Facade.HookRegenBindingRequest) -> Facade.HookRegenView | None:
+            """Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing."""
+        def adopt(self, spec: Facade.HookRegenAdoptRequest) -> Facade.PackPutReceipt:
+            """Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record."""
     class _VaultArtifactsVerbs:
         def publish_approval(self, spec: Facade.ArtifactPublishRequest) -> Facade.ArtifactPublishApproval:
             """Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing."""
@@ -2442,6 +2453,12 @@ class Oneiron:
         def reject(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
             """Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads."""
     class _VaultNotesVerbs:
+        def bless_brief_kind(self, input: Facade.EmptyRequest) -> Facade.BriefKindStamp:
+            """A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority."""
+        def author_brief(self, input: Facade.AuthorBriefRequest) -> Facade.EntityRefReceipt:
+            """Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction."""
+        def follow_citation(self, spec: Facade.BriefCitationFollowRequest) -> Facade.ScopedReadResult[Facade.SharedBriefCitation | None]:
+            """Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle."""
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
         def author_take(self, input: Facade.AuthorTakeRequest) -> Facade.EntityRefReceipt:
@@ -2765,6 +2782,29 @@ class Oneiron:
     class _ConnectorOutboundVerbs:
         def schedule(self, spec: Facade.OutboundScheduleRequest) -> Facade.OutboundIntentReceipt:
             """Schedules one send through a granted outbound connector, gated and held for delivery."""
+    class _CalendarVerbs:
+        def invite(self, spec: Facade.CalendarInviteSurfaceInput) -> Facade.OutboundIntentReceipt:
+            """Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."""
+        @property
+        def connector(self) -> "Oneiron._CalendarConnectorVerbs": ...
+        @property
+        def imip(self) -> "Oneiron._CalendarImipVerbs": ...
+    class _CalendarConnectorVerbs:
+        def configure(self, spec: Facade.CalendarConnectorConfigureRequest) -> Facade.CalendarConnectorRegistration:
+            """Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."""
+        def get(self, spec: Facade.CalendarConnectorRequest) -> Facade.CalendarConnectorRegistration | None:
+            """Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof."""
+        def pull(self, spec: Facade.CalendarConnectorRequest) -> Facade.CalendarSyncOutcome:
+            """Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof."""
+        def write(self, spec: Facade.CalendarConnectorWriteRequest) -> Facade.RemoteWriteReceipt:
+            """Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite."""
+        def kill(self, spec: Facade.CalendarConnectorKillRequest) -> Facade.CalendarConnectorRegistration:
+            """Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence."""
+    class _CalendarImipVerbs:
+        def configure(self, spec: Facade.CalendarImipTransportConfig) -> Facade.CalendarImipTransportConfig:
+            """Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity."""
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.CalendarImipTransportConfig | None:
+            """Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value."""
 
 # END GENERATED FACADE VERBS
 ```

@@ -110,7 +110,9 @@ pub struct EvalSourceGroup {
 }
 
 /// How many of a seat's families have each purpose.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct PurposeCounts {
     pub development: usize,
     pub judge_audit: usize,

@@ -238,7 +238,12 @@ pub(super) enum Caller {
 /// version-wide benchmark): the vault owner, or the agent whose live leased
 /// try is that root.
 fn controller(memory: &Memory<'_>, root: Option<AttemptId>) -> MemoryResult<Caller> {
-    let txn = memory.vault().store.env.read_txn().map_err(crate::Error::from)?;
+    let txn = memory
+        .vault()
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)?;
     controller_in_txn(memory, &txn, root)
 }
 
@@ -248,15 +253,16 @@ pub(super) fn controller_in_txn(
     root: Option<AttemptId>,
 ) -> MemoryResult<Caller> {
     let vault = memory.vault();
-    if crate::memory::actor_is_vault_owner_in_txn(
-        vault, txn, memory.actor(), memory.actor_class(),
-    )? {
+    if crate::memory::actor_is_vault_owner_in_txn(vault, txn, memory.actor(), memory.actor_class())?
+    {
         return Ok(Caller::Owner);
     }
-    let refused = || forbidden(
-        "only the campaign's controller drives its record: the owner, or the agent running its root attempt",
-        "Call from the campaign's root try, or as the owner.",
-    );
+    let refused = || {
+        forbidden(
+            "only the campaign's controller drives its record: the owner, or the agent running its root attempt",
+            "Call from the campaign's root try, or as the owner.",
+        )
+    };
     let binding = memory.task_host().ok_or_else(refused)?;
     let attempt = binding.parent();
     let admitted = match root {
@@ -466,7 +472,12 @@ pub fn research_promotion_basis(
     memory.vault().try_with_write_txn_grouped(|txn| {
         controller_in_txn(memory, txn, Some(root))?;
         Ok(research::promotion_basis_in_txn(
-            memory.vault(), txn, root, attempt(input.candidate)?, input.archive, now(memory),
+            memory.vault(),
+            txn,
+            root,
+            attempt(input.candidate)?,
+            input.archive,
+            now(memory),
         )?)
     })
 }

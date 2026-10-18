@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 693 facade rows, 2519 declarations.
-Inputs: 641 of 693 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 618 of 693 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 707 facade rows, 2549 declarations.
+Inputs: 655 of 707 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 632 of 707 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -1076,11 +1076,12 @@ class TaskOutcomeRejected(TypedDict):
     kind: Literal["rejected"]
     decision_ref: NotRequired[str | None]
 TaskOutcome = TaskOutcomeProposed | TaskOutcomeCreated | TaskOutcomeAccepted | TaskOutcomeHeldByOther | TaskOutcomeAskedUp | TaskOutcomeReported | TaskOutcomeSnapshot | TaskOutcomeUnchanged | TaskOutcomeStaleFence | TaskOutcomeWrongNode | TaskOutcomeRejected
+TaskActor = str
 class TaskLifecycleRecord(TypedDict):
     call: str
     outcome: str
     occurred_at: int
-    actor: EntityId
+    actor: TaskActor
     on_behalf_of: NotRequired[str | None]
     job_ref: NotRequired[str | None]
     trigger_ref: NotRequired[str | None]
@@ -6673,6 +6674,43 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
+class HookRegenBindingRequest(TypedDict):
+    binding: EntityId
+class HookContractStamp(TypedDict):
+    verb_table: str
+    sandbox: str
+class HookGoldenDiff(TypedDict):
+    cases: int
+    changed: list[str]
+HookRegenFailurePhase = Literal["intent", "generate", "validate", "golden_replay"]
+class HookRegenFailure(TypedDict):
+    phase: HookRegenFailurePhase
+    message: str
+class HookRegenOutcomeAutoAdopt(TypedDict):
+    outcome: Literal["auto_adopt"]
+    candidate: str
+    target: HookContractStamp
+    diff: HookGoldenDiff
+class HookRegenOutcomeNeedsHumanStamp(TypedDict):
+    outcome: Literal["needs_human_stamp"]
+    candidate: str
+    target: HookContractStamp
+    diff: HookGoldenDiff
+class HookRegenOutcomeRolledBack(TypedDict):
+    outcome: Literal["rolled_back"]
+    failure: HookRegenFailure
+HookRegenOutcome = HookRegenOutcomeAutoAdopt | HookRegenOutcomeNeedsHumanStamp | HookRegenOutcomeRolledBack
+class HookRegenRecord(TypedDict):
+    body_hash: str
+    stamp: HookContractStamp
+    intent: NotRequired[str | None]
+    pending: NotRequired[HookRegenOutcome | None]
+class HookRegenView(TypedDict):
+    record: HookRegenRecord
+    candidate_hash: NotRequired[str | None]
+class HookRegenAdoptRequest(TypedDict):
+    binding: EntityId
+    candidate_hash: str
 ArtifactPointerChannel = Literal["published", "preview"]
 CodebaseForkHash = list[int]
 class ArtifactExportRefForkHash(TypedDict):
@@ -10380,6 +10418,71 @@ class BookingPageTokenRequest(TypedDict):
     page_ref: str
 class BookingPageTokenResponse(TypedDict):
     page_token: str
+CalendarInviteSurfaceMethod = Literal["REQUEST", "CANCEL"]
+class CalendarInviteSurfaceInput(TypedDict):
+    method: CalendarInviteSurfaceMethod
+    uid: str
+    sequence: int
+    ics_blob_ref: str
+    recipient: str
+    mention: NotRequired[MentionProvenance | None]
+class OutboundIntentReceipt(TypedDict):
+    intent_ref: str
+    outcome: str
+    gate_outcome: NotRequired[str | None]
+    gate_decision_ref: NotRequired[str | None]
+    gate_reason_codes: list[str]
+    deduped: bool
+class CalendarConnectorSeatConfig(TypedDict):
+    seat_ref: str
+    secret_ref: str
+    system: str
+    calendar_ref: str
+    cadence_jitter_min_seconds: int
+    cadence_jitter_max_seconds: int
+class CalendarConnectorConfigureRequest(TypedDict):
+    config: CalendarConnectorSeatConfig
+    endpoint: str
+class CalendarConnectorKillSwitchState(TypedDict):
+    killed_at: int
+    verbs_revoked: bool
+    polling_stopped: bool
+    reason_ref: str
+class CalendarConnectorSeatState(TypedDict):
+    config: CalendarConnectorSeatConfig
+    cursor: NotRequired[str | None]
+    kill_switch: NotRequired[CalendarConnectorKillSwitchState | None]
+class CalendarSyncOutcomeReenqueuedBody(TypedDict):
+    next_cursor: NotRequired[str | None]
+    next_not_before: int
+    applied: int
+    acknowledged: int
+    source_absences: int
+    status_cancellations: int
+class CalendarSyncOutcomeReenqueued(TypedDict):
+    Reenqueued: CalendarSyncOutcomeReenqueuedBody
+CalendarSyncOutcome = Literal["Killed"] | CalendarSyncOutcomeReenqueued
+class CalendarConnectorRegistration(TypedDict):
+    endpoint: str
+    seat: CalendarConnectorSeatState
+    last_sync: NotRequired[CalendarSyncOutcome | None]
+class CalendarConnectorRequest(TypedDict):
+    seat_ref: str
+class CalendarConnectorWriteRequest(TypedDict):
+    seat_ref: str
+    event_ref: str
+class RemoteWriteReceipt(TypedDict):
+    href: str
+    etag: NotRequired[str | None]
+    uid: str
+    sequence: int
+    content_hash: list[int]
+class CalendarConnectorKillRequest(TypedDict):
+    seat_ref: str
+    reason_ref: str
+class CalendarImipTransportConfig(TypedDict):
+    endpoint: str
+    secret_ref: str
 class CalendarRangeDto(TypedDict):
     start: int
     end: int
@@ -12198,13 +12301,6 @@ class OutboundScheduleRequest(TypedDict):
     job_ref: NotRequired[str | None]
     occurred_at: NotRequired[int | None]
     mention: NotRequired[MentionProvenance | None]
-class OutboundIntentReceipt(TypedDict):
-    intent_ref: str
-    outcome: str
-    gate_outcome: NotRequired[str | None]
-    gate_decision_ref: NotRequired[str | None]
-    gate_reason_codes: list[str]
-    deduped: bool
 class SummaryPathBranch(TypedDict):
     branch: str
 class SummaryPathBranchSpanBody(TypedDict):
@@ -12379,6 +12475,26 @@ class SummaryRegenerateRequest(TypedDict):
     read_refs: list[str]
 class SummaryProposalRequest(TypedDict):
     proposal_ref: str
+NoteExtractionDefault = Literal["disabled"]
+NoteContextDefault = Literal["relationship_scoped"]
+NoteRetentionDefault = Literal["durable"]
+class BriefKindStamp(TypedDict):
+    person_ref: str
+    extraction: NoteExtractionDefault
+    context: NoteContextDefault
+    retention: NoteRetentionDefault
+class BriefClaimCitation(TypedDict):
+    claim_ref: str
+    document_ref: str
+    start: int
+    end: int
+class AuthorBriefRequest(TypedDict):
+    markdown: str
+    citations: list[BriefClaimCitation]
+class BriefCitationFollowRequest(TypedDict):
+    share_ref: str
+    claim_ref: str
+    narrowing: NotRequired[ShareViewNarrowing | None]
 class AuthorTakeTargetSubject(TypedDict):
     subject: str
 class AuthorTakeTargetClaim(TypedDict):

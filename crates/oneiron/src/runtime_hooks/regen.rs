@@ -31,7 +31,7 @@ const OWN_PACK_REF: &str = "vault.packs.put";
 
 /// What a hook body is written against: the verb table it calls and the
 /// sandbox world it runs in. A change to either runs the intent again.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HookContractStamp {
     /// BLAKE3 of the verb table's declarations (`code-mode.d.ts`).
     pub verb_table: String,
@@ -55,7 +55,7 @@ impl HookContractStamp {
 }
 
 /// Where a regen stopped. Every phase keeps the last good body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HookRegenFailurePhase {
     /// The hook kept no intent to run again.
@@ -68,7 +68,7 @@ pub enum HookRegenFailurePhase {
     GoldenReplay,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HookRegenFailure {
     pub phase: HookRegenFailurePhase,
     pub message: String,
@@ -145,7 +145,7 @@ impl HookGoldenFingerprint {
 }
 
 /// Where a candidate's golden replay parts from the last good body's.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HookGoldenDiff {
     /// The golden runs compared.
     pub cases: usize,
@@ -184,7 +184,7 @@ impl HookGoldenDiff {
 }
 
 /// A regen's decision, kept on the hook's record until it is enacted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum HookRegenOutcome {
     /// An identical fingerprint: the candidate adopts without a question.
@@ -204,8 +204,23 @@ pub enum HookRegenOutcome {
     RolledBack { failure: HookRegenFailure },
 }
 
+impl HookRegenOutcome {
+    /// The candidate body's hash while one waits, as its binding records a
+    /// body: the hash an adoption names, and the record's body hash once
+    /// it is adopted. A rollback holds no candidate.
+    #[must_use]
+    pub fn candidate_hash(&self) -> Option<String> {
+        match self {
+            Self::AutoAdopt { candidate, .. } | Self::NeedsHumanStamp { candidate, .. } => {
+                Some(body_hash(candidate))
+            }
+            Self::RolledBack { .. } => None,
+        }
+    }
+}
+
 /// One hook's regen record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HookRegenRecord {
     /// The last good body, as BLAKE3 hex.
     pub body_hash: String,
@@ -215,6 +230,57 @@ pub struct HookRegenRecord {
     pub intent: Option<String>,
     /// The last regen's decision, until it is enacted.
     pub pending: Option<HookRegenOutcome>,
+}
+
+impl HookRegenRecord {
+    /// [`HookRegenOutcome::candidate_hash`] of the decision waiting here.
+    #[must_use]
+    pub fn candidate_hash(&self) -> Option<String> {
+        self.pending
+            .as_ref()
+            .and_then(HookRegenOutcome::candidate_hash)
+    }
+}
+
+/// A hook body's hash as its binding records it: BLAKE3, lowercase hex.
+fn body_hash(body: &str) -> String {
+    blake3::hash(body.as_bytes()).to_hex().to_string()
+}
+
+/// The CALL behind the candidate-hash fence (DOOR-077): the candidate a
+/// pending regen enacts, and the contract it targets, only when the
+/// decision waiting on `record` is the one `candidate_hash` names. An
+/// adoption never enacts a candidate its caller did not read, so a regen
+/// that replaced the decision since is refused, never adopted under a stamp
+/// given for the older one. An AutoAdopt needs no question; a
+/// NeedsHumanStamp enacts only with `stamped`, the owner's stamp.
+fn pending_candidate(
+    record: Option<&HookRegenRecord>,
+    candidate_hash: &str,
+    stamped: bool,
+) -> Result<(String, HookContractStamp)> {
+    let (candidate, target, asks) = match record.and_then(|record| record.pending.as_ref()) {
+        Some(HookRegenOutcome::AutoAdopt {
+            candidate, target, ..
+        }) => (candidate, target, false),
+        Some(HookRegenOutcome::NeedsHumanStamp {
+            candidate, target, ..
+        }) => (candidate, target, true),
+        Some(HookRegenOutcome::RolledBack { .. }) | None => {
+            return Err(Error::InvalidConfig("no regen is pending".to_owned()));
+        }
+    };
+    if body_hash(candidate) != candidate_hash {
+        return Err(Error::InvalidConfig(
+            "the pending regen is not the candidate named: read the record again".to_owned(),
+        ));
+    }
+    if asks && !stamped {
+        return Err(Error::InvalidConfig(
+            "this regen changes what the hook does: it needs the owner's stamp".to_owned(),
+        ));
+    }
+    Ok((candidate.clone(), target.clone()))
 }
 
 /// A binding's body passed under this engine's contract when it was bound.
@@ -411,18 +477,24 @@ impl Vault {
     }
 
     /// Enacts `binding`'s pending regen: the candidate replaces the hook's
-    /// body in its pack, through the owner's own put. An AutoAdopt needs no
-    /// question; a NeedsHumanStamp adopts only with `stamped`, the owner's
-    /// stamp. The record then names the new body under the target contract.
+    /// body in its pack, through the owner's own put. `candidate_hash` names
+    /// the candidate its caller read ([`HookRegenRecord::candidate_hash`]);
+    /// only that pending candidate enacts. An AutoAdopt needs no question; a
+    /// NeedsHumanStamp adopts only with `stamped`, the owner's stamp. Only a
+    /// put that installs the candidate advances the record, to the new body
+    /// under the target contract. A Candidate or Blocked put leaves the last
+    /// good body and the pending decision as they were, and is answered as
+    /// it is.
     ///
     /// # Errors
     ///
-    /// No regen is pending, or it needs a stamp it lacks; and the put's own
-    /// refusals.
+    /// No regen is pending, it is not the candidate named, or it needs a
+    /// stamp it lacks; and the put's own refusals.
     pub fn adopt_hook_regen(
         &self,
         owner: &AuthenticatedOwner,
         binding: EntityId,
+        candidate_hash: &str,
         stamped: bool,
     ) -> Result<PackInstallDisposition> {
         let (_, row) = self
@@ -430,23 +502,8 @@ impl Vault {
             .into_iter()
             .find(|(id, _)| *id == binding)
             .ok_or(Error::EntityNotFound)?;
-        let mut record = self
-            .hook_regen_record(binding)?
-            .ok_or_else(|| Error::InvalidConfig("no regen is pending".to_owned()))?;
-        let (candidate, target) = match &record.pending {
-            Some(HookRegenOutcome::AutoAdopt {
-                candidate, target, ..
-            }) => (candidate.clone(), target.clone()),
-            Some(HookRegenOutcome::NeedsHumanStamp {
-                candidate, target, ..
-            }) if stamped => (candidate.clone(), target.clone()),
-            Some(HookRegenOutcome::NeedsHumanStamp { .. }) => {
-                return Err(Error::InvalidConfig(
-                    "this regen changes what the hook does: it needs the owner's stamp".to_owned(),
-                ));
-            }
-            _ => return Err(Error::InvalidConfig("no regen is pending".to_owned())),
-        };
+        let record = self.hook_regen_record(binding)?;
+        let (candidate, target) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
         let source = self
             .get_pack_source(&row.source)?
             .ok_or(Error::EntityNotFound)?;
@@ -463,21 +520,39 @@ impl Vault {
             })
             .collect();
         let disposition = self.put_pack(owner, files)?;
-        let body_hash = blake3::hash(candidate.as_bytes()).to_hex().to_string();
+        // A Candidate or Blocked put bound nothing: the hook still runs its
+        // last good body, and the decision still waits on its record.
+        if !matches!(disposition, PackInstallDisposition::Installed(_)) {
+            return Ok(disposition);
+        }
         // The new body binds under a new id; the old binding stops.
         let rebound = self
             .pack_hook_bindings()?
             .into_iter()
             .find(|(_, bound)| {
-                bound.pack == row.pack && bound.hook == row.hook && bound.body_hash == body_hash
+                bound.pack == row.pack
+                    && bound.hook == row.hook
+                    && bound.body_hash == candidate_hash
             })
-            .map(|(id, _)| id);
-        record.body_hash = body_hash;
-        record.stamp = target;
-        record.pending = None;
+            .map(|(id, _)| id)
+            .filter(|id| *id != binding);
+        let adopted = HookRegenRecord {
+            body_hash: candidate_hash.to_owned(),
+            stamp: target,
+            intent: record.and_then(|record| record.intent),
+            pending: None,
+        };
         self.with_write_txn_grouped(|txn| {
-            for id in std::iter::once(binding).chain(rebound) {
-                REGEN.put(self, txn, &id, &record)?;
+            // The fence again, in the write that moves the record: a regen
+            // that replaced the decision since keeps its own.
+            let stored = REGEN.get(&self.store, txn, &binding)?;
+            let enacted = stored
+                .as_ref()
+                .and_then(HookRegenRecord::candidate_hash)
+                .as_deref()
+                == Some(candidate_hash);
+            for id in enacted.then_some(binding).into_iter().chain(rebound) {
+                REGEN.put(self, txn, &id, &adopted)?;
             }
             Ok(())
         })?;
