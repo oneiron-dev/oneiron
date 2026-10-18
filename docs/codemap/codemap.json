@@ -71840,7 +71840,7 @@
      "path": "src/managed/host.rs",
      "purpose": "Managed process entry behind the shared six-verb Host contract",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -72014,7 +72014,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -72039,7 +72039,7 @@
      "path": "src/managed/vm_guest.rs",
      "purpose": "Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -72055,7 +72055,7 @@
      "purpose": "The microVM adapter's host half: one Firecracker VM per vault",
      "surface": {
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 3
      }
     },
@@ -73988,7 +73988,7 @@
      "path": "src/voice_host/boot.rs",
      "purpose": "The server's own voice loop at serve start (OF-410)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -76647,8 +76647,8 @@
      "path": "src/lib/managed_holder.rs",
      "purpose": "Host-attested account actions: one managed widen request, and one facade request the vault owner makes in…",
      "surface": {
-      "const": 2,
-      "fn": 4,
+      "const": 5,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -76739,7 +76739,7 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 8,
+      "const": 10,
       "enum": 2,
       "fn": 4
      }

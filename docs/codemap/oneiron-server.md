@@ -590,7 +590,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/main.rs` | src | s | — | — | — |
 | `src/managed/args.rs` | src | L | 1 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | ManagedArgs, ManagedError | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
 | `src/managed/ctl_shed_tests.rs` | test | s | — | — | — |
-| `src/managed/host.rs` | src | s | 5 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
+| `src/managed/host.rs` | src | s | 6 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
 | `src/managed/isolation.rs` | src | s | 4 crate-vis | — | Fail-closed Linux fscrypt and root-owned UID allocation probes |
 | `src/managed/key_sync.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 const · 1 re-export | KeyInvalidation, KeyInvalidationKind | Managed-host wiring for the node account-key path (OF-448, the node half of CROSS-ARCH-0008 section 4, owner… |
 | `src/managed/ledger.rs` | src | m | 1 struct · 7 fn · 1 const · 3 crate-vis | WakeLedger | Managed wake ledger: entries, revision, and supervisor pushes |
@@ -603,10 +603,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/preview/http.rs` | src | m | 1 crate-vis | — | HTTP and WebSocket forwarding on a preview-only origin |
 | `src/managed/relay.rs` | src | m | 1 struct · 1 fn · 1 const | RelayConfig | A relay room has no engine, vault key, Loro document or inference worker |
 | `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
-| `src/managed/state_serve.rs` | src | L | 3 struct · 20 fn · 1 type · 1 const · 3 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
+| `src/managed/state_serve.rs` | src | L | 3 struct · 20 fn · 1 type · 1 const · 4 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 3 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
-| `src/managed/vm_guest.rs` | src | s | 5 crate-vis | — | Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer… |
-| `src/managed/vm_host.rs` | src | m | 3 struct · 1 enum · 14 fn | SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun | The microVM adapter's host half: one Firecracker VM per vault |
+| `src/managed/vm_guest.rs` | src | s | 6 crate-vis | — | Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer… |
+| `src/managed/vm_host.rs` | src | m | 3 struct · 1 enum · 15 fn | SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun | The microVM adapter's host half: one Firecracker VM per vault |
 | `src/managed/vm_schedule.rs` | src | s | 6 crate-vis | — | The standalone VM host's acknowledged wake ledger |
 | `src/mcp/actors.rs` | src | m | 5 struct · 3 enum · 18 fn · 7 crate-vis | McpBoardSnapshot, McpConnectorActorRecord, McpConnectorActorRegistrationError, McpConnectorActorResolutionError, McpConnectorActorRevokeStatus, McpConnectorScope, McpCredentialHashKey, McpResolvedActor | MCP connector actor types: credentials, scopes, records, and resolution |
 | `src/mcp/args.rs` | src | s | 3 struct · 1 enum | McpActorClass, McpActorMetadata, McpConsentMetadata, McpToolScope | MCP actor and consent metadata: the envelope every endpoint tool call carries |
@@ -771,7 +771,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/usage/tests.rs` | test | s | — | — | — |
 | `src/voice_host/attachment.rs` | src | s | 1 fn | — | The voice host as a wake-pass attachment: it serves the owner's admitted stream beside one pass and spends… |
 | `src/voice_host/backend.rs` | src | s | 2 crate-vis | — | The voice call's backend for the host's own model calls (OF-410): partial enrichment and the sentence… |
-| `src/voice_host/boot.rs` | src | m | 3 crate-vis | — | The server's own voice loop at serve start (OF-410) |
+| `src/voice_host/boot.rs` | src | m | 4 crate-vis | — | The server's own voice loop at serve start (OF-410) |
 | `src/voice_host/brain.rs` | src | m | 2 struct · 1 fn | ChatBrain, ChatBrainBindings | The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it |
 | `src/voice_host/connection.rs` | src | m | 4 crate-vis | — | One private, pre-admitted UDS connection on the existing Tokio runtime |
 | `src/voice_host/entry_barrier.rs` | src | s | 6 crate-vis | — | The newcomer barrier on a live reply (OF-365 P5, FIX 1389) |
