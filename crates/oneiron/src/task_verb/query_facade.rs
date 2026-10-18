@@ -162,6 +162,9 @@ impl Memory<'_> {
     /// richer reports (progress, blocked, done, failed, release, brief) ride
     /// the same verb through [`Memory::tasks_highway`].
     pub fn tasks_update(&self, task_ref: EntityId) -> MemoryResult<TaskUpdateReceipt> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_update(task_ref);
+        }
         self.tasks_highway(
             super::TaskVia::Wire,
             super::TaskCall::Report(super::TaskReport {
@@ -188,6 +191,9 @@ impl Memory<'_> {
         &self,
         input: &super::sdk::TaskUpdateRequest,
     ) -> MemoryResult<TaskUpdateReceipt> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_update_request(input);
+        }
         if input.result_ref.is_some() {
             return Err(MemoryError::bad_request("task_update_result_needs_run"));
         }

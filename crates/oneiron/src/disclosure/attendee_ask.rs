@@ -288,6 +288,9 @@ impl Memory<'_> {
         &self,
         ask: &UnknownAttendeeAsk,
     ) -> MemoryResult<TaskAskReceipt> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().raise_unknown_attendee_ask(ask);
+        }
         let record = AttendeeAskRecord {
             session_key: ask.session_key.clone(),
             speaker_key: ask.speaker_key.clone(),

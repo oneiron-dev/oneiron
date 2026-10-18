@@ -460,6 +460,10 @@ pub struct Memory<'v> {
     /// The door's own admission of a hook's rewritten args
     /// (`with_rewrite_admit`).
     pub(super) rewrite_admit: Option<RewriteAdmit>,
+    /// The vault task-work turn this surface's operation holds
+    /// (`with_task_work_turn`, Rule 5): its nested task work runs on it and
+    /// never waits for another. A turn that waited out the line still counts.
+    pub(super) task_work_turn: Option<std::sync::Arc<crate::work_line::TaskWorkTurn>>,
 }
 
 /// A door's admission of a verb hook's rewritten args, run on the verb's name
@@ -565,6 +569,7 @@ impl Vault {
             credential_instrument: None,
             credential_door: None,
             rewrite_admit: None,
+            task_work_turn: None,
         }
     }
 
@@ -609,6 +614,7 @@ impl Vault {
             credential_instrument: None,
             credential_door: None,
             rewrite_admit: None,
+            task_work_turn: None,
         }
     }
 }
@@ -662,6 +668,7 @@ impl<'v> Memory<'v> {
                 credential_instrument: self.credential_instrument.clone(),
                 credential_door: self.credential_door.clone(),
                 rewrite_admit: self.rewrite_admit.clone(),
+                task_work_turn: self.task_work_turn.clone(),
             },
         })
     }
@@ -695,6 +702,38 @@ impl Memory<'_> {
 
     pub(crate) fn vault(&self) -> &Vault {
         self.vault
+    }
+
+    /// Binds the vault task-work turn a host already holds for this
+    /// operation (Rule 5): the surface's task work runs on it and never waits
+    /// in the line again. A host that waited for the turn passes that one.
+    #[must_use]
+    pub fn with_task_work_turn(
+        mut self,
+        turn: std::sync::Arc<crate::work_line::TaskWorkTurn>,
+    ) -> Self {
+        self.task_work_turn = Some(turn);
+        self
+    }
+
+    /// Whether this surface's operation holds its task-work turn already.
+    pub(crate) fn has_task_work_turn(&self) -> bool {
+        self.task_work_turn.is_some()
+    }
+
+    /// This surface holding its operation's task-work turn: the one it
+    /// holds, else the actor's next turn in the vault's line, waited for on
+    /// this thread. Take it at the operation's outer entry, before any
+    /// transaction; nested task work then reuses it.
+    #[must_use]
+    pub(crate) fn task_work_memory(&self) -> Self {
+        let mut memory = self.clone();
+        if memory.task_work_turn.is_none() {
+            memory.task_work_turn = Some(std::sync::Arc::new(
+                self.vault.admit_task_work_blocking(self.actor),
+            ));
+        }
+        memory
     }
 
     /// Binds this surface's reads to the verified credential the actor

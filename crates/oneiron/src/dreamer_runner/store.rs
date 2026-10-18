@@ -565,6 +565,9 @@ impl<'a> DreamerRunnerStore<'a> {
         use crate::task_verb::highway_runner::RunnerSettle;
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
+        // Rule 5: the TASK's report runs on its runner's task-work turn,
+        // taken before the writer and held past its commit.
+        let turn = crate::task_verb::highway_runner::runner_report_turn(self.vault, attempt_id)?;
         let outcome = self.vault.with_write_txn_grouped(|wtxn| {
             // OF-220: a TASK's durable result lands before the lease clears.
             crate::task_verb::highway_runner::report_leased_task_in_txn(
@@ -572,6 +575,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 wtxn,
                 attempt_id,
                 judged.map_or(RunnerSettle::Done, RunnerSettle::Judged),
+                turn.as_ref(),
             )?;
             let outcome = crate::ports::JobQueue::port_job_complete(
                 self.vault,
@@ -633,10 +637,13 @@ impl<'a> DreamerRunnerStore<'a> {
 
     /// Atomically retries a typed agent failure together with its runner tree
     /// and authority scope. A generic queue retry alone would orphan these
-    /// Dreamer-owned rows on the newly scheduled attempt.
+    /// Dreamer-owned rows on the newly scheduled attempt. `turn` is the
+    /// task-work turn the failure ladder took for the try's TASK report
+    /// (Rule 5), before this writer.
     pub(crate) fn retry_agent_dispatch_failure(
         &self,
         input: crate::attempt_queue::RetryAttempt,
+        turn: Option<&std::sync::Arc<crate::work_line::TaskWorkTurn>>,
     ) -> Result<AttemptRecord> {
         self.vault.with_write_txn_grouped(|txn| {
             let source = self
@@ -658,6 +665,7 @@ impl<'a> DreamerRunnerStore<'a> {
                     error: input.last_error.as_deref().unwrap_or_default(),
                     retryable: true,
                 },
+                turn,
             )?;
             let crate::attempt_queue::RetryOutcome::Retried(record) =
                 self.attempts.retry_in_txn(txn, input)?;
@@ -675,6 +683,9 @@ impl<'a> DreamerRunnerStore<'a> {
     pub fn fail(&self, input: FailDreamerAttempt) -> Result<FailDreamerAttemptOutcome> {
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
+        // Rule 5: the TASK's report runs on its runner's task-work turn,
+        // taken before the writer and held past its commit.
+        let turn = crate::task_verb::highway_runner::runner_report_turn(self.vault, attempt_id)?;
         let outcome =
             self.vault.with_write_txn_grouped(|wtxn| {
                 let record = self.attempts.get_in_write_txn(wtxn, attempt_id)?.ok_or(
@@ -695,6 +706,7 @@ impl<'a> DreamerRunnerStore<'a> {
                         error: &input.reason,
                         retryable: false,
                     },
+                    turn.as_ref(),
                 )?;
                 let outcome = crate::ports::JobQueue::port_job_fail(
                     self.vault,

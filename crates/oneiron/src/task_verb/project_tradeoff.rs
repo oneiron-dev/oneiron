@@ -150,6 +150,11 @@ impl Memory<'_> {
         task: EntityId,
         proposal: EntityId,
     ) -> MemoryResult<TaskAskReceipt> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .tasks_route_project_tradeoff(task, proposal);
+        }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let vault = self.vault();
         let ask = crate::skill_optimize::skill_tradeoff_ask(vault, &proposal)?
@@ -267,6 +272,11 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         choice: TradeoffChoice,
     ) -> MemoryResult<HeldOutVerdict> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .tasks_settle_project_tradeoff(ask, owner, choice);
+        }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let vault = self.vault();
         if owner.revalidate_person(vault)? != self.actor() {
@@ -311,6 +321,11 @@ impl Memory<'_> {
         ask: TaskAskHandle,
         choice: TradeoffChoice,
     ) -> MemoryResult<HeldOutVerdict> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .tasks_settle_project_tradeoff_as_agent(ask, choice);
+        }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         if self.actor_class() != EdgeActorClass::Agent {
             return Err(consult_refusal(

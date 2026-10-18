@@ -393,6 +393,9 @@ impl Memory<'_> {
         handle: &super::TaskAskHandle,
         word: &super::TaskAskWord,
     ) -> MemoryResult<super::TaskAskAnswer> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_answer(handle, word);
+        }
         // A person's word is theirs to give: a human connector running
         // generated code does not make that code's answer the person's.
         if self.writes_generated() && self.actor_class() == crate::EdgeActorClass::Human {

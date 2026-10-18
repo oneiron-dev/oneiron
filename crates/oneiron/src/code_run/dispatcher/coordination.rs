@@ -326,7 +326,12 @@ impl<'a> HostSelfDispatcher<'a> {
         }))
     }
 
-    pub(super) fn dispatch_tasks_ask(&self, mut call: TaskAskSpec) -> Result<SelfDispatchOutcome> {
+    /// `ask`, on the run's task-work turn `turn` (Rule 5).
+    pub(super) fn dispatch_tasks_ask(
+        &self,
+        mut call: TaskAskSpec,
+        turn: Arc<crate::work_line::TaskWorkTurn>,
+    ) -> Result<SelfDispatchOutcome> {
         let vault = self.coordination_vault()?;
         if let Some(parent) = self.agent_parent {
             let live = DreamerRunnerStore::new(vault)
@@ -340,7 +345,9 @@ impl<'a> HostSelfDispatcher<'a> {
                 call.task_ref = Some(task);
             }
         }
-        let mut memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        let mut memory = vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .with_task_work_turn(turn);
         // The run's leased try is the ask's fan-out caller (OF-393): the ask
         // states the count, expected spend and cap of that agent's spend
         // tree. A run bound by its attempt id alone states none.
@@ -487,13 +494,17 @@ impl<'a> HostSelfDispatcher<'a> {
         })
     }
 
+    /// `wait`, on the run's task-work turn `turn` (Rule 5).
     pub(super) fn dispatch_tasks_wait(
         &self,
         handle: TaskAskHandle,
         run_id: Option<EntityId>,
+        turn: Arc<crate::work_line::TaskWorkTurn>,
     ) -> Result<SelfDispatchOutcome> {
         let vault = self.coordination_vault()?;
-        let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        let memory = vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .with_task_work_turn(turn);
         // Only a persisted bridge result acknowledges a void. If the process
         // died after returning Changed but before replay append, it is offered
         // again; a later distinct void has a higher generation and re-wakes.

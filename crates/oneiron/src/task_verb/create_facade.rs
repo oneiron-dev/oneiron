@@ -66,6 +66,9 @@ impl Memory<'_> {
     /// task highway (OF-220), which owns its idempotency, settlement and
     /// receipts. A brief-less create is the engine-internal minters' door.
     pub fn tasks_create(&self, spec: &TaskCreateSpec) -> MemoryResult<TaskCreateReceipt> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_create(spec);
+        }
         if spec.brief.is_some() || spec.intent_key.is_some() {
             return self.post_create_spec(spec);
         }
