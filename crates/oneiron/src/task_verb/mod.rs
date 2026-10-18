@@ -166,6 +166,7 @@ pub(crate) use create_validation::{
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{
     FailedTaskContinuation, TaskContinuationOutcome, continue_failed_task_in_txn,
+    task_settled_at_in,
 };
 
 /// The objectives a run realizing `task` confesses against (OF-544): its

@@ -110,8 +110,11 @@ pub use claim_conflict::{
     ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
 };
 pub use claims::{
-    ClaimInput, CommitOutcome, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES,
-    MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason,
+    ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
+    ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
+    ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
+    CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite,
+    RecordRefusal, RefusalReason, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use diary_read::{

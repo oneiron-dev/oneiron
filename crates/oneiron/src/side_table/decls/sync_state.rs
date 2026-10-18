@@ -93,20 +93,25 @@ side_tables! {
     /// purges while the citer is live. Key: hex32 (entity) ":" hex32 (citer).
     ENTITY_DOC_CITATION_FLOOR: SyncState b"entity_doc:v1:citation_floor:" Named;
     /// Durable identity/provenance/status of one open or settled document fork. Key: hex32.
-    ENTITY_DOC_FORK: SyncState b"entity_doc:v1:fork:" Named;
+    ENTITY_DOC_FORK: SyncState b"entity_doc:v1:fork:" Named
+        => crate::entity_doc::erase_fork_actor_in_txn;
     /// Shallow Loro snapshot of a fork's diverged content at its opening base. Key: hex32.
     ENTITY_DOC_FORK_SNAPSHOT: SyncState b"entity_doc:v1:fork_snapshot:" Raw;
     /// Immutable citation pin binding a quoted span to its exact causal frontier, keyed by entity
     /// then citation id. Key: hex32 ":" hex32.
-    ENTITY_DOC_PIN: SyncState b"entity_doc:v1:pin:" Named;
+    ENTITY_DOC_PIN: SyncState b"entity_doc:v1:pin:" Named
+        => crate::entity_doc::erase_pin_actor_in_txn;
     /// Review bundle of every fork opened under one text-edit proposal. Key: hex32.
-    ENTITY_DOC_PROPOSAL_BUNDLE: SyncState b"entity_doc:v1:proposal:" Named;
+    ENTITY_DOC_PROPOSAL_BUNDLE: SyncState b"entity_doc:v1:proposal:" Named
+        => crate::entity_doc::erase_proposal_actor_in_txn;
     /// Durable proof of one owner-authorized shallow history purge, keyed by entity then receipt id.
     /// Key: hex32 ":" hex32.
-    ENTITY_DOC_PURGE_RECEIPT: SyncState b"entity_doc:v1:purge:" Named;
+    ENTITY_DOC_PURGE_RECEIPT: SyncState b"entity_doc:v1:purge:" Named
+        => crate::entity_doc::erase_purge_actor_in_txn;
     /// Durable settlement receipt (before/after causal frontier) for one fork's merge/switch/reject
     /// verdict, keyed by entity then receipt id. Key: hex32 ":" hex32.
-    ENTITY_DOC_RECEIPT: SyncState b"entity_doc:v1:receipt:" Named;
+    ENTITY_DOC_RECEIPT: SyncState b"entity_doc:v1:receipt:" Named
+        => crate::entity_doc::erase_receipt_actor_in_txn;
     /// A record one federation pact delivered here at one consent epoch (FIX 321), written in the
     /// transaction that materialized it. Local to this vault: never replicated or exported. Value:
     /// the world the record sits in (16 raw bytes; empty for base reality). Key: hex64 (pact id)
