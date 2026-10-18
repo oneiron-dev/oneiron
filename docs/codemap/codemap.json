@@ -344,13 +344,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/affect/consolidation.rs",
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -380,7 +380,7 @@
      "path": "src/affect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 3,
       "re-export": 3
      }
@@ -24880,8 +24880,26 @@
      "path": "src/gate/policy_manifest_doors/mod.rs",
      "purpose": "Typed policy reads, owner edits and inert untrusted contributions",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
-      "re-export": 2
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetrievalWeights",
+      "RetrievalWeightsConfigureRequest",
+      "RetrievalWeightsReceipt",
+      "RetrievalWeightsView"
+     ],
+     "path": "src/gate/policy_manifest_doors/retrieval_weights.rs",
+     "purpose": "Owner-configured retrieval priors in the existing trusted default manifest",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -30861,6 +30879,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AffectAnnotationPut",
+      "AffectClaimConsolidateRequest",
+      "AffectClaimConsolidation",
+      "AffectTurnEvidence"
+     ],
+     "path": "src/memory/affect.rs",
+     "purpose": "Typed affect evidence setup through ordinary claim admission and VAD consolidation",
+     "surface": {
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AnswerAdmission"
      ],
      "path": "src/memory/answer_boundary.rs",
@@ -31756,7 +31790,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 10,
+      "mod": 11,
       "re-export": 43
      }
     },
@@ -50364,7 +50398,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 630
+      "fn": 634
      }
     },
     {
@@ -56008,7 +56042,7 @@
     "affect": {
      "files": 9,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -56643,7 +56677,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 139,
+     "files": 140,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56846,7 +56880,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 169,
+     "files": 170,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57525,9 +57559,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 194,
+   "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3505,
+   "source_files": 3507,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66015,7 +66049,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 580
+      "fn": 584
      }
     },
     {
@@ -67064,7 +67098,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 581
+      "fn": 585
      }
     },
     {
@@ -69924,6 +69958,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/affect_doors.rs",
+     "purpose": "Retrieval-prior setup and VAD consolidation on the caller's own owner proof",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/agent_definition_doors.rs",
      "purpose": "Custom definitions, saved workflows and workspace onboarding, with the caller's own proof",
      "surface": {
@@ -70277,7 +70321,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 110
+      "crate-vis": 111
      }
     },
     {
@@ -77887,7 +77931,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 370,
+     "files": 371,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78309,7 +78353,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 701,
+   "source_files": 702,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78510,6 +78554,10 @@
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AffectAnnotationPut",
+      "AffectClaimConsolidateRequest",
+      "AffectClaimConsolidation",
+      "AffectTurnEvidence",
       "AffectedTests",
       "AgentBudgetView",
       "AgentCeilingInput",
@@ -80009,6 +80057,10 @@
       "RetrievalTraceStageRecord",
       "RetrievalTurn",
       "RetrievalTurnRequest",
+      "RetrievalWeights",
+      "RetrievalWeightsConfigureRequest",
+      "RetrievalWeightsReceipt",
+      "RetrievalWeightsView",
       "RetryableLlmError",
       "RevealDecision",
       "RevealDescribeRequest",
@@ -80532,6 +80584,7 @@
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
       "UsedProvenanceEdge",
+      "VadAnnotationSource",
       "VadBadge",
       "VerdictBinding",
       "VerdictMode",
@@ -80647,8 +80700,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 560,
-      "struct": 1580
+      "enum": 561,
+      "struct": 1588
      }
     },
     {
