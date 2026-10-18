@@ -3,9 +3,9 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 576 facade rows, 2133 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 538.
-// WireJson rows: none.
+// UniFFI census: 580 facade rows, 2140 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 541.
+// WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
@@ -25284,6 +25284,64 @@ pub struct CallableCardView {
     pub returns: crate::WireJson,
 }
 
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackReceiptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPackReceiptRequest {
+    #[serde(rename = "attempt_receipt")]
+    pub attempt_receipt: String,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillPackReceipt {
+    #[serde(rename = "receipt")]
+    pub receipt: ReceiptRecord,
+    #[serde(rename = "loaded_skills")]
+    pub loaded_skills: Vec<String>,
+    #[serde(rename = "attribution")]
+    pub attribution: PackAttributionFields,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackOutcomeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPackOutcomeRequest {
+    #[serde(rename = "attempt_receipt")]
+    pub attempt_receipt: String,
+    #[serde(rename = "outcome_receipt")]
+    pub outcome_receipt: String,
+    #[serde(rename = "succeeded")]
+    pub succeeded: bool,
+    #[serde(rename = "axis")]
+    pub axis: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(
+        rename = "goal_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub goal_revision: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackOutcomeProjection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillPackOutcomeProjection {
+    #[serde(rename = "receipt")]
+    pub receipt: LateCreditReceipt,
+    #[serde(rename = "persisted")]
+    pub persisted: bool,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackCreditRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPackCreditRequest {
+    #[serde(rename = "receipt_id")]
+    pub receipt_id: String,
+}
+
 /// `oneiron_model::llm::call::CallPurpose`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CallPurpose {
@@ -34570,4 +34628,24 @@ pub struct LeaderSplitOutput {
     pub leader: String,
     #[serde(rename = "depth_remaining")]
     pub depth_remaining: u8,
+}
+
+/// `oneiron::code_run::run_verbs::SkillCallInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillCallInput {
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "args")]
+    pub args: crate::WireJson,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SkillCallInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestSkillCallInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: SkillCallInput,
 }

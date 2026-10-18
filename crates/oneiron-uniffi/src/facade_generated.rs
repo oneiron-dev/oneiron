@@ -1981,6 +1981,21 @@ export_facade! {
     let output = client.self_skills_callables(&input)?;
     crate::codec::lift_record("self.skills.callables", &output)
 };
+"vault.skills.pack_receipt" => fn vault_skills_pack_receipt(&self, input: SkillPackReceiptRequest) -> SkillPackReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillPackReceiptRequest = crate::codec::lower_record("vault.skills.pack_receipt", input)?;
+    let output = client.vault_skills_pack_receipt(&input)?;
+    crate::codec::lift_record("vault.skills.pack_receipt", &output)
+};
+"vault.skills.outcomes.project" => fn vault_skills_outcomes_project(&self, input: SkillPackOutcomeRequest) -> SkillPackOutcomeProjection = |client| {
+    let input: oneiron::task_verb::sdk::SkillPackOutcomeRequest = crate::codec::lower_record("vault.skills.outcomes.project", input)?;
+    let output = client.vault_skills_outcomes_project(&input)?;
+    crate::codec::lift_record("vault.skills.outcomes.project", &output)
+};
+"vault.skills.outcomes.get" => fn vault_skills_outcomes_get(&self, input: SkillPackCreditRequest) -> Option<LateCreditReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::SkillPackCreditRequest = crate::codec::lower_record("vault.skills.outcomes.get", input)?;
+    let output = client.vault_skills_outcomes_get(&input)?;
+    crate::codec::lift_record("vault.skills.outcomes.get", &output)
+};
 "ai.steps.submit" => fn ai_steps_submit(&self, input: ModelStepSubmit) -> ModelStepReceipt = |client| {
     let input: oneiron::llm::model_step::ModelStepSubmit = crate::codec::lower_record("ai.steps.submit", input)?;
     let output = client.ai_steps_submit(&input)?;
@@ -2880,5 +2895,10 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::LeaderSplitInput> = crate::codec::lower_record("self.leader.split", input)?;
     let output = client.self_leader_split(&input)?;
     crate::codec::lift_record("self.leader.split", &output)
+};
+"self.skills.call" => fn self_skills_call(&self, input: LiveRunRequestSkillCallInput) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::SkillCallInput> = crate::codec::lower_record("self.skills.call", input)?;
+    let output = client.self_skills_call(&input)?;
+    crate::codec::encode("self.skills.call", &output)
 };
 }

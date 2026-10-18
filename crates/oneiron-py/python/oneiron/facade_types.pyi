@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 576 facade rows, 2198 declarations.
-Inputs: 526 of 576 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 509 of 576 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 89; unread shapes: 0.
+Census: 580 facade rows, 2204 declarations.
+Inputs: 529 of 580 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 512 of 580 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -8266,6 +8266,24 @@ class CallableCardView(TypedDict):
     reference: str
     arguments: Any
     returns: Any
+class SkillPackReceiptRequest(TypedDict):
+    attempt_receipt: str
+class SkillPackReceipt(TypedDict):
+    receipt: ReceiptRecord
+    loaded_skills: list[str]
+    attribution: PackAttributionFields
+class SkillPackOutcomeRequest(TypedDict):
+    attempt_receipt: str
+    outcome_receipt: str
+    succeeded: bool
+    axis: str
+    at: int
+    goal_revision: NotRequired[str | None]
+class SkillPackOutcomeProjection(TypedDict):
+    receipt: LateCreditReceipt
+    persisted: bool
+class SkillPackCreditRequest(TypedDict):
+    receipt_id: str
 class CallPurposeOtherBody(TypedDict):
     name: str
 class CallPurposeOther(TypedDict):
@@ -11443,6 +11461,9 @@ class LeaderSplitOutput(TypedDict):
     parent: EntityId
     leader: EntityId
     depth_remaining: int
+class SkillCallInput(TypedDict):
+    skill: str
+    args: Any
 class GeneratedUiStatePatchAdd(TypedDict):
     op: Literal["add"]
     path: str

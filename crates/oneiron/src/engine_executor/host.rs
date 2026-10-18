@@ -87,6 +87,8 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// Callable skills this host is running now, each nested in the one
     /// before: a callable that calls another runs its step inside its own.
     callable_depth: u32,
+    /// The host projection already ran this outer call's verb hooks.
+    admitted_skill_seq: Option<u64>,
 }
 
 /// The name a reader child reads its parent's source by.
@@ -144,6 +146,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             declined: None,
             skill_executor: None,
             callable_depth: 0,
+            admitted_skill_seq: None,
         }
     }
 
@@ -151,6 +154,13 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// are credited to (OF-353).
     pub(super) fn with_skill_executor(mut self, executor: &crate::ModelId) -> Self {
         self.skill_executor = Some(executor.as_str().to_owned());
+        self
+    }
+
+    /// Only the credential-bound host projection sets this; nested calls
+    /// still enter their own verb hooks.
+    pub(super) fn with_admitted_skill_call(mut self, seq: u64) -> Self {
+        self.admitted_skill_seq = Some(seq);
         self
     }
 
@@ -306,18 +316,22 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         };
         // The call's verb hooks once it is admitted (ARCH-0080 §3): a rewrite
         // names the skill and the args it runs with.
-        let (skill, hooked) = match self.gated_write.enter_verb_hooks(
-            SelfCall::SkillsCall(skill),
-            Some(site),
-            lease.read_as.clone(),
-        )? {
-            Ok((SelfCall::SkillsCall(skill), hooked)) => (skill, hooked),
-            Ok(_) => {
-                return Err(Error::InvariantViolation(
-                    "a skill call's hooks rewrote it into another call",
-                ));
+        let (skill, hooked) = if self.admitted_skill_seq == Some(seq) {
+            (skill, None)
+        } else {
+            match self.gated_write.enter_verb_hooks(
+                SelfCall::SkillsCall(skill),
+                Some(site),
+                lease.read_as.clone(),
+            )? {
+                Ok((SelfCall::SkillsCall(skill), hooked)) => (skill, Some(hooked)),
+                Ok(_) => {
+                    return Err(Error::InvariantViolation(
+                        "a skill call's hooks rewrote it into another call",
+                    ));
+                }
+                Err(stopped) => return Ok(stopped),
             }
-            Err(stopped) => return Ok(stopped),
         };
         let Some(executor) = self.skill_executor.clone() else {
             return Ok(failed("skills_call_no_executor".to_owned()));
@@ -364,7 +378,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         // The post chain reads the answer as the guest gets it: a large one
         // by its handle.
         let outcome = self.store_large_answer(seq, outcome)?;
-        self.gated_write.leave_verb_hooks(hooked, outcome)
+        match hooked {
+            Some(hooked) => self.gated_write.leave_verb_hooks(hooked, outcome),
+            None => Ok(outcome),
+        }
     }
 
     /// One `self.*` call over the bridge. `runtime` is the sibling a call

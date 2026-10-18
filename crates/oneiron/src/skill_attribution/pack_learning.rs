@@ -42,6 +42,32 @@ pub fn project_anchored_pack_outcome(
     outcome: &AnchoredPackOutcome,
     now: u64,
 ) -> Result<LateCreditReceipt> {
+    project(vault, None, attempt_receipt, outcome, now)
+}
+
+/// An owner's external verdict, revalidated in the projection transaction.
+/// The public door fixes its anchor to OwnerVerdict; it cannot mint held-out,
+/// world or audit evidence on behalf of another observer.
+pub fn project_anchored_pack_outcome_as_owner(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    attempt_receipt: &str,
+    outcome: &AnchoredPackOutcome,
+    now: u64,
+) -> Result<LateCreditReceipt> {
+    if outcome.anchor != Anchor::OwnerVerdict {
+        return Err(Error::InvalidClaimBody("the owner door requires an owner verdict"));
+    }
+    project(vault, Some(owner), attempt_receipt, outcome, now)
+}
+
+fn project(
+    vault: &Vault,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    attempt_receipt: &str,
+    outcome: &AnchoredPackOutcome,
+    now: u64,
+) -> Result<LateCreditReceipt> {
     let anchor = EvidenceSource::Anchored(outcome.anchor).admit()?;
     if !anchor.feeds(LearningPredicate::Reliability) {
         return Err(Error::InvalidClaimBody(
@@ -81,6 +107,9 @@ pub fn project_anchored_pack_outcome(
         .collect();
     let key = receipt_id(attempt_receipt, &outcome.receipt, &outcome.axis);
     vault.with_write_txn_grouped(|txn| {
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(vault, txn)?;
+        }
         // A matched-fork check recorded for this run and axis counts as the
         // skill's contribution, though it landed after the receipt froze.
         let fields = super::contribution::with_recorded_checks_in_txn(
