@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 636 facade rows, 2302 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 595.
+// UniFFI census: 644 facade rows, 2318 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 603.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -21214,6 +21214,255 @@ pub struct CheckoutDoorBinding {
     pub checkout_path: String,
     #[serde(rename = "remote_url")]
     pub remote_url: String,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CheckoutClass {
+    #[serde(rename = "edit")]
+    Edit,
+    #[serde(rename = "build")]
+    Build,
+    #[serde(rename = "verify")]
+    Verify,
+    #[serde(rename = "effect")]
+    Effect,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutClaimInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutClaimInput {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "task")]
+    pub task: String,
+    #[serde(rename = "task_class")]
+    pub task_class: CheckoutClass,
+    #[serde(rename = "ttl_seconds")]
+    pub ttl_seconds: u64,
+    #[serde(rename = "declared_idempotent")]
+    pub declared_idempotent: bool,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CheckoutState {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "settling")]
+    Settling,
+    #[serde(rename = "settled")]
+    Settled,
+    #[serde(rename = "retained")]
+    Retained,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutLeaseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CheckoutLeaseView {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "task")]
+    pub task: String,
+    #[serde(rename = "repo_ref")]
+    pub repo_ref: String,
+    #[serde(rename = "holder")]
+    pub holder: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "task_class")]
+    pub task_class: CheckoutClass,
+    #[serde(rename = "state")]
+    pub state: CheckoutState,
+    #[serde(rename = "claimed_at")]
+    pub claimed_at: u64,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+    #[serde(rename = "expired")]
+    pub expired: bool,
+    #[serde(rename = "ticket")]
+    pub ticket: String,
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<String>,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutGetInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutGetInput {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutRenewInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutRenewInput {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "ttl_seconds")]
+    pub ttl_seconds: u64,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutReclaimInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutReclaimInput {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "expired_epoch")]
+    pub expired_epoch: u64,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutTakeoverInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutTakeoverInput {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "expected_epoch")]
+    pub expected_epoch: u64,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutPublishInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutPublishInput {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "observed_ref")]
+    pub observed_ref: String,
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutPublished`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CheckoutPublished {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "observed_ref")]
+    pub observed_ref: String,
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "result_identity")]
+    pub result_identity: String,
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CheckoutAction {
+    #[serde(rename = "select")]
+    Select,
+    #[serde(rename = "apply")]
+    Apply,
+    #[serde(rename = "release")]
+    Release,
+    #[serde(rename = "discard")]
+    Discard,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutSettleInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutSettleInput {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "observed_ref")]
+    pub observed_ref: String,
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "action")]
+    pub action: CheckoutAction,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutSettled`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CheckoutSettled {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "observed_ref")]
+    pub observed_ref: String,
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "action")]
+    pub action: CheckoutAction,
+    #[serde(rename = "result_identity")]
+    pub result_identity: String,
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "settled_at")]
+    pub settled_at: u64,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutTeardownInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutTeardownInput {
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(
+        rename = "pushed_head_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pushed_head_receipt: Option<String>,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutRetention`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CheckoutRetention {
+    #[serde(rename = "missing_pushed_head_receipt")]
+    MissingPushedHeadReceipt,
+    #[serde(rename = "receipt_mismatch")]
+    ReceiptMismatch,
+    #[serde(rename = "live_occupant")]
+    LiveOccupant,
+    #[serde(rename = "dirty_or_uncertain")]
+    DirtyOrUncertain,
+}
+
+/// `oneiron::memory::checkout_doors::types::CheckoutTornDown`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum CheckoutTornDown {
+    #[serde(rename = "collected")]
+    Collected {
+        #[serde(rename = "checkout")]
+        checkout: String,
+        #[serde(rename = "epoch")]
+        epoch: u64,
+    },
+    #[serde(rename = "retained")]
+    Retained {
+        #[serde(rename = "checkout")]
+        checkout: String,
+        #[serde(rename = "epoch")]
+        epoch: u64,
+        #[serde(rename = "reason")]
+        reason: CheckoutRetention,
+    },
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeRepoPointer`.

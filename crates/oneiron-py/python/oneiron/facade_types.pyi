@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 636 facade rows, 2363 declarations.
-Inputs: 584 of 636 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 567 of 636 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 644 facade rows, 2379 declarations.
+Inputs: 592 of 644 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 575 of 644 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -6863,6 +6863,83 @@ class CheckoutDoorBinding(TypedDict):
     epoch: int
     checkout_path: str
     remote_url: str
+CheckoutClass = Literal["edit", "build", "verify", "effect"]
+class CheckoutClaimInput(TypedDict):
+    checkout: str
+    repo: EntityId
+    task: EntityId
+    task_class: CheckoutClass
+    ttl_seconds: int
+    declared_idempotent: bool
+CheckoutState = Literal["active", "settling", "settled", "retained"]
+class CheckoutLeaseView(TypedDict):
+    checkout: str
+    task: EntityId
+    repo_ref: str
+    holder: EntityId
+    epoch: int
+    task_class: CheckoutClass
+    state: CheckoutState
+    claimed_at: int
+    expires_at: NotRequired[int | None]
+    expired: bool
+    ticket: str
+    receipt: NotRequired[str | None]
+class CheckoutGetInput(TypedDict):
+    checkout: str
+class CheckoutRenewInput(TypedDict):
+    checkout: str
+    epoch: int
+    ttl_seconds: int
+class CheckoutReclaimInput(TypedDict):
+    checkout: str
+    expired_epoch: int
+class CheckoutTakeoverInput(TypedDict):
+    checkout: str
+    expected_epoch: int
+class CheckoutPublishInput(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+class CheckoutPublished(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+    result_identity: str
+    receipt: str
+CheckoutAction = Literal["select", "apply", "release", "discard"]
+class CheckoutSettleInput(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+    action: CheckoutAction
+class CheckoutSettled(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+    action: CheckoutAction
+    result_identity: str
+    receipt: str
+    settled_at: int
+class CheckoutTeardownInput(TypedDict):
+    checkout: str
+    epoch: int
+    pushed_head_receipt: NotRequired[EntityId | None]
+CheckoutRetention = Literal["missing_pushed_head_receipt", "receipt_mismatch", "live_occupant", "dirty_or_uncertain"]
+class CheckoutTornDownCollected(TypedDict):
+    status: Literal["collected"]
+    checkout: str
+    epoch: int
+class CheckoutTornDownRetained(TypedDict):
+    status: Literal["retained"]
+    checkout: str
+    epoch: int
+    reason: CheckoutRetention
+CheckoutTornDown = CheckoutTornDownCollected | CheckoutTornDownRetained
 class CodeRepoPointer(TypedDict):
     local_folder: str
     commit: str

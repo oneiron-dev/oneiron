@@ -3073,6 +3073,78 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_checkout_claim(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.claim", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_checkout_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_checkout_renew(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.renew", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_checkout_reclaim(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.reclaim", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_checkout_takeover(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.takeover", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_checkout_publish(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.publish", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_checkout_settle(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.settle", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_checkout_teardown(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.teardown", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_snapshots_ingest(
         &self,
         input: serde_json::Value,

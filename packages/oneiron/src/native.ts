@@ -377,6 +377,14 @@ vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
 vaultCodeCheckoutBind(input: unknown): unknown
+vaultCodeCheckoutClaim(input: unknown): unknown
+vaultCodeCheckoutGet(input: unknown): unknown
+vaultCodeCheckoutRenew(input: unknown): unknown
+vaultCodeCheckoutReclaim(input: unknown): unknown
+vaultCodeCheckoutTakeover(input: unknown): unknown
+vaultCodeCheckoutPublish(input: unknown): unknown
+vaultCodeCheckoutSettle(input: unknown): unknown
+vaultCodeCheckoutTeardown(input: unknown): unknown
 vaultCodeSnapshotsIngest(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown

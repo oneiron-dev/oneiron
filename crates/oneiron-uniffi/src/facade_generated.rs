@@ -1736,6 +1736,46 @@ export_facade! {
     let output = client.vault_code_checkout_bind(&input)?;
     crate::codec::lift_record("vault.code.checkout.bind", &output)
 };
+"vault.code.checkout.claim" => fn vault_code_checkout_claim(&self, input: CheckoutClaimInput) -> CheckoutLeaseView = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutClaimInput = crate::codec::lower_record("vault.code.checkout.claim", input)?;
+    let output = client.vault_code_checkout_claim(&input)?;
+    crate::codec::lift_record("vault.code.checkout.claim", &output)
+};
+"vault.code.checkout.get" => fn vault_code_checkout_get(&self, input: CheckoutGetInput) -> CheckoutLeaseView = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutGetInput = crate::codec::lower_record("vault.code.checkout.get", input)?;
+    let output = client.vault_code_checkout_get(&input)?;
+    crate::codec::lift_record("vault.code.checkout.get", &output)
+};
+"vault.code.checkout.renew" => fn vault_code_checkout_renew(&self, input: CheckoutRenewInput) -> CheckoutLeaseView = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutRenewInput = crate::codec::lower_record("vault.code.checkout.renew", input)?;
+    let output = client.vault_code_checkout_renew(&input)?;
+    crate::codec::lift_record("vault.code.checkout.renew", &output)
+};
+"vault.code.checkout.reclaim" => fn vault_code_checkout_reclaim(&self, input: CheckoutReclaimInput) -> CheckoutLeaseView = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutReclaimInput = crate::codec::lower_record("vault.code.checkout.reclaim", input)?;
+    let output = client.vault_code_checkout_reclaim(&input)?;
+    crate::codec::lift_record("vault.code.checkout.reclaim", &output)
+};
+"vault.code.checkout.takeover" => fn vault_code_checkout_takeover(&self, input: CheckoutTakeoverInput) -> CheckoutLeaseView = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutTakeoverInput = crate::codec::lower_record("vault.code.checkout.takeover", input)?;
+    let output = client.vault_code_checkout_takeover(&input)?;
+    crate::codec::lift_record("vault.code.checkout.takeover", &output)
+};
+"vault.code.checkout.publish" => fn vault_code_checkout_publish(&self, input: CheckoutPublishInput) -> CheckoutPublished = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutPublishInput = crate::codec::lower_record("vault.code.checkout.publish", input)?;
+    let output = client.vault_code_checkout_publish(&input)?;
+    crate::codec::lift_record("vault.code.checkout.publish", &output)
+};
+"vault.code.checkout.settle" => fn vault_code_checkout_settle(&self, input: CheckoutSettleInput) -> CheckoutSettled = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutSettleInput = crate::codec::lower_record("vault.code.checkout.settle", input)?;
+    let output = client.vault_code_checkout_settle(&input)?;
+    crate::codec::lift_record("vault.code.checkout.settle", &output)
+};
+"vault.code.checkout.teardown" => fn vault_code_checkout_teardown(&self, input: CheckoutTeardownInput) -> CheckoutTornDown = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutTeardownInput = crate::codec::lower_record("vault.code.checkout.teardown", input)?;
+    let output = client.vault_code_checkout_teardown(&input)?;
+    crate::codec::lift_record("vault.code.checkout.teardown", &output)
+};
 "vault.code.snapshots.ingest" => fn vault_code_snapshots_ingest(&self, input: CodeSnapshotIngestRequest) -> CodeSnapshotView = |client| {
     let input: oneiron::memory::codebase_doors::CodeSnapshotIngestRequest = crate::codec::lower_record("vault.code.snapshots.ingest", input)?;
     let output = client.vault_code_snapshots_ingest(&input)?;
