@@ -126,6 +126,24 @@ impl Vault {
         owner: &AuthenticatedOwner,
         document: EntityId,
     ) -> Result<Vec<(String, EsignCapability)>> {
+        self.mint_esign_capabilities(owner, document, false)
+    }
+    /// [`Self::issue_esign_capabilities`] that first revokes every live
+    /// token of the draft, so each recipient gets a fresh one: the door for
+    /// tokens their holder lost before the send.
+    pub fn reissue_esign_capabilities(
+        &self,
+        owner: &AuthenticatedOwner,
+        document: EntityId,
+    ) -> Result<Vec<(String, EsignCapability)>> {
+        self.mint_esign_capabilities(owner, document, true)
+    }
+    fn mint_esign_capabilities(
+        &self,
+        owner: &AuthenticatedOwner,
+        document: EntityId,
+        rotate: bool,
+    ) -> Result<Vec<(String, EsignCapability)>> {
         self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
             let state = state_in(self, txn, document)?;
@@ -139,7 +157,7 @@ impl Vault {
                 if let Some((digest, mut prior)) =
                     recipient_binding(self, txn, document, &recipient.id)?
                 {
-                    if prior.usable_until(state.document.expires_at, now) {
+                    if !rotate && prior.usable_until(state.document.expires_at, now) {
                         continue;
                     }
                     prior.revoked_at.get_or_insert(now);
