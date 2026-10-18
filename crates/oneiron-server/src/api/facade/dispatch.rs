@@ -8379,6 +8379,27 @@ async fn vault_runs_branches_get(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_consults_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consults.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consults.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consults.get", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_consults_get(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_workspace_establish(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -14753,6 +14774,7 @@ pub(crate) async fn call_verb(
         "vault.agents.spawn.get" => vault_agents_spawn_get(server, call, input).await,
         "vault.tasks.cancel_force" => vault_tasks_cancel_force(server, call, input).await,
         "vault.runs.branches.get" => vault_runs_branches_get(server, call, input).await,
+        "vault.consults.get" => vault_consults_get(server, call, input).await,
         "vault.workspace.establish" => vault_workspace_establish(server, call, input).await,
         "vault.workspace.members.onboard" => {
             vault_workspace_members_onboard(server, call, input).await

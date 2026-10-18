@@ -1187,6 +1187,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.agents.spawn.get"
         | "vault.tasks.cancel_force"
         | "vault.runs.branches.get"
+        | "vault.consults.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"

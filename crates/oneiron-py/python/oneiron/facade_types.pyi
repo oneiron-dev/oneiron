@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 609 facade rows, 2282 declarations.
-Inputs: 557 of 609 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 540 of 609 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 610 facade rows, 2287 declarations.
+Inputs: 558 of 610 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 541 of 610 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -7143,6 +7143,27 @@ class RunBranchesRequest(TypedDict):
 class RunBranchesView(TypedDict):
     task_ref: EntityId
     branches: list[RunBranchView]
+class ConsultReadRequest(TypedDict):
+    task_ref: EntityId
+ConsultDisposition = Literal["completed", "rejected", "failed", "expired", "abandoned", "cancelled"]
+class ConsultSummaryViewAnswer(TypedDict):
+    kind: Literal["answer"]
+    evidence_refs: list[ConsultPayloadRef]
+class ConsultSummaryViewAbstained(TypedDict):
+    kind: Literal["abstained"]
+    reason_ref: ConsultPayloadRef
+ConsultSummaryView = ConsultSummaryViewAnswer | ConsultSummaryViewAbstained
+class ConsultTerminalView(TypedDict):
+    disposition: ConsultDisposition
+    result_ref: NotRequired[EntityId | None]
+    summary: NotRequired[ConsultSummaryView | None]
+    finished_at: int
+    ladder: NotRequired[str | None]
+    counter_task_ref: NotRequired[EntityId | None]
+class ConsultInspection(TypedDict):
+    task_ref: EntityId
+    deadline_at: NotRequired[int | None]
+    terminal: NotRequired[ConsultTerminalView | None]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str

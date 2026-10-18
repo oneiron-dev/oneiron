@@ -1965,6 +1965,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consults.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_doors::ConsultReadRequest,
+                >(),
+            ),
+            (
                 "vault.workspace.establish",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkspacePresetRequest,
@@ -3654,6 +3660,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.spawn.get",
     "vault.tasks.cancel_force",
     "vault.runs.branches.get",
+    "vault.consults.get",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -4243,6 +4250,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.runs.branches.get" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::run_doors::RunBranchesView,
+        >(),
+        "vault.consults.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::run_doors::ConsultInspection,
         >(),
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
@@ -7053,6 +7063,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.runs.branches.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consults.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10041,6 +10058,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.runs.branches.get" => {
             let _input: crate::task_verb::run_doors::RunBranchesRequest = decode(value.clone())?;
         }
+        "vault.consults.get" => {
+            let _input: crate::task_verb::run_doors::ConsultReadRequest = decode(value.clone())?;
+        }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
         }
@@ -11610,6 +11630,7 @@ pub fn invoke(
         "vault.agents.spawn.get" => encode(vault_agents_spawn_get(memory, decode(value)?)?),
         "vault.tasks.cancel_force" => encode(vault_tasks_cancel_force(memory, decode(value)?)?),
         "vault.runs.branches.get" => encode(vault_runs_branches_get(memory, decode(value)?)?),
+        "vault.consults.get" => encode(vault_consults_get(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -15177,6 +15198,16 @@ pub fn vault_runs_branches_get(
     crate::task_verb::run_doors::read_branches_as(
         memory.vault(),
         &memory.embedded_owner("vault.runs.branches.get")?,
+        input,
+    )
+}
+pub fn vault_consults_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::run_doors::ConsultReadRequest,
+) -> MemoryResult<crate::task_verb::run_doors::ConsultInspection> {
+    crate::task_verb::run_doors::read_consult_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consults.get")?,
         input,
     )
 }

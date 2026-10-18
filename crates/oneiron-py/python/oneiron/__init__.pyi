@@ -641,6 +641,8 @@ class Oneiron:
         @property
         def runs(self) -> "Oneiron._VaultRunsVerbs": ...
         @property
+        def consults(self) -> "Oneiron._VaultConsultsVerbs": ...
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
         @property
         def critic(self) -> "Oneiron._VaultCriticVerbs": ...
@@ -1651,6 +1653,9 @@ class Oneiron:
     class _VaultRunsBranchesVerbs:
         def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
+    class _VaultConsultsVerbs:
+        def get(self, spec: Facade.ConsultReadRequest) -> Facade.ConsultInspection:
+            """The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies."""
     class _VaultWorkspaceVerbs:
         def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
             """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""

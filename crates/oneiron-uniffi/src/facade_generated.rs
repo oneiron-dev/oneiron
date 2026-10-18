@@ -1796,6 +1796,11 @@ export_facade! {
     let output = client.vault_runs_branches_get(&input)?;
     crate::codec::lift_record("vault.runs.branches.get", &output)
 };
+"vault.consults.get" => fn vault_consults_get(&self, input: ConsultReadRequest) -> ConsultInspection = |client| {
+    let input: oneiron::task_verb::run_doors::ConsultReadRequest = crate::codec::lower_record("vault.consults.get", input)?;
+    let output = client.vault_consults_get(&input)?;
+    crate::codec::lift_record("vault.consults.get", &output)
+};
 "vault.workspace.establish" => fn vault_workspace_establish(&self, input: WorkspacePresetRequest) -> WorkspacePresetReceipt = |client| {
     let input: oneiron::task_verb::sdk::WorkspacePresetRequest = crate::codec::lower_record("vault.workspace.establish", input)?;
     let output = client.vault_workspace_establish(&input)?;

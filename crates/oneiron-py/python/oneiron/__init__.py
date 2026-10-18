@@ -757,6 +757,9 @@ class Oneiron:
         def runs(self) -> "Oneiron._VaultRunsVerbs":
             return Oneiron._VaultRunsVerbs(self._client)
         @property
+        def consults(self) -> "Oneiron._VaultConsultsVerbs":
+            return Oneiron._VaultConsultsVerbs(self._client)
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
         @property
@@ -2523,6 +2526,12 @@ class Oneiron:
         def get(self, spec):
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
             return json.loads(_translate(lambda: self._client.vault_runs_branches_get(json.dumps(spec))))
+    class _VaultConsultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies."""
+            return json.loads(_translate(lambda: self._client.vault_consults_get(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

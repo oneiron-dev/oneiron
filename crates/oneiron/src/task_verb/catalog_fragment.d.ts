@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 664 code-mode rows (643 host rows, 21 run rows), 2368 declarations.
-// Replies: 585 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 665 code-mode rows (644 host rows, 21 run rows), 2373 declarations.
+// Replies: 586 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1481,6 +1481,11 @@ declare namespace Sdk {
   type CancelForceReceipt = { task_ref: EntityId; effected: boolean; forced: number; branches: RunBranchView[] };
   type RunBranchesRequest = { task_ref: EntityId };
   type RunBranchesView = { task_ref: EntityId; branches: RunBranchView[] };
+  type ConsultReadRequest = { task_ref: EntityId };
+  type ConsultDisposition = "completed" | "rejected" | "failed" | "expired" | "abandoned" | "cancelled";
+  type ConsultSummaryView = { kind: "answer"; evidence_refs: ConsultPayloadRef[] } | { kind: "abstained"; reason_ref: ConsultPayloadRef };
+  type ConsultTerminalView = { disposition: ConsultDisposition; result_ref?: EntityId | null; summary?: ConsultSummaryView | null; finished_at: number; ladder?: string | null; counter_task_ref?: EntityId | null };
+  type ConsultInspection = { task_ref: EntityId; deadline_at?: number | null; terminal?: ConsultTerminalView | null };
   type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
   type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
@@ -3089,6 +3094,10 @@ declare const vault: Sdk.VaultHost & {
     promote(input: Sdk.ConsolidationPromoteRequest): Promise<Sdk.ConsolidationPromotion | StoredResult>;
     /** Reads the status of one consolidation attempt by its durable job reference. */
     status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.DreamerAttemptView | null | StoredResult>;
+  };
+  consults: {
+    /** The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies. */
+    get(input: Sdk.ConsultReadRequest): Promise<Sdk.ConsultInspection | StoredResult>;
   };
   conversations: {
     /** Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller. */
