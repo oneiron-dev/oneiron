@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 938 code-mode rows (914 host rows, 24 run rows), 3141 declarations.
-// Replies: 847 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 978 code-mode rows (954 host rows, 24 run rows), 3257 declarations.
+// Replies: 873 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -379,6 +379,14 @@ declare namespace Sdk {
   type RunSettlementsRequest = { run: string };
   type RunRungSettlement = { instance: string; lease: string; revision: number; model?: string | null; offer: string; route: string; reserved_units: number; settled_units: number; unit: string; usage_reported: boolean; settlement_refused: boolean; occurred_at: number; cost_amount?: number | null; currency?: string | null; price_table_snapshot?: string | null };
   type RunSettlementsView = { run: string; metering_enabled: boolean; settlements: RunRungSettlement[] };
+  type RsiBudgetShare = { units: number; pinned: boolean };
+  type RsiBudgetConfig = { limit: number; exploration_exposure_limit: number; shares: Record<string, RsiBudgetShare> };
+  type RsiWorkLineView = { unit: string; limit: number; spent: number; reserved: number };
+  type RsiShareView = { label: string; units: number; pinned: boolean };
+  type RsiExposureLineView = { unit: string; limit: number; spent: number; reserved: number };
+  type RsiLineView = { work_line: RsiWorkLineView; shares: RsiShareView[]; exposure_line: RsiExposureLineView; suspended: boolean };
+  type RsiLineRequest = Record<string, never>;
+  type RsiTopUp = { line: "tokens"; units: number } | { line: "exploration"; units: number } | { line: "share"; share: string; units: number };
   type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
   type FanoutCheckChoice = "ack" | "ack_and_remember";
@@ -602,8 +610,11 @@ declare namespace Sdk {
   type AssetResolveRequest = { asset_ref: string; image_input?: boolean; audio_input?: boolean; room_bytes?: number | null };
   type ServedAssetForm = "image" | "audio" | "thumbnail" | "asset_text" | "ask";
   type AssetResolved = { asset_ref: string; form: ServedAssetForm; mime_type?: string | null; bytes_b64?: string | null; text?: string | null; asset_text_ref?: string | null; handle?: string | null; receipt_refs: string[] };
-  type VectorSearchRequest = { space?: string | null; query_kind?: InputKind | null; query: number[]; kinds?: InputKind[]; limit: number };
+  type VectorSearchLane = "ordinary" | "voice_hot";
+  type VectorSearchRequest = { space?: string | null; query_kind?: InputKind | null; query: number[]; kinds?: InputKind[]; limit: number; lane?: VectorSearchLane };
   type VectorSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; embedding_matches: EmbeddingMatchEvidence[] };
+  type VectorRefinement = { stored_dimensions: number; candidate_dimensions: number; query_dimensions: number; score_dimensions: number; full_dimension_rescore: boolean };
+  type VectorSearchResult = { hits: VectorSearchHit[]; lane: VectorSearchLane; effective_limit: number; limit_clamped: boolean; refinement?: VectorRefinement | null };
   type PixelRegion = { x: number; y: number; width: number; height: number };
   type ImageViewRequest = { handle: string; region?: PixelRegion | null; edge?: number | null };
   type PulledImage = { asset_ref: string; pull: string; mime_type: string; bytes: string; width?: number | null; height?: number | null };
@@ -958,6 +969,27 @@ declare namespace Sdk {
   type ConnectorPackGrantRow = { tool: string; ceiling: DataClass; headers?: boolean };
   type ConnectorPackGrantsPutRequest = { basis: ConnectorPackBasis; endpoint: string; actor?: string | null; rows: ConnectorPackGrantRow[] };
   type PackRemoveRequest = { pack: string };
+  type ChatRole = "system" | "developer" | "user" | "assistant";
+  type ChatPart = { type: "text"; text: string };
+  type ChatContent = string | ChatPart[];
+  type ChatMessage = { role: ChatRole; content: ChatContent; name?: string | null };
+  type ChatStop = string | string[];
+  type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null };
+  type ChatCompletionObject = "chat.completion";
+  type ChatCompletionRole = "assistant";
+  type ChatCompletionMessage = { role: ChatCompletionRole; content: string };
+  type ChatCompletionChoice = { index: number; message: ChatCompletionMessage; finish_reason: string };
+  type ChatCompletionUsage = { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  type ChatCompletionRememberError = { code: string; message: string };
+  type ChatCompletionRemembered = { claim: string; approval: string } | { error: ChatCompletionRememberError };
+  type ChatCompletionMemory = { injected: boolean; remembered: ChatCompletionRemembered };
+  type ChatCompletionResponse = { id: string; object: ChatCompletionObject; created: number; model: string; choices: ChatCompletionChoice[]; usage: ChatCompletionUsage; oneiron: ChatCompletionMemory };
+  type ProxyConnectorAdmitRequest = { actor: string };
+  type ConnectorPendingManifestView = { candidate: string; protocol_revision: string; report_hash?: string | null };
+  type ConnectorKeyView = { id: string; status: string; secret_ref?: string | null; protocol_revision?: string | null; accepted_slate_revision?: number | null; consent_required: boolean; qualification?: ConnectorQualificationReceipt | null; manifest_hash?: string | null; pending_manifest?: ConnectorPendingManifestView | null };
+  type ConnectorSlateView = { id: string; revision: number; stamped: boolean; facet_limit?: string[] | null; manifest: SlateToolManifest[]; rows: SlateRow[]; reach: ShapePlanReach };
+  type ProxyConnectorRegistration = { connector: string; key: ConnectorKeyView; slate: ConnectorSlateView };
+  type ProxyConnectorRevokeWriteRequest = { actor: string; key: string; revision: number };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
   type ChannelSubscriptionsRequest = { agent: string };
@@ -1401,6 +1433,12 @@ declare namespace Sdk {
   type RsiSettlement = { Spent: number } | { Exposure: number } | "Refunded";
   type ResearchReservation = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: AttemptId | null; settlement?: RsiSettlement | null; reserved_at: number };
   type ResearchRefundWire = { root: EntityId; reservation: EntityId };
+  type ResearchExplorationWire = { root: EntityId; units: number; attempt?: EntityId | null };
+  type RsiOverdraftReceipt = { share: string; units: number };
+  type ResearchReservationWire = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: EntityId | null; settlement?: RsiSettlement | null; overdraft?: RsiOverdraftReceipt | null; reserved_at: number };
+  type RsiBudgetRead = { limit: number; spent: number; reserved: number; suspended: boolean };
+  type RsiExplorationRead = { exposure_limit: number; spent_exposure: number; reserved_exposure: number; suspended: boolean };
+  type ResearchBudgetView = { budget: ResearchBudgetRead; reservations: ResearchReservationWire[]; rsi_work?: RsiBudgetRead | null; rsi_exploration?: RsiExplorationRead | null };
   type ResearchBenchmarkWire = { estimator_version: string; benchmark: CampaignDatasetRef; cases: number; dgm_score: number; estimator_score: number; receipt_refs: string[] };
   type SelectionBenchmark = { estimator_version: string; benchmark: CampaignDatasetRef; cases: number; dgm_score: number; estimator_score: number; receipt_refs: string[]; recorded_at: number };
   type AuthorityHandoffAlarmAck = { by: string; at: number };
@@ -1794,6 +1832,22 @@ declare namespace Sdk {
   type AnnotationThreadRequest = { artifact_ref: string; thread_ref: string };
   type AnnotationAssignRequest = { artifact_ref: string; thread_ref: string; assignee_ref?: string | null };
   type AnnotationStateRequest = { artifact_ref: string; thread_ref: string; state: AnnotationThreadState };
+  type GraphFsReference = { kind: "live_head" } | { kind: "fork_hash"; repo: EntityId; hash: string } | { kind: "repo_snapshot"; snapshot: EntityId };
+  type GraphFsMountRequest = { ref: GraphFsReference; page_byte_cap?: number | null; max_entries?: number | null };
+  type GraphFsMounted = { mount: GraphFsMountRequest; root: string; projection: string };
+  type GraphFsPathRequest = { mount: GraphFsMountRequest; path: string; cursor?: string | null };
+  type GraphFsKind = "directory" | "file" | "symlink" | "cursor";
+  type GraphFsEntryView = { name: string; kind: GraphFsKind; target?: string | null; cursor?: string | null; byte_len?: number | null };
+  type GraphFsDirectoryView = { mount: GraphFsMountRequest; path: string; entries: GraphFsEntryView[]; next_cursor?: string | null };
+  type GraphFsEncoding = "utf8" | "base64";
+  type GraphFsPlan = "pushdown" | "walk";
+  type GraphFsOutput = { mount: GraphFsMountRequest; path: string; output: string; encoding: GraphFsEncoding; next_cursor?: string | null; plan: GraphFsPlan };
+  type GraphFsLinkRequest = { mount: GraphFsMountRequest; path: string };
+  type GraphFsLinkView = { mount: GraphFsMountRequest; path: string; target?: string | null };
+  type GraphFsLsRequest = { mount: GraphFsMountRequest; path: string; cursor?: string | null; by_time?: boolean };
+  type GraphFsFindRequest = { mount: GraphFsMountRequest; path: string; cursor?: string | null; newer_than?: number | null };
+  type GraphFsGrepRequest = { mount: GraphFsMountRequest; path: string; pattern: string; recursive?: boolean; cursor?: string | null };
+  type GraphFsHeadRequest = { mount: GraphFsMountRequest; path: string; lines?: number | null; cursor?: string | null };
   type CodeStateRequest = { repo: string; path: string; revision_ref?: string | null };
   type CodeDiffRequest = { before: CodeStateRequest; after: CodeStateRequest };
   type CodeStateView = { document_ref: string; repo: string; path: string; revision_ref?: string | null; text_hash: string };
@@ -2353,6 +2407,48 @@ declare namespace Sdk {
   type AnonymousChatSkippedCheckView = { input: boolean; reason: PolicySkipReason };
   type AnonymousChatBlockReasonView = "policy" | "human_review_unavailable";
   type AnonymousChatResponse = { type: "reply"; content: string; notices: GateSystemNoticeRecord[]; skipped_checks: AnonymousChatSkippedCheckView[]; model_notices: GateSystemNoticeRecord[] } | { type: "blocked"; input: boolean; notice: GateSystemNoticeRecord; preceding_notices: GateSystemNoticeRecord[]; reason: AnonymousChatBlockReasonView; model_notices: GateSystemNoticeRecord[] };
+  type ModelWireFormat = "openai-compat" | "anthropic-messages" | "gemini" | "own-server" | "local";
+  type LlmCatalogCost = { input_per_million: string; output_per_million: string; cache_read_per_million?: string | null; cache_write_per_million?: string | null };
+  type LlmCatalogEntry = { model: ModelId; display_name: string; locality: ModelLocality; context_window_tokens: number; max_output_tokens?: number | null; cost?: LlmCatalogCost | null; capabilities?: LlmCapability[]; metadata?: Record<string, unknown> };
+  type ModelRegistryRow = { version: number; wire: ModelWireFormat; catalog: LlmCatalogEntry; scores?: Record<string, Record<string, number>>; fetched_at?: Record<string, number>; tokens_per_o200k?: number | null; stale_since?: number | null };
+  type CatalogSeed = { version: number; rows: ModelRegistryRow[] };
+  type ScoreObservation = { model: ModelId; benchmark: string; score: number };
+  type ScoreSnapshot = { source: string; fetched_at: number; observations: ScoreObservation[] };
+  type ModelCatalogRefresh = { revision: string; expected_revision?: string | null; catalog: CatalogSeed; scores?: ScoreSnapshot[] };
+  type ModelScoreDiff = { model: ModelId; source: string; benchmark: string; previous?: number | null; score: number; fetched_at: number };
+  type ModelCatalogRevision = { revision: string; previous_revision?: string | null; catalog: CatalogSeed; rows: ModelRegistryRow[]; score_diffs: ModelScoreDiff[]; refreshed_at: number };
+  type ModelCatalogGet = { revision?: string | null };
+  type ModelCatalogDiffRequest = { from: string; to: string };
+  type ModelCatalogChange = { model: ModelId; previous?: ModelRegistryRow | null; current?: ModelRegistryRow | null };
+  type ModelCatalogDiff = { from: string; to: string; changes: ModelCatalogChange[] };
+  type ModelBackendPin = { model: ModelId; backend: string; serving_revision: string; quantization?: string | null; context_window_tokens: number };
+  type TrialSetPin = { id: string; version: number; rubric_version: string };
+  type HeldOutSelection = { answer: EntityId; fact: EntityId; source_family: string };
+  type ModelTrialPolicy = { exploration_remaining: number; vault_cost_cap?: number | null; project_cost_cap?: number | null; auto_approve?: boolean; candidate_needs_download: boolean };
+  type ModelTrialRequest = { principal: EntityId; question: EntityId; question_version: number; goal: EntityId; incumbent: ModelBackendPin; candidate: ModelBackendPin; source: string; benchmark: string; set: TrialSetPin; held_out: HeldOutSelection[]; incumbent_usage_bound: LlmUsage; candidate_usage_bound: LlmUsage; future_units: number; policy: ModelTrialPolicy };
+  type ModelTrialNominate = { catalog_revision: string; request: ModelTrialRequest };
+  type PricedModelBackend = { pin: ModelBackendPin; price: LlmCatalogCost };
+  type FrozenTrialCase = { selection: HeldOutSelection; unit: EntityId; source_frontier: number[]; fact_value_hash: number[]; label: boolean; noise_weight: number; derived_from: EntityId[] };
+  type TrialAdmission = "ready" | "ask_exploration";
+  type ModelTrialEvidence = { measurements_hash: number[]; incumbent_loss?: number | null; candidate_loss?: number | null; independent_families: number; incumbent_cost_per_thousand: number; candidate_cost_per_thousand: number; trial_cost: number };
+  type PairedQualityInterval = { low: number; high: number };
+  type TrialAssessment = { set: TrialSetPin; measurements_hash: number[]; paired_gain?: PairedQualityInterval | null; retest_noise: number; stricter_margin?: number | null; required_families: number; rare_slices_sufficient: boolean; versions_match: boolean; canary_diverged: boolean };
+  type TrialQuality = "better" | "not_worse" | "worse" | "unknown";
+  type ModelTrialAction = "stay" | "offer" | "auto_approve" | "ask_tradeoff" | "unknown";
+  type ModelTrialReceipt = { assessment: TrialAssessment; quality: TrialQuality; action: ModelTrialAction; candidate_cost_per_unit: number; added_cost_per_thousand: number; added_future_cost: number; completed_at: number };
+  type ModelTrialView = { catalog_revision: string; id: EntityId; request: ModelTrialRequest; incumbent: PricedModelBackend; candidate: PricedModelBackend; nominated_score: number; score_fetched_at: number; cases: FrozenTrialCase[]; estimated_cost: number; admission: TrialAdmission; prepared_at: number; execution_started: boolean; evidence?: ModelTrialEvidence | null; receipt?: ModelTrialReceipt | null };
+  type ModelTrialRef = { question: EntityId; trial: EntityId };
+  type ModelTrialComplete = { question: EntityId; trial: EntityId; assessment: TrialAssessment };
+  type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach";
+  type ModelDisposition = "offline" | "served";
+  type ModelBinding = { model: ModelId; slot: ModelSlot; tier: ModelTierRef; route_models?: Record<string, ModelId>; disposition?: ModelDisposition | null; reads_audio?: boolean };
+  type ModelBindingPropose = { question: EntityId; trial: EntityId; role: ModelRole; binding: ModelBinding };
+  type ModelBindingStatus = "proposed" | "accepted" | "denied";
+  type ModelBindingProposal = { id: EntityId; principal: EntityId; role: ModelRole; previous: ModelBinding; proposed: ModelBinding; trial: ModelTrialView; status: ModelBindingStatus; proposed_at: number; settled_at?: number | null };
+  type ModelBindingProposalRef = { proposal: EntityId };
+  type ModelBindingRead = { role: ModelRole };
+  type TeacherProbeApproval = { probe_id: string; model: ModelId; binding_hash: string; f1_millionths: number; policy_hash: string; holder_ref?: string | null };
+  type ModelBindingAccept = { proposal: EntityId; teacher_approval?: TeacherProbeApproval | null };
   type AiOptionsRequest = { operation?: string | null; inputs?: string[] };
   type AiOptions = { options: unknown[]; media_units_left?: number | null };
   type AiPart = { kind: "text"; text: string } | { kind: "image"; media_type: string; data: string } | { kind: "audio"; media_type: string; data: string } | { kind: "video"; media_type: string; data?: string | null; uri?: string | null } | { kind: "embedding"; vector: number[] };
@@ -2610,6 +2706,9 @@ declare namespace Sdk {
   type ProseSpan = { kind: "plain"; start: number; end: number; start_utf16: number; end_utf16: number; text: string } | { kind: "link"; start: number; end: number; start_utf16: number; end_utf16: number; label: string; record: RecordRef; narrowing: ScopedReadReceipt };
   type LinkedText = { message_id?: string | null; spans: ProseSpan[] };
   type RecordLinks = { texts: LinkedText[]; narrowing?: ScopedReadReceipt | null; next_after?: string | null };
+  type VectorSearchConfig = { dimensions: number; fast_dims?: number | null };
+  type VectorPutRequest = { entity_ref: string; vector: number[] };
+  type VectorPutReceipt = { entity_ref: string; dimensions: number };
   type HybridPprQuery = { seeds: string[]; depth: number };
   type HybridTemporalQuery = { start: number; end: number };
   type RetrievalBlendWeights = { recency: number; salience: number; confidence: number; gravity: number };
@@ -2669,6 +2768,23 @@ declare namespace Sdk {
   type EsignDispatchRequest = { document_ref: string; recipient_count: number; on_behalf_of?: string | null; idempotency_key?: string | null };
   type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[] };
   type EsignVoidRequest = { document_ref: string; recipient_count: number; reason: string; on_behalf_of?: string | null; idempotency_key?: string | null };
+  type SigningAction = { action: "load" } | { action: "save_field"; field: string; value: FieldValue } | { action: "complete"; consent: boolean; next?: string | null } | { action: "reject"; reason: string };
+  type EsignSigningRequest = { token: string; action: SigningAction };
+  type FieldControl = { kind: "text"; max_bytes: number; server_computed: boolean } | { kind: "checkbox" } | { kind: "select"; options: string[] } | { kind: "signature" };
+  type FieldPresentation = { id: string; item: number; geometry: FieldGeometry; required: boolean; control: FieldControl; value?: FieldValue | null };
+  type SigningPage = { item_count: number; title: string; recipient: string; fields: EsignField[]; presentations: FieldPresentation[]; values: Record<string, SignatureRow> };
+  type SigningOutcome = { outcome: "page"; data: SigningPage } | { outcome: "not_your_turn" } | { outcome: "terminal"; data: { status: DocumentStatus; item_count: number } } | { outcome: "awaiting_seal" } | { outcome: "held_for_owner"; data: { held_at: number } } | { outcome: "consent_required" };
+  type EsignSigningPdfRequest = { token: string; item: number };
+  type EsignSigningPdfView = { item: number; pdf_base64: string };
+  type EsignSigningImageRequest = { token: string; png_or_jpeg_base64: string };
+  type EsignSigningImageView = { image_ref: string };
+  type EsignSigningSignatureRequest = { token: string; image_ref: string };
+  type EsignSigningSignatureView = { image_ref: string; image_base64: string };
+  type EsignSealGetRequest = { document_ref: string };
+  type EsignSealAttemptView = { attempt_ref: string; kind: string; state: string; dedupe_key?: string | null; lease_owner?: string | null; attempt_count: number; created_at: number; updated_at: number; last_error?: string | null };
+  type EsignSealedItemView = { original_artifact: string; original_version: number; sealed_artifact: string; sealed_version: number; sha256: string };
+  type EsignSealedView = { attempt_ref: string; audit_chain_sha256: string; rejected: boolean; items: EsignSealedItemView[] };
+  type EsignSealView = { document_ref: string; status: DocumentStatus; attempts: EsignSealAttemptView[]; sealed?: EsignSealedView | null };
   type CoreWriteTextField = { field: string; value: string };
   type ConversationCreateInput = { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreEntityWriteReceipt = { id: string; entity_type: number; learned_at: number; body: unknown };
@@ -3161,6 +3277,10 @@ declare namespace Sdk {
 declare const ai: {
   /** One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call. */
   anonymous_chat(input: Sdk.AnonymousChatRequest): Promise<Sdk.AnonymousChatResponse | StoredResult>;
+  chat: {
+    /** Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling. */
+    completions(input: Sdk.ChatCompletionRequest): Promise<Sdk.ChatCompletionResponse | StoredResult>;
+  };
   /** One embedding vector per input text, from the host's embedding model. */
   embed(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** One image out of the host's image model; reference images make it an edit. */
@@ -3285,6 +3405,26 @@ declare const feedback: {
 };
 /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
 declare function fetch(input: Sdk.WebFetchRequest): Promise<Sdk.FetchResult | StoredResult>;
+declare const graph_fs: {
+  /** Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference. */
+  cat(input: Sdk.GraphFsPathRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index. */
+  find(input: Sdk.GraphFsFindRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** Search visible mounted file bytes, using the live claim text index for supported recursive patterns. */
+  grep(input: Sdk.GraphFsGrepRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** Read the first requested lines at the mounted reference with bounded output and a sealed continuation. */
+  head(input: Sdk.GraphFsHeadRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** List names at the mounted reference, using the live temporal index when requested. */
+  ls(input: Sdk.GraphFsLsRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation. */
+  read_file(input: Sdk.GraphFsPathRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** Resolve a visible graph link at the mounted reference without following a host filesystem link. */
+  read_link(input: Sdk.GraphFsLinkRequest): Promise<Sdk.GraphFsLinkView | StoredResult>;
+  /** List one directory at the mounted reference under the caller read gate, with a sealed continuation. */
+  readdir(input: Sdk.GraphFsPathRequest): Promise<Sdk.GraphFsDirectoryView | StoredResult>;
+  /** Count lines, words and bytes of a visible file at the mounted reference. */
+  wc(input: Sdk.GraphFsLinkRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+};
 declare const host: {
   budget: {
     /** Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work. */
@@ -3295,6 +3435,8 @@ declare const host: {
   /** Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes. */
   wake(input: Sdk.HostWakeRequest): Promise<Sdk.HostWakeResult | StoredResult>;
 };
+/** Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash. */
+declare function mount(input: Sdk.GraphFsMountRequest): Promise<Sdk.GraphFsMounted | StoredResult>;
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
@@ -3797,6 +3939,18 @@ declare const vault: Sdk.VaultHost & {
     local(input: Sdk.LocalRunnerBudgetRequest): Promise<Sdk.LocalRunnerBudgetView | StoredResult>;
     /** The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it. */
     reservations(input: Sdk.RunnerBudgetReservationsRequest): Promise<Sdk.RunnerBudgetReservationsView | StoredResult>;
+    /** The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure. */
+    rsi: ((input: Sdk.RsiLineRequest) => Promise<Sdk.RsiLineView | StoredResult>) & {
+      /** The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend. */
+      configure(input: Sdk.RsiBudgetConfig): Promise<Sdk.RsiLineView | StoredResult>;
+      /** The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay. */
+      hold: ((input: Sdk.RsiLineRequest) => Promise<Sdk.RsiLineView | StoredResult>) & {
+        /** The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt. */
+        resume(input: Sdk.RsiLineRequest): Promise<Sdk.RsiLineView | StoredResult>;
+      };
+      /** The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself. */
+      top_up(input: Sdk.RsiTopUp): Promise<Sdk.RsiLineView | StoredResult>;
+    };
     /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
     settlements(input: Sdk.RunSettlementsRequest): Promise<Sdk.RunSettlementsView | StoredResult>;
   };
@@ -4140,6 +4294,12 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   connectors: {
+    proxy: {
+      /** The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key. */
+      admit(input: Sdk.ProxyConnectorAdmitRequest): Promise<Sdk.ProxyConnectorRegistration | StoredResult>;
+      /** The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact. */
+      revoke_write(input: Sdk.ProxyConnectorRevokeWriteRequest): Promise<Sdk.ProxyConnectorRegistration | StoredResult>;
+    };
     subscriptions: {
       /** An agent's connector event subscriptions, standing and revoked, for the owner. */
       list(input: Sdk.ChannelSubscriptionsRequest): Promise<Sdk.ChannelSubscriptions | StoredResult>;
@@ -4329,8 +4489,22 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller. */
     remind(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
+    seal: {
+      /** Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it. */
+      get(input: Sdk.EsignSealGetRequest): Promise<Sdk.EsignSealView | StoredResult>;
+    };
     /** Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope. */
     send_for_signature(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
+    signing: {
+      /** One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act. */
+      act(input: Sdk.EsignSigningRequest): Promise<Sdk.SigningOutcome | StoredResult>;
+      /** Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names. */
+      image(input: Sdk.EsignSigningImageRequest): Promise<Sdk.EsignSigningImageView | StoredResult>;
+      /** One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing. */
+      pdf(input: Sdk.EsignSigningPdfRequest): Promise<Sdk.EsignSigningPdfView | StoredResult>;
+      /** Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes. */
+      signature(input: Sdk.EsignSigningSignatureRequest): Promise<Sdk.EsignSigningSignatureView | StoredResult>;
+    };
     /** Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller. */
     void(input: Sdk.EsignVoidRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
   };
@@ -4623,6 +4797,40 @@ declare const vault: Sdk.VaultHost & {
     /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
     react(input: Sdk.MessageReactionRequest): Promise<Sdk.MessageReactionReceipt | StoredResult>;
   };
+  models: {
+    bindings: {
+      /** Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks. */
+      accept(input: Sdk.ModelBindingAccept): Promise<Sdk.ModelBindingProposal | StoredResult>;
+      /** Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding. */
+      deny(input: Sdk.ModelBindingProposalRef): Promise<Sdk.ModelBindingProposal | StoredResult>;
+      /** Reads an owner-reviewed model role-binding proposal and its pinned trial evidence. */
+      get(input: Sdk.ModelBindingProposalRef): Promise<Sdk.ModelBindingProposal | StoredResult>;
+      /** Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it. */
+      propose(input: Sdk.ModelBindingPropose): Promise<Sdk.ModelBindingProposal | StoredResult>;
+      /** Reads the currently active manifest binding for a model role. */
+      read(input: Sdk.ModelBindingRead): Promise<Sdk.ModelBinding | StoredResult>;
+    };
+    catalog: {
+      /** Diffs two immutable model catalog revisions, including prices, scores and retired offers. */
+      diff(input: Sdk.ModelCatalogDiffRequest): Promise<Sdk.ModelCatalogDiff | StoredResult>;
+      /** Reads a pinned model catalog revision with its prices, backend offers and score evidence. */
+      get(input: Sdk.ModelCatalogGet): Promise<Sdk.ModelCatalogRevision | StoredResult>;
+      /** Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding. */
+      refresh(input: Sdk.ModelCatalogRefresh): Promise<Sdk.ModelCatalogRevision | StoredResult>;
+    };
+    trials: {
+      /** Approves exploration for a held-out model trial only; leaves its role binding unchanged. */
+      approve(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
+      /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
+      complete(input: Sdk.ModelTrialComplete): Promise<Sdk.ModelTrialView | StoredResult>;
+      /** Reads a retained held-out trial, its catalog revision, independent labels and measured cost. */
+      get(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
+      /** Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority. */
+      nominate(input: Sdk.ModelTrialNominate): Promise<Sdk.ModelTrialView | StoredResult>;
+      /** Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost. */
+      run(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
+    };
+  };
   /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
   neighbors(input: Sdk.NeighborsRequest): Promise<Sdk.ScopedReadResult<Sdk.NeighborHit[]> | StoredResult>;
   notes: {
@@ -4896,6 +5104,8 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it. */
     bind(input: Sdk.ResearchBindWire): Promise<Sdk.ResearchBinding | StoredResult>;
+    /** Reads the campaign's lease, every reservation it holds or held with its settlement and soft-share overdraft receipt, and the vault RSI lines behind them, including the observable hold state. */
+    budget(input: Sdk.ResearchArchiveWire): Promise<Sdk.ResearchBudgetView | StoredResult>;
     /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */
     create_child(input: Sdk.ResearchChildWire): Promise<Sdk.ResearchChildReceipt | StoredResult>;
     /** The owner scores one arm of a bound claim-authoring campaign on one split under its bound config; the blind taste questions go through the host's decision ladder, and the report is returned, not stored. */
@@ -4920,6 +5130,8 @@ declare const vault: Sdk.VaultHost & {
     refund_work(input: Sdk.ResearchRefundWire): Promise<Sdk.ResearchReservation | StoredResult>;
     /** Spends a Promote candidate's one sealed confirmation and releases the campaign's sealed cohort to the controller's referee, counted as a serving. */
     reserve_confirmation(input: Sdk.ResearchCandidateWire): Promise<Sdk.EvalRelease | StoredResult>;
+    /** Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work. */
+    reserve_exploration(input: Sdk.ResearchExplorationWire): Promise<Sdk.EntityId | StoredResult>;
     /** Reserves token work for the campaign on the RSI line under its share, and returns the reservation's id. */
     reserve_work(input: Sdk.ResearchWorkWire): Promise<Sdk.EntityId | StoredResult>;
     /** Runs one selection round through the trusted selection floor and records it; only the owner can say the goal is met. */
@@ -5090,8 +5302,11 @@ declare const vault: Sdk.VaultHost & {
     hybrid(input: Sdk.HybridSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.HybridSearchHit[]> | StoredResult>;
     /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
     temporal(input: Sdk.TemporalSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.TemporalSearchResult> | StoredResult>;
-    /** Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt. */
-    vector(input: Sdk.VectorSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.VectorSearchHit[]> | StoredResult>;
+    /** Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit. */
+    vector: ((input: Sdk.VectorSearchRequest) => Promise<Sdk.ScopedReadResult<Sdk.VectorSearchResult> | StoredResult>) & {
+      /** Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search. */
+      config(input: Sdk.EmptyRequest): Promise<Sdk.ScopedReadResult<Sdk.VectorSearchConfig> | StoredResult>;
+    };
   };
   secrets: {
     /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
@@ -5415,6 +5630,10 @@ declare const vault: Sdk.VaultHost & {
       /** The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern. */
       set(input: Sdk.TrustedContactTierRequest): Promise<Sdk.TrustedContactTierSet | StoredResult>;
     };
+  };
+  vectors: {
+    /** Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically. */
+    put(input: Sdk.VectorPutRequest): Promise<Sdk.VectorPutReceipt | StoredResult>;
   };
   voices: {
     /** The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone. */
