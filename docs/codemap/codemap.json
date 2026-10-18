@@ -3085,7 +3085,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -37708,7 +37708,7 @@
      "path": "src/policy_model/owner_rows/world_privacy_switch.rs",
      "purpose": "The owner's settings for one world: where it may be read, where its sealed copies may rest, and its model…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -55977,9 +55977,19 @@
      "path": "src/world_keys/doors.rs",
      "purpose": "The doors that mint, wrap and open a world's key (contract §5), and what every world-key door shares: this…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/doors/provenance.rs",
+     "purpose": "A key record's provenance, under its signature (CALLS WORLD_KEY_WRAP_AUTH): the owner work request it does…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -56120,7 +56130,18 @@
      "path": "src/world_keys/reassert.rs",
      "purpose": "The owner's re-assertion of one world after a pin change (contract §4)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/reassert/holder.rs",
+     "purpose": "A holder's re-assertion of one world's keys (contract §4): the step the re-assert door runs on a holder, and…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -58659,7 +58680,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58675,7 +58696,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3579,
+   "source_files": 3581,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58923,15 +58944,16 @@
       "OwnerWorkOutcome",
       "OwnerWorkRefusal",
       "OwnerWorkRequest",
-      "OwnerWorkResult"
+      "OwnerWorkResult",
+      "WorldKeyMode"
      ],
      "path": "src/authority/owner_work.rs",
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
      "surface": {
       "const": 2,
       "crate-vis": 6,
-      "enum": 4,
-      "fn": 10,
+      "enum": 5,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -59028,7 +59050,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PolicyRevision",
@@ -59042,7 +59064,7 @@
       "const": 7,
       "crate-vis": 3,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
