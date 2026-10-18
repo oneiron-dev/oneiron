@@ -14,6 +14,7 @@
 //! blob versions remain authoritative and this body is a proposal surface.
 pub mod deck_export;
 mod held;
+pub mod oracle_run;
 pub mod pptx;
 mod reshape;
 
