@@ -1009,6 +1009,14 @@ impl OneironClient {
                 "vault.notes.lifecycle" => remote_agent_verb_output::<
                     oneiron::note::NoteLifecycleView,
                 >(client, verb, &input),
+                "vault.notes.set_overrides" => remote_agent_verb_output::<
+                    oneiron::note::NoteDefaultsView,
+                >(client, verb, &input),
+                "vault.notes.defaults" => {
+                    remote_agent_verb_output::<oneiron::note::NoteDefaultsView>(
+                        client, verb, &input,
+                    )
+                }
                 _ => Err(crate::error::bad_request(
                     "unknown SDK agent verb",
                     &["Use a verb from the SDK catalog."],
@@ -4995,5 +5003,31 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.notes.lifecycle", value)
+    }
+    /// Sets the defaults one NOTE overrides over its kind's; empty overrides clear them.
+    pub fn vault_notes_set_overrides(
+        &self,
+        input: &oneiron::note::SetNoteOverridesRequest,
+    ) -> Result<oneiron::note::NoteDefaultsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.set_overrides", value)
+    }
+    /// One NOTE's overrides and the defaults its gates read after them.
+    pub fn vault_notes_defaults(
+        &self,
+        input: &oneiron::note::NoteRefRequest,
+    ) -> Result<oneiron::note::NoteDefaultsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.defaults", value)
     }
 }

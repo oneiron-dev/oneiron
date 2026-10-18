@@ -1,5 +1,6 @@
-//! Budgeted xref framing and lossless object-stream expansion before rewriting.
-use super::streams::decode_stream;
+//! Exact xref framing and lossless object-stream expansion before rewriting.
+//! Each stream decodes under its own bound; nothing is summed over the file.
+use super::streams::decoded;
 use super::*;
 use lopdf::xref::XrefEntry;
 mod dictionary;
@@ -8,11 +9,10 @@ use dictionary::leading_dictionary;
 struct Frame {
     entries: BTreeMap<u32, XrefEntry>,
     revisions: Vec<usize>,
-    nodes: usize,
 }
 
 /// Neutralize ObjStm before lopdf eagerly inflates it. We expand it ourselves
-/// with an aggregate budget, exact Flate checks, and exact object indexes.
+/// with exact Flate checks and exact object indexes.
 fn defer_object_streams(object: &mut Object) {
     if let Ok(stream) = object.as_stream_mut()
         && stream.dict.has_type(b"ObjStm")
@@ -36,28 +36,18 @@ pub(super) fn load(bytes: &[u8]) -> Result<Document> {
     let mut frame = Frame {
         entries: BTreeMap::new(),
         revisions: Vec::new(),
-        nodes: 0,
     };
-    frame.read(bytes, offset, &mut BTreeSet::new())?;
-    // Bound total full-document parsing, not just each input or inflated stream.
-    // Every prior snapshot below is the input plus a short startxref trailer.
-    let parse_work = bytes
-        .len()
-        .checked_add(64)
-        .and_then(|size| size.checked_mul(frame.revisions.len()))
-        .ok_or(PdfPreparationError::Limit)?;
-    if parse_work > MAX_OUTPUT {
-        return Err(PdfPreparationError::Limit);
-    }
-    let mut remaining = MAX_OUTPUT;
+    frame.read(bytes, offset)?;
     // Inspect superseded revisions too: rewriting must not erase a prior seal.
+    // Each snapshot is the input plus a short startxref trailer, read one at a
+    // time, however many revisions the file carries.
     for previous in frame.revisions.iter().skip(1) {
         let mut snapshot = bytes.to_vec();
         snapshot.extend_from_slice(format!("\nstartxref\n{previous}\n%%EOF\n").as_bytes());
-        let old = load_objects(&snapshot, &mut remaining)?;
+        let old = load_objects(&snapshot)?;
         reject_signatures(&old)?;
     }
-    let document = load_objects(bytes, &mut remaining)?;
+    let document = load_objects(bytes)?;
     for (id, entry) in &frame.entries {
         match entry {
             XrefEntry::Normal { generation, .. } => {
@@ -74,7 +64,7 @@ pub(super) fn load(bytes: &[u8]) -> Result<Document> {
     Ok(document)
 }
 
-fn load_objects(bytes: &[u8], remaining: &mut usize) -> Result<Document> {
+fn load_objects(bytes: &[u8]) -> Result<Document> {
     let mut doc = Document::load_mem_with_options(
         bytes,
         LoadOptions {
@@ -83,15 +73,13 @@ fn load_objects(bytes: &[u8], remaining: &mut usize) -> Result<Document> {
                 defer_object_streams(object);
                 Some((id, Object::Null))
             }),
-            max_decompressed_size: Some(MAX_INPUT),
+            // lopdf's bound is per stream, as ours is.
+            max_decompressed_size: Some(STREAM_DECODE_BYTES),
             ..Default::default()
         },
     )?;
     if doc.is_encrypted() || doc.was_encrypted() {
         return Err(PdfPreparationError::EncryptedPdf);
-    }
-    if doc.reference_table.entries.len() > MAX_OBJECTS || doc.objects.len() > MAX_OBJECTS {
-        return Err(PdfPreparationError::Limit);
     }
     let ids: Vec<_> = doc
         .objects
@@ -105,13 +93,12 @@ fn load_objects(bytes: &[u8], remaining: &mut usize) -> Result<Document> {
         .collect();
     for id in ids {
         let stream = doc.get_object(id)?.as_stream()?;
-        let decoded = decode_stream(stream, (*remaining).min(MAX_INPUT))?;
-        *remaining = remaining
-            .checked_sub(decoded.len())
-            .ok_or(PdfPreparationError::Limit)?;
+        let decoded = decoded(stream)?;
         let first = natural(stream.dict.get(b"First")?)?;
+        // N is checked against the header's own tokens below, so no count
+        // is reserved ahead of them.
         let count = natural(stream.dict.get(b"N")?)?;
-        if count == 0 || count > MAX_OBJECTS || first > decoded.len() {
+        if count == 0 || first > decoded.len() {
             return Err(PdfPreparationError::MalformedPdf);
         }
         let header = std::str::from_utf8(&decoded[..first])
@@ -147,9 +134,6 @@ fn load_objects(bytes: &[u8], remaining: &mut usize) -> Result<Document> {
                 Some(XrefEntry::Compressed { container, index }) if *container == id.0 && usize::from(*index) == position)
             {
                 doc.objects.insert((number, 0), object);
-            }
-            if doc.objects.len() > MAX_OBJECTS {
-                return Err(PdfPreparationError::Limit);
             }
         }
     }
@@ -198,10 +182,25 @@ fn reject_direct_signature(object: &Object) -> Result<()> {
 }
 
 impl Frame {
-    fn read(&mut self, bytes: &[u8], offset: usize, seen: &mut BTreeSet<usize>) -> Result<()> {
-        if !seen.insert(offset) || seen.len() > 32 || offset >= bytes.len() {
-            return Err(PdfPreparationError::MalformedPdf);
+    /// Reads the xref section at `offset` and every section it chains to
+    /// (`/XRefStm` first, then `/Prev`), newest first, as many as the file
+    /// holds. A section named twice is a cycle and malformed.
+    fn read(&mut self, bytes: &[u8], offset: usize) -> Result<()> {
+        let mut seen = BTreeSet::new();
+        let mut pending = vec![offset];
+        while let Some(offset) = pending.pop() {
+            if !seen.insert(offset) || offset >= bytes.len() {
+                return Err(PdfPreparationError::MalformedPdf);
+            }
+            for previous in self.section(bytes, offset)?.into_iter().rev() {
+                pending.push(previous);
+            }
         }
+        Ok(())
+    }
+    /// Reads one xref section and returns the sections its trailer chains
+    /// to, in the order they are read.
+    fn section(&mut self, bytes: &[u8], offset: usize) -> Result<Vec<usize>> {
         self.revisions.push(offset);
         let part = &bytes[offset..];
         let mut entries = BTreeMap::new();
@@ -216,7 +215,7 @@ impl Frame {
             while let Some(first) = tokens.next() {
                 let first = integer(Some(first))?;
                 let count = integer(tokens.next())?;
-                self.charge(count)?;
+                subsection(count)?;
                 for id in first..first.checked_add(count).ok_or(PdfPreparationError::Limit)? {
                     let offset = integer(tokens.next())?;
                     let generation = integer(tokens.next())?;
@@ -265,7 +264,7 @@ impl Frame {
             if !trim_start(&after[length..]).starts_with(b"endstream") {
                 return Err(PdfPreparationError::MalformedPdf);
             }
-            let decoded = decode_stream(&Stream::new(dict.clone(), raw.to_vec()), MAX_INPUT)?;
+            let decoded = decoded(&Stream::new(dict.clone(), raw.to_vec()))?;
             let widths = dict
                 .get(b"W")?
                 .as_array()?
@@ -293,7 +292,7 @@ impl Frame {
             }
             let mut cursor = 0;
             for pair in index.chunks_exact(2) {
-                self.charge(pair[1])?;
+                subsection(pair[1])?;
                 for id in pair[0]
                     ..pair[0]
                         .checked_add(pair[1])
@@ -366,23 +365,22 @@ impl Frame {
             }
             self.entries.entry(id).or_insert(entry);
         }
+        let mut chained = Vec::new();
         for key in [b"XRefStm".as_slice(), b"Prev"] {
             if let Ok(previous) = trailer.get(key) {
-                self.read(bytes, natural(previous)?, seen)?;
+                chained.push(natural(previous)?);
             }
         }
-        Ok(())
+        Ok(chained)
     }
-    fn charge(&mut self, count: usize) -> Result<()> {
-        self.nodes = self
-            .nodes
-            .checked_add(count)
-            .ok_or(PdfPreparationError::Limit)?;
-        if count == 0 || self.nodes > MAX_OBJECTS {
-            return Err(PdfPreparationError::Limit);
-        }
-        Ok(())
+}
+/// An xref subsection names at least one entry. Its entries are read from the
+/// section's own bytes, so no count is reserved ahead of them.
+fn subsection(count: usize) -> Result<()> {
+    if count == 0 {
+        return Err(PdfPreparationError::MalformedPdf);
     }
+    Ok(())
 }
 fn insert(entries: &mut BTreeMap<u32, XrefEntry>, id: usize, entry: XrefEntry) -> Result<()> {
     let id = u32::try_from(id).map_err(|_| PdfPreparationError::Limit)?;
