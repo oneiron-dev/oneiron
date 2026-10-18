@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "area": "memory",
+  "assets": [
+    {
+      "id": "memory-canonical-cases",
+      "path": "cases.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-memory-canonical-cases",
+        "revision": "sha256:664702fd4593cbcc17d4d9349c394be805d0e9da45870054dd069a32276efbca"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "664702fd4593cbcc17d4d9349c394be805d0e9da45870054dd069a32276efbca",
+      "expectedFacts": {
+        "description": "Original synthetic people, opinions, observations, dates, task tree and scope facts authored from the cited canon. These are design inputs and independent oracles, not engine exports, responses or storage records.",
+        "people": 2,
+        "agents": 2,
+        "projects": 2,
+        "nonBaseWorlds": 2,
+        "canonicalScopeKeys": [
+          "worldId",
+          "scopeFacetId",
+          "scopeRelationshipId",
+          "scopeProjectId"
+        ],
+        "noEngineOrHarnessConstantsChanged": true
+      },
+      "scenarios": [
+        "MEMORY-01",
+        "MEMORY-02",
+        "MEMORY-03",
+        "MEMORY-04",
+        "MEMORY-05",
+        "MEMORY-06",
+        "MEMORY-07",
+        "MEMORY-08"
+      ],
+      "requires": []
+    }
+  ]
+}
