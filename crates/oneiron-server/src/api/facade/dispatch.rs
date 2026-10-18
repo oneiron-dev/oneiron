@@ -16740,6 +16740,7 @@ pub(crate) async fn call_verb(
         | "self.desktop.window"
         | "self.desktop.handover" => Err(context_required(verb, VerbContext::Browser)),
         "connector.answer"
+        | "vault.worlds.privacy.set"
         | "vault.search"
         | "vault.claims.put"
         | "vault.edges.put"

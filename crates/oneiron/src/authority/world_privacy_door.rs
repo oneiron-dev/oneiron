@@ -31,6 +31,31 @@ pub enum EditOrigin {
     Peer(PeerMachine),
 }
 
+/// Who a settings edit is written as, once its door checked them in the
+/// writer: the PERSON whose will it is (a holder of the world's settings
+/// right, or for an agent's act the vault owner its Grant carries), who
+/// decided (the holder himself, or an agent within its Grant), where (audit
+/// only), and the request a holder's yes answers (FIX 4480).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WorldEditAuthor {
+    pub(crate) owner: EntityId,
+    pub(crate) by: ActBy,
+    pub(crate) surface: ActSurface,
+    pub(crate) answer: Option<EntityId>,
+}
+
+impl WorldEditAuthor {
+    /// A holder's own say-so, answering nothing.
+    pub(crate) const fn holder(owner: EntityId, surface: ActSurface) -> Self {
+        Self {
+            owner,
+            by: ActBy::Owner,
+            surface,
+            answer: None,
+        }
+    }
+}
+
 /// One signed and folded settings edit.
 pub(crate) struct WorldPrivacyChange {
     pub(crate) machine: EntityId,
@@ -85,16 +110,16 @@ impl Vault {
     }
 
     /// Signs and lands one edit in the caller's transaction. The caller has
-    /// revalidated the owner and holds the release lock. `surface` is where
-    /// the owner said so, for audit only. `seen` is the settings revision the
-    /// deciding surface showed him: it must be the world's current one, else
-    /// the edit is a conflict, never a silent overwrite; `None` takes the
-    /// current revision (a caller that showed none).
+    /// revalidated `author` (a holder, or an agent's Grant) and holds the
+    /// release lock. Its surface is where the will was said, for audit only.
+    /// `seen` is the settings revision the deciding surface showed: it must be
+    /// the world's current one, else the edit is a conflict, never a silent
+    /// overwrite; `None` takes the current revision (a caller that showed
+    /// none).
     pub(crate) fn append_world_privacy_edit_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        owner: EntityId,
-        surface: ActSurface,
+        author: WorldEditAuthor,
         world: EntityId,
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,
@@ -173,7 +198,15 @@ impl Vault {
         let signer = AuthorityKey::Ed25519(public_key);
         let seq = next_sequence(&fold, &signer)?;
         let now = self.instant_in_txn(txn)?.secs();
-        let act = OwnerAct::by_owner(owner, OwnerActKind::WorldPrivacy, world, surface, current.0);
+        let act = OwnerAct {
+            owner: author.owner,
+            by: author.by,
+            surface: author.surface,
+            act: OwnerActKind::WorldPrivacy,
+            target: world,
+            seen: current.0,
+            answer: author.answer,
+        };
         let entry = sign_side_entry(
             &fold,
             &key,

@@ -535,6 +535,7 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         SelfCall::WakePolicyWrite(write) => json!({"policy": to_json(&write.policy)?}),
         SelfCall::AgentVerb(verb) => json!({"verb": verb.verb.as_str(), "input": verb.input}),
         SelfCall::ConnectorAnswer(request) => to_json(request)?,
+        SelfCall::WorldPrivacySet(input) => to_json(input)?,
         SelfCall::Fold(fold) => to_json(fold)?,
         SelfCall::ReaderSpawn(spawn) => json!({
             "source": spawn.source,
@@ -974,8 +975,10 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         // resolved by the host before the hooks run: a rewrite would name a
         // result nothing resolved.
         // An answer is frozen once and checked as given (ONE-2510).
+        // A world-settings request is judged as the agent gave it (FIX 4480).
         SelfCall::AgentVerb(_)
         | SelfCall::ConnectorAnswer(_)
+        | SelfCall::WorldPrivacySet(_)
         | SelfCall::ReaderSpawn(_)
         | SelfCall::ReaderReport(_)
         | SelfCall::Summarize(_)

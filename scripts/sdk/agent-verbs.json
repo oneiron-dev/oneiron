@@ -8187,6 +8187,14 @@
       "effect": "ConnectorAnswer"
     },
     {
+      "name": "vault.worlds.privacy.set",
+      "input": "crate::policy_model::WorldPrivacySetInput",
+      "output": "crate::policy_model::WorldPrivacySetOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "WorldPrivacySet"
+    },
+    {
       "name": "self.browser.open",
       "description": "Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor.",
       "input": "crate::task_verb::sdk::BrowserOpenInput",
