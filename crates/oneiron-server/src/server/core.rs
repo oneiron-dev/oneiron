@@ -142,7 +142,7 @@ pub struct SyncServer {
     /// serving, the provider itself. A slot is attached by the serve path after
     /// construction, the same way the deep-retrieval host is: `Self::new` pins
     /// no model and downloads nothing.
-    pub(crate) embedder: Option<EmbedderSlot>,
+    pub(crate) embedder: Option<Arc<EmbedderSlot>>,
     /// The `[oneironer]` tagger slot, `None` when no tagger is configured.
     /// Attached by the serve path after construction, like the embedder.
     pub(crate) tagger: Option<TaggerSlot>,
@@ -711,7 +711,7 @@ impl SyncServer {
     /// a possible download: a server built without one runs at rung 0 forever,
     /// which is what every deployment did before this ticket.
     pub(crate) fn with_embedder(mut self, embedder: Option<EmbedderSlot>) -> Self {
-        self.embedder = embedder;
+        self.embedder = embedder.map(Arc::new);
         self
     }
 

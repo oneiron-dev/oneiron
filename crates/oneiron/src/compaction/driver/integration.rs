@@ -65,16 +65,18 @@ impl CompactionDriver {
     /// summary and the run's coverage land in the room's overlay through
     /// `session`, on the `route` the run captured at entry, and drop with it
     /// at close. Such a summary takes no birth stamp: it is never exported.
+    /// The vector its pass embedded, if any, stages with it.
     pub(crate) fn integrate_in_overlay(
         &mut self,
         session: &crate::off_record::OffRecordSession<'_>,
         route: &crate::session_overlay::SessionWriteRoute,
         byline: WriteActor,
-        gated: GatedCompaction,
+        mut gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
         span: &crate::code_run::ExecutorOutputSpan,
     ) -> Result<SwapPlan> {
         let session_ref = gated.request.session_ref;
+        let vector = gated.vector.take();
         self.integrate_inner(gated, accumulated, |request, product| {
             mint_epoch_summary_in_overlay(
                 session,
@@ -83,6 +85,7 @@ impl CompactionDriver {
                 byline,
                 request,
                 product,
+                vector.as_ref(),
                 |view, txn, mint| span.put_coverage_in(view, txn, mint),
             )
         })
@@ -174,7 +177,9 @@ impl CompactionDriver {
         // Compare both the unique job identity and the sealed input. A stale,
         // duplicate, foreign-driver, or edited request cannot mint or clear
         // the current flight, nor feed its latency into the margin law.
-        let GatedCompaction { request, product } = gated;
+        let GatedCompaction {
+            request, product, ..
+        } = gated;
         let request = &request;
         if active.as_deref() != Some(request) {
             return Err(Error::InvariantViolation(

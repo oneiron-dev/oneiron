@@ -269,6 +269,16 @@ impl EmbedderSlot {
         self.ready.get()
     }
 
+    /// The provider once the vault has admitted it, for a caller that embeds
+    /// its own rows: an off-record room's epoch summaries, which take no
+    /// `pe:` marker for the worker to fill.
+    pub(crate) fn admitted_provider(&self) -> Option<Arc<dyn QueryEmbedder>> {
+        self.ready
+            .get()
+            .filter(|_| self.admitted.load(Ordering::Acquire))
+            .map(Arc::clone)
+    }
+
     /// Fetches the local model's artifacts from somewhere other than Hugging
     /// Face. Test-only: it is how a row exercises the fetch path without
     /// leaving the host.

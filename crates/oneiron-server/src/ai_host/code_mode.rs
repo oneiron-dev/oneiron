@@ -167,7 +167,8 @@ pub(super) async fn bind(
         total: models.code_mode.max_runs,
         wait: server.config.limits.queue_wait(),
     };
-    server.with_mcp_quickjs_provider(compaction.attach(provider, status), runs)
+    let embedder = server.embedder.clone();
+    server.with_mcp_quickjs_provider(compaction.attach(provider, status, embedder), runs)
 }
 
 /// Shadow mode's checker, per `[models.code_mode.check]`; none when the mode

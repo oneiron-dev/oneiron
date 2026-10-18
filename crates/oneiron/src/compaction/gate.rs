@@ -192,6 +192,9 @@ impl Default for CompactionGatePolicy {
 pub struct GatedCompaction {
     pub(super) request: CompactionRequest,
     pub(super) product: CompactionProduct,
+    /// The summary's vector, embedded in its pass for a room's mint
+    /// (`embed_for_room`); `None` anywhere else.
+    pub(super) vector: Option<super::epoch_vector::EpochVector>,
 }
 
 impl GatedCompaction {
@@ -216,6 +219,7 @@ impl GatedCompaction {
         Self {
             request: request.clone(),
             product,
+            vector: None,
         }
     }
 }
@@ -316,6 +320,7 @@ pub fn gate_compaction(
             finish: product.finish.clone(),
             latency: product.latency,
         },
+        vector: None,
     })
 }
 

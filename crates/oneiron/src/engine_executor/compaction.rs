@@ -18,7 +18,8 @@ use crate::compaction::{
     CompactHooks, CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionWatermark, CompactionWindowMessage,
-    EpochPlacement, FoldLedger, GatedCompaction, escape_compacted_text, gate_compaction,
+    EpochEmbedder, EpochPlacement, FoldLedger, GatedCompaction, escape_compacted_text,
+    gate_compaction,
 };
 use crate::entity_id::EntityId;
 use crate::tokenizer::count_context_pack_tokens;
@@ -60,6 +61,10 @@ struct LiveSeat {
     /// an off-record room's overlay, or a room on record at entry, under its
     /// saver. Its epochs land along that same route.
     session_bound: bool,
+    /// Bound to an off-record room's overlay, which keeps no `pe:` queue:
+    /// each epoch pass embeds its summary inline with `vectors` (K6).
+    overlay: bool,
+    vectors: Option<Arc<dyn EpochEmbedder>>,
 }
 
 enum PassOutcome {
@@ -178,9 +183,23 @@ impl RunCompaction {
                 held: None,
                 last_feed: None,
                 session_bound: false,
+                overlay: false,
+                vectors: None,
             })),
             report,
         }
+    }
+
+    /// The embedder an off-record room's run embeds its epoch summaries
+    /// with, in each pass (K6: a room keeps no `pe:` queue). A run on base,
+    /// or in a room on record, leaves its summaries to the vault's own
+    /// embedding queue.
+    #[must_use]
+    pub fn with_room_vectors(mut self, vectors: Arc<dyn EpochEmbedder>) -> Self {
+        if let Seat::Live(seat) = &mut self.seat {
+            seat.vectors = Some(vectors);
+        }
+        self
     }
 
     #[must_use]
@@ -223,6 +242,7 @@ impl RunCompaction {
             RouteTarget::Overlay | RouteTarget::Base => {
                 if let Seat::Live(seat) = &mut self.seat {
                     seat.session_bound = true;
+                    seat.overlay = target == RouteTarget::Overlay;
                 }
             }
             RouteTarget::Discard => {
@@ -394,11 +414,20 @@ impl RunCompaction {
                         if request.is_some() || !folds.is_empty() {
                             let backend = Arc::clone(seat.driver.backend());
                             let policy = seat.policy;
+                            let vectors = seat.vectors.clone().filter(|_| seat.overlay);
                             let (sender, receiver) = channel();
                             seat.spawn.spawn(Box::new(move || {
-                                let epoch = request
-                                    .as_ref()
-                                    .map(|request| run_pass(&*backend, request, &policy));
+                                let epoch = request.as_ref().map(|request| {
+                                    let mut outcome = run_pass(&*backend, request, &policy);
+                                    // A room's summary takes its vector here,
+                                    // off the step loop; its mint stages it.
+                                    if let (PassOutcome::Accepted(gated), Some(vectors)) =
+                                        (&mut outcome, &vectors)
+                                    {
+                                        gated.embed_for_room(vectors.as_ref());
+                                    }
+                                    outcome
+                                });
                                 let folds = folds
                                     .into_iter()
                                     .map(|job| {

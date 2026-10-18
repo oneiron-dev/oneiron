@@ -44,9 +44,9 @@ impl SyncServer {
     ) -> oneiron::Result<crate::owner::embedder::EmbedderReport> {
         let doctor = self.vault.doctor()?;
         Ok(crate::owner::embedder::EmbedderReport::served(
-            self.embedder.as_ref().map(EmbedderSlot::config),
+            self.embedder.as_deref().map(EmbedderSlot::config),
             &doctor,
-            self.embedder.as_ref().map(EmbedderSlot::dense_state),
+            self.embedder.as_deref().map(EmbedderSlot::dense_state),
         ))
     }
 
@@ -326,7 +326,7 @@ impl SyncServer {
     fn log_pass(&self, report: &PendingEmbeddingReconcileReport) {
         let truncations = self
             .embedder
-            .as_ref()
+            .as_deref()
             .and_then(crate::embedder::EmbedderSlot::truncations)
             .unwrap_or(0);
         tracing::info!(

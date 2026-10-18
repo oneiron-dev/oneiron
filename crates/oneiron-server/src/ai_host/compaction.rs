@@ -14,8 +14,10 @@ use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::compaction::{
     CompactionBackend, CompactionBackendRegistry, CompactionCheck, CompactionDriver,
     CompactionGatePolicy, CompactionOff, CompactionProduct, CompactionRefusal, CompactionRequest,
-    CompactionSuppression, CompactionTierClass, compaction_reply_schema, compaction_request_input,
+    CompactionSuppression, CompactionTierClass, EpochEmbedder, compaction_reply_schema,
+    compaction_request_input,
 };
+use oneiron::embed::Embedder;
 use oneiron::engine_executor::{
     CompactionSpawn, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, RunCompaction,
 };
@@ -32,6 +34,7 @@ use super::payer_funding::scope_funding;
 use super::status::{CompactionState, CompactionStatus, StatusCell};
 use crate::admission::Admission;
 use crate::config::models::{ModelsConfig, Rung, role_key};
+use crate::embedder::EmbedderSlot;
 use crate::mcp::McpQuickJsProvider;
 use crate::models::{ModelRuntime, RoleRefusal};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
@@ -217,16 +220,24 @@ impl CodeModeCompaction {
         }
     }
 
-    /// Hands `provider` a fresh seat per run and reports the state.
+    /// Hands `provider` a fresh seat per run and reports the state. A run in
+    /// an off-record room embeds its summaries on `embedder`, the server's
+    /// own, while it serves on this device (FIX 522).
     pub(super) fn attach(
         self,
         provider: McpQuickJsProvider,
         status: &StatusCell,
+        embedder: Option<Arc<EmbedderSlot>>,
     ) -> McpQuickJsProvider {
         status.update(|status| status.compaction = self.status());
+        let vectors = embedder.map(|slot| slot as Arc<dyn EpochEmbedder>);
         provider.with_compaction(Arc::new(
             move |byline, credential: &str, spend: Option<&SpendScopeId>| {
-                self.for_run(byline, credential, spend)
+                let seat = self.for_run(byline, credential, spend);
+                match &vectors {
+                    Some(vectors) => seat.with_room_vectors(Arc::clone(vectors)),
+                    None => seat,
+                }
             },
         ))
     }
@@ -397,6 +408,16 @@ struct ThreadSpawn {
     passes: Arc<Admission<String>>,
     credential: String,
     runtime: tokio::runtime::Handle,
+}
+
+/// The server's embedder, for a room's epoch summaries: only once the vault
+/// has admitted it, the same provider its embedding worker fills `pe:` rows
+/// with.
+impl EpochEmbedder for EmbedderSlot {
+    fn serving(&self) -> Option<Arc<dyn Embedder>> {
+        self.admitted_provider()
+            .map(|embedder| embedder as Arc<dyn Embedder>)
+    }
 }
 
 impl CompactionSpawn for ThreadSpawn {
