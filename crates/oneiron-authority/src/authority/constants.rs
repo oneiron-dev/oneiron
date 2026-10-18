@@ -128,6 +128,10 @@ pub const SLIP_KEY_INVITATION_REF: &str = "invitation_ref";
 /// A support slip's signed delegation (OF-606). Present only on a support
 /// slip's mint, so every other slip's wire form is unchanged.
 pub const SLIP_KEY_DELEGATION: &str = "delegation";
+/// A slip's signed comm reach ceiling (FIX 3899), after the delegation key.
+/// Present only on a mint whose owner set a reach, so every other slip's
+/// wire form is unchanged.
+pub const SLIP_KEY_COMM: &str = "comm";
 pub const DELEGATION_KEY_PURPOSE: &str = "purpose";
 pub const DELEGATION_KEY_TICKET_REF: &str = "ticket_ref";
 pub const DELEGATION_KEY_OWNER_REF: &str = "owner_ref";

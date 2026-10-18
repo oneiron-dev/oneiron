@@ -243,7 +243,7 @@ pub(super) fn load_step_response_in_txn(
 /// The WITH-WHAT params identity: BLAKE3 of the request's canonical params
 /// JSON, lowercase hex. The terminal claim writer and the memo-hit provenance
 /// check MUST agree byte-for-byte, so both go through this one helper.
-fn request_params_hash(request: &LlmRequest) -> DurableStepResult<String> {
+pub(super) fn request_params_hash(request: &LlmRequest) -> DurableStepResult<String> {
     Ok(bytes_to_hex_lower(
         blake3::hash(&canonical_json_bytes(&request.params)?).as_bytes(),
     ))
@@ -261,7 +261,7 @@ pub(super) fn step_claim_matches_request(
         && decoded.params_hash == request_params_hash(request)?)
 }
 
-fn call_purpose_str(purpose: &CallPurpose) -> String {
+pub(super) fn call_purpose_str(purpose: &CallPurpose) -> String {
     match purpose {
         CallPurpose::Extraction => "extraction".to_owned(),
         CallPurpose::Consolidation => "consolidation".to_owned(),

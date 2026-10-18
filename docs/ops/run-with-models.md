@@ -585,10 +585,10 @@ A pass that cannot be written as the agent keeps its raw window for the turn
 and says why; it never falls back to the Dreamer or to the plain cheap
 writer. The run's `compaction` object carries `self_unavailable`:
 `live_fork_not_built` (the row selects `live_fork`, which needs the live fork
-this host does not cut yet), `session_receipts_not_built` (a run bound to a
-room: its receipts have no room store yet), `no_identity` (the actor is not
-an agent anchored to a PERSON), `identity_unreadable`, `policy_unreadable`,
-`model_not_served`, or `route_wider_than_policy`.
+this host does not cut yet), `no_identity` (the actor is not an agent
+anchored to a PERSON), `identity_unreadable`, `policy_unreadable`,
+`model_not_served`, or `route_wider_than_policy`. A run bound to a room is
+written as the agent too, on the route the run captured at entry.
 
 Each self-written summary lands only through its packet: a turn digest of
 its window, admitted through the packet door's host-log binding against the
@@ -600,7 +600,28 @@ when the provider reported none, never a guessed zero), each try the gate
 refused as its own line, the call's step hash and the home parts it wore.
 The epoch's receipt rides its coverage row and is named by its SUMMARY's
 birth; a fold's rides its fold record. The run's `compaction` object shows
-the last one as `self_writer`.
+the last pass as `self_writer` (landed or not) and every summary the run
+landed, with the receipt its rows keep, as `self_landed`.
+
+Each paid call of a self-written pass, a try the gate refused too, is filed
+as one `dreamer.step` claim about and by the agent, its job the run it
+compacted, on the run's own route: in the vault for an ordinary run or a
+room already on record, in the room's overlay for an off-record room. The
+run's meter settled the call once when it ran; filing it settles nothing
+again. The receipt names the answering try's step and each refused try's,
+and the revision of the retained steps the window was cut from.
+
+A self-written summary depends on each home part it wore whole, as on any
+source: erasing a diary entry, a lesson or the voice it wore withdraws the
+summary's words. Each self-written epoch or fold that lands in the vault
+also queues the Dreamer's check of it, in the same write. The check reads
+the summary against the run's retained steps for exactly its span and
+records a finding: `supported`, `mismatch`, `stale_evidence` or
+`unreadable_evidence`, with the hashes, revisions and the steps a conflict
+cites. A mismatch also reaches the agent's inbox. The check never rewrites
+the summary, never changes its byline and never writes in the agent's
+voice. A summary that stays in an off-record room's overlay is not checked:
+nothing of the room reaches the vault, where the Dreamer reads.
 
 A run in an off-record room compacts the same way, inside the room: the pass
 reads the room's view, and the summary, its sources and its step coverage

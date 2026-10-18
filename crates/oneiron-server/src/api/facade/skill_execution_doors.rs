@@ -18,12 +18,25 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::{ModelId, WriteActor};
 
-use super::host_doors::{internal, owner_proof};
+use super::host_doors::{Listed, MaybeListed, internal, owner_proof, refused};
 use super::{FacadeApiError, FacadeCall, facade_actor};
 use crate::auth::CoreAuth;
 use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer};
 
+/// `self.skills.call` (`host_door_lists`): a callable skill answers JSON
+/// made from its stored source, the verbs it calls and retained results,
+/// and the executor returns that output without the rows it was made from,
+/// so the list is unknown (`None`), never `[]` read off the SKILL id.
 pub(crate) async fn self_skills_call(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<oneiron::code_run::SkillCallInput>,
+) -> MaybeListed<serde_json::Value> {
+    (skills_call(server, auth, session, input).await, None)
+}
+
+async fn skills_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
@@ -196,8 +209,14 @@ impl AgentVerbDoor for SkillCredentialDoor {
                 super::action_routes::require_action_scope(&self.auth, effect.as_str())
                     .map_err(FacadeApiError::into_memory_error)?;
             }
+            // A search, an edge's target and a consult's refs are read on
+            // the credential's lane.
             Ok(match call {
-                RunCall::Bridge(SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge) => Some(key),
+                RunCall::Bridge(
+                    SelfEffect::MemorySearch
+                    | SelfEffect::MemoryPutEdge
+                    | SelfEffect::ConsultResult,
+                ) => Some(key),
                 _ => None,
             })
         };
@@ -226,44 +245,70 @@ impl AgentVerbDoor for SkillCredentialDoor {
     }
 }
 
+/// `vault.skills.pack_receipt` (`host_door_lists`): the receipt ledger is a
+/// side table, and the frozen receipt names its loaded versions, attribution
+/// and outputs by ref without reading their bodies, so the list is complete
+/// and empty.
 pub(crate) async fn vault_skills_pack_receipt(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SkillPackReceiptRequest,
-) -> MemoryResult<SkillPackReceipt> {
-    let owner = owner_proof(auth, server, "vault.skills.pack_receipt")?;
+) -> Listed<SkillPackReceipt> {
+    let owner = match owner_proof(auth, server, "vault.skills.pack_receipt") {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    let answer = tokio::task::spawn_blocking(move || {
         sdk::skill_pack_receipt_as_owner(server.vault(), &owner, &input)
     })
     .await
-    .map_err(|_| internal("vault.skills.pack_receipt"))?
+    .map_err(|_| internal("vault.skills.pack_receipt"))
+    .and_then(|answer| answer);
+    (answer, Vec::new())
 }
 
+/// `vault.skills.outcomes.project` (`host_door_lists`): the projection
+/// reads receipts, evidence, versions and lineage edges to score credit, and
+/// answers the shares and the persisted bit, no skill, turn or artifact
+/// text, so the list is complete and empty.
 pub(crate) async fn vault_skills_outcomes_project(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SkillPackOutcomeRequest,
-) -> MemoryResult<sdk::SkillPackOutcomeProjection> {
-    let owner = owner_proof(auth, server, "vault.skills.outcomes.project")?;
+) -> Listed<sdk::SkillPackOutcomeProjection> {
+    let owner = match owner_proof(auth, server, "vault.skills.outcomes.project") {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    let answer = tokio::task::spawn_blocking(move || {
         sdk::skill_pack_outcome_as_owner(server.vault(), &owner, &input)
     })
     .await
-    .map_err(|_| internal("vault.skills.outcomes.project"))?
+    .map_err(|_| internal("vault.skills.outcomes.project"))
+    .and_then(|answer| answer);
+    (answer, Vec::new())
 }
 
+/// `vault.skills.outcomes.get` (`host_door_lists`): a point read of the
+/// stored credit side row, its subjects and shares by ref, so the list is
+/// complete and empty.
 pub(crate) async fn vault_skills_outcomes_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SkillPackCreditRequest,
-) -> MemoryResult<Option<oneiron::skill_attribution::LateCreditReceipt>> {
-    let owner = owner_proof(auth, server, "vault.skills.outcomes.get")?;
+) -> Listed<Option<oneiron::skill_attribution::LateCreditReceipt>> {
+    let owner = match owner_proof(auth, server, "vault.skills.outcomes.get") {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    let answer = tokio::task::spawn_blocking(move || {
         sdk::skill_pack_credit_as_owner(server.vault(), &owner, &input)
     })
     .await
-    .map_err(|_| internal("vault.skills.outcomes.get"))?
+    .map_err(|_| internal("vault.skills.outcomes.get"))
+    .and_then(|answer| answer);
+    (answer, Vec::new())
 }

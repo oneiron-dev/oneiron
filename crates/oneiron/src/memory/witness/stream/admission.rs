@@ -24,7 +24,24 @@ impl Memory<'_> {
                 "commit_message needs one message",
             ));
         }
-        self.witness(turn)
+        self.witness_with_route_prepare_and_txn_effect(
+            turn,
+            None,
+            crate::store::Callback::Audited,
+            || {},
+            |txn| {
+                if let Some(id) = turn.messages[0].id.as_deref() {
+                    let id = EntityId::from_hex(id)?;
+                    if storage::ACTIVE.contains(&self.vault.store, txn, &id)? {
+                        return Err(crate::memory::MemoryError::bad_request(
+                            "a MESSAGE with an active stream cannot be committed atomically",
+                        ));
+                    }
+                }
+                Ok(None)
+            },
+            |_| Ok(()),
+        )
     }
     /// Starts one message. Supplied initial content stays only in memory. Existing
     /// MESSAGEs require empty initial content and retain their immutable axes.

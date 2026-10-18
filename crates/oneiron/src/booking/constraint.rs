@@ -335,7 +335,7 @@ pub struct SolveRequest {
 
 /// One slot the oracle chose. UTC times are the oracle's; no caller rewrites,
 /// rounds, or invents them.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
 pub struct RankedSlot {
     pub start_utc: u64,
     pub end_utc: u64,
