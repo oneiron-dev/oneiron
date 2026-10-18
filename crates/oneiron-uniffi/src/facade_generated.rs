@@ -338,6 +338,46 @@ export_facade! {
     let output = client.tasks_accept(&input)?;
     crate::codec::lift_record("tasks.accept", &output)
 };
+"vault.commit_message" => fn vault_commit_message(&self, input: CommitMessageRequest) -> WitnessReceipt = |client| {
+    let input: oneiron::memory::CommitMessageRequest = crate::codec::lower_record("vault.commit_message", input)?;
+    let output = client.vault_commit_message(&input)?;
+    Lift::lift(output)
+};
+"vault.begin_message_stream" => fn vault_begin_message_stream(&self, input: BeginMessageStreamRequest) -> MessageStreamHandle = |client| {
+    let input: oneiron::memory::BeginMessageStreamRequest = crate::codec::lower_record("vault.begin_message_stream", input)?;
+    let output = client.vault_begin_message_stream(&input)?;
+    crate::codec::lift_record("vault.begin_message_stream", &output)
+};
+"vault.append_to_stream" => fn vault_append_to_stream(&self, input: AppendToStreamRequest) -> WireJson = |client| {
+    let input: oneiron::memory::AppendToStreamRequest = crate::codec::lower_record("vault.append_to_stream", input)?;
+    let output = client.vault_append_to_stream(&input)?;
+    crate::codec::encode("vault.append_to_stream", &output)
+};
+"vault.flush_stream" => fn vault_flush_stream(&self, input: MessageStreamRequest) -> WireJson = |client| {
+    let input: oneiron::memory::MessageStreamRequest = crate::codec::lower_record("vault.flush_stream", input)?;
+    let output = client.vault_flush_stream(&input)?;
+    crate::codec::encode("vault.flush_stream", &output)
+};
+"vault.finalize_stream" => fn vault_finalize_stream(&self, input: MessageStreamRequest) -> MessageStreamReceipt = |client| {
+    let input: oneiron::memory::MessageStreamRequest = crate::codec::lower_record("vault.finalize_stream", input)?;
+    let output = client.vault_finalize_stream(&input)?;
+    crate::codec::lift_record("vault.finalize_stream", &output)
+};
+"vault.cancel_stream" => fn vault_cancel_stream(&self, input: CancelStreamRequest) -> MessageStreamReceipt = |client| {
+    let input: oneiron::memory::CancelStreamRequest = crate::codec::lower_record("vault.cancel_stream", input)?;
+    let output = client.vault_cancel_stream(&input)?;
+    crate::codec::lift_record("vault.cancel_stream", &output)
+};
+"vault.message_stream_partial" => fn vault_message_stream_partial(&self, input: MessageStreamRequest) -> MessageStreamPartial = |client| {
+    let input: oneiron::memory::MessageStreamRequest = crate::codec::lower_record("vault.message_stream_partial", input)?;
+    let output = client.vault_message_stream_partial(&input)?;
+    crate::codec::lift_record("vault.message_stream_partial", &output)
+};
+"vault.messages.durability" => fn vault_messages_durability(&self, input: MessageDurabilityRequest) -> ScopedReadResultOptionalMessageDurability = |client| {
+    let input: oneiron::memory::MessageDurabilityRequest = crate::codec::lower_record("vault.messages.durability", input)?;
+    let output = client.vault_messages_durability(&input)?;
+    crate::codec::lift_record("vault.messages.durability", &output)
+};
 "vault.witness" => fn vault_witness(&self, turn: WitnessTurn) -> WitnessReceipt = |client| {
     let turn: oneiron::memory::WitnessTurn = turn.lower()?;
     let output = client.vault_witness(&turn)?;
@@ -2551,6 +2591,41 @@ export_facade! {
     let output = client.vault_code_checkout_teardown(&input)?;
     crate::codec::lift_record("vault.code.checkout.teardown", &output)
 };
+"vault.code.views.materialize" => fn vault_code_views_materialize(&self, input: CodeViewMaterializeRequest) -> CodeWorkingView = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewMaterializeRequest = crate::codec::lower_record("vault.code.views.materialize", input)?;
+    let output = client.vault_code_views_materialize(&input)?;
+    crate::codec::lift_record("vault.code.views.materialize", &output)
+};
+"vault.code.views.get" => fn vault_code_views_get(&self, input: CodeViewRequest) -> CodeWorkingView = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewRequest = crate::codec::lower_record("vault.code.views.get", input)?;
+    let output = client.vault_code_views_get(&input)?;
+    crate::codec::lift_record("vault.code.views.get", &output)
+};
+"vault.code.views.read" => fn vault_code_views_read(&self, input: CodeViewReadRequest) -> CodeViewFileBytes = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewReadRequest = crate::codec::lower_record("vault.code.views.read", input)?;
+    let output = client.vault_code_views_read(&input)?;
+    crate::codec::lift_record("vault.code.views.read", &output)
+};
+"vault.code.views.action" => fn vault_code_views_action(&self, input: CodeViewActionRequest) -> CodeViewAction = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewActionRequest = crate::codec::lower_record("vault.code.views.action", input)?;
+    let output = client.vault_code_views_action(&input)?;
+    crate::codec::lift_record("vault.code.views.action", &output)
+};
+"vault.code.views.build" => fn vault_code_views_build(&self, input: CodeViewBuildRequest) -> CodeCacheOutcome = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewBuildRequest = crate::codec::lower_record("vault.code.views.build", input)?;
+    let output = client.vault_code_views_build(&input)?;
+    crate::codec::lift_record("vault.code.views.build", &output)
+};
+"vault.code.cache.get" => fn vault_code_cache_get(&self, input: CodeCacheReadRequest) -> CodeCacheOutcome = |client| {
+    let input: oneiron::memory::code_view_doors::CodeCacheReadRequest = crate::codec::lower_record("vault.code.cache.get", input)?;
+    let output = client.vault_code_cache_get(&input)?;
+    crate::codec::lift_record("vault.code.cache.get", &output)
+};
+"vault.code.cache.reuse" => fn vault_code_cache_reuse(&self, input: CodeViewBuildRequest) -> CodeCacheOutcome = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewBuildRequest = crate::codec::lower_record("vault.code.cache.reuse", input)?;
+    let output = client.vault_code_cache_reuse(&input)?;
+    crate::codec::lift_record("vault.code.cache.reuse", &output)
+};
 "vault.code.snapshots.ingest" => fn vault_code_snapshots_ingest(&self, input: CodeSnapshotIngestRequest) -> CodeSnapshotView = |client| {
     let input: oneiron::memory::codebase_doors::CodeSnapshotIngestRequest = crate::codec::lower_record("vault.code.snapshots.ingest", input)?;
     let output = client.vault_code_snapshots_ingest(&input)?;
@@ -3465,6 +3540,36 @@ export_facade! {
     let input: oneiron::task_verb::sdk::CalendarFreebusyRequest = crate::codec::lower_record("vault.calendar.freebusy", input)?;
     let output = client.vault_calendar_freebusy(&input)?;
     crate::codec::lift_record("vault.calendar.freebusy", &output)
+};
+"vault.calendar.prep" => fn vault_calendar_prep(&self, input: CalendarMeetingRequest) -> ScopedReadResultOptionalPrepPack = |client| {
+    let input: oneiron::calendar::meeting::CalendarMeetingRequest = crate::codec::lower_record("vault.calendar.prep", input)?;
+    let output = client.vault_calendar_prep(&input)?;
+    crate::codec::lift_record("vault.calendar.prep", &output)
+};
+"vault.calendar.event_outcome" => fn vault_calendar_event_outcome(&self, input: CalendarMeetingRequest) -> ScopedReadResultOptionalCalendarEventOutcome = |client| {
+    let input: oneiron::calendar::meeting::CalendarMeetingRequest = crate::codec::lower_record("vault.calendar.event_outcome", input)?;
+    let output = client.vault_calendar_event_outcome(&input)?;
+    crate::codec::lift_record("vault.calendar.event_outcome", &output)
+};
+"vault.calendar.check_in.due" => fn vault_calendar_check_in_due(&self, input: CalendarMeetingRequest) -> ScopedReadResultOptionalCalendarCheckInDue = |client| {
+    let input: oneiron::calendar::meeting::CalendarMeetingRequest = crate::codec::lower_record("vault.calendar.check_in.due", input)?;
+    let output = client.vault_calendar_check_in_due(&input)?;
+    crate::codec::lift_record("vault.calendar.check_in.due", &output)
+};
+"vault.calendar.check_in.answer" => fn vault_calendar_check_in_answer(&self, input: CalendarCheckInRequest) -> CalendarCheckInReceipt = |client| {
+    let input: oneiron::calendar::meeting::CalendarCheckInRequest = crate::codec::lower_record("vault.calendar.check_in.answer", input)?;
+    let output = client.vault_calendar_check_in_answer(&input)?;
+    crate::codec::lift_record("vault.calendar.check_in.answer", &output)
+};
+"vault.calendar.outcome_policy.get" => fn vault_calendar_outcome_policy_get(&self) -> CalendarOutcomePolicy = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.calendar.outcome_policy.get")?;
+    let output = client.vault_calendar_outcome_policy_get(&input)?;
+    crate::codec::lift_record("vault.calendar.outcome_policy.get", &output)
+};
+"vault.calendar.outcome_policy.set" => fn vault_calendar_outcome_policy_set(&self, input: CalendarOutcomePolicy) -> CalendarOutcomePolicy = |client| {
+    let input: oneiron::calendar::meeting::CalendarOutcomePolicy = crate::codec::lower_record("vault.calendar.outcome_policy.set", input)?;
+    let output = client.vault_calendar_outcome_policy_set(&input)?;
+    crate::codec::lift_record("vault.calendar.outcome_policy.set", &output)
 };
 "vault.calendar.transcript.ingest" => fn vault_calendar_transcript_ingest(&self, input: TranscriptFileDropInput) -> TranscriptIngestOutcome = |client| {
     let input: oneiron::calendar::transcript::TranscriptFileDropInput = crate::codec::lower_record("vault.calendar.transcript.ingest", input)?;

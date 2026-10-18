@@ -21,6 +21,7 @@ mod identity_kind;
 mod kernel;
 mod ledgers;
 mod lens;
+mod off_device;
 mod pack_attribution;
 mod projection;
 mod questions;

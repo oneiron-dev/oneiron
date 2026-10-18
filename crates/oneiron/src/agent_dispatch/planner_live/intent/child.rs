@@ -305,6 +305,7 @@ impl AgentDispatcher<'_> {
             return Err(invalid(PACK_DAMAGED));
         }
         let launch = PlannedLeaderLaunch {
+            root,
             team_ref,
             members: row.member_attempts,
             start,

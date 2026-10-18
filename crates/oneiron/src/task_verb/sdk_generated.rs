@@ -384,6 +384,47 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAccept>(),
             ),
             (
+                "vault.commit_message",
+                crate::code_run::vault_read::request_schema::<crate::memory::CommitMessageRequest>(
+                ),
+            ),
+            (
+                "vault.begin_message_stream",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::BeginMessageStreamRequest,
+                >(),
+            ),
+            (
+                "vault.append_to_stream",
+                crate::code_run::vault_read::request_schema::<crate::memory::AppendToStreamRequest>(
+                ),
+            ),
+            (
+                "vault.flush_stream",
+                crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamRequest>(
+                ),
+            ),
+            (
+                "vault.finalize_stream",
+                crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamRequest>(
+                ),
+            ),
+            (
+                "vault.cancel_stream",
+                crate::code_run::vault_read::request_schema::<crate::memory::CancelStreamRequest>(),
+            ),
+            (
+                "vault.message_stream_partial",
+                crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamRequest>(
+                ),
+            ),
+            (
+                "vault.messages.durability",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::MessageDurabilityRequest,
+                >(),
+            ),
+            (
                 "vault.witness",
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
@@ -2789,6 +2830,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.views.materialize",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewMaterializeRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewReadRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.action",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewActionRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.build",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewBuildRequest,
+                >(),
+            ),
+            (
+                "vault.code.cache.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeCacheReadRequest,
+                >(),
+            ),
+            (
+                "vault.code.cache.reuse",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewBuildRequest,
+                >(),
+            ),
+            (
                 "vault.code.snapshots.ingest",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::codebase_doors::CodeSnapshotIngestRequest,
@@ -3846,6 +3929,40 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.calendar.freebusy",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::CalendarFreebusyRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.prep",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::meeting::CalendarMeetingRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.event_outcome",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::meeting::CalendarMeetingRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.check_in.due",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::meeting::CalendarMeetingRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.check_in.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::meeting::CalendarCheckInRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.outcome_policy.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.calendar.outcome_policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::meeting::CalendarOutcomePolicy,
                 >(),
             ),
             (
@@ -4985,6 +5102,14 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.hold.resume",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.commit_message",
+    "vault.begin_message_stream",
+    "vault.append_to_stream",
+    "vault.flush_stream",
+    "vault.finalize_stream",
+    "vault.cancel_stream",
+    "vault.message_stream_partial",
+    "vault.messages.durability",
     "vault.recall",
     "vault.retrieval.aging.get",
     "vault.retrieval.aging.configure",
@@ -5283,6 +5408,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.checkout.publish",
     "vault.code.checkout.settle",
     "vault.code.checkout.teardown",
+    "vault.code.views.materialize",
+    "vault.code.views.get",
+    "vault.code.views.read",
+    "vault.code.views.action",
+    "vault.code.views.build",
+    "vault.code.cache.get",
+    "vault.code.cache.reuse",
     "vault.code.snapshots.ingest",
     "vault.code.snapshots.get",
     "vault.code.snapshots.read",
@@ -5366,6 +5498,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.read",
     "vault.calendar.search",
     "vault.calendar.freebusy",
+    "vault.calendar.prep",
+    "vault.calendar.event_outcome",
+    "vault.calendar.check_in.due",
+    "vault.calendar.check_in.answer",
+    "vault.calendar.outcome_policy.get",
+    "vault.calendar.outcome_policy.set",
+    "vault.calendar.transcript.ingest",
     "vault.claims.demote",
     "vault.claims.list_filtered",
     "vault.claims.read_filtered",
@@ -5586,6 +5725,26 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
+        >(),
+        "vault.commit_message" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
+        }
+        "vault.begin_message_stream" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamHandle>()
+        }
+        "vault.append_to_stream" => crate::code_run::vault_read::request_schema::<()>(),
+        "vault.flush_stream" => crate::code_run::vault_read::request_schema::<()>(),
+        "vault.finalize_stream" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamReceipt>()
+        }
+        "vault.cancel_stream" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamReceipt>()
+        }
+        "vault.message_stream_partial" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamPartial>()
+        }
+        "vault.messages.durability" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::memory::MessageDurability>>,
         >(),
         "vault.recall" => {
             crate::code_run::vault_read::request_schema::<crate::memory::MemoryPack>()
@@ -6497,6 +6656,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.checkout.teardown" => crate::code_run::vault_read::request_schema::<
             crate::memory::checkout_doors::CheckoutTornDown,
         >(),
+        "vault.code.views.materialize" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeWorkingView,
+        >(),
+        "vault.code.views.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeWorkingView,
+        >(),
+        "vault.code.views.read" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeViewFileBytes,
+        >(),
+        "vault.code.views.action" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeViewAction,
+        >(),
+        "vault.code.views.build" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeCacheOutcome,
+        >(),
+        "vault.code.cache.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeCacheOutcome,
+        >(),
+        "vault.code.cache.reuse" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeCacheOutcome,
+        >(),
         "vault.code.snapshots.ingest" => crate::code_run::vault_read::request_schema::<
             crate::memory::codebase_doors::CodeSnapshotView,
         >(),
@@ -6749,6 +6929,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.calendar.freebusy" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>,
+        >(),
+        "vault.calendar.prep" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::calendar::PrepPack>>,
+        >(),
+        "vault.calendar.event_outcome" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarEventOutcome>>,
+        >(),
+        "vault.calendar.check_in.due" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarCheckInDue>>,
+        >(),
+        "vault.calendar.check_in.answer" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::meeting::CalendarCheckInReceipt,
+        >(),
+        "vault.calendar.outcome_policy.get" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::meeting::CalendarOutcomePolicy,
+        >(),
+        "vault.calendar.outcome_policy.set" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::meeting::CalendarOutcomePolicy,
+        >(),
+        "vault.calendar.transcript.ingest" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::transcript::TranscriptIngestOutcome,
         >(),
         "vault.claims.demote" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimDemoteView>()
@@ -7677,6 +7878,62 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/task_ref")?.clone(),
             );
             &["spec", "task_ref"]
+        }
+        "vault.commit_message" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.begin_message_stream" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.append_to_stream" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.flush_stream" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.finalize_stream" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cancel_stream" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.message_stream_partial" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.messages.durability" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "vault.witness" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -10706,6 +10963,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.views.materialize" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.action" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.build" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.cache.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.cache.reuse" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.snapshots.ingest" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12013,6 +12319,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.calendar.freebusy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.prep" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.event_outcome" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.check_in.due" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.check_in.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.outcome_policy.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.outcome_policy.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13560,6 +13908,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.accept" => {
             let _input: crate::task_verb::TaskAccept = decode(value.clone())?;
         }
+        "vault.commit_message" => {
+            let _input: crate::memory::CommitMessageRequest = decode(value.clone())?;
+        }
+        "vault.begin_message_stream" => {
+            let _input: crate::memory::BeginMessageStreamRequest = decode(value.clone())?;
+        }
+        "vault.append_to_stream" => {
+            let _input: crate::memory::AppendToStreamRequest = decode(value.clone())?;
+        }
+        "vault.flush_stream" => {
+            let _input: crate::memory::MessageStreamRequest = decode(value.clone())?;
+        }
+        "vault.finalize_stream" => {
+            let _input: crate::memory::MessageStreamRequest = decode(value.clone())?;
+        }
+        "vault.cancel_stream" => {
+            let _input: crate::memory::CancelStreamRequest = decode(value.clone())?;
+        }
+        "vault.message_stream_partial" => {
+            let _input: crate::memory::MessageStreamRequest = decode(value.clone())?;
+        }
+        "vault.messages.durability" => {
+            let _input: crate::memory::MessageDurabilityRequest = decode(value.clone())?;
+        }
         "vault.witness" => {
             let input: crate::memory::WitnessTurn = decode(value.clone())?;
             crate::memory::caps::check_witness_turn(&input)?;
@@ -15035,6 +15407,33 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::checkout_doors::CheckoutTeardownInput =
                 decode(value.clone())?;
         }
+        "vault.code.views.materialize" => {
+            let _input: crate::memory::code_view_doors::CodeViewMaterializeRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.views.get" => {
+            let _input: crate::memory::code_view_doors::CodeViewRequest = decode(value.clone())?;
+        }
+        "vault.code.views.read" => {
+            let _input: crate::memory::code_view_doors::CodeViewReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.views.action" => {
+            let _input: crate::memory::code_view_doors::CodeViewActionRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.views.build" => {
+            let _input: crate::memory::code_view_doors::CodeViewBuildRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.cache.get" => {
+            let _input: crate::memory::code_view_doors::CodeCacheReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.cache.reuse" => {
+            let _input: crate::memory::code_view_doors::CodeViewBuildRequest =
+                decode(value.clone())?;
+        }
         "vault.code.snapshots.ingest" => {
             let _input: crate::memory::codebase_doors::CodeSnapshotIngestRequest =
                 decode(value.clone())?;
@@ -15679,6 +16078,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.calendar.freebusy" => {
             let _input: crate::task_verb::sdk::CalendarFreebusyRequest = decode(value.clone())?;
+        }
+        "vault.calendar.prep" => {
+            let _input: crate::calendar::meeting::CalendarMeetingRequest = decode(value.clone())?;
+        }
+        "vault.calendar.event_outcome" => {
+            let _input: crate::calendar::meeting::CalendarMeetingRequest = decode(value.clone())?;
+        }
+        "vault.calendar.check_in.due" => {
+            let _input: crate::calendar::meeting::CalendarMeetingRequest = decode(value.clone())?;
+        }
+        "vault.calendar.check_in.answer" => {
+            let _input: crate::calendar::meeting::CalendarCheckInRequest = decode(value.clone())?;
+        }
+        "vault.calendar.outcome_policy.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.calendar.outcome_policy.set" => {
+            let _input: crate::calendar::meeting::CalendarOutcomePolicy = decode(value.clone())?;
         }
         "vault.calendar.transcript.ingest" => {
             let _input: crate::calendar::transcript::TranscriptFileDropInput =
@@ -16560,6 +16977,16 @@ pub fn invoke(
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "tasks.accept" => encode(tasks_accept(memory, decode(value)?)?),
+        "vault.commit_message" => encode(vault_commit_message(memory, decode(value)?)?),
+        "vault.begin_message_stream" => encode(vault_begin_message_stream(memory, decode(value)?)?),
+        "vault.append_to_stream" => encode(vault_append_to_stream(memory, decode(value)?)?),
+        "vault.flush_stream" => encode(vault_flush_stream(memory, decode(value)?)?),
+        "vault.finalize_stream" => encode(vault_finalize_stream(memory, decode(value)?)?),
+        "vault.cancel_stream" => encode(vault_cancel_stream(memory, decode(value)?)?),
+        "vault.message_stream_partial" => {
+            encode(vault_message_stream_partial(memory, decode(value)?)?)
+        }
+        "vault.messages.durability" => encode(vault_messages_durability(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
@@ -17411,6 +17838,15 @@ pub fn invoke(
         "vault.code.checkout.teardown" => {
             encode(vault_code_checkout_teardown(memory, decode(value)?)?)
         }
+        "vault.code.views.materialize" => {
+            encode(vault_code_views_materialize(memory, decode(value)?)?)
+        }
+        "vault.code.views.get" => encode(vault_code_views_get(memory, decode(value)?)?),
+        "vault.code.views.read" => encode(vault_code_views_read(memory, decode(value)?)?),
+        "vault.code.views.action" => encode(vault_code_views_action(memory, decode(value)?)?),
+        "vault.code.views.build" => encode(vault_code_views_build(memory, decode(value)?)?),
+        "vault.code.cache.get" => encode(vault_code_cache_get(memory, decode(value)?)?),
+        "vault.code.cache.reuse" => encode(vault_code_cache_reuse(memory, decode(value)?)?),
         "vault.code.snapshots.ingest" => {
             encode(vault_code_snapshots_ingest(memory, decode(value)?)?)
         }
@@ -17675,6 +18111,22 @@ pub fn invoke(
         "vault.calendar.read" => encode(vault_calendar_read(memory, decode(value)?)?),
         "vault.calendar.search" => encode(vault_calendar_search(memory, decode(value)?)?),
         "vault.calendar.freebusy" => encode(vault_calendar_freebusy(memory, decode(value)?)?),
+        "vault.calendar.prep" => encode(vault_calendar_prep(memory, decode(value)?)?),
+        "vault.calendar.event_outcome" => {
+            encode(vault_calendar_event_outcome(memory, decode(value)?)?)
+        }
+        "vault.calendar.check_in.due" => {
+            encode(vault_calendar_check_in_due(memory, decode(value)?)?)
+        }
+        "vault.calendar.check_in.answer" => {
+            encode(vault_calendar_check_in_answer(memory, decode(value)?)?)
+        }
+        "vault.calendar.outcome_policy.get" => {
+            encode(vault_calendar_outcome_policy_get(memory, decode(value)?)?)
+        }
+        "vault.calendar.outcome_policy.set" => {
+            encode(vault_calendar_outcome_policy_set(memory, decode(value)?)?)
+        }
         "vault.calendar.transcript.ingest" => {
             encode(vault_calendar_transcript_ingest(memory, decode(value)?)?)
         }
@@ -18813,6 +19265,54 @@ pub fn tasks_accept(
         &["/task_ref"],
     )?;
     memory.tasks_accept(input)
+}
+pub fn vault_commit_message(
+    memory: &Memory<'_>,
+    input: crate::memory::CommitMessageRequest,
+) -> MemoryResult<crate::memory::WitnessReceipt> {
+    memory.messages_commit(&input)
+}
+pub fn vault_begin_message_stream(
+    memory: &Memory<'_>,
+    input: crate::memory::BeginMessageStreamRequest,
+) -> MemoryResult<crate::memory::MessageStreamHandle> {
+    memory.messages_begin_stream(&input)
+}
+pub fn vault_append_to_stream(
+    memory: &Memory<'_>,
+    input: crate::memory::AppendToStreamRequest,
+) -> MemoryResult<()> {
+    memory.messages_append_stream(&input)
+}
+pub fn vault_flush_stream(
+    memory: &Memory<'_>,
+    input: crate::memory::MessageStreamRequest,
+) -> MemoryResult<()> {
+    memory.messages_flush_stream(&input)
+}
+pub fn vault_finalize_stream(
+    memory: &Memory<'_>,
+    input: crate::memory::MessageStreamRequest,
+) -> MemoryResult<crate::memory::MessageStreamReceipt> {
+    memory.messages_finalize_stream(&input)
+}
+pub fn vault_cancel_stream(
+    memory: &Memory<'_>,
+    input: crate::memory::CancelStreamRequest,
+) -> MemoryResult<crate::memory::MessageStreamReceipt> {
+    memory.messages_cancel_stream(&input)
+}
+pub fn vault_message_stream_partial(
+    memory: &Memory<'_>,
+    input: crate::memory::MessageStreamRequest,
+) -> MemoryResult<crate::memory::MessageStreamPartial> {
+    memory.messages_stream_partial(&input)
+}
+pub fn vault_messages_durability(
+    memory: &Memory<'_>,
+    input: crate::memory::MessageDurabilityRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::MessageDurability>>> {
+    memory.messages_durability(&input)
 }
 pub fn vault_witness(
     memory: &Memory<'_>,
@@ -22462,6 +22962,51 @@ pub fn vault_code_checkout_teardown(
 ) -> MemoryResult<crate::memory::checkout_doors::CheckoutTornDown> {
     crate::task_verb::sdk::host_only(memory, "vault.code.checkout.teardown", &input)
 }
+pub fn vault_code_views_materialize(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewMaterializeRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeWorkingView> {
+    memory.code_view_materialize_as(
+        &memory.embedded_owner("vault.code.views.materialize")?,
+        input,
+    )
+}
+pub fn vault_code_views_get(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeWorkingView> {
+    memory.code_view_get_as(&memory.embedded_owner("vault.code.views.get")?, input)
+}
+pub fn vault_code_views_read(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewReadRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeViewFileBytes> {
+    memory.code_view_read_as(&memory.embedded_owner("vault.code.views.read")?, input)
+}
+pub fn vault_code_views_action(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewActionRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeViewAction> {
+    memory.code_view_action_as(&memory.embedded_owner("vault.code.views.action")?, input)
+}
+pub fn vault_code_views_build(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewBuildRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeCacheOutcome> {
+    memory.code_view_build_as(&memory.embedded_owner("vault.code.views.build")?, input)
+}
+pub fn vault_code_cache_get(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeCacheReadRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeCacheOutcome> {
+    memory.code_cache_get_as(&memory.embedded_owner("vault.code.cache.get")?, input)
+}
+pub fn vault_code_cache_reuse(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewBuildRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeCacheOutcome> {
+    memory.code_cache_reuse_as(&memory.embedded_owner("vault.code.cache.reuse")?, input)
+}
 pub fn vault_code_snapshots_ingest(
     memory: &Memory<'_>,
     input: crate::memory::codebase_doors::CodeSnapshotIngestRequest,
@@ -23993,6 +24538,46 @@ pub fn vault_calendar_freebusy(
     input: crate::task_verb::sdk::CalendarFreebusyRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>> {
     memory.calendar_freebusy(&input.calendars, input.range.to_time_range())
+}
+pub fn vault_calendar_prep(
+    memory: &Memory<'_>,
+    input: crate::calendar::meeting::CalendarMeetingRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::calendar::PrepPack>>> {
+    memory.calendar_prep(&input)
+}
+pub fn vault_calendar_event_outcome(
+    memory: &Memory<'_>,
+    input: crate::calendar::meeting::CalendarMeetingRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarEventOutcome>>,
+> {
+    memory.calendar_event_outcome(&input)
+}
+pub fn vault_calendar_check_in_due(
+    memory: &Memory<'_>,
+    input: crate::calendar::meeting::CalendarMeetingRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarCheckInDue>>,
+> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.check_in.due", &input)
+}
+pub fn vault_calendar_check_in_answer(
+    memory: &Memory<'_>,
+    input: crate::calendar::meeting::CalendarCheckInRequest,
+) -> MemoryResult<crate::calendar::meeting::CalendarCheckInReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.check_in.answer", &input)
+}
+pub fn vault_calendar_outcome_policy_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::calendar::meeting::CalendarOutcomePolicy> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.outcome_policy.get", &_input)
+}
+pub fn vault_calendar_outcome_policy_set(
+    memory: &Memory<'_>,
+    input: crate::calendar::meeting::CalendarOutcomePolicy,
+) -> MemoryResult<crate::calendar::meeting::CalendarOutcomePolicy> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.outcome_policy.set", &input)
 }
 pub fn vault_calendar_transcript_ingest(
     memory: &Memory<'_>,
