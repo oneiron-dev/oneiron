@@ -308,6 +308,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RecallRequest>(),
             ),
             (
+                "vault.retrieval.aging.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.retrieval.aging.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest,
+                >(),
+            ),
+            (
                 "vault.retrieval.weights.get",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -3848,6 +3858,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.lease.top_up",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.retrieval.aging.get",
+    "vault.retrieval.aging.configure",
     "vault.retrieval.weights.get",
     "vault.retrieval.weights.configure",
     "vault.affect.annotations.put",
@@ -4202,6 +4214,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
+        >(),
+        "vault.retrieval.aging.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::ClaimAgingProfilesView,
+        >(),
+        "vault.retrieval.aging.configure" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::ClaimAgingProfilesReceipt,
         >(),
         "vault.retrieval.weights.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::RetrievalWeightsView,
@@ -5612,6 +5630,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.aging.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.aging.configure" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10147,6 +10179,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_as_of(input.as_of)?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
+        "vault.retrieval.aging.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.aging.configure" => {
+            let _input: crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest =
+                decode(value.clone())?;
+        }
         "vault.retrieval.weights.get" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -12479,6 +12518,10 @@ pub fn invoke(
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
+        "vault.retrieval.aging.get" => encode(vault_retrieval_aging_get(memory, decode(value)?)?),
+        "vault.retrieval.aging.configure" => {
+            encode(vault_retrieval_aging_configure(memory, decode(value)?)?)
+        }
         "vault.retrieval.weights.get" => {
             encode(vault_retrieval_weights_get(memory, decode(value)?)?)
         }
@@ -14297,6 +14340,27 @@ pub fn vault_recall(
     crate::memory::caps::check_as_of(input.as_of)?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::recall_unembedded(memory, input)
+}
+pub fn vault_retrieval_aging_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_manifest_doors::ClaimAgingProfilesView> {
+    crate::policy_manifest_doors::claim_aging_profiles_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.retrieval.aging.get")?,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_retrieval_aging_configure(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest,
+) -> MemoryResult<crate::policy_manifest_doors::ClaimAgingProfilesReceipt> {
+    crate::policy_manifest_doors::configure_claim_aging_profiles_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.retrieval.aging.configure")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_retrieval_weights_get(
     memory: &Memory<'_>,

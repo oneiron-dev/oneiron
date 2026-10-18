@@ -57,6 +57,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.witness", post(facade_route))
         .route("/vault.claims.upsert", post(facade_route))
         .route("/vault.recall", post(facade_route))
+        .route("/vault.retrieval.aging.get", post(facade_route))
+        .route("/vault.retrieval.aging.configure", post(facade_route))
         .route("/vault.retrieval.weights.get", post(facade_route))
         .route("/vault.retrieval.weights.configure", post(facade_route))
         .route("/vault.affect.annotations.put", post(facade_route))

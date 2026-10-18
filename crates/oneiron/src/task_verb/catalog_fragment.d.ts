@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 717 code-mode rows (696 host rows, 21 run rows), 2535 declarations.
-// Replies: 633 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 719 code-mode rows (698 host rows, 21 run rows), 2540 declarations.
+// Replies: 635 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -356,6 +356,11 @@ declare namespace Sdk {
   type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
   type RetrievalRunId = { bytes: number[] };
   type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null };
+  type AccessFactorPolicy = { half_life_secs: number; floor: number };
+  type ClaimAgingProfiles = { durable: AccessFactorPolicy; standard: AccessFactorPolicy; ephemeral: AccessFactorPolicy };
+  type ClaimAgingProfilesView = { manifest_ref: string; body_hash: string; profiles: ClaimAgingProfiles };
+  type ClaimAgingProfilesConfigureRequest = { expected_body_hash: string; profiles: ClaimAgingProfiles };
+  type ClaimAgingProfilesReceipt = { configuration: ClaimAgingProfilesView; receipt_ref: string };
   type RetrievalWeights = { affect: number; arousal: number; community: number; vad: number };
   type RetrievalWeightsView = { manifest_ref: string; body_hash: string; weights: RetrievalWeights };
   type RetrievalWeightsConfigureRequest = { expected_body_hash: string; weights: RetrievalWeights };
@@ -3932,6 +3937,12 @@ declare const vault: Sdk.VaultHost & {
     status(input: Sdk.ResultRunRequest): Promise<Sdk.ResultRunStatus | StoredResult>;
   };
   retrieval: {
+    aging: {
+      /** The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies. */
+      configure(input: Sdk.ClaimAgingProfilesConfigureRequest): Promise<Sdk.ClaimAgingProfilesReceipt | StoredResult>;
+      /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.ClaimAgingProfilesView | StoredResult>;
+    };
     /** The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata. */
     export(input: Sdk.RetrievalDiagnosticRequest): Promise<Sdk.RetrievalDiagnosticExport | StoredResult>;
     outcomes: {

@@ -26,6 +26,7 @@
 
 pub(super) mod action_routes;
 mod affect_doors;
+mod aging_doors;
 mod agent_definition_doors;
 mod agent_verbs;
 mod artifact_hosting_doors;
