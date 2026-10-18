@@ -39823,6 +39823,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AdmissionReceipt",
+      "AdmissionReceiptsRequest",
+      "AdmissionStatus",
+      "AdmissionStatusRequest",
+      "AdmissionTracker"
+     ],
+     "path": "src/receipt/admission.rs",
+     "purpose": "Durable admission observations of named typed calls (ARCH-0044 C5)",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/receipt/archive_source/access.rs",
      "purpose": "Archive receipt I/O through ordinary ASSET admission, not terminal ledgers",
@@ -40102,6 +40120,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 19,
+      "mod": 1,
       "re-export": 18
      }
     },
@@ -51888,7 +51907,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 824
+      "fn": 826
      }
     },
     {
@@ -55368,6 +55387,7 @@
      "kind": "src",
      "notable": [
       "LineCrossing",
+      "LineObserver",
       "LinePermit",
       "TaskWorkTurn",
       "WaitTimedOut",
@@ -55377,9 +55397,9 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 13,
+      "fn": 15,
       "struct": 4,
-      "trait": 1
+      "trait": 2
      }
     },
     {
@@ -58867,7 +58887,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59345,7 +59365,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3622,
+   "source_files": 3623,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67878,7 +67898,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 793
+      "fn": 795
      }
     },
     {
@@ -68927,7 +68947,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 794
+      "fn": 796
      }
     },
     {
@@ -71821,6 +71841,16 @@
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/admission_doors.rs",
+     "purpose": "Admission observations wrap the original generated typed dispatch, not a generic submit endpoint",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -80160,7 +80190,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 397,
+     "files": 398,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80589,7 +80619,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 741,
+   "source_files": 742,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80796,6 +80826,10 @@
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AdmissionReceipt",
+      "AdmissionReceiptsRequest",
+      "AdmissionStatus",
+      "AdmissionStatusRequest",
       "AffectAnnotationPut",
       "AffectClaimConsolidateRequest",
       "AffectClaimConsolidation",
@@ -83514,8 +83548,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 675,
-      "struct": 2052
+      "enum": 676,
+      "struct": 2055
      }
     },
     {
