@@ -80,6 +80,7 @@ impl DispatchObservation {
             // Runtime meter echoes belong to the originating call, not audit replay.
             effector_budget: None,
             budget_ladder_events: Vec::new(),
+            budget_pool: None,
         })
     }
 }

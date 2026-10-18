@@ -23,6 +23,81 @@ export type OpenOptions = {
   dimensions?: number
 }
 
+/** An authority key's signature suite. */
+export type CheckpointPinSuite = "ed25519" | "p256"
+
+/** One authority public key in a checkpoint pin. */
+export type CheckpointPinKey = {
+  suite: CheckpointPinSuite
+  /** Lowercase hex: 32 bytes for Ed25519, the compressed SEC1 point for P-256. */
+  key: string
+}
+
+/** A root's classical signature over a key binding. */
+export type CheckpointPinSignature = {
+  suite: CheckpointPinSuite
+  /** The key that verifies the signature. */
+  publicKey: CheckpointPinKey
+  /** Lowercase hex. */
+  signature: string
+}
+
+/** One eligible root of the pinned policy. */
+export type CheckpointPinRoot = {
+  key: CheckpointPinKey
+  tier: "software" | "hardware" | "cloud_custodial"
+  /** The managed host root, which managed mode requires. */
+  host: boolean
+}
+
+/** The eligible roots and the quorum a checkpoint needs from them. */
+export type CheckpointPinPolicy = {
+  posture: "managed" | "relay" | "self_host"
+  /** Ascending by key, one row per root. */
+  roots: CheckpointPinRoot[]
+  /** Distinct eligible roots that must attest. */
+  quorum: number
+  /** One attesting root must be hardware-backed. */
+  hardware: boolean
+}
+
+/** An eligible root's certificate for its checkpoint SLH-DSA key. */
+export type CheckpointPinBinding = {
+  /** 32 bytes, lowercase hex. */
+  vaultId: string
+  /** The authority genesis entry hash, lowercase hex. */
+  genesis: string
+  root: CheckpointPinKey
+  /** The install whose checkpoint signing seed holds the key: 16 bytes, lowercase hex. */
+  install: string
+  /** The SLH-DSA-SHA2-256s public key, lowercase hex. */
+  slhdsa: string
+  /** The crypto epoch the key signs at. */
+  epoch: number
+  signature: CheckpointPinSignature
+}
+
+/**
+ * The checkpoint pin {@link Oneiron.pair} returns (OF-469): what a joining
+ * device trusts the vault's checkpoint by, fixed by the pairing link. It is
+ * already checked against the link and is stored nowhere; a machine that will
+ * run a local replica keeps it whole beside the server origin and the
+ * credential, and supplies it when that replica starts.
+ */
+export type CheckpointPin = {
+  /** The single-use pairing link's nonce, lowercase hex. */
+  challenge: string
+  /** 32 bytes, lowercase hex. */
+  vaultId: string
+  /** The authority genesis entry hash, lowercase hex. */
+  genesis: string
+  /** The pinned checkpoint image id, lowercase hex. */
+  checkpoint: string
+  policy: CheckpointPinPolicy
+  /** Ascending by root key, one per root. */
+  bindings: CheckpointPinBinding[]
+}
+
 /** Who authored one witnessed message. */
 export type WitnessAuthor = "user" | "companion" | "system"
 
@@ -618,6 +693,66 @@ LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply | LensFrameCallba
 class CloseLensFrameReply(TypedDict):
     closed: bool
 
+# OF-469: the checkpoint pin `Oneiron.pair` returns, every byte value as
+# lowercase hex. It is the trust input a local replica adopts the vault's
+# checkpoint by; keep it whole beside the server origin and the credential.
+class CheckpointPinKey(TypedDict):
+    suite: Literal["ed25519", "p256"]
+    # 32 bytes for Ed25519; the compressed SEC1 point for P-256.
+    key: str
+
+class CheckpointPinSignature(TypedDict):
+    suite: Literal["ed25519", "p256"]
+    public_key: CheckpointPinKey
+    signature: str
+
+class CheckpointPinRoot(TypedDict):
+    key: CheckpointPinKey
+    tier: Literal["software", "hardware", "cloud_custodial"]
+    # The managed host root, which managed mode requires.
+    host: bool
+
+class CheckpointPinPolicy(TypedDict):
+    posture: Literal["managed", "relay", "self_host"]
+    # Ascending by key, one row per root.
+    roots: list[CheckpointPinRoot]
+    # Distinct eligible roots that must attest.
+    quorum: int
+    # One attesting root must be hardware-backed.
+    hardware: bool
+
+class CheckpointPinBinding(TypedDict):
+    vault_id: str
+    genesis: str
+    root: CheckpointPinKey
+    # The install whose checkpoint signing seed holds the key (16 bytes).
+    install: str
+    # The SLH-DSA-SHA2-256s public key.
+    slhdsa: str
+    epoch: int
+    signature: CheckpointPinSignature
+
+class CheckpointPin(TypedDict):
+    # The single-use pairing link's nonce.
+    challenge: str
+    vault_id: str
+    # The authority genesis entry hash.
+    genesis: str
+    # The pinned checkpoint image id.
+    checkpoint: str
+    policy: CheckpointPinPolicy
+    # Ascending by root key, one per root.
+    bindings: list[CheckpointPinBinding]
+
+class Paired(TypedDict):
+    # A handle connected with the credential.
+    memory: "Oneiron"
+    # Store as ONEIRON_KEY; the link cannot be redeemed twice.
+    credential: str
+    # Checked against the link and stored nowhere; None when the vault has
+    # no attested checkpoint.
+    pin: CheckpointPin | None
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -645,7 +780,7 @@ class Oneiron:
     @classmethod
     def connect(cls, url: str, key: str) -> "Oneiron": ...
     @classmethod
-    def pair(cls, link: str) -> tuple["Oneiron", str]: ...
+    def pair(cls, link: str) -> Paired: ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
     def in_room_turn(self, room_ref: str) -> "Oneiron": ...
     def in_off_record_session(self, session_ref: str) -> "Oneiron": ...

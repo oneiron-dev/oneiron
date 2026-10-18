@@ -25,6 +25,7 @@ use crate::claim::{PointRead, ScopedRead, ScopedReadActorKey, claim_evidence_adm
 use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
@@ -42,7 +43,6 @@ const RULES: SideTable<(), StewardshipRules, LegacyJson> =
 /// Reach-outs a host draft was scheduled for, with when.
 const DRAFTED: SideTable<EntityId, u64, side_table::Raw> =
     SideTable::new(&side_table::DREAMER_STEWARDSHIP_DRAFTED);
-const MAX_RULES: usize = 256;
 /// The newest records about a person one draft cites.
 const DRAFT_EVIDENCE: usize = 8;
 const READ_CHUNK: usize = 256;
@@ -100,23 +100,44 @@ pub struct StewardshipDraftRequest {
     revision: [u8; 32],
 }
 
-fn bad_text(text: &str, max: usize) -> bool {
-    text.trim().is_empty() || text.len() > max || text.chars().any(char::is_control)
+fn bad_text(text: &str) -> bool {
+    text.trim().is_empty() || text.chars().any(char::is_control)
+}
+
+/// Measures a rule set where the owner sets it against the `[limits]` rows
+/// (OF-520): its rules, the most voice sources one route names, and its
+/// longest id, route or instruction. Past one the vault's port asks, and the
+/// set is kept whole.
+fn measure_rules(vault: &Vault, rules: &[StewardshipRule]) {
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, rules.len() as u64);
+    let mut voices: usize = 0;
+    let mut longest: usize = 0;
+    for rule in rules {
+        longest = longest.max(rule.id.len());
+        let Some(route) = &rule.draft else {
+            continue;
+        };
+        voices = voices.max(route.voice.len());
+        for text in [&route.verb, &route.channel, &route.target] {
+            longest = longest.max(text.len());
+        }
+        longest = longest.max(route.instruction.len());
+    }
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, voices as u64);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
 }
 
 impl StewardshipRule {
     fn validate(&self) -> Result<()> {
-        if bad_text(&self.id, 128) || self.every_secs == 0 {
+        if bad_text(&self.id) || self.every_secs == 0 {
             return Err(invalid());
         }
         if let Some(route) = &self.draft {
             if [&route.verb, &route.channel, &route.target]
                 .into_iter()
-                .any(|text| bad_text(text, 2048))
+                .any(|text| bad_text(text))
                 || route.voice.is_empty()
-                || route.voice.len() > 8
                 || route.instruction.trim().is_empty()
-                || route.instruction.len() > 8192
             {
                 return Err(invalid());
             }
@@ -141,9 +162,6 @@ impl Vault {
         mut rules: Vec<StewardshipRule>,
         now: u64,
     ) -> Result<StewardshipRules> {
-        if rules.len() > MAX_RULES {
-            return Err(invalid());
-        }
         let mut ids = BTreeSet::new();
         for rule in &rules {
             rule.validate()?;
@@ -151,6 +169,7 @@ impl Vault {
                 return Err(invalid());
             }
         }
+        measure_rules(self, &rules);
         self.with_write_txn_grouped(|txn| {
             let actor = super::validate_owner_in_txn(self, txn, owner)?;
             let held = RULES.get(&self.store, &*txn, &())?;
