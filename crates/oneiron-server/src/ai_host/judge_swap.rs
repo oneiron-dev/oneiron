@@ -37,6 +37,14 @@ pub(super) fn run(
     Ok(())
 }
 
+/// A journal row's case ref: the evidence its swap case, and any label asked
+/// on it, names.
+pub(super) fn journal_case_ref(row: &JournalRow) -> String {
+    blake3::hash(format!("{}|{}|{}", row.at, row.question.id.to_hex(), row.state).as_bytes())
+        .to_hex()
+        .to_string()
+}
+
 /// The journal's judgments, keyed by case, as the engine reads them.
 struct JournalShadow<'a> {
     server: &'a SyncServer,
@@ -62,10 +70,7 @@ impl JudgeShadowHost for JournalShadow<'_> {
                 continue;
             };
             let question = row.question.id.to_hex();
-            let case_ref =
-                blake3::hash(format!("{}|{}|{}", row.at, question, row.state).as_bytes())
-                    .to_hex()
-                    .to_string();
+            let case_ref = journal_case_ref(&row);
             cases.push(JudgeShadowCase {
                 case_ref: case_ref.clone(),
                 source_family: source_family(&row, &state),

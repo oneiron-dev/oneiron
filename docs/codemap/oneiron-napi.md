@@ -20,7 +20,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/convert.rs` | src | m | 19 crate-vis | — | DTO to/from engine converters plus the forget paging helper |
 | `src/facade/dtos.rs` | src | L | 59 struct | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +51 | All napi(object) DTO structs for the actor-scoped surface |
 | `src/facade/input_error.rs` | src | s | 1 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |
-| `src/facade/mod.rs` | src | s | 1 re-export · 3 crate-vis | — | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |
+| `src/facade/mod.rs` | src | s | 1 re-export · 4 crate-vis | — | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |
 | `src/facade/numeric.rs` | src | s | 3 crate-vis | — | JavaScript numbers must be validated before N-API can narrow them |
 | `src/facade/tests.rs` | test | s | — | — | Boundary regression tests for the napi facade surface |
 | `src/facade/verbs_claims.rs` | src | m | 13 fn | — | Core claim/witness/read verbs of the actor-scoped surface |

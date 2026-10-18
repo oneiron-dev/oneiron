@@ -35,6 +35,7 @@ mod coach_health;
 pub(crate) mod coach_host;
 mod code_fix;
 mod connector_event;
+mod contribution;
 mod dreamer;
 pub(crate) mod failure_signals;
 mod harness;
@@ -156,10 +157,10 @@ impl AiHandle {
                 },
                 |models| models.chat,
             ),
-            raw_budget_units: models.map_or(
-                crate::config::models::DEFAULT_RAW_BUDGET_UNITS,
-                |models| models.raw_budget_units,
-            ),
+            raw_budget_units: models
+                .map_or(crate::config::models::DEFAULT_RAW_BUDGET_UNITS, |models| {
+                    models.raw_budget_units
+                }),
             rerank_budget_units: models.map_or(0, |models| models.recall.rerank_budget_units),
             turns: TurnTracker::new(),
             inbound: Arc::new(AtomicU64::new(unix_now())),

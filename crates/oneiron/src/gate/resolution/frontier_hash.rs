@@ -208,7 +208,6 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(limits) = resolution.pptx_comment_limits {
         hash_str(hasher, "pptx_comment_limits:nested_narrowing");
         for value in [
-            limits.max_patches,
             limits.max_author_name_bytes,
             limits.max_xml_bytes,
             limits.max_xml_attributes,

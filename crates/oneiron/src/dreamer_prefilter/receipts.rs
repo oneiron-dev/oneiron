@@ -13,9 +13,10 @@ use crate::receipt::{
     FIELD_PREFILTER_DECISION, FIELD_PREFILTER_FEATURE_PREFIX, FIELD_PREFILTER_PASSED,
     FIELD_PREFILTER_PHASE, FIELD_PREFILTER_ROUND, FIELD_PREFILTER_SCANNED, FIELD_PREFILTER_SCORE,
     FIELD_PREFILTER_SKIPPED, FIELD_PREFILTER_THRESHOLD, FIELD_PREFILTER_TOKENS_SAVED,
-    FIELD_PREFILTER_TURN, MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord,
-    hex_lower, retain_newest_receipt,
+    FIELD_PREFILTER_TURN, ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower,
+    retain_newest_receipt,
 };
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideTable};
 
 use super::screen::PrefilterScreen;
@@ -221,11 +222,11 @@ fn prefilter_round_receipt(round: &[u8], row: &PrefilterRoundRow) -> ReceiptReco
 /// applied by the caller in `receipt::family`, as every sibling projector's
 /// is, so a single-kind query never pays for a family it did not ask for.
 ///
-/// Both walks are bounded by [`MAX_RECEIPT_QUERY_SCAN`]. The keys are round
-/// hashes, which are not time-ordered, so the walk cannot stop early on time
-/// the way a ledger-ordered projector can; the newest `query.limit` of the
-/// matches is retained as it is everywhere else, and a `job_ref` query stays
-/// exhaustive within the walk because that join runs after collection.
+/// Both walks read every row, counted as one scan. The keys are round hashes, which are not
+/// time-ordered, so the walk cannot stop early on time the way a
+/// ledger-ordered projector can; the newest `query.limit` of all the matches
+/// is retained as it is everywhere else, and a `job_ref` query stays
+/// exhaustive because that join runs after collection.
 ///
 /// # Errors
 ///
@@ -236,16 +237,10 @@ pub(crate) fn prefilter_receipts(
 ) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
+    let mut count = ScanCount::start(&vault.store, &rtxn, EngineScan::PrefilterReceiptRows, &[])?;
 
-    for (scanned, row) in SKIP
-        .iter_from(&vault.store, &rtxn, &[])?
-        .take(MAX_RECEIPT_QUERY_SCAN + 1)
-        .enumerate()
-    {
-        if scanned == MAX_RECEIPT_QUERY_SCAN {
-            note_prefilter_scan_capped("skip");
-            break;
-        }
+    for row in SKIP.iter_from(&vault.store, &rtxn, &[])? {
+        count.row();
         let ((round, turn), decoded) = row?;
         // The key is version-scoped, so a foreign version UNDER a v1 key is
         // corruption rather than a migration.
@@ -259,21 +254,15 @@ pub(crate) fn prefilter_receipts(
         );
     }
 
-    for (scanned, row) in ROUND
-        .iter_from(&vault.store, &rtxn, &[])?
-        .take(MAX_RECEIPT_QUERY_SCAN + 1)
-        .enumerate()
-    {
-        if scanned == MAX_RECEIPT_QUERY_SCAN {
-            note_prefilter_scan_capped("round");
-            break;
-        }
+    for row in ROUND.iter_from(&vault.store, &rtxn, &[])? {
+        count.row();
         let (round, decoded) = row?;
         if decoded.version != PREFILTER_RECEIPT_VERSION {
             return Err(Error::CorruptedIndex("dreamer prefilter round receipt"));
         }
         collect_prefilter_receipt(&mut out, query, prefilter_round_receipt(&round, &decoded));
     }
+    count.finish(vault);
 
     Ok(out)
 }
@@ -291,14 +280,4 @@ fn collect_prefilter_receipt(
     } else {
         retain_newest_receipt(out, record, query.limit);
     }
-}
-
-/// Surfaces a screening-receipt walk that stopped at the receipt-family work
-/// cap: the answer is a bounded PREFIX of the family, not the family.
-fn note_prefilter_scan_capped(family: &str) {
-    tracing::warn!(
-        scan_cap = MAX_RECEIPT_QUERY_SCAN,
-        family,
-        "dreamer prefilter receipt scan hit the receipt-family work cap; older rows were not projected"
-    );
 }
