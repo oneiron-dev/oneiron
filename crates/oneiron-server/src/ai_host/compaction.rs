@@ -330,9 +330,12 @@ impl LiveCompaction {
         host: CompactionHostBinding,
         spend: Option<&SpendScopeId>,
     ) -> oneiron::Result<CompactionBackendRegistry> {
-        let house = self.served.first().ok_or(oneiron::Error::InvariantViolation(
-            "code mode's compaction serves no house seat",
-        ))?;
+        let house = self
+            .served
+            .first()
+            .ok_or(oneiron::Error::InvariantViolation(
+                "code mode's compaction serves no house seat",
+            ))?;
         let route = ServedCompactionBackend {
             meter: spend.map_or_else(
                 || house.meter.clone(),

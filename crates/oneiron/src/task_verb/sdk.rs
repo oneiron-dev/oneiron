@@ -529,6 +529,7 @@ impl QueryAffect {
     }
 }
 
+pub use super::fanout_batch::*;
 pub use super::recall_door::{
     RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
     recall_with_vector,
@@ -537,6 +538,7 @@ pub use super::sdk_agents::*;
 pub use super::sdk_anonymous_chat::*;
 pub use super::sdk_asr::*;
 pub use super::sdk_authority_history::*;
+pub use super::sdk_browser::*;
 pub use super::sdk_calendar::*;
 pub use super::sdk_campaign_split::*;
 pub use super::sdk_catalog_fragment::{
@@ -554,7 +556,6 @@ pub use super::sdk_embedding_space::*;
 pub use super::sdk_eval_cohort::*;
 pub use super::sdk_explain::*;
 pub use super::sdk_fanout_launch::*;
-pub use super::fanout_batch::*;
 pub use super::sdk_federation::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
@@ -568,6 +569,7 @@ pub use super::sdk_off_record::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_reply::*;
 pub use super::sdk_research::*;
+pub use super::sdk_campaign_archive::*;
 pub use super::sdk_residence::*;
 pub use super::sdk_retrieval::*;
 pub use super::sdk_scratchpad::*;
@@ -581,6 +583,7 @@ pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
 pub use super::sdk_skill_execution::*;
 pub use super::sdk_skills::*;
+pub use super::sdk_standing::*;
 pub use super::sdk_support_grant::*;
 pub use super::sdk_trusted_contact::*;
 pub use super::sdk_voice_bank::*;

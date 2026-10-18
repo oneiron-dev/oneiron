@@ -336,6 +336,9 @@ class Oneiron:
         def memory(self) -> "Oneiron._SelfMemoryVerbs":
             return Oneiron._SelfMemoryVerbs(self._client)
         @property
+        def standing(self) -> "Oneiron._SelfStandingVerbs":
+            return Oneiron._SelfStandingVerbs(self._client)
+        @property
         def identity(self) -> "Oneiron._SelfIdentityVerbs":
             return Oneiron._SelfIdentityVerbs(self._client)
         @property
@@ -377,6 +380,9 @@ class Oneiron:
         def history(self, spec):
             """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
             return json.loads(_translate(lambda: self._client.self_history(json.dumps(spec))))
+        @property
+        def browser(self) -> "Oneiron._SelfBrowserVerbs":
+            return Oneiron._SelfBrowserVerbs(self._client)
         def fold(self, spec):
             """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
             return json.loads(_translate(lambda: self._client.self_fold(json.dumps(spec))))
@@ -431,6 +437,18 @@ class Oneiron:
         def query(self, spec):
             """Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."""
             return json.loads(_translate(lambda: self._client.self_memory_diary_query(json.dumps(spec))))
+    class _SelfStandingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """This agent's configured standing block in one world: its handle, name and token floor."""
+            return json.loads(_translate(lambda: self._client.self_standing_get(json.dumps(spec))))
+        def list(self, spec=None):
+            """Every standing block configured for this agent, one per world, in world order."""
+            return json.loads(_translate(lambda: self._client.self_standing_list(json.dumps({} if spec is None else spec))))
+        def edit(self, spec):
+            """This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited."""
+            return json.loads(_translate(lambda: self._client.self_standing_edit(json.dumps(spec))))
     class _SelfIdentityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -538,6 +556,54 @@ class Oneiron:
         def describe(self, spec):
             """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
             return json.loads(_translate(lambda: self._client.self_folds_describe(json.dumps(spec))))
+    class _SelfBrowserVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, spec):
+            """Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_open(json.dumps(spec))))
+        def observe(self, spec):
+            """Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."""
+            return json.loads(_translate(lambda: self._client.self_browser_observe(json.dumps(spec))))
+        def find(self, spec):
+            """Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."""
+            return json.loads(_translate(lambda: self._client.self_browser_find(json.dumps(spec))))
+        def click(self, spec):
+            """Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_click(json.dumps(spec))))
+        def click_at(self, spec):
+            """Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_click_at(json.dumps(spec))))
+        def type(self, spec):
+            """Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_type(json.dumps(spec))))
+        def select(self, spec):
+            """Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_select(json.dumps(spec))))
+        def wait_for(self, spec):
+            """Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_wait_for(json.dumps(spec))))
+        def expect(self, spec):
+            """Checks that a page row is present or absent, and holds a given value."""
+            return json.loads(_translate(lambda: self._client.self_browser_expect(json.dumps(spec))))
+        def screenshot(self, spec):
+            """Takes a screenshot the session holds, by image ref and never captioned."""
+            return json.loads(_translate(lambda: self._client.self_browser_screenshot(json.dumps(spec))))
+        def view(self, spec):
+            """Reads back a held image by its ref."""
+            return json.loads(_translate(lambda: self._client.self_browser_view(json.dumps(spec))))
+        def crop(self, spec):
+            """Crops a held image to a rectangle."""
+            return json.loads(_translate(lambda: self._client.self_browser_crop(json.dumps(spec))))
+        def zoom(self, spec):
+            """Zooms into a rectangle of a held image."""
+            return json.loads(_translate(lambda: self._client.self_browser_zoom(json.dumps(spec))))
+        def batch(self, spec):
+            """Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_batch(json.dumps(spec))))
+        def handover(self, spec):
+            """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
+            return json.loads(_translate(lambda: self._client.self_browser_handover(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -600,6 +666,9 @@ class Oneiron:
         @property
         def affect(self) -> "Oneiron._VaultAffectVerbs":
             return Oneiron._VaultAffectVerbs(self._client)
+        @property
+        def tagging(self) -> "Oneiron._VaultTaggingVerbs":
+            return Oneiron._VaultTaggingVerbs(self._client)
         @property
         def export(self) -> "Oneiron._VaultExportVerbs":
             return Oneiron._VaultExportVerbs(self._client)
@@ -744,6 +813,9 @@ class Oneiron:
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
+        @property
+        def standing_blocks(self) -> "Oneiron._VaultStandingBlocksVerbs":
+            return Oneiron._VaultStandingBlocksVerbs(self._client)
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs":
             return Oneiron._VaultWorkflowsVerbs(self._client)
@@ -1044,6 +1116,21 @@ class Oneiron:
         def consolidate(self, spec):
             """The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."""
             return json.loads(_translate(lambda: self._client.vault_affect_claims_consolidate(json.dumps(spec))))
+    class _VaultTaggingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."""
+            return json.loads(_translate(lambda: self._client.vault_tagging_status(json.dumps(spec))))
+        def tags(self, spec):
+            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."""
+            return json.loads(_translate(lambda: self._client.vault_tagging_tags(json.dumps(spec))))
+        def history(self, spec):
+            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."""
+            return json.loads(_translate(lambda: self._client.vault_tagging_history(json.dumps(spec))))
+        def mentions(self, spec):
+            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
+            return json.loads(_translate(lambda: self._client.vault_tagging_mentions(json.dumps(spec))))
     class _VaultExportVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1760,9 +1847,9 @@ class Oneiron:
         def create_child(self, spec):
             """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""
             return json.loads(_translate(lambda: self._client.vault_research_create_child(json.dumps(spec))))
-        def archive(self, spec):
-            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
-            return json.loads(_translate(lambda: self._client.vault_research_archive(json.dumps(spec))))
+        @property
+        def archive(self) -> "Oneiron._VaultResearchArchiveVerbs":
+            return Oneiron._VaultResearchArchiveVerbs(self._client)
         def bind(self, spec):
             """Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."""
             return json.loads(_translate(lambda: self._client.vault_research_bind(json.dumps(spec))))
@@ -1811,6 +1898,30 @@ class Oneiron:
         def record_benchmark(self, spec):
             """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
             return json.loads(_translate(lambda: self._client.vault_research_record_benchmark(json.dumps(spec))))
+    class _VaultResearchArchiveVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive(json.dumps(spec))))
+        def install(self, spec):
+            """Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_install(json.dumps(spec))))
+        def record(self, spec):
+            """Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_record(json.dumps(spec))))
+        def get(self, spec):
+            """Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_get(json.dumps(spec))))
+        def best(self, spec):
+            """Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_best(json.dumps(spec))))
+        def repropose(self, spec):
+            """Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_repropose(json.dumps(spec))))
+        def coverage(self, spec):
+            """Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_coverage(json.dumps(spec))))
     class _VaultEvalsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1967,6 +2078,9 @@ class Oneiron:
         def approve_once(self, spec):
             """The owner approves exactly one engine-emitted effect digest; no standing grant is created."""
             return json.loads(_translate(lambda: self._client.vault_consent_approve_once(json.dumps(spec))))
+        def deny(self, spec):
+            """The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."""
+            return json.loads(_translate(lambda: self._client.vault_consent_deny(json.dumps(spec))))
         def create_standing_grant(self, spec):
             """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
             return json.loads(_translate(lambda: self._client.vault_consent_create_standing_grant(json.dumps(spec))))
@@ -2488,17 +2602,44 @@ class Oneiron:
             """The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."""
             return json.loads(_translate(lambda: self._client.vault_agents_update(json.dumps(spec))))
         @property
+        def dreaming(self) -> "Oneiron._VaultAgentsDreamingVerbs":
+            return Oneiron._VaultAgentsDreamingVerbs(self._client)
+        @property
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs":
             return Oneiron._VaultAgentsSpawnVerbs(self._client)
         def export_pack(self, request: dict[str, Any]) -> dict[str, Any]:
             """The agent's travelling AgentPack folder (files base64) and what stayed home."""
             return json.loads(_translate(lambda: self._client.vault_agents_export_pack(json.dumps(request, allow_nan=False))))
+    class _VaultAgentsDreamingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot."""
+            return json.loads(_translate(lambda: self._client.vault_agents_dreaming_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."""
+            return json.loads(_translate(lambda: self._client.vault_agents_dreaming_set(json.dumps(spec))))
     class _VaultAgentsSpawnVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def get(self, spec):
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
             return json.loads(_translate(lambda: self._client.vault_agents_spawn_get(json.dumps(spec))))
+    class _VaultStandingBlocksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle."""
+            return json.loads(_translate(lambda: self._client.vault_standing_blocks_configure(json.dumps(spec))))
+        def reconfigure(self, spec):
+            """The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened."""
+            return json.loads(_translate(lambda: self._client.vault_standing_blocks_reconfigure(json.dumps(spec))))
+        def get(self, spec):
+            """The owner reads one agent's configured standing block in one world: its handle, name and token floor."""
+            return json.loads(_translate(lambda: self._client.vault_standing_blocks_get(json.dumps(spec))))
+        def list(self, spec):
+            """The owner lists every standing block configured for one agent, one per world, in world order."""
+            return json.loads(_translate(lambda: self._client.vault_standing_blocks_list(json.dumps(spec))))
     class _VaultWorkflowsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2871,6 +3012,9 @@ class Oneiron:
     class _VaultBookingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def constraint_turn(self, spec):
+            """Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."""
+            return json.loads(_translate(lambda: self._client.vault_booking_constraint_turn(json.dumps(spec))))
         def page_token(self, spec):
             """The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."""
             return json.loads(_translate(lambda: self._client.vault_booking_page_token(json.dumps(spec))))
@@ -3144,6 +3288,9 @@ class Oneiron:
         def create(self, input: dict[str, Any]) -> Any:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
             return json.loads(_translate(lambda: self._client.vault_notes_create(json.dumps(input, allow_nan=False))))
+        def author_take(self, input: dict[str, Any]) -> Any:
+            """Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."""
+            return json.loads(_translate(lambda: self._client.vault_notes_author_take(json.dumps(input, allow_nan=False))))
         def from_entity(self, input: dict[str, Any]) -> Any:
             """Creates a NOTE of a registered kind from an existing entity."""
             return json.loads(_translate(lambda: self._client.vault_notes_from_entity(json.dumps(input, allow_nan=False))))
