@@ -10,7 +10,9 @@
 //! A tag set reads only while the text it was read from does: once its turn
 //! or one of its messages reads deleted (a deletion published ahead of its
 //! purge, an archive), no read door returns it, its mood or a provisional
-//! name it holds.
+//! name it holds. A read door also hides a link to an entity this replica
+//! does not hold (a window demoted back to thin, OF-534); the stored link
+//! stays, so a promotion that brings the row back shows it again.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -284,7 +286,7 @@ impl Vault {
     /// The tags saved for a turn, while the text they were read from reads.
     pub fn turn_tags(&self, turn: &EntityId) -> Result<Option<TurnTags>> {
         let txn = self.store.env.read_txn()?;
-        readable_in_txn(&self.store, &txn, turn)
+        readable_view_in_txn(&self.store, &txn, turn)
     }
 
     /// Every saved mention that names `entity`, or an entity merged into
@@ -303,7 +305,7 @@ impl Vault {
         }
         let mut hits = Vec::new();
         for turn in turns {
-            let Some(tags) = readable_in_txn(&self.store, &txn, &turn)? else {
+            let Some(tags) = readable_view_in_txn(&self.store, &txn, &turn)? else {
                 continue;
             };
             for (index, mention) in tags.mentions.into_iter().enumerate() {
@@ -373,6 +375,39 @@ pub(super) fn readable_in_txn(
     Ok(Some(tags))
 }
 
+/// [`readable_in_txn`] as the read doors show it: a link to an entity whose
+/// row this replica does not hold, its window demoted back to thin (OF-534),
+/// is hidden, so no reader meets an id it cannot open. A provisional entity
+/// is local and shows while it stands. Only the copy changes: no row goes
+/// and no stored link is rewritten, so a promotion shows the link again.
+fn readable_view_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<TurnTags>> {
+    let Some(mut tags) = readable_in_txn(store, txn, turn)? else {
+        return Ok(None);
+    };
+    let mut absent = Vec::new();
+    for entity in tags.entities() {
+        if !provisional::exists_in_txn(store, txn, &entity)?
+            && !crate::ports::EntityStoreRead::port_entity_present(store, txn, &entity)?
+        {
+            absent.push(entity);
+        }
+    }
+    if absent.is_empty() {
+        return Ok(Some(tags));
+    }
+    for mention in &mut tags.mentions {
+        for entity in &absent {
+            mention.link = mention.link.without(entity);
+        }
+    }
+    tags.keep_live_evidence();
+    Ok(Some(tags))
+}
+
 /// The tags saved for `turn` while they index its words as they read now,
 /// and the bytes of text hashed to tell: the envelope names the input a
 /// tagger would read from the turn today, with or without its live window.
@@ -383,7 +418,7 @@ pub(crate) fn current_tags_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<(Option<TurnTags>, usize)> {
-    let Some(tags) = readable_in_txn(&vault.store, txn, turn)? else {
+    let Some(tags) = readable_view_in_txn(&vault.store, txn, turn)? else {
         return Ok((None, 0));
     };
     let TurnInput::Ready {
@@ -741,6 +776,28 @@ pub(crate) fn tear_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityI
     strip_in_txn(store, txn, id)?;
     provisional::retire_in_txn(store, txn, id)?;
     Ok(())
+}
+
+/// A window demotion's hook for a TURN it removes (OF-534), in the remover's
+/// transaction before the turn's edges go: its tag set and exactly the
+/// mention index rows of that set. The turn is not erased: no other set is
+/// stripped or retagged and no provisional entity is settled here; the
+/// caller settles the ones the set named. Returns the entities it named.
+#[cfg(feature = "sync")]
+pub(super) fn drop_demoted_set_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    let Some(tags) = TAG_SET.get(store, txn, turn)? else {
+        return Ok(BTreeSet::new());
+    };
+    let named = tags.entities();
+    for entity in &named {
+        MENTION_REF.delete(store, txn, &(*entity, *turn))?;
+    }
+    TAG_SET.delete(store, txn, turn)?;
+    Ok(named)
 }
 
 /// The turns `id` is part of that hold a tag set. Every `PartOf` edge out of

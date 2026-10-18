@@ -210,9 +210,8 @@ impl EsignState {
                 self.require_turn(recipient, now)?;
                 if self.recipients[recipient].access != AccessStatus::Verified
                     || reason.trim().is_empty()
-                    || reason.len() > 4096
                 {
-                    return Err(invalid("decline requires a bounded reason"));
+                    return Err(invalid("decline requires a reason"));
                 }
                 self.recipients
                     .get_mut(recipient)
@@ -224,7 +223,6 @@ impl EsignState {
                 if self.ready_to_seal()
                     || !matches!(self.status, DocumentStatus::Draft | DocumentStatus::Pending)
                     || reason.trim().is_empty()
-                    || reason.len() > 4096
                 {
                     return Err(invalid("document cannot be voided"));
                 }
@@ -292,15 +290,12 @@ pub(super) fn validate_value(field: &EsignField, value: &FieldValue) -> Result<(
         }
         (FieldMeta::Select { options }, FieldValue::Text(v)) if options.contains(v) => Ok(()),
         (FieldMeta::Email, FieldValue::Text(v))
-            if v.len() <= 320 && v.contains('@') && !v.contains(['\r', '\n']) =>
+            if v.len() <= EMAIL_MAX_BYTES && v.contains('@') && !v.contains(['\r', '\n']) =>
         {
             Ok(())
         }
-        (FieldMeta::Date | FieldMeta::Name, FieldValue::Text(v))
-            if !v.is_empty() && v.len() <= 4096 =>
-        {
-            Ok(())
-        }
+        // No engine cap on a name (Rule 5): the field's box bounds what fits.
+        (FieldMeta::Date | FieldMeta::Name, FieldValue::Text(v)) if !v.is_empty() => Ok(()),
         _ => Err(invalid("field value does not match field metadata")),
     }
 }

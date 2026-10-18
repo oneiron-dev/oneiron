@@ -17,7 +17,7 @@ use oneiron_llm_own_server::{MESH_PEER, MeshLlmTransport, OwnServerBackend, Vaul
 use oneiron_mesh_transport::{MachineId, MeshTransport};
 
 use super::ladder::{LadderRung, SeatScope, Wire};
-use super::router::Routes;
+use super::router::{MESH_ORIGIN, Routes};
 use super::{ModelRouter, OfferCooldowns, OfferLadder, ServedOffer};
 
 /// The adapter a discovered model's offer names: the own-server wire, over
@@ -32,9 +32,9 @@ const MESH_PAYER: Payer = Payer::Local;
 /// Serves the models the owner's other nodes offer on the host's router,
 /// as each mesh catalog refresh leaves the vault's rows.
 pub(crate) struct MeshRoutes {
-    /// `None` on a host with no configured model: it has no raw route to
-    /// serve them on.
-    router: Option<Arc<ModelRouter>>,
+    /// The host's raw router: empty but for these on a host with no
+    /// configured model.
+    router: Arc<ModelRouter>,
     /// Shared with every configured ladder, so an offer's rest outlives the
     /// refresh that rebuilt its route.
     rests: Arc<OfferCooldowns>,
@@ -45,7 +45,7 @@ impl MeshRoutes {
     /// Serves the rows earlier refreshes wrote at once, before this run's
     /// first refresh. Calls go out on the current runtime.
     pub(super) fn new(
-        router: Option<Arc<ModelRouter>>,
+        router: Arc<ModelRouter>,
         rests: Arc<OfferCooldowns>,
         vault: &Arc<Vault>,
         mesh: Arc<dyn MeshTransport>,
@@ -66,9 +66,6 @@ impl MeshRoutes {
     /// Serves each model the vault's discovery rows hold now, in place of
     /// the last set. When the rows cannot be read, the last set stays.
     pub(crate) fn publish(&self, vault: &Vault) {
-        let Some(router) = &self.router else {
-            return;
-        };
         let rows = match vault.model_registry_rows() {
             Ok(rows) => rows,
             Err(error) => {
@@ -113,7 +110,7 @@ impl MeshRoutes {
                 routes.insert(entry.model, (ModelLocality::OwnServer, Arc::new(ladder)));
             }
         }
-        router.discover(routes);
+        self.router.discover(routes);
     }
 }
 
@@ -130,7 +127,7 @@ fn mesh_peer(row: &ModelRegistryRow) -> Option<MachineId> {
 /// The offer a call to `entry`'s model on `peer` is admitted under: the
 /// own-server wire at that node, keyless and paid by nobody per call.
 fn mesh_offer(peer: MachineId, entry: &LlmCatalogEntry) -> Option<OfferBinding> {
-    let route = OfferRoute::new(MESH_ADAPTER, format!("mesh:{}", peer.to_hex())).ok()?;
+    let route = OfferRoute::new(MESH_ADAPTER, format!("{MESH_ORIGIN}{}", peer.to_hex())).ok()?;
     Some(OfferBinding {
         offer: entry.model.as_str().to_owned(),
         model: entry.model.clone(),

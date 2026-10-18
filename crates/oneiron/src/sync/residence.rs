@@ -16,7 +16,8 @@ pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
     AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, AuthorityCheckpointPart,
     AuthorityPageImport, authority_append_for, authority_checkpoint_part_for, authority_range_for,
-    authority_tail_for, authority_wanted, held_authority_entries, import_authority_page,
+    authority_tail_for, authority_wanted, held_authority_entries, held_authority_history,
+    import_authority_page,
 };
 pub use bundle::{
     SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry, SealedBundleObject,
@@ -90,6 +91,24 @@ pub fn home_search_candidates(
         results.push((hit.id, hit.score, residence_window_for_blob(&raw)?));
     }
     Ok(results)
+}
+
+/// The forwarded `residence.search` a device signs and its home verifies
+/// (FIX 2907): the query, the limit as a big-endian `u64` and the device
+/// selector's wire bytes, in that order. Both ends build it here, from the
+/// values the request carries, so the two never sign different bytes.
+pub fn with_forwarded_search<R>(
+    query: &str,
+    limit: usize,
+    selector_wire: &[u8],
+    with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
+) -> R {
+    let limit = (limit as u64).to_be_bytes();
+    let fields: [&[u8]; 3] = [query.as_bytes(), &limit, selector_wire];
+    with(&crate::authority::ForwardedRequest {
+        method: "residence.search",
+        fields: &fields,
+    })
 }
 
 /// The canonical window that holds one entity: a CLAIM that names a world
