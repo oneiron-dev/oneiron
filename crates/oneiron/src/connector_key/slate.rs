@@ -78,6 +78,85 @@ impl SlateDataClass {
     }
 }
 
+/// The owner and holder edges' key for the elicitation row, beside tool
+/// names. MCP tool names are `[A-Za-z0-9_.-]`, so no tool can take it, and
+/// a slate refuses a tool that tries.
+pub const ELICITATION_ROW_KEY: &str = "@elicitation";
+/// The elicitation row's class. The row lets a foreign server ask; it is
+/// not a payload verdict: each answer takes its own payload-aware check
+/// under the calling actor's scoped grant.
+pub(super) const ELICITATION_ROW_DATA_CLASS: SlateDataClass = SlateDataClass::Personal;
+
+/// A slate row's typed identity: one declared tool, or the one MCP client
+/// capability ARCH-0072 gives a permission row. Elicitation is never a
+/// callable tool; sampling, roots and logging are not rows (DEC-0006).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SlateCapability<'a> {
+    Tool(&'a str),
+    Elicitation,
+}
+impl<'a> SlateCapability<'a> {
+    /// An edge row key: [`ELICITATION_ROW_KEY`] is the elicitation row, any
+    /// other key names a tool.
+    pub fn parse(key: &'a str) -> Self {
+        if key == ELICITATION_ROW_KEY {
+            Self::Elicitation
+        } else {
+            Self::Tool(key)
+        }
+    }
+    /// The key the owner and holder edges name this row by.
+    pub fn key(self) -> &'a str {
+        match self {
+            Self::Tool(name) => name,
+            Self::Elicitation => ELICITATION_ROW_KEY,
+        }
+    }
+}
+
+/// The slate's one elicitation declaration (ARCH-0072: "one typed row per
+/// declared capability, including elicitation"). Elicitation is an MCP
+/// client capability, so no server lists it: MCP admission declares it for
+/// every connector it admits, and the call host decides per revision
+/// whether to declare it on the wire. A tool's legacy ask form folds into
+/// this one declaration and never makes a second permission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlateElicitationManifest {
+    /// The tools whose legacy ask form this row also covers.
+    pub legacy_ask_tools: BTreeSet<String>,
+}
+impl SlateElicitationManifest {
+    /// The one declaration `tools` carry: admission's own when `declared`,
+    /// with every tool's legacy ask folded in. None when neither asks.
+    pub fn of(tools: &[SlateToolManifest], declared: bool) -> Option<Self> {
+        let legacy_ask_tools: BTreeSet<String> = tools
+            .iter()
+            .filter(|tool| tool.legacy_ask)
+            .map(|tool| tool.name.clone())
+            .collect();
+        (declared || !legacy_ask_tools.is_empty()).then_some(Self { legacy_ask_tools })
+    }
+}
+
+/// A slate's whole typed declaration: its tools and its one elicitation
+/// declaration, both inside the manifest hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlateManifest {
+    pub tools: Vec<SlateToolManifest>,
+    pub elicitation: Option<SlateElicitationManifest>,
+}
+impl SlateManifest {
+    /// `tools`, with the elicitation declaration admission makes when
+    /// `declared` (every admitted MCP connector) and any legacy ask folded
+    /// in.
+    pub fn new(tools: Vec<SlateToolManifest>, declared: bool) -> Self {
+        let elicitation = SlateElicitationManifest::of(&tools, declared);
+        Self { tools, elicitation }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlateToolManifest {
@@ -93,6 +172,8 @@ pub struct SlateToolManifest {
     pub destroys: bool,
     pub spends: bool,
     pub sends_outward: bool,
+    /// The tool asks through the legacy form. That folds into the slate's
+    /// one elicitation row; the tool's own row carries no ask permission.
     pub legacy_ask: bool,
     /// The connector's declared `readOnlyHint` and `idempotentHint`. A call
     /// to a read-only tool that destroys nothing, or to an idempotent one,
@@ -104,13 +185,13 @@ pub struct SlateToolManifest {
 }
 impl SlateToolManifest {
     /// Irreversible or header-bearing: `auto` already asks per call for these.
+    /// A legacy ask raises the elicitation row's floor, not the tool's.
     pub(super) fn floor(&self) -> bool {
         self.destroys
             || self.spends
             || self.sends_outward
             || !self.header_parameters.is_empty()
             || self.data_class == SlateDataClass::Header
-            || self.legacy_ask
     }
     /// A parameter that reaches the wire as a header is its own data class.
     pub fn row_data_class(&self) -> SlateDataClass {
@@ -127,10 +208,17 @@ impl SlateToolManifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlateDraftRow {
+    /// The row's key: a tool name, or [`ELICITATION_ROW_KEY`].
     pub tool: String,
     pub disposition: SlateDisposition,
     pub data_class: SlateDataClass,
     pub rationale: String,
+}
+impl SlateDraftRow {
+    /// The row's typed identity.
+    pub fn capability(&self) -> SlateCapability<'_> {
+        SlateCapability::parse(&self.tool)
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -184,7 +272,8 @@ impl SlateRow {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorGrantSlate {
-    manifest: Vec<SlateToolManifest>,
+    manifest: SlateManifest,
+    /// One row per tool, and the elicitation row when the manifest declares it.
     rows: Vec<SlateRow>,
     manifest_hash: [u8; 32],
     revision: u64,
@@ -195,28 +284,48 @@ pub struct ConnectorGrantSlate {
     holder_facet_narrow: Option<SlateFacetNarrow>,
     /// The slate this one revises (a drift delta); `None` at connector add.
     prior: Option<EntityId>,
-    /// Rows new or expanded against `prior`: the only rows the tap re-asks.
+    /// Rows new or expanded against `prior`, by row key: the only rows the
+    /// tap re-asks.
     reask: BTreeSet<String>,
     /// The aggregate the last owner stamp bound.
     stamped_aggregate: Option<[u8; 32]>,
 }
 impl ConnectorGrantSlate {
+    /// Every row: the tools' and the elicitation row.
     pub fn rows(&self) -> &[SlateRow] {
         &self.rows
     }
+    /// Tool `tool`'s row; never the elicitation row.
     pub fn row(&self, tool: &str) -> Option<&SlateRow> {
-        self.rows.iter().find(|row| row.draft.tool == tool)
+        self.capability_row(SlateCapability::Tool(tool))
     }
+    pub fn capability_row(&self, capability: SlateCapability<'_>) -> Option<&SlateRow> {
+        self.rows
+            .iter()
+            .find(|row| row.draft.capability() == capability)
+    }
+    pub fn elicitation_row(&self) -> Option<&SlateRow> {
+        self.capability_row(SlateCapability::Elicitation)
+    }
+    /// The declared tools.
     pub fn manifest(&self) -> &[SlateToolManifest] {
+        &self.manifest.tools
+    }
+    /// The whole declaration: the tools and the elicitation declaration.
+    pub fn slate_manifest(&self) -> &SlateManifest {
         &self.manifest
     }
+    pub fn elicitation_manifest(&self) -> Option<&SlateElicitationManifest> {
+        self.manifest.elicitation.as_ref()
+    }
     pub fn tool(&self, name: &str) -> Option<&SlateToolManifest> {
-        self.manifest.iter().find(|tool| tool.name == name)
+        self.manifest.tools.iter().find(|tool| tool.name == name)
     }
     pub(in crate::connector_key) fn resolved_schemas(
         &self,
     ) -> Option<BTreeMap<String, (serde_json::Value, Option<String>)>> {
         self.manifest
+            .tools
             .iter()
             .map(|tool| {
                 Some((
@@ -228,6 +337,7 @@ impl ConnectorGrantSlate {
     }
     pub fn tool_names(&self) -> BTreeSet<&str> {
         self.manifest
+            .tools
             .iter()
             .map(|tool| tool.name.as_str())
             .collect()
@@ -265,8 +375,9 @@ impl ConnectorGrantSlate {
         self.row(tool)
             .map_or(SlateDisposition::AlwaysAsk, SlateRow::effective_disposition)
     }
-    /// The owner-accepted grant: each row's stamped setting and class, plus
-    /// the facet limit. Holder narrows sit outside it, so they never break it.
+    /// The owner-accepted grant: each row's stamped setting and class (the
+    /// elicitation row's too), the elicitation declaration, and the facet
+    /// limit. Holder narrows sit outside it, so they never break it.
     pub fn grant_hash(&self) -> [u8; 32] {
         let rows: Vec<_> = self
             .rows
@@ -281,7 +392,10 @@ impl ConnectorGrantSlate {
             .collect();
         let mut hasher = blake3::Hasher::new();
         hasher.update(SLATE_GRANT_DOMAIN);
-        hasher.update(&serde_json::to_vec(&(rows, &self.facet_limit)).unwrap_or_default());
+        hasher.update(
+            &serde_json::to_vec(&(rows, &self.manifest.elicitation, &self.facet_limit))
+                .unwrap_or_default(),
+        );
         *hasher.finalize().as_bytes()
     }
     fn aggregate(&self) -> [u8; 32] {
@@ -298,33 +412,59 @@ impl ConnectorGrantSlate {
     }
 }
 
-fn validate(manifest: &[SlateToolManifest], rows: &[SlateDraftRow]) -> Result<()> {
-    if manifest.is_empty() || manifest.len() != rows.len() || manifest.len() > 4096 {
+fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
+    let declared = &manifest.tools;
+    let row_count = declared.len() + usize::from(manifest.elicitation.is_some());
+    if declared.is_empty() || rows.len() != row_count || declared.len() > 4096 {
         return Err(invalid());
     }
-    let tools: BTreeMap<_, _> = manifest
+    let tools: BTreeMap<_, _> = declared
         .iter()
         .map(|tool| (tool.name.as_str(), tool))
         .collect();
-    if tools.len() != manifest.len() || manifest.iter().any(|tool| tool.name.trim().is_empty()) {
+    if tools.len() != declared.len()
+        || declared
+            .iter()
+            .any(|tool| tool.name.trim().is_empty() || tool.name == ELICITATION_ROW_KEY)
+    {
+        return Err(invalid());
+    }
+    // Legacy asks fold into the one declaration, never beside it.
+    if ![false, true]
+        .into_iter()
+        .any(|admitted| SlateElicitationManifest::of(declared, admitted) == manifest.elicitation)
+    {
         return Err(invalid());
     }
     let mut seen = BTreeSet::new();
     for row in rows {
-        let tool = tools.get(row.tool.as_str()).ok_or_else(invalid)?;
         // A draft grants nothing: it may pre-fill a tighter setting, but only
         // the owner's own override can choose `always allow`.
         if !seen.insert(&row.tool)
             || row.rationale.trim().is_empty()
             || row.rationale.len() > 4096
             || row.disposition == SlateDisposition::AlwaysAllow
-            || !tool
-                .resolved_input_schema
-                .as_ref()
-                .is_some_and(|schema| schema.is_object() && is_resolved_schema(schema))
-            || row.data_class != tool.row_data_class()
         {
             return Err(invalid());
+        }
+        match row.capability() {
+            // A client capability: no tool schema to resolve, one fixed class.
+            SlateCapability::Elicitation => {
+                if manifest.elicitation.is_none() || row.data_class != ELICITATION_ROW_DATA_CLASS {
+                    return Err(invalid());
+                }
+            }
+            SlateCapability::Tool(name) => {
+                let tool = tools.get(name).ok_or_else(invalid)?;
+                if !tool
+                    .resolved_input_schema
+                    .as_ref()
+                    .is_some_and(|schema| schema.is_object() && is_resolved_schema(schema))
+                    || row.data_class != tool.row_data_class()
+                {
+                    return Err(invalid());
+                }
+            }
         }
     }
     Ok(())
@@ -350,12 +490,20 @@ pub(in crate::connector_key) fn declaration_expands(
         || next.destroys && !old.destroys
         || next.spends && !old.spends
         || next.sends_outward && !old.sends_outward
-        || next.legacy_ask && !old.legacy_ask
         || next.trigger != old.trigger
         || !schema_narrows(
             old.resolved_input_schema.as_ref(),
             next.resolved_input_schema.as_ref(),
         )
+}
+
+/// Whether the elicitation declaration reaches further than before: a
+/// tool's legacy ask newly folded into the row.
+pub(in crate::connector_key) fn elicitation_expands(
+    old: &SlateElicitationManifest,
+    next: &SlateElicitationManifest,
+) -> bool {
+    !next.legacy_ask_tools.is_subset(&old.legacy_ask_tools)
 }
 
 /// A dropped facet limit, or a facet the old limit lacked, widens the Grant.
@@ -368,7 +516,7 @@ fn facets_widen(old: Option<&BTreeSet<EntityId>>, next: Option<&BTreeSet<EntityI
 }
 
 /// Compare the fully typed grant declaration and the effective settings.
-/// Unchanged or reduced authority carries its earlier consent; new tools,
+/// Unchanged or reduced authority carries its earlier consent; new rows,
 /// richer declarations, a looser setting or a wider facet set need a tap.
 pub(in crate::connector_key) fn slate_expands(
     old: &ConnectorGrantSlate,
@@ -378,19 +526,41 @@ pub(in crate::connector_key) fn slate_expands(
     facets_widen(
         old.effective_facets().as_ref(),
         next.effective_facets().as_ref(),
-    ) || next.manifest.iter().any(|tool| {
-        let row = next
-            .row(&tool.name)
-            .expect("validated slate has one row per tool");
-        if !row.enabled() {
-            return false;
-        }
-        let (Some(old_tool), Some(old_row)) = (old.tool(&tool.name), old.row(&tool.name)) else {
-            return true;
-        };
-        declaration_expands(old_tool, tool, carry)
-            || row.effective_disposition() < old_row.effective_disposition()
-    })
+    ) || elicitation_row_expands(old, next)
+        || next.manifest.tools.iter().any(|tool| {
+            let row = next
+                .row(&tool.name)
+                .expect("validated slate has one row per tool");
+            if !row.enabled() {
+                return false;
+            }
+            let (Some(old_tool), Some(old_row)) = (old.tool(&tool.name), old.row(&tool.name))
+            else {
+                return true;
+            };
+            declaration_expands(old_tool, tool, carry)
+                || row.effective_disposition() < old_row.effective_disposition()
+        })
+}
+
+/// The elicitation row, as [`slate_expands`] reads a tool's: a new enabled
+/// row, a richer declaration or a looser setting. A removal, or a row at
+/// `never allow` (the client then declares nothing), reaches no further.
+fn elicitation_row_expands(old: &ConnectorGrantSlate, next: &ConnectorGrantSlate) -> bool {
+    let (Some(declaration), Some(row)) = (next.elicitation_manifest(), next.elicitation_row())
+    else {
+        return false;
+    };
+    if !row.enabled() {
+        return false;
+    }
+    let (Some(old_declaration), Some(old_row)) =
+        (old.elicitation_manifest(), old.elicitation_row())
+    else {
+        return true;
+    };
+    elicitation_expands(old_declaration, declaration)
+        || row.effective_disposition() < old_row.effective_disposition()
 }
 
 /// Only a provable restriction carries consent. Anything unknown re-asks.
@@ -592,7 +762,7 @@ pub(in crate::connector_key) fn scan_slates_in_txn(
 /// A fresh, unstamped slate over validated draft rows. `prior` and `reask`
 /// are set only for a drift delta, which also carries the prior facet rows.
 pub(in crate::connector_key) fn new_slate(
-    manifest: &[SlateToolManifest],
+    manifest: &SlateManifest,
     rows: Vec<SlateRow>,
     prior: Option<&ConnectorGrantSlate>,
     prior_id: Option<EntityId>,
@@ -602,7 +772,7 @@ pub(in crate::connector_key) fn new_slate(
     validate(manifest, &drafts)?;
     let manifest_bytes = serde_json::to_vec(manifest).map_err(|_| invalid())?;
     Ok(ConnectorGrantSlate {
-        manifest: manifest.to_vec(),
+        manifest: manifest.clone(),
         manifest_hash: *blake3::hash(&manifest_bytes).as_bytes(),
         rows,
         revision: 0,
@@ -619,21 +789,31 @@ pub(in crate::connector_key) fn new_slate(
 impl Vault {
     /// Persists the typed admission artifact. Free text, partial rows, duplicate
     /// tools, and owner columns in the draft all fail before the first write.
+    /// The model drafts tool rows only: a legacy ask's elicitation row is the
+    /// engine's rule draft, and a model row naming it fails as a duplicate.
     pub fn store_connector_slate(
         &self,
         manifest: &[SlateToolManifest],
         model_output: &str,
     ) -> Result<EntityId> {
+        let manifest = SlateManifest::new(manifest.to_vec(), false);
         let rows: Vec<SlateDraftRow> = serde_json::from_str(model_output).map_err(|_| invalid())?;
+        let elicitation = manifest.elicitation.as_ref().map(|declaration| {
+            super::slate_draft::rule_draft_elicitation_row(
+                declaration,
+                &super::slate_draft::SlatePastRulings::default(),
+            )
+        });
         let rows = rows
             .into_iter()
+            .chain(elicitation)
             .map(|draft| SlateRow {
                 draft,
                 owner_override: None,
                 holder_narrow: None,
             })
             .collect();
-        self.put_new_slate(new_slate(manifest, rows, None, None, BTreeSet::new())?)
+        self.put_new_slate(new_slate(&manifest, rows, None, None, BTreeSet::new())?)
     }
     pub(in crate::connector_key) fn put_new_slate(
         &self,
@@ -651,6 +831,7 @@ impl Vault {
     }
     /// One authenticated stamp for the entire typed slate. This neither
     /// qualifies a connector nor activates its key: probes own that transition.
+    /// `overrides` names rows by key: a tool name, or [`ELICITATION_ROW_KEY`].
     pub fn override_connector_slate(
         &self,
         owner: &AuthenticatedOwner,
@@ -673,8 +854,8 @@ impl Vault {
     ) -> Result<ConnectorGrantSlate> {
         self.stamp_slate(owner, id, expected_revision, overrides, Some(facet_limit))
     }
-    /// "Flip to all-manual": every row `always ask` (a `never allow` row
-    /// stays removed), then the one stamp.
+    /// "Flip to all-manual": every row `always ask`, the elicitation row's
+    /// too (a `never allow` row stays removed), then the one stamp.
     pub fn accept_connector_slate_all_manual(
         &self,
         owner: &AuthenticatedOwner,
@@ -754,7 +935,8 @@ impl Vault {
     /// ARCH-0072 self-update: the key's own holder tightens rows or the facet
     /// set of its bound slate, with no stamp. Narrowing is free, widening
     /// never is. The tightening is receipted on the key's log and marked with
-    /// the holder, and the owner's stamp on a row reverses it.
+    /// the holder, and the owner's stamp on a row reverses it. `narrows`
+    /// names rows as the owner's overrides do.
     pub fn narrow_connector_slate(
         &self,
         key_id: &EntityId,
