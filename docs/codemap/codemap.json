@@ -11912,6 +11912,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/consent_wait/ledger.rs",
+     "purpose": "A wait's receipts as the consent Gate ledger holds them (DOOR-079 PR 2)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/consent_wait/mod.rs",
      "purpose": "Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03)",
      "surface": {
@@ -11954,7 +11964,7 @@
      "path": "src/code_run/consent_wait/types.rs",
      "purpose": "The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 3,
       "fn": 3,
       "struct": 3
@@ -15327,6 +15337,7 @@
      "purpose": "—",
      "surface": {
       "const": 10,
+      "crate-vis": 1,
       "enum": 4,
       "fn": 16,
       "struct": 6,
@@ -31665,6 +31676,49 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/code_wait_doors/mod.rs",
+     "purpose": "Typed code consent wait doors (DOOR-079): `vault.code.waits.resolve` answers one exact sealed code consent…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_wait_doors/operations.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeWaitAnswerView",
+      "CodeWaitChoice",
+      "CodeWaitConsumptionView",
+      "CodeWaitLedgerLinks",
+      "CodeWaitReceiptRequest",
+      "CodeWaitReceiptView",
+      "CodeWaitResolveRequest",
+      "CodeWaitSettleOutcome",
+      "CodeWaitSettlementView",
+      "CodeWaitState",
+      "CodeWaitTarget"
+     ],
+     "path": "src/memory/code_wait_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 3,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/codebase_doors/mod.rs",
      "purpose": "Typed code snapshot doors (DOOR-118): the import of one committed local Git tree, its pinned manifest, its…",
      "surface": {
@@ -32126,7 +32180,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 11,
+      "mod": 12,
       "re-export": 45
      }
     },
@@ -50989,7 +51043,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 694
+      "fn": 696
      }
     },
     {
@@ -57018,7 +57072,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57620,7 +57674,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 173,
+     "files": 176,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58301,7 +58355,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3556,
+   "source_files": 3560,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66831,7 +66885,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 658
+      "fn": 660
      }
     },
     {
@@ -67880,7 +67934,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 659
+      "fn": 661
      }
     },
     {
@@ -70930,6 +70984,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_wait_doors.rs",
+     "purpose": "Credential-bound host projections of the typed code consent wait doors (DOOR-079): answer one exact sealed…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/codebase_doors.rs",
      "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
      "surface": {
@@ -71183,7 +71247,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 120
+      "crate-vis": 121
      }
     },
     {
@@ -78902,7 +78966,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 382,
+     "files": 383,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79324,7 +79388,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 720,
+   "source_files": 721,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79913,6 +79977,17 @@
       "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
+      "CodeWaitAnswerView",
+      "CodeWaitChoice",
+      "CodeWaitConsumptionView",
+      "CodeWaitLedgerLinks",
+      "CodeWaitReceiptRequest",
+      "CodeWaitReceiptView",
+      "CodeWaitResolveRequest",
+      "CodeWaitSettleOutcome",
+      "CodeWaitSettlementView",
+      "CodeWaitState",
+      "CodeWaitTarget",
       "CohortSummary",
       "ColdAuthorityAuditRow",
       "CollectionAtom",
@@ -81888,8 +81963,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 604,
-      "struct": 1762
+      "enum": 607,
+      "struct": 1770
      }
     },
     {
