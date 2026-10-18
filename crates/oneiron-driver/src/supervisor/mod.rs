@@ -41,9 +41,7 @@ mod shutdown;
 pub use self::attachment::{
     AttachedPassFuture, LinkedShutdown, PassAttachment, PassAttachmentSource, WakePassFuture,
 };
-pub use self::config::{
-    MAX_PASS_BUDGET_BASE_LEN, NowSeconds, RestartBackoffConfig, WakeSupervisorConfig,
-};
+pub use self::config::{NowSeconds, RestartBackoffConfig, WakeSupervisorConfig};
 pub use self::factory::{
     ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan, WaveReadyDispatcher,
 };

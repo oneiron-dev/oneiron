@@ -69,25 +69,11 @@ impl RestartBackoff {
 /// rescan per pass, no hot-loop; cost is paid once per [`WakeSupervisor::run`].
 pub(super) const PASS_BUDGET_INDEX_SCAN_BOUND: u64 = 65_536;
 
-/// Mirror of the runner store's private budget-id ceiling
-/// (`MAX_DREAMER_BUDGET_ID_LEN` in `oneiron::dreamer_runner`). Pinned by a
-/// real-store validation test below, so drift breaks the build here.
-pub(super) const MAX_RUNNER_BUDGET_ID_LEN: usize = 128;
-
 /// Mirror of `attempt_queue`'s private `MAX_LEASE_OWNER_LEN` (admission stamps
 /// `lease_owner` through the runner into the attempt queue, which rejects empty
 /// and over-long owners before mutating rows). Pinned by a real-queue
 /// validation test below.
 pub(super) const MAX_RUNNER_LEASE_OWNER_LEN: usize = 128;
-
-/// Bytes reserved for the derived per-pass suffix: `":p"` plus the widest
-/// `u64` decimal rendering (20 digits).
-const PASS_BUDGET_SUFFIX_RESERVE: usize = 22;
-
-/// Longest base [`WakeSupervisorConfig::budget_id`] whose derived
-/// `{base}:p{n}` id stays within the runner store's ceiling for every
-/// possible pass index.
-pub const MAX_PASS_BUDGET_BASE_LEN: usize = MAX_RUNNER_BUDGET_ID_LEN - PASS_BUDGET_SUFFIX_RESERVE;
 
 /// Static supervisor configuration. One base wake budget id + lease owner
 /// per supervisor; every pass gets a fresh wall-clock deadline, a fresh
@@ -159,9 +145,6 @@ impl WakeSupervisorConfig {
     /// Rejects configs that would make every pass fail or hard-cut without
     /// durable progress (fail-fast before the tick loop):
     ///
-    /// * a base [`Self::budget_id`] whose derived `{base}:p{n}` id could
-    ///   exceed the runner store's budget-id ceiling (startup scan would
-    ///   treat validation errors as "occupied" and spin);
     /// * `local_node_id == 0` (admission rejects zero before mutating any
     ///   attempt row, so every pass would empty-fail under HybridTick);
     /// * `pass_ceiling_ms <= DREAMER_GRACEFUL_WRAP_WINDOW_MS` (the pass is
@@ -172,14 +155,6 @@ impl WakeSupervisorConfig {
     ///   ceiling is `MAX_RUNNER_LEASE_OWNER_LEN`; empty/over-long fails
     ///   admission the same way).
     pub fn validate(&self) -> Result<()> {
-        if self.budget_id.len() > MAX_PASS_BUDGET_BASE_LEN {
-            return Err(oneiron::Error::InvalidConfig(format!(
-                "wake supervisor budget_id is {} bytes; max {} so derived \
-                 per-pass ids fit the runner-store ceiling",
-                self.budget_id.len(),
-                MAX_PASS_BUDGET_BASE_LEN
-            )));
-        }
         if self.local_node_id == 0 {
             return Err(oneiron::Error::InvalidConfig(
                 "wake supervisor local_node_id must be nonzero \
