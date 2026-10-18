@@ -20,8 +20,9 @@ pub use inference_admission::{
     InferencePolicySnapshot,
 };
 pub use oneiron_model::llm::{
-    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults,
-    VoiceBackendBinding, VoiceLane, VoicePrecedence, locality_within_extraction_bound,
+    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
+    SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
+    VoicePrecedence, locality_within_extraction_bound,
 };
 pub(crate) mod entity_refs;
 pub use oneiron_model::llm::{

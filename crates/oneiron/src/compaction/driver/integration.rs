@@ -36,6 +36,13 @@ impl CompactionDriver {
     /// Commit executor run/span coverage with the actual minted SUMMARY,
     /// born at the run's `placement` in the same transaction.
     /// Read-time views project this record; the driver advances only on commit.
+    /// A self-written summary (FIX 4465) lands only with its `landing`: its
+    /// packet must be the gated request's own, and its receipt rides the
+    /// coverage row and the summary's birth.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the coverage landing's arguments plus a self-written summary's landing"
+    )]
     pub(crate) fn integrate_with_coverage(
         &mut self,
         vault: &Vault,
@@ -44,8 +51,18 @@ impl CompactionDriver {
         gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
         span: &crate::code_run::ExecutorOutputSpan,
+        landing: Option<crate::compaction::SelfLanding>,
     ) -> Result<SwapPlan> {
         let session_ref = gated.request.session_ref;
+        if let Some(landing) = &landing {
+            let WindowLog::Host { run: Some(run), .. } = gated.request.log else {
+                return Err(Error::InvariantViolation(
+                    "a self-written epoch is cut from no run's log",
+                ));
+            };
+            Self::check_self_landing(&gated, run, byline, landing)?;
+        }
+        let writer = landing.map(|landing| landing.execution);
         self.integrate_inner(gated, accumulated, |request, product| {
             mint_epoch_summary_with(
                 vault,
@@ -53,12 +70,67 @@ impl CompactionDriver {
                 byline,
                 request,
                 product,
+                writer.as_ref(),
                 |txn, mint| {
-                    vault.put_code_run_compaction_coverage_in_txn(txn, span, mint)?;
+                    vault.put_code_run_compaction_coverage_in_txn(
+                        txn,
+                        span,
+                        mint,
+                        writer.as_ref(),
+                    )?;
                     placement.settle_in(&vault.store, txn, mint.summary_id())
                 },
             )
         })
+    }
+
+    /// A self-written summary's packet belongs to its gated request (FIX
+    /// 4465): admitted on `run`'s log for exactly the request's span, in its
+    /// session, over its turns, as a digest of exactly the gated prose, with
+    /// the snapshot its pass stamped, written by the run's own byline. An
+    /// epoch's request must name `run` too; a fold's names none.
+    pub(crate) fn check_self_landing(
+        gated: &GatedCompaction,
+        run: EntityId,
+        byline: WriteActor,
+        landing: &crate::compaction::SelfLanding,
+    ) -> Result<()> {
+        let request = &gated.request;
+        let last = request
+            .window
+            .last()
+            .ok_or(Error::InvariantViolation(
+                "compaction window carries no messages",
+            ))?
+            .turn;
+        let mut turns: Vec<EntityId> = Vec::new();
+        for message in &request.window {
+            if !turns.contains(&message.turn_id) {
+                turns.push(message.turn_id);
+            }
+        }
+        let packet = &landing.packet;
+        let same_run = match request.log {
+            WindowLog::Host { run: Some(named), .. } => named == run,
+            WindowLog::Host { run: None, .. } => true,
+            WindowLog::Conversation => false,
+        };
+        let bound = packet.host_log().is_some_and(|log| {
+            log.run_id == run && log.first == request.turn_start && log.last == last
+        });
+        if !same_run
+            || !bound
+            || packet.session() != request.session_ref
+            || packet.turn_ids() != turns.as_slice()
+            || packet.digest_text() != Some(gated.product.summary_text.as_str())
+            || landing.execution.snapshot().as_ref() != Some(packet.snapshot())
+            || landing.execution.writer != byline.entity_ref()
+        {
+            return Err(Error::InvariantViolation(
+                "a self-written summary's packet is not its gated request's",
+            ));
+        }
+        Ok(())
     }
 
     /// [`Self::integrate_with_coverage`] for a run in an off-record room: the
@@ -86,7 +158,7 @@ impl CompactionDriver {
                 request,
                 product,
                 vector.as_ref(),
-                |view, txn, mint| span.put_coverage_in(view, txn, mint),
+                |view, txn, mint| span.put_coverage_in(view, txn, mint, None),
             )
         })
     }
@@ -123,9 +195,10 @@ impl CompactionDriver {
                     byline,
                     request,
                     product,
+                    None,
                     landing,
                     |txn, mint| {
-                        vault.put_code_run_compaction_coverage_in_txn(txn, span, mint)?;
+                        vault.put_code_run_compaction_coverage_in_txn(txn, span, mint, None)?;
                         placement.settle_in(&vault.store, txn, mint.summary_id())
                     },
                 )
@@ -155,7 +228,15 @@ impl CompactionDriver {
         accumulated: &[CompactionWindowMessage],
     ) -> Result<SwapPlan> {
         self.integrate_inner(gated, accumulated, |request, product| {
-            mint_epoch_summary_with(vault, session_ref, byline, request, product, |_, _| Ok(()))
+            mint_epoch_summary_with(
+                vault,
+                session_ref,
+                byline,
+                request,
+                product,
+                None,
+                |_, _| Ok(()),
+            )
         })
     }
 
