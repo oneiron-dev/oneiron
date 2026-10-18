@@ -1167,6 +1167,30 @@ impl OneironClient {
                 "vault.code.checkout.bind" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::CheckoutDoorBinding,
                 >(client, verb, &input),
+                "vault.code.checkout.claim" => remote_agent_verb_output::<
+                    oneiron::memory::checkout_doors::CheckoutLeaseView,
+                >(client, verb, &input),
+                "vault.code.checkout.get" => remote_agent_verb_output::<
+                    oneiron::memory::checkout_doors::CheckoutLeaseView,
+                >(client, verb, &input),
+                "vault.code.checkout.renew" => remote_agent_verb_output::<
+                    oneiron::memory::checkout_doors::CheckoutLeaseView,
+                >(client, verb, &input),
+                "vault.code.checkout.reclaim" => remote_agent_verb_output::<
+                    oneiron::memory::checkout_doors::CheckoutLeaseView,
+                >(client, verb, &input),
+                "vault.code.checkout.takeover" => remote_agent_verb_output::<
+                    oneiron::memory::checkout_doors::CheckoutLeaseView,
+                >(client, verb, &input),
+                "vault.code.checkout.publish" => remote_agent_verb_output::<
+                    oneiron::memory::checkout_doors::CheckoutPublished,
+                >(client, verb, &input),
+                "vault.code.checkout.settle" => remote_agent_verb_output::<
+                    oneiron::memory::checkout_doors::CheckoutSettled,
+                >(client, verb, &input),
+                "vault.code.checkout.teardown" => remote_agent_verb_output::<
+                    oneiron::memory::checkout_doors::CheckoutTornDown,
+                >(client, verb, &input),
                 "vault.code.snapshots.ingest" => remote_agent_verb_output::<
                     oneiron::memory::codebase_doors::CodeSnapshotView,
                 >(client, verb, &input),
@@ -6652,6 +6676,102 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.checkout.bind", value)
+    }
+    pub fn vault_code_checkout_claim(
+        &self,
+        input: &oneiron::memory::checkout_doors::CheckoutClaimInput,
+    ) -> Result<oneiron::memory::checkout_doors::CheckoutLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checkout.claim", value)
+    }
+    pub fn vault_code_checkout_get(
+        &self,
+        input: &oneiron::memory::checkout_doors::CheckoutGetInput,
+    ) -> Result<oneiron::memory::checkout_doors::CheckoutLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checkout.get", value)
+    }
+    pub fn vault_code_checkout_renew(
+        &self,
+        input: &oneiron::memory::checkout_doors::CheckoutRenewInput,
+    ) -> Result<oneiron::memory::checkout_doors::CheckoutLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checkout.renew", value)
+    }
+    pub fn vault_code_checkout_reclaim(
+        &self,
+        input: &oneiron::memory::checkout_doors::CheckoutReclaimInput,
+    ) -> Result<oneiron::memory::checkout_doors::CheckoutLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checkout.reclaim", value)
+    }
+    pub fn vault_code_checkout_takeover(
+        &self,
+        input: &oneiron::memory::checkout_doors::CheckoutTakeoverInput,
+    ) -> Result<oneiron::memory::checkout_doors::CheckoutLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checkout.takeover", value)
+    }
+    pub fn vault_code_checkout_publish(
+        &self,
+        input: &oneiron::memory::checkout_doors::CheckoutPublishInput,
+    ) -> Result<oneiron::memory::checkout_doors::CheckoutPublished, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checkout.publish", value)
+    }
+    pub fn vault_code_checkout_settle(
+        &self,
+        input: &oneiron::memory::checkout_doors::CheckoutSettleInput,
+    ) -> Result<oneiron::memory::checkout_doors::CheckoutSettled, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checkout.settle", value)
+    }
+    pub fn vault_code_checkout_teardown(
+        &self,
+        input: &oneiron::memory::checkout_doors::CheckoutTeardownInput,
+    ) -> Result<oneiron::memory::checkout_doors::CheckoutTornDown, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checkout.teardown", value)
     }
     pub fn vault_code_snapshots_ingest(
         &self,

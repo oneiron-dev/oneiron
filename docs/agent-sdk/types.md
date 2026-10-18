@@ -1963,6 +1963,22 @@ class Oneiron:
     class _VaultCodeCheckoutVerbs:
         def bind(self, spec: Facade.CheckoutDoorBindRequest) -> Facade.CheckoutDoorBinding:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
+        def claim(self, spec: Facade.CheckoutClaimInput) -> Facade.CheckoutLeaseView:
+            """Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence."""
+        def get(self, spec: Facade.CheckoutGetInput) -> Facade.CheckoutLeaseView:
+            """Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it."""
+        def renew(self, spec: Facade.CheckoutRenewInput) -> Facade.CheckoutLeaseView:
+            """Renew the caller's still-live checkout under its exact holder and epoch fence."""
+        def reclaim(self, spec: Facade.CheckoutReclaimInput) -> Facade.CheckoutLeaseView:
+            """Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch."""
+        def takeover(self, spec: Facade.CheckoutTakeoverInput) -> Facade.CheckoutLeaseView:
+            """Explicitly take over a checkout as its task owner, including effect work, at the named epoch."""
+        def publish(self, spec: Facade.CheckoutPublishInput) -> Facade.CheckoutPublished:
+            """Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head."""
+        def settle(self, spec: Facade.CheckoutSettleInput) -> Facade.CheckoutSettled:
+            """Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt."""
+        def teardown(self, spec: Facade.CheckoutTeardownInput) -> Facade.CheckoutTornDown:
+            """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
     class _VaultCodeSnapshotsVerbs:
         def ingest(self, spec: Facade.CodeSnapshotIngestRequest) -> Facade.CodeSnapshotView:
             """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""

@@ -1235,6 +1235,22 @@ export class Oneiron {
       checkout: {
         /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
         bind: (input: Facade.CheckoutDoorBindRequest): Facade.CheckoutDoorBinding => this.#call(() => this.#client.vaultCodeCheckoutBind(input) as Facade.CheckoutDoorBinding),
+        /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */
+        claim: (input: Facade.CheckoutClaimInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutClaim(input) as Facade.CheckoutLeaseView),
+        /** Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it. */
+        get: (input: Facade.CheckoutGetInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutGet(input) as Facade.CheckoutLeaseView),
+        /** Renew the caller's still-live checkout under its exact holder and epoch fence. */
+        renew: (input: Facade.CheckoutRenewInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutRenew(input) as Facade.CheckoutLeaseView),
+        /** Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch. */
+        reclaim: (input: Facade.CheckoutReclaimInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutReclaim(input) as Facade.CheckoutLeaseView),
+        /** Explicitly take over a checkout as its task owner, including effect work, at the named epoch. */
+        takeover: (input: Facade.CheckoutTakeoverInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutTakeover(input) as Facade.CheckoutLeaseView),
+        /** Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head. */
+        publish: (input: Facade.CheckoutPublishInput): Facade.CheckoutPublished => this.#call(() => this.#client.vaultCodeCheckoutPublish(input) as Facade.CheckoutPublished),
+        /** Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt. */
+        settle: (input: Facade.CheckoutSettleInput): Facade.CheckoutSettled => this.#call(() => this.#client.vaultCodeCheckoutSettle(input) as Facade.CheckoutSettled),
+        /** Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees. */
+        teardown: (input: Facade.CheckoutTeardownInput): Facade.CheckoutTornDown => this.#call(() => this.#client.vaultCodeCheckoutTeardown(input) as Facade.CheckoutTornDown),
       },
       snapshots: {
         /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */

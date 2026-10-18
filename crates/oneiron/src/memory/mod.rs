@@ -49,6 +49,7 @@ pub mod caps;
 pub mod channel_doors;
 mod chat;
 mod claims;
+pub mod checkout_doors;
 pub mod code_doors;
 pub mod code_run_doors;
 pub mod code_wait_doors;

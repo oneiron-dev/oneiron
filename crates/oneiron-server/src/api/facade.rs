@@ -42,6 +42,7 @@ mod campaign_split_doors;
 mod channel_doors;
 mod claim_settle_doors;
 mod cleanup_doors;
+mod checkout_doors;
 mod code_doors;
 mod code_run_doors;
 mod code_wait_doors;

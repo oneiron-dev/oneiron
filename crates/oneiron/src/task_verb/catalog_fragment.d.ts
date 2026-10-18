@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 719 code-mode rows (698 host rows, 21 run rows), 2540 declarations.
-// Replies: 635 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 727 code-mode rows (706 host rows, 21 run rows), 2556 declarations.
+// Replies: 643 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1493,6 +1493,22 @@ declare namespace Sdk {
   type OriginPublicationsView = { repo: string; publications: OriginPublicationView[] };
   type CheckoutDoorBindRequest = { repo: string; checkout: string; epoch: number; endpoint: string };
   type CheckoutDoorBinding = { repo: string; checkout: string; epoch: number; checkout_path: string; remote_url: string };
+  type CheckoutClass = "edit" | "build" | "verify" | "effect";
+  type CheckoutClaimInput = { checkout: string; repo: EntityId; task: EntityId; task_class: CheckoutClass; ttl_seconds: number; declared_idempotent: boolean };
+  type CheckoutState = "active" | "settling" | "settled" | "retained";
+  type CheckoutLeaseView = { checkout: string; task: EntityId; repo_ref: string; holder: EntityId; epoch: number; task_class: CheckoutClass; state: CheckoutState; claimed_at: number; expires_at?: number | null; expired: boolean; ticket: string; receipt?: string | null };
+  type CheckoutGetInput = { checkout: string };
+  type CheckoutRenewInput = { checkout: string; epoch: number; ttl_seconds: number };
+  type CheckoutReclaimInput = { checkout: string; expired_epoch: number };
+  type CheckoutTakeoverInput = { checkout: string; expected_epoch: number };
+  type CheckoutPublishInput = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId };
+  type CheckoutPublished = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId; result_identity: string; receipt: string };
+  type CheckoutAction = "select" | "apply" | "release" | "discard";
+  type CheckoutSettleInput = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId; action: CheckoutAction };
+  type CheckoutSettled = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId; action: CheckoutAction; result_identity: string; receipt: string; settled_at: number };
+  type CheckoutTeardownInput = { checkout: string; epoch: number; pushed_head_receipt?: EntityId | null };
+  type CheckoutRetention = "missing_pushed_head_receipt" | "receipt_mismatch" | "live_occupant" | "dirty_or_uncertain";
+  type CheckoutTornDown = { status: "collected"; checkout: string; epoch: number } | { status: "retained"; checkout: string; epoch: number; reason: CheckoutRetention };
   type CodeRepoPointer = { local_folder: string; commit: string };
   type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
   type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number };
@@ -3209,6 +3225,22 @@ declare const vault: Sdk.VaultHost & {
     checkout: {
       /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
       bind(input: Sdk.CheckoutDoorBindRequest): Promise<Sdk.CheckoutDoorBinding | StoredResult>;
+      /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */
+      claim(input: Sdk.CheckoutClaimInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it. */
+      get(input: Sdk.CheckoutGetInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head. */
+      publish(input: Sdk.CheckoutPublishInput): Promise<Sdk.CheckoutPublished | StoredResult>;
+      /** Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch. */
+      reclaim(input: Sdk.CheckoutReclaimInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Renew the caller's still-live checkout under its exact holder and epoch fence. */
+      renew(input: Sdk.CheckoutRenewInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt. */
+      settle(input: Sdk.CheckoutSettleInput): Promise<Sdk.CheckoutSettled | StoredResult>;
+      /** Explicitly take over a checkout as its task owner, including effect work, at the named epoch. */
+      takeover(input: Sdk.CheckoutTakeoverInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees. */
+      teardown(input: Sdk.CheckoutTeardownInput): Promise<Sdk.CheckoutTornDown | StoredResult>;
     };
     /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
     diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;

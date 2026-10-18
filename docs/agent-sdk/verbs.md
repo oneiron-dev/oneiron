@@ -372,6 +372,14 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
 - `vault.code.checkout.bind`
+- `vault.code.checkout.claim`
+- `vault.code.checkout.get`
+- `vault.code.checkout.renew`
+- `vault.code.checkout.reclaim`
+- `vault.code.checkout.takeover`
+- `vault.code.checkout.publish`
+- `vault.code.checkout.settle`
+- `vault.code.checkout.teardown`
 - `vault.code.snapshots.ingest`
 - `vault.code.snapshots.get`
 - `vault.code.snapshots.read`
