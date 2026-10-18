@@ -3,10 +3,18 @@
 //!
 //! Each axis below has a restrict whose result is never wider than its left
 //! side, so `restrict(before, after) == after` proves `after` no wider on
-//! it. Every other field must be equal: a row table, a fold that depends on
-//! order or provenance, and any field added later. A narrowing the
-//! comparator cannot prove reads as a widening and waits for the owner.
+//! it. A row table that meets all its matching rows, whatever their order,
+//! counts when every row it held is still there and each row added only
+//! restricts. Every other field must be equal: any other row table, a fold
+//! that depends on order or provenance, and any field added later. A
+//! narrowing the comparator cannot prove reads as a widening and waits for
+//! the owner.
 use super::PolicyManifestResolution;
+use crate::gate::ceiling::{
+    ActorCeiling, PolicyApprovalCeiling, PolicyAxes, PolicyCriticality, PolicyPack,
+    PolicySensitivity,
+};
+use crate::gate::class_policy::{ActPolicyTable, ActPosture, ClassPolicyPrecedence};
 use crate::gate::fanout_policy::merge_controls;
 
 /// `probe` takes `before`'s value where `narrower(before, after)` holds.
@@ -40,6 +48,52 @@ fn meet_in<T: Clone + PartialEq>(before: &T, after: &T, restrict: impl FnOnce(&m
     let mut met = before.clone();
     restrict(&mut met, after.clone());
     met == *after
+}
+
+/// Every row of `before` is still in `after`, counting copies, and each row
+/// `after` adds is `narrow`.
+fn adds_only<T: PartialEq>(before: &[T], after: &[T], narrow: impl Fn(&T) -> bool) -> bool {
+    let mut added: Vec<&T> = after.iter().collect();
+    for row in before {
+        let Some(at) = added.iter().position(|kept| *kept == row) else {
+            return false;
+        };
+        added.remove(at);
+    }
+    added.into_iter().all(narrow)
+}
+
+/// Axes the meet leaves as they were, or at their restrictive pole. Normal
+/// is no identity: an axis no pack sets reads Critical and Sensitive, so a
+/// new Normal one opens it.
+fn axes_narrow(axes: &PolicyAxes) -> bool {
+    matches!(axes.criticality, None | Some(PolicyCriticality::Critical))
+        && matches!(axes.sensitivity, None | Some(PolicySensitivity::Sensitive))
+        && !axes.unknown_axis_seen
+}
+
+/// A new pack: every pack's selected axes meet, so one whose defaults and
+/// rules all narrow only narrows.
+fn pack_narrows(pack: &PolicyPack) -> bool {
+    axes_narrow(&pack.defaults) && pack.rules.iter().all(|rule| axes_narrow(&rule.axes))
+}
+
+/// A new actor ceiling row: all matching rows meet, and no matching row
+/// reads as Proposed, so only a Proposed row narrows. An Auto one can mint the
+/// explicit system-author permit.
+fn ceiling_narrows(row: &ActorCeiling) -> bool {
+    matches!(row.ceiling, PolicyApprovalCeiling::Proposed)
+}
+
+/// New act rows, each a vault-wide Deny at the default precedence. A
+/// RequireCapability row opens a pairing silence denied, and VaultOnly
+/// drops the holders' denials.
+fn act_rows_narrow(before: &ActPolicyTable, after: &ActPolicyTable) -> bool {
+    adds_only(before.rows(), after.rows(), |row| {
+        matches!(row.posture, ActPosture::Deny)
+            && row.holder_ref.is_none()
+            && matches!(row.precedence, ClassPolicyPrecedence::NestedNarrowing)
+    })
 }
 
 /// Whether `after` is no wider than `before` on every axis. A fail-closed
@@ -118,5 +172,9 @@ pub(crate) fn manifest_resolution_narrows(
     by_value_both!(dreamer_failure_precedence);
     in_place_both!(livequery_tracker_limits);
     in_place_both!(credential_lifetimes);
+    // A replaced or dropped row proves nothing here.
+    axis!(packs, |b, a| adds_only(b, a, pack_narrows));
+    axis!(actor_ceilings, |b, a| adds_only(b, a, ceiling_narrows));
+    axis!(act_policy, act_rows_narrow);
     probe == *before
 }
