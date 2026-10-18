@@ -11641,7 +11641,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -12051,6 +12051,7 @@
      "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 7,
       "fn": 1,
       "struct": 22
@@ -18463,7 +18464,7 @@
      "path": "src/dreamer_consolidation/nightly_merge.rs",
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -31307,7 +31308,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 5,
-      "re-export": 40
+      "re-export": 41
      }
     },
     {
@@ -31720,6 +31721,26 @@
      "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and…",
      "surface": {
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProspectiveQueryHint",
+      "SignalExtractionClaim",
+      "SignalExtractionMessage",
+      "SignalExtractionRequest",
+      "SignalExtractionResult",
+      "SignalExtractionResultRequest",
+      "SignalExtractionSource",
+      "SignalExtractionTicket"
+     ],
+     "path": "src/memory/signal_extraction.rs",
+     "purpose": "Typed signal extraction over the production Dreamer partition queue",
+     "surface": {
+      "fn": 2,
+      "struct": 8
      }
     },
     {
@@ -49452,7 +49473,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 500
+      "fn": 503
      }
     },
     {
@@ -53897,7 +53918,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 26,
       "fn": 24,
       "mod": 1,
       "re-export": 1,
@@ -55603,7 +55624,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 152,
+     "files": 153,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56284,7 +56305,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3429,
+   "source_files": 3430,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64697,7 +64718,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 450
+      "fn": 453
      }
     },
     {
@@ -65745,7 +65766,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 451
+      "fn": 454
      }
     },
     {
@@ -68825,6 +68846,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/extraction_doors.rs",
+     "purpose": "Owner-only extraction doors over the caller's own credential read lane",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/fanout_doors.rs",
      "purpose": "The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and…",
      "surface": {
@@ -68878,7 +68909,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 90
+      "crate-vis": 91
      }
     },
     {
@@ -68918,7 +68949,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -76263,7 +76294,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 346,
+     "files": 347,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76678,7 +76709,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 671,
+   "source_files": 672,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77352,6 +77383,7 @@
       "DocxRun",
       "DollarBasis",
       "DoneMeans",
+      "DreamerAttemptView",
       "EditNoteRequest",
       "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
@@ -77669,6 +77701,7 @@
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
+      "LiveRunRequestMemorySupersedeInput",
       "LlmCapability",
       "LlmError",
       "LlmInputUsage",
@@ -77697,6 +77730,8 @@
       "MembershipConsent",
       "MemoryExport",
       "MemoryProjection",
+      "MemorySupersedeInput",
+      "MemoryWriteOutput",
       "MergeCrossover",
       "MergedFinding",
       "MeshPathDirection",
@@ -77959,6 +77994,7 @@
       "ProposalSettleRequest",
       "ProposalSettlement",
       "ProseSpan",
+      "ProspectiveQueryHint",
       "ProviderPin",
       "PruneReason",
       "PruneReceipt",
@@ -78278,6 +78314,13 @@
       "SharedVaultChange",
       "SharedVaultDeletion",
       "SharedVaultRequest",
+      "SignalExtractionClaim",
+      "SignalExtractionMessage",
+      "SignalExtractionRequest",
+      "SignalExtractionResult",
+      "SignalExtractionResultRequest",
+      "SignalExtractionSource",
+      "SignalExtractionTicket",
       "SignatureRow",
       "SignedAuthorityHistory",
       "SigningStatus",
@@ -78529,7 +78572,7 @@
      "purpose": "—",
      "surface": {
       "enum": 450,
-      "struct": 1203
+      "struct": 1215
      }
     },
     {
