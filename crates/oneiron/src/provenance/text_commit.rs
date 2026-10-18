@@ -46,7 +46,6 @@ impl RowProvenance {
                 || receipt.start < 0
                 || receipt.end <= receipt.start
                 || !receipt.made_by.process.is_valid()
-                || receipt.made_by.inputs.len() > 1024
                 || (receipt.made_by.trigger.is_some()
                     && (!commits.is_empty()
                         || !receipt

@@ -673,7 +673,6 @@ fn admit_body(vault: &Vault, txn: &RoTxn<'_>, doc: &LoroDoc, before: &Frontiers)
 fn made_by_names(actor: WriteActor, made_by: &MadeBy) -> bool {
     made_by.process.actor == actor.entity_ref()
         && made_by.process.is_valid()
-        && made_by.inputs.len() <= 1024
         && (actor.actor_class() == EdgeActorClass::Human
             || made_by.process.class != MadeByClass::Stated)
 }

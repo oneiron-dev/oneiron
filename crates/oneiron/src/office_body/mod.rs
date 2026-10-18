@@ -977,10 +977,7 @@ fn writer(kind: OfficeBodyKind, actor: WriteActor, made_by: &MadeBy) -> TypedBod
 }
 
 fn check_made_by(actor: WriteActor, made_by: &MadeBy) -> Result<()> {
-    if made_by.process.actor != actor.entity_ref()
-        || !made_by.process.is_valid()
-        || made_by.inputs.len() > 1024
-    {
+    if made_by.process.actor != actor.entity_ref() || !made_by.process.is_valid() {
         return Err(invalid(
             "the MadeBy envelope does not name this actor's process",
         ));
