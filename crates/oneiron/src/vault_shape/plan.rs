@@ -206,6 +206,10 @@ fn door(
         (ShapeChange::Retire, ShapeTarget::Member { .. }) => Some("remove_shared_member"),
         (ShapeChange::Create, ShapeTarget::World { .. }) => Some("create_world"),
         (ShapeChange::Create, ShapeTarget::Facet { .. }) => Some("create_facet"),
+        // A retired world or mask is deleted, never erased: its keys stay.
+        (ShapeChange::Retire, ShapeTarget::World { .. } | ShapeTarget::Facet { .. }) => {
+            Some("delete_entity")
+        }
         (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("define_agent"),
         (ShapeChange::Update | ShapeChange::Retire, ShapeTarget::Actor { .. }) => {
             Some("update_agent_definition_as")
@@ -219,6 +223,7 @@ fn door(
             }) => Some(source.door()),
             _ => None,
         },
+        (ShapeChange::Update, ShapeTarget::Skill { .. }) => Some("sync_skill_from_hub_ref"),
         (ShapeChange::Retire, ShapeTarget::Skill { .. }) => Some("update_skill_record"),
         (ShapeChange::Create, ShapeTarget::Channel { .. }) => match after {
             Some(ShapeRow::Channel {
