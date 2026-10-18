@@ -1,0 +1,9 @@
+{
+  "namespace": [
+    "authority",
+    "handoff"
+  ],
+  "key": "harbour-note",
+  "value": "The harbour lantern is amber.",
+  "requestId": "e2e-authority-08-preserve-note"
+}
