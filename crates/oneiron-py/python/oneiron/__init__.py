@@ -263,7 +263,8 @@ class Oneiron:
         ..., "readReceipt": ...}`` for a deterministic tool. A card the server
         no longer holds raises ``NOT_FOUND``: render the lens again. An
         embedded handle raises ``BAD_REQUEST``: lens frames live on the
-        server that rendered the card.
+        served host that rendered the card, so render the lens through a
+        connected handle and send its events on that same handle.
         """
         return json.loads(
             _translate(lambda: self._client.lens_frame_event(card_id, json.dumps(request)))

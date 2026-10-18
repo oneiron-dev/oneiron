@@ -223,8 +223,9 @@ export class Oneiron {
    * `POST /v1/core/lens-frames/{cardId}/events` under this handle's
    * credential. `request.event.cardId` must name the same card. A card the
    * server no longer holds throws `NOT_FOUND`: render the lens again. An
-   * embedded handle throws `BAD_REQUEST`: lens frames live on the server
-   * that rendered the card.
+   * embedded handle throws `BAD_REQUEST`: lens frames live on the served
+   * host that rendered the card, so render the lens through a connected
+   * handle and send its events on that same handle.
    */
   lensFrameEvent(cardId: string, request: LensFrameEventRequest): LensFrameEventReply {
     return this.#call(() => this.#client.lensFrameEvent(cardId, request) as LensFrameEventReply)

@@ -1275,7 +1275,18 @@ async fn vault_export(
     // or the explicit dev mode exports as the owner it acts as.
     let action = crate::api::host_action::facade_host_action(server, auth)?;
     let proof = auth.verified_slip();
-    if proof.is_none() && action.is_none() {
+    // A managed vault's attested owner (`ManagedOwnerAction`)
+    // presents neither: the request's own owner proof, which the
+    // export revalidates in its snapshot. Never the hosted root.
+    let owner = match (proof, &action) {
+        (None, None) if auth.managed_owner().is_some() => Some(super::host_doors::owner_proof(
+            auth,
+            server,
+            "vault.export",
+        )?),
+        _ => None,
+    };
+    if proof.is_none() && action.is_none() && owner.is_none() {
         return Err(FacadeApiError::forbidden(
             "full-vault export requires verified owner authority",
             ["Present a verified owner credential."],
@@ -1286,12 +1297,14 @@ async fn vault_export(
     // Beside the archive, the rows its snapshot read past the
     // caller's locality: every owner path lists them. A slip keeps
     // its own path; a host action with no slip (the dev mode)
-    // takes the engine's host-action export.
-    let (output, rows) = match (proof, action) {
-        (Some(proof), _) if proof.claims().holder_ref == "host" => server
+    // takes the engine's host-action export; the attested owner
+    // takes the engine's request-proof export, at its own
+    // locality.
+    let (output, rows) = match (proof, action, owner) {
+        (Some(proof), _, _) if proof.claims().holder_ref == "host" => server
             .vault
             .export_with_verified_host_owner_listing(&input, proof, auth.locality())?,
-        (Some(proof), _) => {
+        (Some(proof), _, _) => {
             let (actor, class) = facade_actor(server, auth)?;
             let producers = oneiron::memory::ProducerRows::default();
             let output = server
@@ -1302,12 +1315,17 @@ async fn vault_export(
                 .export_with_verified_owner(&input, proof)?;
             (output, producers.take())
         }
-        (None, Some(action)) => {
+        (None, Some(action), _) => {
             server
                 .vault
                 .export_with_host_action_listing(&input, &action, auth.locality())?
         }
-        (None, None) => {
+        (None, None, Some(owner)) => {
+            server
+                .vault
+                .export_with_authenticated_owner_listing(&input, &owner, auth.locality())?
+        }
+        (None, None, None) => {
             return Err(FacadeApiError::forbidden(
                 "full-vault export requires verified owner authority",
                 ["Present a verified owner credential."],
