@@ -39,6 +39,7 @@ use crate::error::{Error, Result};
 use crate::off_record::OffRecordSession;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
+use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 use crate::{Vault, WriteActor};
