@@ -9334,6 +9334,50 @@ async fn vault_habits_checkin(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_productivity_create(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.productivity.create",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_productivity_tree(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.productivity.tree",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_claims_admit(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12020,6 +12064,8 @@ pub(crate) async fn call_verb(
         "vault.neighbors" => vault_neighbors(server, call, input).await,
         "vault.structural.put" => vault_structural_put(server, call, input).await,
         "vault.habits.checkin" => vault_habits_checkin(server, call, input).await,
+        "vault.productivity.create" => vault_productivity_create(server, call, input).await,
+        "vault.productivity.tree" => vault_productivity_tree(server, call, input).await,
         "vault.claims.admit" => vault_claims_admit(server, call, input).await,
         "vault.artifacts.create" => vault_artifacts_create(server, call, input).await,
         "vault.esign.create" => vault_esign_create(server, call, input).await,

@@ -452,6 +452,8 @@ pub enum AgentVerb {
     VaultNeighbors,
     VaultStructuralPut,
     VaultHabitsCheckin,
+    VaultProductivityCreate,
+    VaultProductivityTree,
     VaultClaimsAdmit,
     VaultArtifactsCreate,
     VaultEsignCreate,
@@ -990,6 +992,8 @@ impl AgentVerb {
         Self::VaultNeighbors,
         Self::VaultStructuralPut,
         Self::VaultHabitsCheckin,
+        Self::VaultProductivityCreate,
+        Self::VaultProductivityTree,
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
         Self::VaultEsignCreate,
@@ -1537,6 +1541,8 @@ impl AgentVerb {
             Self::VaultNeighbors => "vault.neighbors",
             Self::VaultStructuralPut => "vault.structural.put",
             Self::VaultHabitsCheckin => "vault.habits.checkin",
+            Self::VaultProductivityCreate => "vault.productivity.create",
+            Self::VaultProductivityTree => "vault.productivity.tree",
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
             Self::VaultEsignCreate => "vault.esign.create",
@@ -2038,6 +2044,8 @@ impl AgentVerb {
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
+                | Self::VaultProductivityTree
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -2583,6 +2591,8 @@ impl AgentVerb {
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
+                | Self::VaultProductivityTree
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -2767,6 +2777,7 @@ impl AgentVerb {
                 | Self::VaultSearchHybrid
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultProductivityTree
                 | Self::VaultClaimsSeed
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
@@ -3199,6 +3210,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -3555,6 +3567,7 @@ impl AgentVerb {
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -4091,6 +4104,8 @@ impl AgentVerb {
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
+            Self::VaultProductivityCreate => &["spec"],
+            Self::VaultProductivityTree => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -4630,6 +4645,8 @@ impl AgentVerb {
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
+            Self::VaultProductivityCreate => &["spec"],
+            Self::VaultProductivityTree => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -5972,6 +5989,12 @@ impl AgentVerb {
                 "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit."
             }
             Self::VaultHabitsCheckin => "Appends one immutable check-in under a Habit TASK.",
+            Self::VaultProductivityCreate => {
+                "Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."
+            }
+            Self::VaultProductivityTree => {
+                "The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."
+            }
             Self::VaultClaimsAdmit => {
                 "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."
             }

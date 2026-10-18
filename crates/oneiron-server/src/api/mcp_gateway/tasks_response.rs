@@ -1366,6 +1366,8 @@ fn mcp_agent_verb_input(
         "vault.neighbors" => a.spec.clone().ok_or_else(invalid),
         "vault.structural.put" => a.spec.clone().ok_or_else(invalid),
         "vault.habits.checkin" => a.spec.clone().ok_or_else(invalid),
+        "vault.productivity.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.productivity.tree" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.create" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.create" => a.spec.clone().ok_or_else(invalid),
@@ -2774,6 +2776,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.habits.checkin" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.productivity.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.productivity.tree" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.admit" => {
@@ -9294,6 +9302,22 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::HabitCheckinInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_habits_checkin(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.productivity.create" => {
+            let input: oneiron::memory::ProductivityCreateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_productivity_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.productivity.tree" => {
+            let input: oneiron::memory::ProductivityTreeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_productivity_tree(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

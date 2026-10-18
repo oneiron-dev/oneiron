@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 492 facade rows, 1765 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 456.
+// UniFFI census: 494 facade rows, 1772 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 457.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -23222,6 +23222,109 @@ pub struct HybridSearchHit {
 pub struct ScopedReadResultHybridSearchHitList {
     #[serde(rename = "value")]
     pub value: Vec<HybridSearchHit>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::memory::structural::productivity::ProductivityCreateRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ProductivityCreateRole {
+    #[serde(rename = "goal")]
+    Goal,
+    #[serde(rename = "milestone")]
+    Milestone,
+    #[serde(rename = "habit")]
+    Habit,
+}
+
+/// `oneiron::memory::structural::productivity::ProductivityCreateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProductivityCreateRequest {
+    #[serde(rename = "role")]
+    pub role: ProductivityCreateRole,
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(
+        rename = "parent_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_ref: Option<String>,
+}
+
+/// `oneiron::memory::structural::productivity::ProductivityTreeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProductivityTreeRequest {
+    #[serde(rename = "root_ref")]
+    pub root_ref: String,
+    #[serde(rename = "max_depth")]
+    pub max_depth: u32,
+}
+
+/// `oneiron::memory::structural::productivity::ProductivityRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ProductivityRole {
+    #[serde(rename = "task")]
+    Task,
+    #[serde(rename = "goal")]
+    Goal,
+    #[serde(rename = "milestone")]
+    Milestone,
+    #[serde(rename = "habit")]
+    Habit,
+    #[serde(rename = "habit_checkin")]
+    HabitCheckin,
+}
+
+/// `oneiron::memory::structural::productivity::ProductivityNode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProductivityNode {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "id_hex")]
+    pub id_hex: String,
+    #[serde(
+        rename = "parent_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_ref: Option<String>,
+    #[serde(rename = "depth")]
+    pub depth: u32,
+    #[serde(rename = "role")]
+    pub role: ProductivityRole,
+    #[serde(rename = "label", default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(
+        rename = "current_streak",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub current_streak: Option<u32>,
+    #[serde(
+        rename = "longest_streak",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub longest_streak: Option<u32>,
+}
+
+/// `oneiron::memory::structural::productivity::ProductivityTree`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProductivityTree {
+    #[serde(rename = "root_ref")]
+    pub root_ref: String,
+    #[serde(rename = "nodes")]
+    pub nodes: Vec<ProductivityNode>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalProductivityTree`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalProductivityTree {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<ProductivityTree>,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
 }
