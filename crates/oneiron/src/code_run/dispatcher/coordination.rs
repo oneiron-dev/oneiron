@@ -189,6 +189,14 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(self)
     }
 
+    /// This run's actor's turn in the vault's task-work line, held while one
+    /// ask or wait runs.
+    pub(super) fn task_work_turn(&self) -> Result<crate::work_line::TaskWorkTurn> {
+        Ok(self
+            .coordination_vault()?
+            .admit_task_work_blocking(self.actor.entity_ref()))
+    }
+
     fn coordination_vault(&self) -> Result<&Vault> {
         match &self.storage {
             ExecutorStorage::Canonical(vault) => Ok(vault),
