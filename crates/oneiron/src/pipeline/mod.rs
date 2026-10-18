@@ -28,6 +28,8 @@ mod temporal_report;
 pub use temporal_report::TemporalSearchReport;
 mod trace;
 mod types;
+mod vector_refinement;
+pub use vector_refinement::VectorRefinement;
 mod world_authority;
 pub(crate) use world_authority::{WorldGrantIndex, reading_default, resolve_world_authority};
 

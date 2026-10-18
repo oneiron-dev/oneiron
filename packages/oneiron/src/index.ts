@@ -642,8 +642,11 @@ export class Oneiron {
       resolve: (input: Facade.AssetResolveRequest): Facade.ScopedReadResult<Facade.AssetResolved> => this.#call(() => this.#client.vaultAssetsResolve(input) as Facade.ScopedReadResult<Facade.AssetResolved>),
     },
     search: {
-      /** Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt. */
-      vector: (input: Facade.VectorSearchRequest): Facade.ScopedReadResult<Facade.VectorSearchHit[]> => this.#call(() => this.#client.vaultSearchVector(input) as Facade.ScopedReadResult<Facade.VectorSearchHit[]>),
+      /** Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit. */
+      vector: Object.assign((input: Facade.VectorSearchRequest): Facade.ScopedReadResult<Facade.VectorSearchResult> => this.#call(() => this.#client.vaultSearchVector(input) as Facade.ScopedReadResult<Facade.VectorSearchResult>), {
+        /** Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search. */
+        config: (input: Facade.EmptyRequest = {}): Facade.ScopedReadResult<Facade.VectorSearchConfig> => this.#call(() => this.#client.vaultSearchVectorConfig(input) as Facade.ScopedReadResult<Facade.VectorSearchConfig>),
+      }),
       /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
       hybrid: (input: Facade.HybridSearchRequest): Facade.ScopedReadResult<Facade.HybridSearchHit[]> => this.#call(() => this.#client.vaultSearchHybrid(input) as Facade.ScopedReadResult<Facade.HybridSearchHit[]>),
       /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
@@ -1927,6 +1930,40 @@ export class Oneiron {
         append: (input: Facade.DagRecordAppendInput): Facade.DagRecordAppendReceipt => this.#call(() => this.#client.vaultConversationsRecordsAppend(input) as Facade.DagRecordAppendReceipt),
       },
     },
+    models: {
+      catalog: {
+        /** Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding. */
+        refresh: (input: Facade.ModelCatalogRefresh): Facade.ModelCatalogRevision => this.#call(() => this.#client.vaultModelsCatalogRefresh(input) as Facade.ModelCatalogRevision),
+        /** Reads a pinned model catalog revision with its prices, backend offers and score evidence. */
+        get: (input: Facade.ModelCatalogGet): Facade.ModelCatalogRevision => this.#call(() => this.#client.vaultModelsCatalogGet(input) as Facade.ModelCatalogRevision),
+        /** Diffs two immutable model catalog revisions, including prices, scores and retired offers. */
+        diff: (input: Facade.ModelCatalogDiffRequest): Facade.ModelCatalogDiff => this.#call(() => this.#client.vaultModelsCatalogDiff(input) as Facade.ModelCatalogDiff),
+      },
+      trials: {
+        /** Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority. */
+        nominate: (input: Facade.ModelTrialNominate): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsNominate(input) as Facade.ModelTrialView),
+        /** Reads a retained held-out trial, its catalog revision, independent labels and measured cost. */
+        get: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsGet(input) as Facade.ModelTrialView),
+        /** Approves exploration for a held-out model trial only; leaves its role binding unchanged. */
+        approve: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsApprove(input) as Facade.ModelTrialView),
+        /** Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost. */
+        run: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsRun(input) as Facade.ModelTrialView),
+        /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
+        complete: (input: Facade.ModelTrialComplete): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsComplete(input) as Facade.ModelTrialView),
+      },
+      bindings: {
+        /** Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it. */
+        propose: (input: Facade.ModelBindingPropose): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsPropose(input) as Facade.ModelBindingProposal),
+        /** Reads an owner-reviewed model role-binding proposal and its pinned trial evidence. */
+        get: (input: Facade.ModelBindingProposalRef): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsGet(input) as Facade.ModelBindingProposal),
+        /** Reads the currently active manifest binding for a model role. */
+        read: (input: Facade.ModelBindingRead): Facade.ModelBinding => this.#call(() => this.#client.vaultModelsBindingsRead(input) as Facade.ModelBinding),
+        /** Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks. */
+        accept: (input: Facade.ModelBindingAccept): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsAccept(input) as Facade.ModelBindingProposal),
+        /** Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding. */
+        deny: (input: Facade.ModelBindingProposalRef): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsDeny(input) as Facade.ModelBindingProposal),
+      },
+    },
     voices: {
       packs: {
         /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
@@ -2059,6 +2096,10 @@ export class Oneiron {
       /** A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
       links: (input: Facade.RecordLinksRequest): Facade.RecordLinks => this.#call(() => this.#client.vaultRefsLinks(input) as Facade.RecordLinks),
     },
+    vectors: {
+      /** Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically. */
+      put: (input: Facade.VectorPutRequest): Facade.VectorPutReceipt => this.#call(() => this.#client.vaultVectorsPut(input) as Facade.VectorPutReceipt),
+    },
     /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
     neighbors: (input: Facade.NeighborsRequest): Facade.ScopedReadResult<Facade.NeighborHit[]> => this.#call(() => this.#client.vaultNeighbors(input) as Facade.ScopedReadResult<Facade.NeighborHit[]>),
     structural: {
@@ -2090,6 +2131,20 @@ export class Oneiron {
       remind: (input: Facade.EsignDispatchRequest): Facade.EsignDispatchView => this.#call(() => this.#client.vaultEsignRemind(input) as Facade.EsignDispatchView),
       /** Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller. */
       void: (input: Facade.EsignVoidRequest): Facade.EsignDispatchView => this.#call(() => this.#client.vaultEsignVoid(input) as Facade.EsignDispatchView),
+      signing: {
+        /** One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act. */
+        act: (input: Facade.EsignSigningRequest): Facade.SigningOutcome => this.#call(() => this.#client.vaultEsignSigningAct(input) as Facade.SigningOutcome),
+        /** One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing. */
+        pdf: (input: Facade.EsignSigningPdfRequest): Facade.EsignSigningPdfView => this.#call(() => this.#client.vaultEsignSigningPdf(input) as Facade.EsignSigningPdfView),
+        /** Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names. */
+        image: (input: Facade.EsignSigningImageRequest): Facade.EsignSigningImageView => this.#call(() => this.#client.vaultEsignSigningImage(input) as Facade.EsignSigningImageView),
+        /** Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes. */
+        signature: (input: Facade.EsignSigningSignatureRequest): Facade.EsignSigningSignatureView => this.#call(() => this.#client.vaultEsignSigningSignature(input) as Facade.EsignSigningSignatureView),
+      },
+      seal: {
+        /** Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it. */
+        get: (input: Facade.EsignSealGetRequest): Facade.EsignSealView => this.#call(() => this.#client.vaultEsignSealGet(input) as Facade.EsignSealView),
+      },
     },
     /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
     batch: (input: Facade.CoreBatchWriteInput): Facade.CoreBatchWriteReceipt => this.#call(() => this.#client.vaultBatch(input) as Facade.CoreBatchWriteReceipt),
@@ -2316,6 +2371,8 @@ export class Oneiron {
   }
   readonly self = {
     focus: {
+      /** Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery. */
+      wakes: (input: Facade.LiveRunRequest<Facade.BoardWakeRequest>): Facade.BoardWakeReply => this.#call(() => this.#client.selfFocusWakes(input) as Facade.BoardWakeReply),
       scratchpad: {
         /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
         recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
@@ -2324,6 +2381,12 @@ export class Oneiron {
         /** Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad. */
         seal: (input: Facade.ScratchpadSealRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadSeal(input) as Facade.ScratchpadWriteReply),
       },
+      /** Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw. */
+      refresh: (input: Facade.LiveRunRequest<Facade.BoardRefreshRequest>): Facade.BoardFrameReply => this.#call(() => this.#client.selfFocusRefresh(input) as Facade.BoardFrameReply),
+      /** Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling. */
+      subscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusSubscribe(input) as Facade.BoardSubscriptionReply),
+      /** Unsubscribes the attached run's board STREAM connection from the named scopes. */
+      unsubscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusUnsubscribe(input) as Facade.BoardSubscriptionReply),
     },
     memory: {
       /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
@@ -2591,6 +2654,28 @@ export class Oneiron {
       /** Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work. */
       hit: (input: Facade.HostBudgetHitRequest): Facade.HostBudgetHitResult => this.#call(() => this.#client.hostBudgetHit(input) as Facade.HostBudgetHitResult),
     },
+  }
+  /** Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash. */
+  mount(input: Facade.GraphFsMountRequest): Facade.GraphFsMounted { return this.#call(() => this.#client.mount(input) as Facade.GraphFsMounted) }
+  readonly graph_fs = {
+    /** List one directory at the mounted reference under the caller read gate, with a sealed continuation. */
+    readdir: (input: Facade.GraphFsPathRequest): Facade.GraphFsDirectoryView => this.#call(() => this.#client.graphFsReaddir(input) as Facade.GraphFsDirectoryView),
+    /** Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation. */
+    read_file: (input: Facade.GraphFsPathRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsReadFile(input) as Facade.GraphFsOutput),
+    /** Resolve a visible graph link at the mounted reference without following a host filesystem link. */
+    read_link: (input: Facade.GraphFsLinkRequest): Facade.GraphFsLinkView => this.#call(() => this.#client.graphFsReadLink(input) as Facade.GraphFsLinkView),
+    /** List names at the mounted reference, using the live temporal index when requested. */
+    ls: (input: Facade.GraphFsLsRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsLs(input) as Facade.GraphFsOutput),
+    /** Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index. */
+    find: (input: Facade.GraphFsFindRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsFind(input) as Facade.GraphFsOutput),
+    /** Search visible mounted file bytes, using the live claim text index for supported recursive patterns. */
+    grep: (input: Facade.GraphFsGrepRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsGrep(input) as Facade.GraphFsOutput),
+    /** Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference. */
+    cat: (input: Facade.GraphFsPathRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsCat(input) as Facade.GraphFsOutput),
+    /** Read the first requested lines at the mounted reference with bounded output and a sealed continuation. */
+    head: (input: Facade.GraphFsHeadRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsHead(input) as Facade.GraphFsOutput),
+    /** Count lines, words and bytes of a visible file at the mounted reference. */
+    wc: (input: Facade.GraphFsLinkRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsWc(input) as Facade.GraphFsOutput),
   }
   /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
   execute_code(input: Facade.ForeignCodeRunRequest): Facade.ForeignCodeRunResult { return this.#call(() => this.#client.executeCode(input) as Facade.ForeignCodeRunResult) }

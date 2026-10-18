@@ -73,6 +73,7 @@ mod expression_preference;
 pub mod extraction;
 pub mod foreign_code;
 pub mod hook_regen_doors;
+pub mod graph_fs_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;
@@ -192,7 +193,6 @@ pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
     PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
 };
-pub use search_vector::{VectorSearchHit, VectorSearchRequest};
 pub use signal_extraction::{
     ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
     SignalExtractionResult, SignalExtractionResultRequest, SignalExtractionSource,
@@ -240,6 +240,10 @@ pub use search_hybrid::{
 };
 pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,
+};
+pub use search_vector::{
+    VectorPutReceipt, VectorPutRequest, VectorSearchConfig, VectorSearchHit,
+    VectorSearchLane, VectorSearchRequest, VectorSearchResult,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};

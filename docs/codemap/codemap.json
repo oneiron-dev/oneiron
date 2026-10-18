@@ -6034,13 +6034,25 @@
       "EsignIssuedLink",
       "EsignLinksIssueRequest",
       "EsignLinksView",
+      "EsignSealAttemptView",
+      "EsignSealGetRequest",
+      "EsignSealView",
+      "EsignSealedItemView",
+      "EsignSealedView",
+      "EsignSigningImageRequest",
+      "EsignSigningImageView",
+      "EsignSigningPdfRequest",
+      "EsignSigningPdfView",
+      "EsignSigningRequest",
+      "EsignSigningSignatureRequest",
+      "EsignSigningSignatureView",
       "EsignVoidRequest"
      ],
      "path": "src/blob_artifact/esign/door.rs",
      "purpose": "The e-sign doors outside Rust (ARCH-0064 D3, D5, SGN-02)",
      "surface": {
-      "fn": 6,
-      "struct": 10
+      "fn": 11,
+      "struct": 22
      }
     },
     {
@@ -11330,7 +11342,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -27106,7 +27118,7 @@
      "path": "src/graph_fs/mod.rs",
      "purpose": "Graph-FS read projection over the vault graph",
      "surface": {
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -27156,6 +27168,30 @@
       "crate-vis": 10,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graph_fs/scoped_files.rs",
+     "purpose": "The same credential-gated file projection for point reads and indexed hydration",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphFsReference"
+     ],
+     "path": "src/graph_fs/snapshot.rs",
+     "purpose": "Historical file resolution over retained codebase snapshots",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -30272,6 +30308,68 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/llm/catalog_doors/bindings.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/catalog_doors/mod.rs",
+     "purpose": "Catalog refresh is evidence, never permission to route",
+     "surface": {
+      "fn": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/catalog_doors/trials.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelBindingAccept",
+      "ModelBindingProposal",
+      "ModelBindingProposalRef",
+      "ModelBindingPropose",
+      "ModelBindingRead",
+      "ModelBindingStatus",
+      "ModelCatalogChange",
+      "ModelCatalogDiff",
+      "ModelCatalogDiffRequest",
+      "ModelCatalogGet",
+      "ModelCatalogRefresh",
+      "ModelCatalogRevision",
+      "ModelTrialComplete",
+      "ModelTrialEvidence",
+      "ModelTrialNominate",
+      "ModelTrialRef",
+      "ModelTrialView"
+     ],
+     "path": "src/llm/catalog_doors/types.rs",
+     "purpose": "Typed catalog evidence, held-out trials and owner-reviewed role bindings",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AnswerActor"
      ],
@@ -30551,7 +30649,7 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 6,
       "struct": 7,
@@ -30588,7 +30686,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 9,
       "re-export": 12
      }
     },
@@ -30599,6 +30697,7 @@
      "path": "src/llm/decision/questions/outcomes.rs",
      "purpose": "Idempotent outcome projection over durable facts and immutable question versions",
      "surface": {
+      "crate-vis": 1,
       "fn": 4
      }
     },
@@ -30661,7 +30760,7 @@
      "path": "src/llm/decision/questions/refresh.rs",
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 8,
       "struct": 2
      }
@@ -30703,7 +30802,7 @@
      "path": "src/llm/decision/questions/store.rs",
      "purpose": "Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 5
      }
     },
@@ -30989,7 +31088,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 9,
-      "mod": 9,
+      "mod": 10,
       "re-export": 14
      }
     },
@@ -31000,6 +31099,7 @@
      "path": "src/llm/model_trials.rs",
      "purpose": "Per-question held-out trials nominated by external benchmark scores",
      "surface": {
+      "crate-vis": 7,
       "fn": 9,
       "re-export": 1
      }
@@ -31058,7 +31158,7 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 16,
       "re-export": 2,
@@ -33025,6 +33125,44 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/graph_fs_doors/mod.rs",
+     "purpose": "Typed read-only file-face verbs",
+     "surface": {
+      "fn": 10,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphFsDirectoryView",
+      "GraphFsEncoding",
+      "GraphFsEntryView",
+      "GraphFsFindRequest",
+      "GraphFsGrepRequest",
+      "GraphFsHeadRequest",
+      "GraphFsKind",
+      "GraphFsLinkRequest",
+      "GraphFsLinkView",
+      "GraphFsLsRequest",
+      "GraphFsMountRequest",
+      "GraphFsMounted",
+      "GraphFsOutput",
+      "GraphFsPathRequest",
+      "GraphFsPlan"
+     ],
+     "path": "src/memory/graph_fs_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 3,
+      "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/hook_regen_doors/mod.rs",
      "purpose": "Typed hook regeneration doors (DOOR-077): `vault.hooks.regen.due` lists the vault's own hook bindings whose…",
      "surface": {
@@ -33201,14 +33339,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 22,
+      "mod": 23,
       "re-export": 50
      }
     },
@@ -33783,14 +33921,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "VectorPutReceipt",
+      "VectorPutRequest",
+      "VectorSearchConfig",
       "VectorSearchHit",
-      "VectorSearchRequest"
+      "VectorSearchLane",
+      "VectorSearchRequest",
+      "VectorSearchResult"
      ],
      "path": "src/memory/search_vector.rs",
-     "purpose": "Typed vector search in the caller's ordinary credential-bound lane",
+     "purpose": "Typed vector search, MRL refinement evidence and full-row uploads in scoped lanes",
      "surface": {
-      "fn": 2,
-      "struct": 2
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
      }
     },
     {
@@ -38102,7 +38246,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -38395,6 +38539,19 @@
       "fn": 15,
       "re-export": 1,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VectorRefinement"
+     ],
+     "path": "src/pipeline/vector_refinement.rs",
+     "purpose": "The dimensional space the existing HNSW funnel actually scores in",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -49660,7 +49817,7 @@
      "path": "src/sync/machine_history.rs",
      "purpose": "Machine-claim history this machine is owed (FIX 3820, FIX 4293)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -52232,8 +52389,12 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "BoardFrameReply",
       "BoardRefreshRequest",
+      "BoardSubscriptionReply",
       "BoardSubscriptionRequest",
+      "BoardWakeReply",
+      "BoardWakeRequest",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
       "DescribeRequest",
@@ -52276,7 +52437,7 @@
       "enum": 1,
       "fn": 13,
       "re-export": 63,
-      "struct": 36
+      "struct": 40
      }
     },
     {
@@ -52712,7 +52873,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 939
+      "fn": 971
      }
     },
     {
@@ -59510,7 +59671,7 @@
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)"
     },
     "graph_fs": {
-     "files": 12,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59671,7 +59832,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 104,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59692,7 +59853,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 209,
+     "files": 211,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59804,7 +59965,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 63,
+     "files": 64,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60373,7 +60534,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3683,
+   "source_files": 3692,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68964,7 +69125,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 908
+      "fn": 942
      }
     },
     {
@@ -70027,7 +70188,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 909
+      "fn": 943
      }
     },
     {
@@ -72900,7 +73061,7 @@
      "path": "src/api/esign/presentation.rs",
      "purpose": "Stateless field editor and capability-scoped ceremony presentation adapters",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -73011,6 +73172,16 @@
      "purpose": "Owner-authenticated signed authority history transfer",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/board_stream_doors.rs",
+     "purpose": "Public run-bound board STREAM doors: `self.focus.refresh`, `self.focus.subscribe`, `self.focus.unsubscribe`…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -73530,7 +73701,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 150
+      "crate-vis": 153
      }
     },
     {
@@ -73641,6 +73812,16 @@
      "purpose": "Credential-bound host projections of the typed speculative merge queue doors (DOOR-132)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/model_catalog_doors.rs",
+     "purpose": "The model catalog is evidence",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -74037,6 +74218,16 @@
      "notable": [],
      "path": "src/api/facade/vault_shape_doors.rs",
      "purpose": "`vault.shape.apply` (ARCH-0070) as a host door: the gated landing of a shape plan",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/vector_doors.rs",
+     "purpose": "Full-row vector uploads under the caller's own owner proof and write gate",
      "surface": {
       "crate-vis": 1
      }
@@ -74701,6 +74892,16 @@
      "purpose": "Security-scheme wiring and schema property-description helper",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/signing_paths.rs",
+     "purpose": "The public signing ceremony routes (`/sign/*`, DOOR-117): their request and answer schemas are the verb…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -76072,7 +76273,7 @@
      "path": "src/big_rung.rs",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -76255,7 +76456,7 @@
      "surface": {
       "enum": 11,
       "fn": 3,
-      "re-export": 10,
+      "re-export": 11,
       "struct": 23
      }
     },
@@ -76269,6 +76470,19 @@
      "purpose": "Host-only deployment commands; neither opens a local vault",
      "surface": {
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphFsCommand"
+     ],
+     "path": "src/cli/graph_fs_args.rs",
+     "purpose": "Named CLI bindings for the typed file-face rows, using the same paired credential and transport as `oneiron…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
      }
     },
     {
@@ -77571,7 +77785,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 25,
       "struct": 1
      }
@@ -81490,7 +81704,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 414,
+     "files": 418,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81546,7 +81760,7 @@
      "purpose": "Campaign enrollment from saved queries (ARCH-0059, decide-host 1193)"
     },
     "cli": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -81919,7 +82133,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 764,
+   "source_files": 769,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82333,6 +82547,13 @@
       "BlockChange",
       "BlockedCategory",
       "BlockedReportView",
+      "BoardFrameReply",
+      "BoardRefreshRequest",
+      "BoardStreamFrame",
+      "BoardSubscriptionReply",
+      "BoardSubscriptionRequest",
+      "BoardWakeReply",
+      "BoardWakeRequest",
       "BodyBlockKind",
       "BodyCell",
       "BodyConflict",
@@ -82496,6 +82717,7 @@
       "Care",
       "CareLevel",
       "CaseDecision",
+      "CatalogSeed",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -83020,6 +83242,7 @@
       "DeliveryWindowRule",
       "DeliveryWindowTimeWindow",
       "DeliveryWindowVerbClass",
+      "DeltaRow",
       "DenyConsentRequest",
       "DerivationEnvelopeView",
       "DerivationKind",
@@ -83107,6 +83330,18 @@
       "EsignLinksView",
       "EsignNoticeSwitches",
       "EsignRecipient",
+      "EsignSealAttemptView",
+      "EsignSealGetRequest",
+      "EsignSealView",
+      "EsignSealedItemView",
+      "EsignSealedView",
+      "EsignSigningImageRequest",
+      "EsignSigningImageView",
+      "EsignSigningPdfRequest",
+      "EsignSigningPdfView",
+      "EsignSigningRequest",
+      "EsignSigningSignatureRequest",
+      "EsignSigningSignatureView",
       "EsignVoidRequest",
       "EstimateLabels",
       "EstimateWindow",
@@ -83202,8 +83437,10 @@
       "FeedbackSubjectPreview",
       "FeedbackSubjectSent",
       "FetchResult",
+      "FieldControl",
       "FieldGeometry",
       "FieldMeta",
+      "FieldPresentation",
       "FieldValue",
       "FindInput",
       "FindOutput",
@@ -83245,6 +83482,8 @@
       "ForkRecord",
       "ForkState",
       "ForkStatus",
+      "FrameKind",
+      "FrozenTrialCase",
       "GateCheckerReceipt",
       "GateCheckerSet",
       "GateCheckerView",
@@ -83307,6 +83546,22 @@
       "GraphAskRequest",
       "GraphAskSelection",
       "GraphEdge",
+      "GraphFsDirectoryView",
+      "GraphFsEncoding",
+      "GraphFsEntryView",
+      "GraphFsFindRequest",
+      "GraphFsGrepRequest",
+      "GraphFsHeadRequest",
+      "GraphFsKind",
+      "GraphFsLinkRequest",
+      "GraphFsLinkView",
+      "GraphFsLsRequest",
+      "GraphFsMountRequest",
+      "GraphFsMounted",
+      "GraphFsOutput",
+      "GraphFsPathRequest",
+      "GraphFsPlan",
+      "GraphFsReference",
       "GraphNode",
       "GroundingContext",
       "GuestCopyState",
@@ -83331,6 +83586,7 @@
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
+      "HeldOutSelection",
       "HolderKind",
       "HookActorClass",
       "HookAuthor",
@@ -83622,6 +83878,9 @@
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestBatchInput",
+      "LiveRunRequestBoardRefreshRequest",
+      "LiveRunRequestBoardSubscriptionRequest",
+      "LiveRunRequestBoardWakeRequest",
       "LiveRunRequestClickInput",
       "LiveRunRequestCropInput",
       "LiveRunRequestExpectInput",
@@ -83668,6 +83927,8 @@
       "LiveVoiceUsage",
       "LiveVoiceUsageRequest",
       "LlmCapability",
+      "LlmCatalogCost",
+      "LlmCatalogEntry",
       "LlmError",
       "LlmInputUsage",
       "LlmMessage",
@@ -83751,7 +84012,25 @@
       "MetricSet",
       "MintConnectGrant",
       "ModeGateInputs",
+      "ModelBackendPin",
+      "ModelBinding",
+      "ModelBindingAccept",
+      "ModelBindingProposal",
+      "ModelBindingProposalRef",
+      "ModelBindingPropose",
+      "ModelBindingRead",
+      "ModelBindingStatus",
+      "ModelCatalogChange",
+      "ModelCatalogDiff",
+      "ModelCatalogDiffRequest",
+      "ModelCatalogGet",
+      "ModelCatalogRefresh",
+      "ModelCatalogRevision",
+      "ModelDisposition",
       "ModelLocality",
+      "ModelRegistryRow",
+      "ModelRole",
+      "ModelScoreDiff",
       "ModelSlot",
       "ModelStepCheckpoint",
       "ModelStepFailure",
@@ -83761,6 +84040,16 @@
       "ModelStepResult",
       "ModelStepRetryPolicy",
       "ModelStepSubmit",
+      "ModelTrialAction",
+      "ModelTrialComplete",
+      "ModelTrialEvidence",
+      "ModelTrialNominate",
+      "ModelTrialPolicy",
+      "ModelTrialReceipt",
+      "ModelTrialRef",
+      "ModelTrialRequest",
+      "ModelTrialView",
+      "ModelWireFormat",
       "MutationIntent",
       "NarrowConnect",
       "NativeOutputRequest",
@@ -83990,6 +84279,7 @@
       "PackSetupView",
       "PackTextFile",
       "PairedInterval",
+      "PairedQualityInterval",
       "PairedReading",
       "Paragraph",
       "PartialResultHold",
@@ -84074,6 +84364,7 @@
       "PrepSection",
       "PrepSectionKind",
       "Preset",
+      "PricedModelBackend",
       "PriorOrigin",
       "PriorRung",
       "PriorSeed",
@@ -84516,7 +84807,10 @@
       "ScopedReadResultOptionalSummaryReadView",
       "ScopedReadResultRecordRefPreview",
       "ScopedReadResultTemporalSearchResult",
-      "ScopedReadResultVectorSearchHitList",
+      "ScopedReadResultVectorSearchConfig",
+      "ScopedReadResultVectorSearchResult",
+      "ScoreObservation",
+      "ScoreSnapshot",
       "ScoredEntityResolutionCandidate",
       "ScratchpadAppendRequest",
       "ScratchpadRecallMark",
@@ -84698,6 +84992,9 @@
       "SignalExtractionTicket",
       "SignatureRow",
       "SignedAuthorityHistory",
+      "SigningAction",
+      "SigningOutcome",
+      "SigningPage",
       "SigningStatus",
       "SkillAuthoringReceipt",
       "SkillCallInput",
@@ -84855,6 +85152,7 @@
       "StreamFinalityReason",
       "StreamSyncVisibility",
       "SubgoalStatus",
+      "SubscriptionScope",
       "SufficiencyCard",
       "SufficiencyInput",
       "SufficiencyVerdict",
@@ -84980,6 +85278,7 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TeacherProbeApproval",
       "TeamAxis",
       "TeamBindingView",
       "TeamPlan",
@@ -85017,6 +85316,10 @@
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
       "TravelChoice",
+      "TrialAdmission",
+      "TrialAssessment",
+      "TrialQuality",
+      "TrialSetPin",
       "TrustedContact",
       "TrustedContactAcceptance",
       "TrustedContactAnswer",
@@ -85061,8 +85364,14 @@
       "UsedProvenanceEdge",
       "VadAnnotationSource",
       "VadBadge",
+      "VectorPutReceipt",
+      "VectorPutRequest",
+      "VectorRefinement",
+      "VectorSearchConfig",
       "VectorSearchHit",
+      "VectorSearchLane",
       "VectorSearchRequest",
+      "VectorSearchResult",
       "VerdictBinding",
       "VerdictMode",
       "ViewInput",
@@ -85094,6 +85403,7 @@
       "WaitForOutput",
       "WakeCadenceReceipt",
       "WakeCadenceView",
+      "WakeEnvelope",
       "WakeIdleState",
       "WakePolicyDecision",
       "WakePolicySetRequest",
@@ -85210,8 +85520,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 762,
-      "struct": 2331
+      "enum": 779,
+      "struct": 2410
      }
     },
     {
