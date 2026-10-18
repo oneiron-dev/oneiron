@@ -6647,6 +6647,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_sieve_evidence(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.evidence")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.evidence", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_evidence_replay(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.evidence.replay")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.evidence.replay", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_cadence(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.cadence")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.cadence", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_settlements(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.settlements")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.settlements", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_settlements_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.settlements.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.settlements.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_sieve_queue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.sieve.queue")?;
         let output = py
@@ -7353,6 +7388,93 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.revert_run")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.revert_run", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_merge(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.merge")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.identity.merge", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_split(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.split")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.identity.split", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_facet(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.facet")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.identity.facet", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_assert_distinct(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.assert_distinct")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.identity.assert_distinct", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.identity.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_undo(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.undo")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.identity.undo", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_resolve(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.resolve")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.identity.resolve", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_events_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.events.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.identity.events.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_proposals_resolve(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.proposals.resolve")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.identity.proposals.resolve", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_proposals_for_pair(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.proposals.for_pair")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.identity.proposals.for_pair", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

@@ -802,6 +802,8 @@ class Oneiron:
     def close_lens_frame(self, card_id: str) -> CloseLensFrameReply:
         """Closes a lens card the connected server rendered and frees its frame."""
 # BEGIN GENERATED FACADE VERBS
+    @property
+    def vault(self) -> "Oneiron._VaultVerbs": ...
     def fetch(self, spec: Facade.WebFetchRequest) -> Facade.FetchResult:
         """Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links."""
     def crawl(self, spec: Facade.WebCrawlRequest) -> Facade.CrawlResult:
@@ -810,8 +812,6 @@ class Oneiron:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
     @property
     def feedback(self) -> "Oneiron._FeedbackVerbs": ...
-    @property
-    def vault(self) -> "Oneiron._VaultVerbs": ...
     @property
     def self(self) -> "Oneiron._SelfVerbs": ...
     def cancel(self, task_ref: str) -> TaskCancelReceipt: ...
@@ -840,12 +840,9 @@ class Oneiron:
     def connector(self) -> "Oneiron._ConnectorVerbs": ...
     @property
     def calendar(self) -> "Oneiron._CalendarVerbs": ...
-    class _FeedbackVerbs:
-        def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
-            """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
-        def send(self, spec: Facade.FeedbackSendSubjectRequest) -> Facade.FeedbackSubjectSent:
-            """The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate."""
     class _VaultVerbs:
+        @property
+        def commitments(self) -> "Oneiron._VaultCommitmentsVerbs": ...
         @property
         def reports(self) -> "Oneiron._VaultReportsVerbs": ...
         @property
@@ -1056,6 +1053,23 @@ class Oneiron:
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
         def revert_run(self, spec: Facade.RevertRunRequest) -> Facade.RevertRunOutcome:
             """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
+        @property
+        def identity(self) -> "Oneiron._VaultIdentityVerbs": ...
+    class _VaultCommitmentsVerbs:
+        def create(self, spec: Facade.CommitmentCreateRequest) -> Facade.CommitmentCreateReceipt:
+            """Creates an authored commitment series and its due index atomically, without approving a reminder."""
+        def get(self, spec: Facade.CommitmentRefRequest) -> Facade.CommitmentView:
+            """Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."""
+        def instances(self, spec: Facade.CommitmentRefRequest) -> list[Facade.CommitmentView]:
+            """Lists the materialized occurrences of a commitment series, including closed obligations."""
+        def proposals(self, spec: Facade.CommitmentRefRequest) -> list[Facade.CommitmentWakeProposal]:
+            """Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery."""
+        def fulfill(self, spec: Facade.CommitmentFulfillRequest) -> Facade.CommitmentView:
+            """Explicitly confirms an obligation fulfilled with witness evidence through the existing fulfillment dispatcher."""
+        def release(self, spec: Facade.CommitmentCloseRequest) -> Facade.CommitmentView:
+            """Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction."""
+        def supersede(self, spec: Facade.CommitmentCloseRequest) -> Facade.CommitmentView:
+            """Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction."""
     class _VaultReportsVerbs:
         def disclosure(self, spec: Facade.ReportDisclosureRequest) -> Facade.ReportIssue:
             """The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."""
@@ -2712,6 +2726,12 @@ class Oneiron:
         def evidence(self, spec: Facade.ConsolidationEvidenceRequest) -> Facade.ScopedReadResult[list[Facade.ConsolidationEvidenceSource]]:
             """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
     class _VaultSieveVerbs:
+        @property
+        def evidence(self) -> "Oneiron._VaultSieveEvidenceVerbs": ...
+        def cadence(self, spec: Facade.WakeCadenceRequest) -> Facade.WakeCadenceView:
+            """Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model."""
+        @property
+        def settlements(self) -> "Oneiron._VaultSieveSettlementsVerbs": ...
         def queue(self, spec: Facade.SievePageRequest) -> Facade.SieveQueuePage:
             """The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed."""
         def retained(self, spec: Facade.SievePageRequest) -> Facade.SieveRetainedPage:
@@ -2724,6 +2744,16 @@ class Oneiron:
         def recipe_policy(self) -> "Oneiron._VaultSieveRecipePolicyVerbs": ...
         @property
         def lease(self) -> "Oneiron._VaultSieveLeaseVerbs": ...
+    class _VaultSieveEvidenceVerbs:
+        def __call__(self, spec: Facade.SieveEvidenceRequest) -> Facade.SieveEvidenceView:
+            """Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner."""
+        def replay(self, spec: Facade.SieveEvidenceRequest) -> Facade.SieveEvidenceView:
+            """Replay the same stored TURN through its owed sieve read under the owner proof; preserve every ingress identity and let the existing digest check decide whether evidence changed."""
+    class _VaultSieveSettlementsVerbs:
+        def __call__(self, spec: Facade.WakeSettlementsRequest) -> Facade.WakeSettlementsPage:
+            """Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks."""
+        def get(self, spec: Facade.WakeSettlementRequest) -> Facade.WakeSettlementView | None:
+            """Read one shared-scheduler root and its complete descendant settlement; a completed dispatcher never implies its children completed."""
     class _VaultSievePolicyVerbs:
         def __call__(self, spec: Facade.SievePolicyRequest) -> Facade.SievePolicy:
             """The owner reads the sieve policy row: how much one pass reads, each kind interest, rule confidences and the uncertain band."""
@@ -2874,6 +2904,38 @@ class Oneiron:
             """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
         def close(self, spec: Facade.NoteEditorCloseRequest) -> Facade.NoteEditorClosed:
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
+    class _VaultIdentityVerbs:
+        def merge(self, spec: Facade.IdentityMergeRequest) -> Facade.IdentityTopologyResult:
+            """The owner merges source identities into a survivor, retaining claim subjects and append-only evidence."""
+        def split(self, spec: Facade.IdentitySplitRequest) -> Facade.IdentityTopologyResult:
+            """The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map."""
+        def facet(self, spec: Facade.IdentityFacetRequest) -> Facade.IdentityTopologyResult:
+            """The owner mints identity facets and forks assigned claims under their masks without restamping original claims."""
+        def assert_distinct(self, spec: Facade.IdentityAssertDistinctRequest) -> Facade.IdentityTopologyResult:
+            """The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."""
+        def propose(self, spec: Facade.IdentityProposeRequest) -> Facade.IdentityTopologyResult:
+            """The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."""
+        def undo(self, spec: Facade.IdentityUndoRequest) -> Facade.IdentityTopologyResult:
+            """The owner undoes one current topology event by appending a counter-event under its observed revision."""
+        def resolve(self, spec: Facade.IdentityEntityRequest) -> Facade.IdentityResolution:
+            """The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments."""
+        @property
+        def events(self) -> "Oneiron._VaultIdentityEventsVerbs": ...
+        @property
+        def proposals(self) -> "Oneiron._VaultIdentityProposalsVerbs": ...
+    class _VaultIdentityEventsVerbs:
+        def get(self, spec: Facade.IdentityEventRequest) -> Facade.IdentityTopologyReceipt:
+            """The owner reads one topology decision with its actor, evidence, action and current decision revision."""
+    class _VaultIdentityProposalsVerbs:
+        def resolve(self, spec: Facade.IdentityProposalResolveRequest) -> Facade.IdentityProposalResolutionResult:
+            """The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision."""
+        def for_pair(self, spec: Facade.IdentityPairRequest) -> Facade.IdentityPairProposals:
+            """The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."""
+    class _FeedbackVerbs:
+        def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
+            """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
+        def send(self, spec: Facade.FeedbackSendSubjectRequest) -> Facade.FeedbackSubjectSent:
+            """The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate."""
     class _SelfVerbs:
         @property
         def focus(self) -> "Oneiron._SelfFocusVerbs": ...

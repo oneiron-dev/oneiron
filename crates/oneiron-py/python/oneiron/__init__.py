@@ -692,6 +692,9 @@ class Oneiron:
         def revert_run(self, spec):
             """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
             return json.loads(_translate(lambda: self._client.vault_revert_run(json.dumps(spec))))
+        @property
+        def identity(self) -> "Oneiron._VaultIdentityVerbs":
+            return Oneiron._VaultIdentityVerbs(self._client)
     class _VaultCommitmentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3584,6 +3587,15 @@ class Oneiron:
     class _VaultSieveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def evidence(self) -> "Oneiron._VaultSieveEvidenceVerbs":
+            return Oneiron._VaultSieveEvidenceVerbs(self._client)
+        def cadence(self, spec):
+            """Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_cadence(json.dumps(spec))))
+        @property
+        def settlements(self) -> "Oneiron._VaultSieveSettlementsVerbs":
+            return Oneiron._VaultSieveSettlementsVerbs(self._client)
         def queue(self, spec):
             """The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed."""
             return json.loads(_translate(lambda: self._client.vault_sieve_queue(json.dumps(spec))))
@@ -3602,6 +3614,24 @@ class Oneiron:
         @property
         def lease(self) -> "Oneiron._VaultSieveLeaseVerbs":
             return Oneiron._VaultSieveLeaseVerbs(self._client)
+    class _VaultSieveEvidenceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_evidence(json.dumps(spec))))
+        def replay(self, spec):
+            """Replay the same stored TURN through its owed sieve read under the owner proof; preserve every ingress identity and let the existing digest check decide whether evidence changed."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_evidence_replay(json.dumps(spec))))
+    class _VaultSieveSettlementsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_settlements(json.dumps(spec))))
+        def get(self, spec):
+            """Read one shared-scheduler root and its complete descendant settlement; a completed dispatcher never implies its children completed."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_settlements_get(json.dumps(spec))))
     class _VaultSievePolicyVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3857,6 +3887,51 @@ class Oneiron:
         def close(self, spec):
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
             return json.loads(_translate(lambda: self._client.vault_notes_editor_close(json.dumps(spec))))
+    class _VaultIdentityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def merge(self, spec):
+            """The owner merges source identities into a survivor, retaining claim subjects and append-only evidence."""
+            return json.loads(_translate(lambda: self._client.vault_identity_merge(json.dumps(spec))))
+        def split(self, spec):
+            """The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map."""
+            return json.loads(_translate(lambda: self._client.vault_identity_split(json.dumps(spec))))
+        def facet(self, spec):
+            """The owner mints identity facets and forks assigned claims under their masks without restamping original claims."""
+            return json.loads(_translate(lambda: self._client.vault_identity_facet(json.dumps(spec))))
+        def assert_distinct(self, spec):
+            """The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."""
+            return json.loads(_translate(lambda: self._client.vault_identity_assert_distinct(json.dumps(spec))))
+        def propose(self, spec):
+            """The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."""
+            return json.loads(_translate(lambda: self._client.vault_identity_propose(json.dumps(spec))))
+        def undo(self, spec):
+            """The owner undoes one current topology event by appending a counter-event under its observed revision."""
+            return json.loads(_translate(lambda: self._client.vault_identity_undo(json.dumps(spec))))
+        def resolve(self, spec):
+            """The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments."""
+            return json.loads(_translate(lambda: self._client.vault_identity_resolve(json.dumps(spec))))
+        @property
+        def events(self) -> "Oneiron._VaultIdentityEventsVerbs":
+            return Oneiron._VaultIdentityEventsVerbs(self._client)
+        @property
+        def proposals(self) -> "Oneiron._VaultIdentityProposalsVerbs":
+            return Oneiron._VaultIdentityProposalsVerbs(self._client)
+    class _VaultIdentityEventsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads one topology decision with its actor, evidence, action and current decision revision."""
+            return json.loads(_translate(lambda: self._client.vault_identity_events_get(json.dumps(spec))))
+    class _VaultIdentityProposalsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def resolve(self, spec):
+            """The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision."""
+            return json.loads(_translate(lambda: self._client.vault_identity_proposals_resolve(json.dumps(spec))))
+        def for_pair(self, spec):
+            """The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."""
+            return json.loads(_translate(lambda: self._client.vault_identity_proposals_for_pair(json.dumps(spec))))
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

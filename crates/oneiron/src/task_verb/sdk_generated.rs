@@ -4122,6 +4122,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.sieve.evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.evidence.replay",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.cadence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::WakeCadenceRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.settlements",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::observation::WakeSettlementsRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.settlements.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::observation::WakeSettlementRequest,
+                >(),
+            ),
+            (
                 "vault.sieve.queue",
                 crate::code_run::vault_read::request_schema::<
                     crate::dreamer_wake::sieve_doors::SievePageRequest,
@@ -4540,6 +4570,66 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.identity.merge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::IdentityMergeRequest,
+                >(),
+            ),
+            (
+                "vault.identity.split",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::IdentitySplitRequest,
+                >(),
+            ),
+            (
+                "vault.identity.facet",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::IdentityFacetRequest,
+                >(),
+            ),
+            (
+                "vault.identity.assert_distinct",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::IdentityAssertDistinctRequest,
+                >(),
+            ),
+            (
+                "vault.identity.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::IdentityProposeRequest,
+                >(),
+            ),
+            (
+                "vault.identity.undo",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::IdentityUndoRequest,
+                >(),
+            ),
+            (
+                "vault.identity.resolve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::IdentityEntityRequest,
+                >(),
+            ),
+            (
+                "vault.identity.events.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::IdentityEventRequest,
+                >(),
+            ),
+            (
+                "vault.identity.proposals.resolve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::IdentityProposalResolveRequest,
+                >(),
+            ),
+            (
+                "vault.identity.proposals.for_pair",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::IdentityPairRequest,
+                >(),
+            ),
+            (
                 "self.browser.open",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserOpenInput>,
@@ -4764,6 +4854,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.edges.put",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
+            ),
+            (
+                "tasks.consult.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_doors::ConsultLandRequest,
+                >(),
             ),
             (
                 "self.leader.advice",
@@ -5224,6 +5320,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.runs.step",
     "vault.runs.checkpoint",
     "vault.consolidation.promote",
+    "vault.sieve.evidence",
+    "vault.sieve.evidence.replay",
+    "vault.sieve.cadence",
+    "vault.sieve.settlements",
+    "vault.sieve.settlements.get",
     "vault.sieve.queue",
     "vault.sieve.retained",
     "vault.sieve.receipts",
@@ -5293,6 +5394,16 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.runs.settle",
     "vault.runs.settlement",
     "vault.revert_run",
+    "vault.identity.merge",
+    "vault.identity.split",
+    "vault.identity.facet",
+    "vault.identity.assert_distinct",
+    "vault.identity.propose",
+    "vault.identity.undo",
+    "vault.identity.resolve",
+    "vault.identity.events.get",
+    "vault.identity.proposals.resolve",
+    "vault.identity.proposals.for_pair",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -6588,6 +6699,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
         >(),
+        "vault.sieve.evidence" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_evidence::SieveEvidenceView,
+        >(),
+        "vault.sieve.evidence.replay" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_evidence::SieveEvidenceView,
+        >(),
+        "vault.sieve.cadence" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::WakeCadenceView>()
+        }
+        "vault.sieve.settlements" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::observation::WakeSettlementsPage,
+        >(),
+        "vault.sieve.settlements.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::observation::WakeSettlementView>,
+        >(),
         "vault.sieve.queue" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_wake::sieve_doors::SieveQueuePage,
         >(),
@@ -6798,6 +6924,36 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.revert_run" => crate::code_run::vault_read::request_schema::<
             crate::memory::run_review::RevertRunOutcome,
+        >(),
+        "vault.identity.merge" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::IdentityTopologyResult,
+        >(),
+        "vault.identity.split" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::IdentityTopologyResult,
+        >(),
+        "vault.identity.facet" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::IdentityTopologyResult,
+        >(),
+        "vault.identity.assert_distinct" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::IdentityTopologyResult,
+        >(),
+        "vault.identity.propose" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::IdentityTopologyResult,
+        >(),
+        "vault.identity.undo" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::IdentityTopologyResult,
+        >(),
+        "vault.identity.resolve" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::IdentityResolution,
+        >(),
+        "vault.identity.events.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::IdentityTopologyReceipt,
+        >(),
+        "vault.identity.proposals.resolve" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::IdentityProposalResolutionResult,
+        >(),
+        "vault.identity.proposals.for_pair" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::IdentityPairProposals,
         >(),
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
@@ -12143,6 +12299,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.sieve.evidence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.evidence.replay" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.cadence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.settlements" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.settlements.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.sieve.queue" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12683,6 +12874,76 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.revert_run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.merge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.split" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.facet" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.assert_distinct" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.undo" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.events.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.proposals.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.proposals.for_pair" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -15451,6 +15712,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::consolidation::ConsolidationEvidenceRequest =
                 decode(value.clone())?;
         }
+        "vault.sieve.evidence" => {
+            let _input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.evidence.replay" => {
+            let _input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.cadence" => {
+            let _input: crate::dreamer_wake::WakeCadenceRequest = decode(value.clone())?;
+        }
+        "vault.sieve.settlements" => {
+            let _input: crate::dreamer_runner::observation::WakeSettlementsRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.settlements.get" => {
+            let _input: crate::dreamer_runner::observation::WakeSettlementRequest =
+                decode(value.clone())?;
+        }
         "vault.sieve.queue" => {
             let _input: crate::dreamer_wake::sieve_doors::SievePageRequest = decode(value.clone())?;
         }
@@ -15707,6 +15987,38 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.revert_run" => {
             let _input: crate::memory::run_review::RevertRunRequest = decode(value.clone())?;
+        }
+        "vault.identity.merge" => {
+            let _input: crate::task_verb::sdk::IdentityMergeRequest = decode(value.clone())?;
+        }
+        "vault.identity.split" => {
+            let _input: crate::task_verb::sdk::IdentitySplitRequest = decode(value.clone())?;
+        }
+        "vault.identity.facet" => {
+            let _input: crate::task_verb::sdk::IdentityFacetRequest = decode(value.clone())?;
+        }
+        "vault.identity.assert_distinct" => {
+            let _input: crate::task_verb::sdk::IdentityAssertDistinctRequest =
+                decode(value.clone())?;
+        }
+        "vault.identity.propose" => {
+            let _input: crate::task_verb::sdk::IdentityProposeRequest = decode(value.clone())?;
+        }
+        "vault.identity.undo" => {
+            let _input: crate::task_verb::sdk::IdentityUndoRequest = decode(value.clone())?;
+        }
+        "vault.identity.resolve" => {
+            let _input: crate::task_verb::sdk::IdentityEntityRequest = decode(value.clone())?;
+        }
+        "vault.identity.events.get" => {
+            let _input: crate::task_verb::sdk::IdentityEventRequest = decode(value.clone())?;
+        }
+        "vault.identity.proposals.resolve" => {
+            let _input: crate::task_verb::sdk::IdentityProposalResolveRequest =
+                decode(value.clone())?;
+        }
+        "vault.identity.proposals.for_pair" => {
+            let _input: crate::task_verb::sdk::IdentityPairRequest = decode(value.clone())?;
         }
         "self.browser.open" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
@@ -17287,6 +17599,15 @@ pub fn invoke(
         "vault.consolidation.evidence" => {
             encode(vault_consolidation_evidence(memory, decode(value)?)?)
         }
+        "vault.sieve.evidence" => encode(vault_sieve_evidence(memory, decode(value)?)?),
+        "vault.sieve.evidence.replay" => {
+            encode(vault_sieve_evidence_replay(memory, decode(value)?)?)
+        }
+        "vault.sieve.cadence" => encode(vault_sieve_cadence(memory, decode(value)?)?),
+        "vault.sieve.settlements" => encode(vault_sieve_settlements(memory, decode(value)?)?),
+        "vault.sieve.settlements.get" => {
+            encode(vault_sieve_settlements_get(memory, decode(value)?)?)
+        }
         "vault.sieve.queue" => encode(vault_sieve_queue(memory, decode(value)?)?),
         "vault.sieve.retained" => encode(vault_sieve_retained(memory, decode(value)?)?),
         "vault.sieve.receipts" => encode(vault_sieve_receipts(memory, decode(value)?)?),
@@ -17435,6 +17756,22 @@ pub fn invoke(
         "vault.runs.settle" => encode(vault_runs_settle(memory, decode(value)?)?),
         "vault.runs.settlement" => encode(vault_runs_settlement(memory, decode(value)?)?),
         "vault.revert_run" => encode(vault_revert_run(memory, decode(value)?)?),
+        "vault.identity.merge" => encode(vault_identity_merge(memory, decode(value)?)?),
+        "vault.identity.split" => encode(vault_identity_split(memory, decode(value)?)?),
+        "vault.identity.facet" => encode(vault_identity_facet(memory, decode(value)?)?),
+        "vault.identity.assert_distinct" => {
+            encode(vault_identity_assert_distinct(memory, decode(value)?)?)
+        }
+        "vault.identity.propose" => encode(vault_identity_propose(memory, decode(value)?)?),
+        "vault.identity.undo" => encode(vault_identity_undo(memory, decode(value)?)?),
+        "vault.identity.resolve" => encode(vault_identity_resolve(memory, decode(value)?)?),
+        "vault.identity.events.get" => encode(vault_identity_events_get(memory, decode(value)?)?),
+        "vault.identity.proposals.resolve" => {
+            encode(vault_identity_proposals_resolve(memory, decode(value)?)?)
+        }
+        "vault.identity.proposals.for_pair" => {
+            encode(vault_identity_proposals_for_pair(memory, decode(value)?)?)
+        }
         "self.browser.open" => encode(self_browser_open(memory, decode(value)?)?),
         "self.browser.observe" => encode(self_browser_observe(memory, decode(value)?)?),
         "self.browser.find" => encode(self_browser_find(memory, decode(value)?)?),
@@ -23994,6 +24331,61 @@ pub fn vault_consolidation_evidence(
         &input,
     )
 }
+pub fn vault_sieve_evidence(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_evidence::SieveEvidenceView> {
+    crate::dreamer_wake::sieve_evidence::evidence_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.evidence")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_evidence_replay(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_evidence::SieveEvidenceView> {
+    crate::dreamer_wake::sieve_evidence::replay_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.evidence.replay")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_cadence(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::WakeCadenceRequest,
+) -> MemoryResult<crate::dreamer_wake::WakeCadenceView> {
+    crate::dreamer_wake::cadence_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.cadence")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_settlements(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::observation::WakeSettlementsRequest,
+) -> MemoryResult<crate::dreamer_runner::observation::WakeSettlementsPage> {
+    crate::dreamer_runner::observation::settlements_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.settlements")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_settlements_get(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::observation::WakeSettlementRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::observation::WakeSettlementView>> {
+    crate::dreamer_runner::observation::settlement_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.settlements.get")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_sieve_queue(
     memory: &Memory<'_>,
     input: crate::dreamer_wake::sieve_doors::SievePageRequest,
@@ -24673,6 +25065,66 @@ pub fn vault_revert_run(
     input: crate::memory::run_review::RevertRunRequest,
 ) -> MemoryResult<crate::memory::run_review::RevertRunOutcome> {
     memory.revert_run_as_owner(&memory.embedded_owner("vault.revert_run")?, &input)
+}
+pub fn vault_identity_merge(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::IdentityMergeRequest,
+) -> MemoryResult<crate::task_verb::sdk::IdentityTopologyResult> {
+    crate::task_verb::sdk::host_only(memory, "vault.identity.merge", &input)
+}
+pub fn vault_identity_split(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::IdentitySplitRequest,
+) -> MemoryResult<crate::task_verb::sdk::IdentityTopologyResult> {
+    crate::task_verb::sdk::host_only(memory, "vault.identity.split", &input)
+}
+pub fn vault_identity_facet(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::IdentityFacetRequest,
+) -> MemoryResult<crate::task_verb::sdk::IdentityTopologyResult> {
+    crate::task_verb::sdk::host_only(memory, "vault.identity.facet", &input)
+}
+pub fn vault_identity_assert_distinct(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::IdentityAssertDistinctRequest,
+) -> MemoryResult<crate::task_verb::sdk::IdentityTopologyResult> {
+    crate::task_verb::sdk::host_only(memory, "vault.identity.assert_distinct", &input)
+}
+pub fn vault_identity_propose(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::IdentityProposeRequest,
+) -> MemoryResult<crate::task_verb::sdk::IdentityTopologyResult> {
+    crate::task_verb::sdk::host_only(memory, "vault.identity.propose", &input)
+}
+pub fn vault_identity_undo(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::IdentityUndoRequest,
+) -> MemoryResult<crate::task_verb::sdk::IdentityTopologyResult> {
+    crate::task_verb::sdk::host_only(memory, "vault.identity.undo", &input)
+}
+pub fn vault_identity_resolve(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::IdentityEntityRequest,
+) -> MemoryResult<crate::task_verb::sdk::IdentityResolution> {
+    crate::task_verb::sdk::host_only(memory, "vault.identity.resolve", &input)
+}
+pub fn vault_identity_events_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::IdentityEventRequest,
+) -> MemoryResult<crate::task_verb::sdk::IdentityTopologyReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.identity.events.get", &input)
+}
+pub fn vault_identity_proposals_resolve(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::IdentityProposalResolveRequest,
+) -> MemoryResult<crate::task_verb::sdk::IdentityProposalResolutionResult> {
+    crate::task_verb::sdk::host_only(memory, "vault.identity.proposals.resolve", &input)
+}
+pub fn vault_identity_proposals_for_pair(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::IdentityPairRequest,
+) -> MemoryResult<crate::task_verb::sdk::IdentityPairProposals> {
+    crate::task_verb::sdk::host_only(memory, "vault.identity.proposals.for_pair", &input)
 }
 pub fn self_browser_open(
     memory: &Memory<'_>,
