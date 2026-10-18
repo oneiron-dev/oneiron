@@ -5,6 +5,11 @@
 //! mutation it is asked to send first passes the vault's ExternalEffect Gate
 //! for both the verified TASK writer and the configured scheduler actor. A raw
 //! issue-list poll cannot supply exact event IDs.
+//!
+//! Beside the scheduled pass, the host serves the signed Linear webhook
+//! (`webhook`, OF-427): its tracker mapping is the direct config's tracker
+//! part in direct mode, else the file `ONEIRON_LINEAR_WEBHOOK_CONFIG` names,
+//! read and checked at startup.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -22,8 +27,78 @@ use serde_json::{Value, json};
 
 use crate::server::SyncServer;
 use oneiron::linear_sync::VaultLinearTaskStore;
+use oneiron_linear::LinearTrackerConfig;
 
 mod direct;
+mod webhook;
+
+pub(crate) use webhook::routes as webhook_routes;
+
+/// Names the JSON file of the webhook's tracker mapping in bridge mode.
+const LINEAR_WEBHOOK_CONFIG_ENV: &str = "ONEIRON_LINEAR_WEBHOOK_CONFIG";
+
+/// A webhook reads no tracker page; this only meets the shared mapping's
+/// own check.
+const WEBHOOK_PAGE_SIZE: u32 = 1;
+
+/// The webhook's tracker mapping in bridge mode.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WebhookConfig {
+    team_id: String,
+    status_ids: BTreeMap<String, String>,
+    assignee_ids: BTreeMap<String, String>,
+}
+
+/// The tracker mapping the Linear webhook applies under (OF-427 C11): the
+/// direct config's tracker part in direct mode, else the file
+/// `ONEIRON_LINEAR_WEBHOOK_CONFIG` names, each checked as the poller checks
+/// its own; `None` when the host configures neither, and the webhook answers
+/// `linear_webhook_not_configured`.
+pub(crate) fn webhook_tracker() -> anyhow::Result<Option<LinearTrackerConfig>> {
+    let webhook = std::env::var_os(LINEAR_WEBHOOK_CONFIG_ENV);
+    if let Some(direct) = std::env::var_os("ONEIRON_LINEAR_CONFIG") {
+        anyhow::ensure!(
+            webhook.is_none(),
+            "a direct Linear mirror maps its webhook in ONEIRON_LINEAR_CONFIG, not {LINEAR_WEBHOOK_CONFIG_ENV}"
+        );
+        return direct::tracker_at(std::path::Path::new(&direct)).map(Some);
+    }
+    let Some(path) = webhook else {
+        return Ok(None);
+    };
+    let config: WebhookConfig = serde_json::from_slice(&std::fs::read(path)?)?;
+    let tracker = LinearTrackerConfig {
+        team_id: config.team_id,
+        status_ids: config.status_ids,
+        assignee_ids: config.assignee_ids,
+        page_size: WEBHOOK_PAGE_SIZE,
+    };
+    tracker.validate()?;
+    Ok(Some(tracker))
+}
+
+/// A host-configured Linear URL, the bridge base or the direct GraphQL
+/// endpoint: HTTPS, or HTTP on a loopback host only, with no embedded
+/// credentials, query or fragment.
+fn check_host_url(url: &reqwest::Url, what: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        url.scheme() == "https"
+            || (url.scheme() == "http"
+                && url.host_str().is_some_and(|host| host == "localhost"
+                    || host == "127.0.0.1"
+                    || host == "[::1]")),
+        "{what} must use HTTPS or local loopback"
+    );
+    anyhow::ensure!(
+        url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "{what} URL must not embed credentials or parameters"
+    );
+    Ok(())
+}
 
 #[derive(Clone)]
 struct LinearBridge {
@@ -50,21 +125,7 @@ impl LinearBridge {
         let mut base = reqwest::Url::parse(&base)?;
         let normalized_path = format!("{}/", base.path().trim_end_matches('/'));
         base.set_path(&normalized_path);
-        anyhow::ensure!(
-            base.scheme() == "https"
-                || (base.scheme() == "http"
-                    && base.host_str().is_some_and(|host| host == "localhost"
-                        || host == "127.0.0.1"
-                        || host == "[::1]")),
-            "Linear bridge must use HTTPS or local loopback"
-        );
-        anyhow::ensure!(
-            base.username().is_empty()
-                && base.password().is_none()
-                && base.query().is_none()
-                && base.fragment().is_none(),
-            "Linear bridge URL must not embed credentials or parameters"
-        );
+        check_host_url(&base, "Linear bridge")?;
         let credential = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
         let client = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -256,6 +317,8 @@ async fn build_bridge(
 pub(crate) async fn spawn(
     server: Arc<SyncServer>,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
+    // An unreadable or invalid webhook mapping fails startup (OF-427 C11).
+    crate::logging::off_runtime("Linear webhook mapping", webhook_tracker).await??;
     let api_key = std::env::var("ONEIRON_LINEAR_API_KEY").ok();
     let direct_config = std::env::var_os("ONEIRON_LINEAR_CONFIG");
     if api_key.is_some() || direct_config.is_some() {

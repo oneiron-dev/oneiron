@@ -52,6 +52,7 @@ mod guest_doors;
 pub(super) mod host_doors;
 mod hub_doors;
 mod legal_hold_doors;
+mod linear_doors;
 mod live_run_doors;
 mod note_doors;
 mod origin_doors;

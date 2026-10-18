@@ -1069,6 +1069,8 @@ class Oneiron:
         def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs": ...
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
+        @property
+        def tasks(self) -> "Oneiron._VaultTasksVerbs": ...
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
             """One page of the people the caller reads, in handle order."""
@@ -1877,6 +1879,19 @@ class Oneiron:
             """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
         def close(self, spec: Facade.NoteEditorCloseRequest) -> Facade.NoteEditorClosed:
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
+    class _VaultTasksVerbs:
+        @property
+        def linear(self) -> "Oneiron._VaultTasksLinearVerbs": ...
+    class _VaultTasksLinearVerbs:
+        @property
+        def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs": ...
+        def provenance(self, spec: Facade.LinearProvenanceRequest) -> Facade.LinearProvenancePage:
+            """One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."""
+    class _VaultTasksLinearMappingVerbs:
+        def __call__(self, spec: Facade.LinearMappingRequest) -> Facade.LinearMappingView:
+            """One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."""
+        def edit(self, spec: Facade.LinearMappingEdit) -> Facade.LinearMappingEditReceipt:
+            """Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."""
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""

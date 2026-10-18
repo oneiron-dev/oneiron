@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 463 code-mode rows (442 host rows, 21 run rows), 1662 declarations.
-// Replies: 407 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 466 code-mode rows (445 host rows, 21 run rows), 1675 declarations.
+// Replies: 410 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -285,7 +285,7 @@ declare namespace Sdk {
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
   type FanoutCheckChoice = "ack" | "ack_and_remember";
   type FanoutAckRequest = { launch_ref: EntityId; plan_digest: string; answer: FanoutCheckChoice; remembered_cap?: number | null };
-  type TaskReportBody = "ack" | { progress: { evidence_refs?: EntityId[]; renew_lease?: boolean } } | { blocked: { on?: TaskHandle[]; note?: string | null; ask?: TaskAskSpec | null } } | { done: { result_ref: EntityId; confession?: string | null } } | { failed: { error: string; retryable: boolean; result_ref?: EntityId | null } } | { release: { reason: string } } | { brief: QueueTaskBrief };
+  type TaskReportBody = "ack" | { progress: { evidence_refs?: EntityId[]; renew_lease?: boolean } } | { blocked: { on?: TaskHandle[]; note?: string | null; ask?: TaskAskSpec | null } } | { done: { result_ref: EntityId; confession?: string | null } } | { failed: { error: string; retryable: boolean; result_ref?: EntityId | null } } | { release: { reason: string } } | { brief: QueueTaskBrief } | { edit: { expected_revision: number; title: string } };
   type TaskUpdateRequest = { task_ref: string; resultRef?: string | null; report?: TaskReportBody | null; report_key?: string | null; attempt?: AttemptHandle | null };
   type TaskUpdateReceipt = { task_ref: EntityId; acked: boolean; report?: TaskCallReceipt | null };
   type ReaderReportReceipt = { task: EntityId; ref: string; replay: boolean };
@@ -1606,6 +1606,19 @@ declare namespace Sdk {
   type SetNoteOverridesRequest = { note_ref: string; overrides?: NoteOverrides };
   type NoteKindDescriptor = { pack: string; kind: string; extraction: ExtractionDefault; context: ContextDefault; retention: RetentionDefault; archive_after_days?: number | null };
   type NoteDefaultsView = { overrides: NoteOverrides; defaults: NoteKindDescriptor };
+  type LinearMappingRequest = { task_ref: string };
+  type LinearIssueRef = { issue_id: string; team_id: string; identifier: string };
+  type LinearFieldConflict = { field: string; task_value?: string | null; issue_value?: string | null };
+  type LinearLinkView = { issue: LinearIssueRef; link_revision: number; task_revision: number; issue_updated_at_ms: number; unresolved_conflicts: LinearFieldConflict[] };
+  type LinearMappingView = { task_ref: string; task_revision: number; link?: LinearLinkView | null; opted_out: boolean; mapping_revision: number; dirty_revision?: number | null; newest_event_refs: string[] };
+  type LinearMappingOp = { kind: "link"; issue_id: string; identifier: string } | { kind: "unlink" } | { kind: "mirror" };
+  type LinearMappingEdit = { task_ref: string; expected_mapping_revision: number; intent_key: string; op: LinearMappingOp };
+  type LinearMappingEditReceipt = { task_ref: string; op: string; mapping_revision: number; opted_out: boolean; issue?: LinearIssueRef | null; event_ref: string; replayed: boolean; at: number };
+  type LinearProvenanceRequest = { task_ref: string; cursor?: string | null; limit?: number | null };
+  type LinearExternalActor = { id: string; kind: string; name?: string | null };
+  type LinearMirrorEvent = { direction: string; task_ref?: string | null; issue?: LinearIssueRef | null; delivery_id?: string | null; operation_id?: string | null; body_digest?: string | null; payload_ref?: string | null; external_actor?: LinearExternalActor | null; webhook_id?: string | null; organization_id?: string | null; webhook_timestamp_ms?: number | null; changed_fields: string[]; status: string; conflicts: LinearFieldConflict[]; writer_actor?: string | null; writer_class?: string | null; gate_ref?: string | null; receipt?: string | null; at: number };
+  type LinearProvenanceEntry = { event_ref: string; event: LinearMirrorEvent };
+  type LinearProvenancePage = { task_ref: string; events: LinearProvenanceEntry[]; next_cursor?: string | null };
   type RunAttachRequest = { run: string; rebind?: boolean };
   type RunAttached = { live_run: string };
   type FoldUnfoldRequest = { live_run: string; fold: string };
@@ -2771,6 +2784,17 @@ declare const vault: Sdk.VaultHost & {
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
     put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
+  };
+  tasks: {
+    linear: {
+      /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
+      mapping: ((input: Sdk.LinearMappingRequest) => Promise<Sdk.LinearMappingView | StoredResult>) & {
+        /** Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key. */
+        edit(input: Sdk.LinearMappingEdit): Promise<Sdk.LinearMappingEditReceipt | StoredResult>;
+      };
+      /** One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts. */
+      provenance(input: Sdk.LinearProvenanceRequest): Promise<Sdk.LinearProvenancePage | StoredResult>;
+    };
   };
   weave: {
     /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
