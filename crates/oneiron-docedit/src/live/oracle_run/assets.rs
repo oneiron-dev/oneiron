@@ -1,0 +1,86 @@
+//! The runner's one picture asset, generated rather than shipped.
+
+use super::record::{Res, text};
+use crate::design_plan::MediaType;
+use crate::edit::transaction::StepAssetKind;
+use crate::edit::{AssetRef, Assets, Digest};
+use crate::graphic::{AssetRecord, Origin};
+use std::io::Write as _;
+
+const PICTURE_ARTIFACT: &str = "deck-oracle-picture";
+const PICTURE_TEXT: &str = "Deck oracle picture";
+/// The side of the generated picture, in pixels.
+const PICTURE_SIDE: u32 = 8;
+
+/// The runner's one picture asset: a small generated PNG.
+pub(super) struct OracleAssets {
+    bytes: Vec<u8>,
+    record: AssetRecord,
+}
+
+impl OracleAssets {
+    pub(super) fn new() -> Res<Self> {
+        let bytes = png()?;
+        let record = AssetRecord {
+            artifact: PICTURE_ARTIFACT.to_owned(),
+            version: 1,
+            content_hash: Digest::of(&bytes).0,
+            media: MediaType::Png,
+            origin: Origin::Held,
+            provenance: Vec::new(),
+            rights: Vec::new(),
+            description: PICTURE_TEXT.to_owned(),
+        };
+        Ok(Self { bytes, record })
+    }
+
+    pub(super) fn image(&self) -> AssetRef {
+        AssetRef {
+            artifact: PICTURE_ARTIFACT.to_owned(),
+            version: 1,
+            hash: Digest::of(&self.bytes),
+            kind: StepAssetKind::Illustration,
+            description: PICTURE_TEXT.to_owned(),
+        }
+    }
+}
+
+impl Assets for OracleAssets {
+    fn resolve(&self, asset: &AssetRef) -> Option<(AssetRecord, Vec<u8>)> {
+        (asset.artifact == PICTURE_ARTIFACT && asset.hash == Digest::of(&self.bytes))
+            .then(|| (self.record.clone(), self.bytes.clone()))
+    }
+}
+
+/// An 8 by 8 RGB gradient as a PNG: signature, IHDR, one zlib IDAT, IEND.
+fn png() -> Res<Vec<u8>> {
+    let mut raw = Vec::new();
+    for y in 0..PICTURE_SIDE {
+        raw.push(0);
+        for x in 0..PICTURE_SIDE {
+            raw.extend_from_slice(&[(x * 32) as u8, (y * 32) as u8, 176]);
+        }
+    }
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(&raw).map_err(text)?;
+    let data = encoder.finish().map_err(text)?;
+    let mut header = Vec::new();
+    header.extend_from_slice(&PICTURE_SIDE.to_be_bytes());
+    header.extend_from_slice(&PICTURE_SIDE.to_be_bytes());
+    header.extend_from_slice(&[8, 2, 0, 0, 0]);
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    chunk(&mut out, b"IHDR", &header);
+    chunk(&mut out, b"IDAT", &data);
+    chunk(&mut out, b"IEND", &[]);
+    Ok(out)
+}
+
+fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+    out.extend_from_slice(&u32::try_from(data.len()).unwrap_or(u32::MAX).to_be_bytes());
+    out.extend_from_slice(kind);
+    out.extend_from_slice(data);
+    let mut crc = crc32fast::Hasher::new();
+    crc.update(kind);
+    crc.update(data);
+    out.extend_from_slice(&crc.finalize().to_be_bytes());
+}

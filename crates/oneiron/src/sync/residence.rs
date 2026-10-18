@@ -20,6 +20,7 @@ pub use authority_tail::{
     authority_tail_for, authority_wanted, held_authority_entries, held_authority_history,
     import_authority_page,
 };
+pub(crate) use bundle::holds_sealed_bundle;
 pub use bundle::{
     SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry,
     SealedBundleKitRoot, SealedBundleObject, SealedBundleStage, commit_sealed_bundle,
@@ -117,8 +118,8 @@ pub fn with_forwarded_search<R>(
     })
 }
 
-/// The canonical window that holds one entity: a CLAIM that names a world
-/// lives in that world's month partition, every other row in the base month.
+/// The canonical window that holds one entity: a CLAIM or key pad that names a
+/// world lives in that world's month partition, every other row in the base month.
 /// A malformed carrier stays in the base partition, as window admission keeps it.
 pub fn residence_window_for_blob(raw: &[u8]) -> Result<WindowKey> {
     let header =

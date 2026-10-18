@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 379 code-mode rows (359 host rows, 20 run rows), 1380 declarations.
-// Replies: 326 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 381 code-mode rows (361 host rows, 20 run rows), 1388 declarations.
+// Replies: 328 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -122,7 +122,7 @@ declare namespace Sdk {
   type ShapePlanRequest = { seed?: ShapeSeed | null; preset?: ShapePresetPick | null };
   type ShapePlanSummary = { changes: number; needs_word: number; ceremonies: number; no_door: number };
   type ShapeReachVerdict = "can" | "asks";
-  type ShapeReachFact = { actor: string; actor_name?: string | null; verb: string; channel: string; sender: string; identity: string; class?: string | null; audience?: string[]; verdict: ShapeReachVerdict };
+  type ShapeReachFact = { actor: string; actor_name?: string | null; verb: string; channel: string; sender: string; identity: string; class?: string | null; audience?: string[]; audience_names?: string[]; verdict: ShapeReachVerdict };
   type ShapeReach = { facts: ShapeReachFact[] };
   type ShapePlanReach = { before: ShapeReach; after: ShapeReach; unresolved: string[]; line: string };
   type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary; reach?: ShapePlanReach };
@@ -493,7 +493,8 @@ declare namespace Sdk {
   type GuestCopyState = "unknown";
   type GuestDeletionRequestStatus = "not_requested" | "queued" | "sent";
   type GuestRevokeDisclosure = { copied_bytes_recallable: NotRecallable; recipient_copy_state: GuestCopyState; deletion_request_status: GuestDeletionRequestStatus };
-  type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure };
+  type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number };
+  type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] };
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
   type ResidenceModeName = "opened" | "all";
@@ -1339,6 +1340,13 @@ declare namespace Sdk {
   type NoteSeal = { note: string; document: string; frontier: number[]; sealed_by: string; sealed_at: number };
   type NoteLifecycleStatus = "active" | "sealed" | "archived" | "tombstoned";
   type NoteLifecycleView = { status: NoteLifecycleStatus; seal?: NoteSeal | null };
+  type ExtractionDefault = "allowed" | "after_seal" | "private_strategy_only" | "disabled";
+  type ContextDefault = "owner_only" | "relationship_scoped" | "vault_readable" | "explicit_only";
+  type RetentionDefault = "durable" | "session_sealed" | "archive_after_days";
+  type NoteOverrides = { extraction?: ExtractionDefault | null; context?: ContextDefault | null; retention?: RetentionDefault | null; archive_after_days?: number | null };
+  type SetNoteOverridesRequest = { note_ref: string; overrides?: NoteOverrides };
+  type NoteKindDescriptor = { pack: string; kind: string; extraction: ExtractionDefault; context: ContextDefault; retention: RetentionDefault; archive_after_days?: number | null };
+  type NoteDefaultsView = { overrides: NoteOverrides; defaults: NoteKindDescriptor };
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
   type MemorySearchOutput = { results: MemorySearchHit[] };
@@ -2017,6 +2025,8 @@ declare const vault: Sdk.VaultHost & {
   notes: {
     /** Creates a NOTE of a registered kind, its first authored text as its birth. */
     create(input: Sdk.CreateNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
+    /** One NOTE's overrides and the extraction, context and retention defaults its gates read after them. */
+    defaults(input: Sdk.NoteRefRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
     /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
     edit(input: Sdk.EditNoteRequest): Promise<Sdk.NoteEditOutcome | StoredResult>;
     /** Creates a NOTE of a registered kind from an existing entity. */
@@ -2025,6 +2035,8 @@ declare const vault: Sdk.VaultHost & {
     lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.NoteLifecycleView | StoredResult>;
     /** Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays. */
     seal(input: Sdk.NoteRefRequest): Promise<Sdk.NoteSeal | StoredResult>;
+    /** Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check. */
+    set_overrides(input: Sdk.SetNoteOverridesRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
   };
   packs: {
     /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
