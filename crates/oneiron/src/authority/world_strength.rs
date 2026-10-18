@@ -305,7 +305,9 @@ pub(super) fn apply_world_privacy(
     let marks = standing.live_signing_chains(edit.machine, signer);
     let narrow_only = !standing.admits_owner_act_signer(edit.machine, &key, StandingView::Install);
     drop(standing);
-    if !admitted {
+    // An owner the edit's parents hold removed carries no say-so (mesh
+    // contract §4): valid, without effect.
+    if !admitted || !super::owner_act::owner_live_at(state, edit.act.owner) {
         state.refused_world_edits.insert(hash);
         return Ok(());
     }

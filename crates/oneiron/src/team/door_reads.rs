@@ -28,11 +28,12 @@ use super::doors::{
     BorrowedCellView, CriticAssociation, CriticObservation, LaunchedMember, LearningCellView,
     LearningEvidenceView, LearningObservation, ObservationIssue, PlanObservation,
     PlannedSpawnObservation, ProviderPinView, ResolvedTeam, RouteObservation, SkillRevisionView,
-    SpawnPhase, TeamBindingView, TeamReceiptView, TypeStamp,
+    TeamBindingView, TeamReceiptView, TypeStamp,
 };
 use super::pattern::{PAYOFF_AXIS, pattern_cell};
 use super::receipt::{PatternSkillRef, TeamReceipt, team_receipt_in_txn};
 use super::run_binding::{TeamRunBinding, team_starts_in_txn};
+use super::spawn_intent::SpawnPhase;
 
 /// One team start as read: what [`resolve_team`] holds against the plan.
 struct TeamRead<'a> {

@@ -31,6 +31,8 @@ pub enum AgentVerb {
     Describe,
     TasksCreate,
     TasksWave,
+    VaultFanoutSpawn,
+    VaultFanoutSlots,
     VaultFanoutLaunch,
     SelfBudget,
     SelfBudgetLand,
@@ -443,6 +445,10 @@ pub enum AgentVerb {
     AiStepsReceipt,
     AiReply,
     VaultReceiptsContext,
+    AiVoiceAsrOpen,
+    AiVoiceAsrHypothesis,
+    AiVoiceAsrFinalize,
+    AiVoiceAsrClose,
     AiVoiceStart,
     AiVoiceAudio,
     AiVoiceEvents,
@@ -695,6 +701,8 @@ impl AgentVerb {
         Self::Describe,
         Self::TasksCreate,
         Self::TasksWave,
+        Self::VaultFanoutSpawn,
+        Self::VaultFanoutSlots,
         Self::VaultFanoutLaunch,
         Self::SelfBudget,
         Self::SelfBudgetLand,
@@ -1107,6 +1115,10 @@ impl AgentVerb {
         Self::AiStepsReceipt,
         Self::AiReply,
         Self::VaultReceiptsContext,
+        Self::AiVoiceAsrOpen,
+        Self::AiVoiceAsrHypothesis,
+        Self::AiVoiceAsrFinalize,
+        Self::AiVoiceAsrClose,
         Self::AiVoiceStart,
         Self::AiVoiceAudio,
         Self::AiVoiceEvents,
@@ -1362,6 +1374,8 @@ impl AgentVerb {
             Self::Describe => "describe",
             Self::TasksCreate => "tasks.create",
             Self::TasksWave => "tasks.wave",
+            Self::VaultFanoutSpawn => "vault.fanout.spawn",
+            Self::VaultFanoutSlots => "vault.fanout.slots",
             Self::VaultFanoutLaunch => "vault.fanout.launch",
             Self::SelfBudget => "self.budget",
             Self::SelfBudgetLand => "self.budget.land",
@@ -1786,6 +1800,10 @@ impl AgentVerb {
             Self::AiStepsReceipt => "ai.steps.receipt",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
+            Self::AiVoiceAsrOpen => "ai.voice.asr.open",
+            Self::AiVoiceAsrHypothesis => "ai.voice.asr.hypothesis",
+            Self::AiVoiceAsrFinalize => "ai.voice.asr.finalize",
+            Self::AiVoiceAsrClose => "ai.voice.asr.close",
             Self::AiVoiceStart => "ai.voice.start",
             Self::AiVoiceAudio => "ai.voice.audio",
             Self::AiVoiceEvents => "ai.voice.events",
@@ -2041,6 +2059,8 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
+                | Self::VaultFanoutSlots
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
@@ -2453,6 +2473,10 @@ impl AgentVerb {
                 | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::AiVoiceAsrOpen
+                | Self::AiVoiceAsrHypothesis
+                | Self::AiVoiceAsrFinalize
+                | Self::AiVoiceAsrClose
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
                 | Self::AiVoiceEvents
@@ -2712,6 +2736,8 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
+                | Self::VaultFanoutSlots
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
@@ -3124,6 +3150,10 @@ impl AgentVerb {
                 | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::AiVoiceAsrOpen
+                | Self::AiVoiceAsrHypothesis
+                | Self::AiVoiceAsrFinalize
+                | Self::AiVoiceAsrClose
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
                 | Self::AiVoiceEvents
@@ -3446,6 +3476,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
+                | Self::VaultFanoutSlots
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
@@ -3850,6 +3882,10 @@ impl AgentVerb {
                 | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::AiVoiceAsrOpen
+                | Self::AiVoiceAsrHypothesis
+                | Self::AiVoiceAsrFinalize
+                | Self::AiVoiceAsrClose
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
                 | Self::AiVoiceEvents
@@ -4068,6 +4104,7 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
                 | Self::SelfBudgetLand
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLeaseTopUp
@@ -4520,6 +4557,8 @@ impl AgentVerb {
                 "parent_ref",
             ],
             Self::TasksWave => &["spec"],
+            Self::VaultFanoutSpawn => &["spec"],
+            Self::VaultFanoutSlots => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
             Self::SelfBudgetLand => &["spec"],
@@ -4932,6 +4971,10 @@ impl AgentVerb {
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
+            Self::AiVoiceAsrOpen => &["spec"],
+            Self::AiVoiceAsrHypothesis => &["spec"],
+            Self::AiVoiceAsrFinalize => &["spec"],
+            Self::AiVoiceAsrClose => &["spec"],
             Self::AiVoiceStart => &["spec"],
             Self::AiVoiceAudio => &["spec"],
             Self::AiVoiceEvents => &["spec"],
@@ -5185,6 +5228,8 @@ impl AgentVerb {
             Self::Describe => &[],
             Self::TasksCreate => &["spec"],
             Self::TasksWave => &["spec"],
+            Self::VaultFanoutSpawn => &["spec"],
+            Self::VaultFanoutSlots => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
             Self::SelfBudgetLand => &["spec"],
@@ -5597,6 +5642,10 @@ impl AgentVerb {
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
+            Self::AiVoiceAsrOpen => &["spec"],
+            Self::AiVoiceAsrHypothesis => &["spec"],
+            Self::AiVoiceAsrFinalize => &["spec"],
+            Self::AiVoiceAsrClose => &["spec"],
             Self::AiVoiceStart => &["spec"],
             Self::AiVoiceAudio => &["spec"],
             Self::AiVoiceEvents => &["spec"],
@@ -5898,6 +5947,12 @@ impl AgentVerb {
             }
             Self::TasksWave => {
                 "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
+            }
+            Self::VaultFanoutSpawn => {
+                "Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree."
+            }
+            Self::VaultFanoutSlots => {
+                "Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree."
             }
             Self::VaultFanoutLaunch => {
                 "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."
@@ -7094,6 +7149,18 @@ impl AgentVerb {
             }
             Self::VaultReceiptsContext => {
                 "Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."
+            }
+            Self::AiVoiceAsrOpen => {
+                "Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline."
+            }
+            Self::AiVoiceAsrHypothesis => {
+                "Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt."
+            }
+            Self::AiVoiceAsrFinalize => {
+                "Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting."
+            }
+            Self::AiVoiceAsrClose => {
+                "Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval."
             }
             Self::AiVoiceStart => {
                 "Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."

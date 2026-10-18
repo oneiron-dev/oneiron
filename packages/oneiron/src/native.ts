@@ -57,6 +57,8 @@ steer(input: unknown): unknown
 describe(input: unknown): unknown
 tasksCreate(input: unknown): unknown
 tasksWave(input: unknown): unknown
+vaultFanoutSpawn(input: unknown): unknown
+vaultFanoutSlots(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
 selfBudget(input: unknown): unknown
 selfBudgetLand(input: unknown): unknown
@@ -469,6 +471,10 @@ aiStepsSubmit(input: unknown): unknown
 aiStepsReceipt(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
+aiVoiceAsrOpen(input: unknown): unknown
+aiVoiceAsrHypothesis(input: unknown): unknown
+aiVoiceAsrFinalize(input: unknown): unknown
+aiVoiceAsrClose(input: unknown): unknown
 aiVoiceStart(input: unknown): unknown
 aiVoiceAudio(input: unknown): unknown
 aiVoiceEvents(input: unknown): unknown

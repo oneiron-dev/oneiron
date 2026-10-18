@@ -30,9 +30,9 @@ pub use doors::{
     FIXTURE_TREE_VERSION_MAX, LaunchedMember, LearningCellView, LearningEvidenceView,
     LearningObservation, ObservationIssue, PlanObservation, PlannedSpawnObservation,
     PlannedSpawnRead, ProviderPinView, ResolvedTeam, RouteObservation, SkillRevisionView,
-    SpawnPhase, TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin, TaskTypeTreePinReceipt,
-    TaskTypeTreeRead, TaskTypeTreeReadReply, TaskTypeTreeView, TeamBindingView, TeamReceiptView,
-    TypeStamp, observe_spawn_as, pin_tree_as, read_tree_as,
+    TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin, TaskTypeTreePinReceipt, TaskTypeTreeRead,
+    TaskTypeTreeReadReply, TaskTypeTreeView, TeamBindingView, TeamReceiptView, TypeStamp,
+    observe_spawn_as, pin_tree_as, read_tree_as,
 };
 pub use market::{
     LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind,
@@ -45,8 +45,8 @@ pub use owner_outcome::{
     DeliverableReview, TeamDeliverableBinding, bind_team_deliverable, bind_team_deliverable_in_txn,
 };
 pub use pattern::{
-    PAYOFF_AXIS, PatternSkill, TeamAxis, TeamPattern, model_mix, pattern_cell, pattern_skill,
-    pattern_skills, register_pattern_skill,
+    PAYOFF_AXIS, PatternLaunchRunner, PatternLaunchSpec, PatternSkill, TeamAxis, TeamPattern,
+    model_mix, pattern_cell, pattern_skill, pattern_skills, register_pattern_skill,
 };
 pub use payoff::{PatternCardEntry, PayoffRow, PlannerCard, payoff_table, planner_card};
 pub use receipt::{
@@ -61,7 +61,5 @@ pub use run_binding::{
     TeamRunBinding, record_team_start, record_team_start_in_txn, team_run_binding,
     team_run_binding_in_txn, team_spawn_context_for_attempt, team_spawn_context_for_attempt_in_txn,
 };
-pub use spawn_intent::{
-    PlannedIntentPhase, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest,
-};
+pub use spawn_intent::{PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest, SpawnPhase};
 pub use stack::{BranchResult, NodeComparison, compare_at_equal_budget};
