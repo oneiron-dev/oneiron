@@ -2,9 +2,9 @@
 //! agent. It sends the reference-free AgentPack projection, never the native
 //! facets an owner backup keeps. The sharer is the caller's own actor, and
 //! everything the pack carries is read through the sharer's admission in one
-//! snapshot: the definition, its skill packages, its knowledge and its
-//! world's name. Born-with text travels only as the sharer chose (none by
-//! default), and the share receipt is written before the folder leaves.
+//! snapshot: the definition, its skill packages, its knowledge, its world's
+//! name and the born-with text the sharer chose (none by default; FIX 3307).
+//! The share receipt is written before the folder leaves.
 
 use std::collections::BTreeMap;
 
@@ -66,21 +66,27 @@ impl Memory<'_> {
     ) -> MemoryResult<AgentPackExport> {
         let vault = self.vault();
         let agent = crate::memory::resolve_entity_ref(vault, &input.agent_ref)?;
-        // The lane and the born-with text open their own snapshots: both
+        // The lane and the sharer's posture open their own snapshots: both
         // come before the one snapshot below (LMDB allows one per thread).
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        // The owner's share comes back through the owner's own read; any
-        // other sharer's reads nothing of a world kept off an unknown machine.
-        let text = if self.secret_sight()? == SecretSight::Owner {
-            vault.born_with_text(&agent, None)?
-        } else {
-            vault.born_with_text_for_another(&agent, None)?
-        };
+        let owner = self.secret_sight()? == SecretSight::Owner;
         let choice = TravelChoice::or_default(input.travel.as_ref(), TravelKind::AgentPack);
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let Some((ENTITY_TYPE_AGENT_DEF, _, body)) = admitted(&lane, &txn, &agent)? else {
             return Err(Error::EntityNotFound.into());
         };
+        // The owner's share reads as the owner's own read; any other sharer's
+        // reads nothing of a world kept off an unknown machine.
+        let kept = if owner {
+            std::collections::BTreeSet::new()
+        } else {
+            crate::settings::device_local_worlds_at(
+                vault,
+                &txn,
+                crate::claim::CallerLocality::OffDevice,
+            )?
+        };
+        let text = super::born_with_text_in_txn(vault, &txn, &lane, &agent, None, &choice, &kept)?;
         let def = decode_agent_definition(&body)?;
         let mut skills = Vec::new();
         for id in
