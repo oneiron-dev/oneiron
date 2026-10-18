@@ -447,8 +447,12 @@ pub(crate) fn revoke(
     owner: &AuthenticatedOwner,
     name: &str,
 ) -> OwnerResult<Rotated> {
+    // Audit only (mesh contract §2): the route passes its own surface once
+    // its adapter returns the custody work receipt too.
+    let surface = oneiron::authority::ActSurface::ThisInstall;
     Ok(vault
-        .revoke_secret_as_owner(owner, name, vault.now_recorded_at())?
+        .revoke_secret_as_owner(owner, surface, name, vault.now_recorded_at())?
+        .rotation
         .into())
 }
 

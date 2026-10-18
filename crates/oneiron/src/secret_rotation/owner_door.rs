@@ -7,10 +7,11 @@
 
 use super::{RECEIPTS, RotationKind, RotationReceipt, encode_rotation_receipt_body};
 use crate::Vault;
+use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::secret_custody::{
-    SecretCustodyRecord, SecretCustodyStatus, put_secret_custody_in_txn,
+    SecretCustodyRecord, SecretCustodyStatus, SecretRevoked, put_secret_custody_in_txn,
     read_secret_custody_in_txn, refuse_bindings_wider_than_live_floor, resolve_secret_ref_in_txn,
 };
 use crate::side_table::HexId;
@@ -58,9 +59,16 @@ impl Vault {
     /// Revokes a secret on the vault owner's behalf: terminal value death,
     /// the record and every lease over it revoked with a
     /// [`RotationKind::Revoked`] receipt, behind the owner proof, rechecked in
-    /// the committing transaction. It is the only served revocation. A
-    /// portable record's revocation reaches the owner's other machines as a
-    /// signed transition (OF-422).
+    /// the committing transaction. It is the only served revocation.
+    ///
+    /// A portable record's revocation reaches the owner's other machines
+    /// with no byte (WILL L04 row 04): in the same transaction this install,
+    /// as the carrier of his act decided on `surface` (audit only), records
+    /// a custody revoke request naming itself as executor and appends its
+    /// enacted result, and every replica that folds it holds the id as
+    /// terminal. The returned work receipt says it committed here, never
+    /// that every replica holds it (CALLS CUSTODY_COMPLETION). The signed
+    /// transition of OF-422 is still written beside it.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no longer
@@ -69,9 +77,10 @@ impl Vault {
     pub fn revoke_secret_as_owner(
         &self,
         owner: &AuthenticatedOwner,
+        surface: ActSurface,
         secret_ref: &str,
         at: u64,
-    ) -> Result<RotationReceipt> {
+    ) -> Result<SecretRevoked> {
         let _ = self.load_install_signing_if_minted();
         let mut wtxn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &wtxn)?;
@@ -80,11 +89,12 @@ impl Vault {
                 "only the vault owner revokes a secret",
             )));
         }
-        let receipt = self.revoke_secret_in_txn(&mut wtxn, secret_ref, at)?;
+        let rotation = self.revoke_secret_in_txn(&mut wtxn, secret_ref, at)?;
         let transition = self.write_transition_of_in_txn(&mut wtxn, secret_ref, at)?;
+        let work = self.carry_custody_revoke_in_txn(&mut wtxn, owner, surface, secret_ref)?;
         wtxn.commit()?;
         self.mirror_transition(transition.as_ref());
-        Ok(receipt)
+        Ok(SecretRevoked { rotation, work })
     }
 
     /// The signed transition of the record `secret_ref` names, as it now

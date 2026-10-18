@@ -658,8 +658,9 @@ fn restore_secrets_in_txn<R: Read + Seek>(
                 "import ID collides with a different custody record",
             ));
         }
-        crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)?;
-        restored += 1;
+        if crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)? {
+            restored += 1;
+        }
     }
     Ok((restored, unchanged, missing))
 }

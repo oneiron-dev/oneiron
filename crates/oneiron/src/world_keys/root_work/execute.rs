@@ -82,7 +82,7 @@ fn pending_root(
 ) -> Option<(OwnerWorkRequest, RootChange)> {
     fold.pending_owner_work_for(me)
         .find_map(|(pending, request)| match request.work {
-            OwnerWorkBody::Root { change } if pending == hash => Some((*request, change)),
+            OwnerWorkBody::Root { change } if pending == hash => Some((request.clone(), change)),
             _ => None,
         })
 }

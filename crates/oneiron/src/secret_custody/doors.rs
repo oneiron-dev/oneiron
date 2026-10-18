@@ -477,6 +477,9 @@ impl Vault {
                 name: rec.name,
             }));
         }
+        // An admitted revoke of the id ends every use, settled here yet or
+        // not (WILL L04 row 04).
+        super::refuse_revoked_use_in_txn(self, txn, id, rec.class, &rec.name)?;
         if !rec
             .binding_for(effector)
             .is_some_and(SecretBinding::grants_read)
@@ -627,12 +630,20 @@ pub(super) fn bind_synced_name_in_txn(
 /// archive under its archived id, inside the import's write transaction and
 /// through every check registration makes. The owner's own archive carries
 /// custody records so a re-import keeps every key (owner ruling 2026-10-17);
-/// no export to a contact or share carries one.
+/// no export to a contact or share carries one. Returns whether it restored
+/// it: a portable record whose id an admitted revoke names stays dead, and
+/// nothing is written (WILL L04 row 04).
 pub(crate) fn restore_secret_custody_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     rec: &mut SecretCustodyRecord,
-) -> Result<()> {
-    register_secret_in_txn(vault, wtxn, id, rec)
+) -> Result<bool> {
+    if rec.class == CustodyClass::CustodyPortable
+        && super::control::custody_revoked_in_txn(vault, wtxn, id)?
+    {
+        return Ok(false);
+    }
+    register_secret_in_txn(vault, wtxn, id, rec)?;
+    Ok(true)
 }
