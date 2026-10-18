@@ -1,6 +1,7 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
 use super::cancel::StepCancellation;
+use super::stack_floor::below_stack_floor;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
     RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
@@ -269,6 +270,8 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// (FIX 600). A cancelled skill answers `code_step_cancelled`, and the
     /// caller's step goes on. A callable's own call nests inside it: past
     /// the `[limits] callable_nest_depth` row it asks, and the call runs.
+    /// A call that would start below the thread's stack floor answers
+    /// `skills_call_stack_floor` instead.
     fn call_skill(
         &mut self,
         seq: u64,
@@ -284,6 +287,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 error,
             })
         };
+        // Each nested level keeps its host loop's frames on this thread.
+        if below_stack_floor() {
+            return Ok(failed("skills_call_stack_floor".to_owned()));
+        }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq,
