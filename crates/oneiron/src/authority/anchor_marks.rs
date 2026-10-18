@@ -71,6 +71,7 @@ impl Vault {
             machine: request.machine,
             owner,
             machine_key: request.machine_key,
+            device_class: request.device_class,
             encryption_key: request.encryption_key.clone(),
             role: MachineRole::Owned(MachineOwnership::Yours),
             revision,

@@ -20,6 +20,7 @@ pub use authority_tail::{
     authority_tail_for, authority_wanted, held_authority_entries, held_authority_history,
     import_authority_page,
 };
+pub(crate) use bundle::holds_sealed_bundle;
 pub use bundle::{
     SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry,
     SealedBundleKitRoot, SealedBundleObject, SealedBundleStage, commit_sealed_bundle,

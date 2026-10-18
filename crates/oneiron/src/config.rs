@@ -455,6 +455,13 @@ pub struct VaultConfig {
     /// host-managed KMS key reference; the pairing is validated by every
     /// opener before the storage environment is mapped.
     pub privacy: VaultPrivacyConfig,
+    /// What kind of machine this install is, as its host declares it (FIX
+    /// 3349; CALLS: MACHINE_DEVICE_CLASS_SOURCE). This install's machine
+    /// enrolment carries it and the owner approves it there; it is never read
+    /// off the operating system. A phone holds no sealed copy of the vault.
+    /// Both presets declare a computer; a phone's host sets
+    /// [`crate::authority::MachineDeviceClass::Phone`].
+    pub machine_device_class: crate::authority::MachineDeviceClass,
     /// The maximum tier (OF-570): the page seal every LMDB page of the vault
     /// is sealed under. `None` opens a plain vault; a sealed one opens only
     /// with its seal ([`crate::world_keys::unlock_page_seal`]), and a new one
@@ -658,6 +665,7 @@ impl VaultConfig {
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: crate::limit_ask::EngineLimits::default(),
+            machine_device_class: crate::authority::MachineDeviceClass::Computer,
             page_seal: None,
         }
     }
@@ -692,6 +700,7 @@ impl VaultConfig {
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: crate::limit_ask::EngineLimits::default(),
+            machine_device_class: crate::authority::MachineDeviceClass::Computer,
             page_seal: None,
         }
     }

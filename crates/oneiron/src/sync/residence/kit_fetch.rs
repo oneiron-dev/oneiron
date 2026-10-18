@@ -14,6 +14,10 @@
 //! names it, the door, the slice it asks for, its time and a fresh nonce. The
 //! home takes a request signed within [`KIT_BUNDLE_FETCH_MAX_AGE_SECS`] of its
 //! clock, and each nonce once.
+//!
+//! The door asks no device class (FIX 3349; CALLS: KIT_BUNDLE_PHONE_POLICY,
+//! allow): a kit restore installs the vault from a generation and keeps no
+//! sealed copy, so a phone that holds the kit may restore from it.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
