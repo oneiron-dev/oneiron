@@ -2176,6 +2176,26 @@ export_facade! {
     let output = client.vault_receipts_context(&input)?;
     crate::codec::lift_record("vault.receipts.context", &output)
 };
+"ai.voice.asr.open" => fn ai_voice_asr_open(&self, input: AsrOpenRequest) -> AsrSession = |client| {
+    let input: oneiron::task_verb::sdk::AsrOpenRequest = crate::codec::lower_record("ai.voice.asr.open", input)?;
+    let output = client.ai_voice_asr_open(&input)?;
+    crate::codec::lift_record("ai.voice.asr.open", &output)
+};
+"ai.voice.asr.hypothesis" => fn ai_voice_asr_hypothesis(&self, input: AsrHypothesisRequest) -> AsrHypothesisReceipt = |client| {
+    let input: oneiron::task_verb::sdk::AsrHypothesisRequest = crate::codec::lower_record("ai.voice.asr.hypothesis", input)?;
+    let output = client.ai_voice_asr_hypothesis(&input)?;
+    crate::codec::lift_record("ai.voice.asr.hypothesis", &output)
+};
+"ai.voice.asr.finalize" => fn ai_voice_asr_finalize(&self, input: AsrHypothesisRequest) -> AsrFinalReceipt = |client| {
+    let input: oneiron::task_verb::sdk::AsrHypothesisRequest = crate::codec::lower_record("ai.voice.asr.finalize", input)?;
+    let output = client.ai_voice_asr_finalize(&input)?;
+    crate::codec::lift_record("ai.voice.asr.finalize", &output)
+};
+"ai.voice.asr.close" => fn ai_voice_asr_close(&self, input: AsrCloseRequest) -> AsrClosed = |client| {
+    let input: oneiron::task_verb::sdk::AsrCloseRequest = crate::codec::lower_record("ai.voice.asr.close", input)?;
+    let output = client.ai_voice_asr_close(&input)?;
+    crate::codec::lift_record("ai.voice.asr.close", &output)
+};
 "ai.voice.start" => fn ai_voice_start(&self, input: LiveVoiceStartRequest) -> LiveVoiceSession = |client| {
     let input: oneiron::task_verb::sdk::LiveVoiceStartRequest = crate::codec::lower_record("ai.voice.start", input)?;
     let output = client.ai_voice_start(&input)?;

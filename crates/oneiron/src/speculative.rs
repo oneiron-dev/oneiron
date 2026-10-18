@@ -48,6 +48,8 @@ use crate::pipeline::ScoredEntity;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::{RetrievalAction, RetrievalRunId};
 
+pub(crate) mod scoped;
+
 /// Max speculative fires per utterance (E7: cap ~4 fires/utterance).
 pub const SPECULATIVE_FIRE_CAP_DEFAULT: u8 = 4;
 /// Reduced per-fire result limit (E7 "fast lane, reduced limit").
@@ -161,6 +163,7 @@ pub struct SpeculativeSession {
     last_signature: BTreeSet<String>,
     fires_used: u8,
     warm: Option<WarmPack>,
+    scope: Option<scoped::SpeculativeReadScope>,
 }
 
 impl SpeculativeSession {
@@ -172,6 +175,7 @@ impl SpeculativeSession {
             last_signature: BTreeSet::new(),
             fires_used: 0,
             warm: None,
+            scope: None,
         }
     }
 
@@ -230,13 +234,14 @@ impl SpeculativeSession {
     /// lets run.
     fn run(&self, pass: SpeculativePass) -> Result<Option<PassOutput>> {
         let Some(budget) = self.config.deadline else {
-            return pass.run(&self.vault, None).map(Some);
+            return pass.run(&self.vault, None, self.scope.as_ref()).map(Some);
         };
         let started = Instant::now();
         let Some(running) = RunningPass::admit(&self.vault) else {
             return Ok(None);
         };
         let vault = Arc::clone(&self.vault);
+        let scope = self.scope.clone();
         let (sender, answer) = std::sync::mpsc::sync_channel(1);
         std::thread::Builder::new()
             .name("oneiron-speculative".to_owned())
@@ -244,7 +249,7 @@ impl SpeculativeSession {
                 let _running = running;
                 let deadline = RetrievalDeadline::hard(started, budget);
                 // The caller may have stopped waiting; a closed slot is moot.
-                let _ = sender.send(pass.run(&vault, Some(&deadline)));
+                let _ = sender.send(pass.run(&vault, Some(&deadline), scope.as_ref()));
             })?;
         match answer.recv_timeout(budget.saturating_sub(started.elapsed())) {
             Ok(output) => output.map(Some),
@@ -385,7 +390,23 @@ struct PassOutput {
 }
 
 impl SpeculativePass {
-    fn run(self, vault: &crate::Vault, deadline: Option<&RetrievalDeadline>) -> Result<PassOutput> {
+    fn run(
+        &self,
+        vault: &crate::Vault,
+        deadline: Option<&RetrievalDeadline>,
+        scope: Option<&scoped::SpeculativeReadScope>,
+    ) -> Result<PassOutput> {
+        match scope {
+            Some(scope) => scope.run(vault, self, deadline),
+            None => self.execute(self.builder(vault, deadline), deadline),
+        }
+    }
+
+    fn builder<'a>(
+        &'a self,
+        vault: &'a crate::Vault,
+        deadline: Option<&'a RetrievalDeadline>,
+    ) -> crate::pipeline::PipelineBuilder<'a> {
         let mut builder = vault.query().search_text(&self.text, self.limit);
         if let Some(vector) = self.query_vector.as_deref() {
             builder = builder.search_vector(vector, self.limit);
@@ -397,6 +418,14 @@ impl SpeculativePass {
         if let Some(deadline) = deadline {
             builder = builder.deadline(deadline);
         }
+        builder
+    }
+
+    fn execute(
+        &self,
+        builder: crate::pipeline::PipelineBuilder<'_>,
+        deadline: Option<&RetrievalDeadline>,
+    ) -> Result<PassOutput> {
         let ran = builder
             .limit(self.limit)
             .telemetry_action(if self.fire {
