@@ -183,6 +183,8 @@ both bindings and their export-census tests in one change.
 - `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
 - `vault.packs.hooks.list`
+- `vault.packs.hooks.grant.set`
+- `vault.packs.hooks.grant.get`
 - `vault.packs.hooks.qualify`
 - `vault.packs.put`
 - `vault.packs.connector.prepare`
@@ -261,6 +263,9 @@ both bindings and their export-census tests in one change.
 - `vault.trusted_contacts.concern.authorize`
 - `vault.trusted_contacts.concern.propose`
 - `vault.trusted_contacts.concern.deliver`
+- `vault.guests.share`
+- `vault.guests.export_envelope`
+- `vault.guests.reshare`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
 - `vault.support_grants.mint`
@@ -281,6 +286,7 @@ both bindings and their export-census tests in one change.
 - `self.off_record.execute`
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
+- `vault.records.erase_sweep`
 - `vault.research.create_child`
 - `vault.research.archive`
 - `vault.research.archive.install`

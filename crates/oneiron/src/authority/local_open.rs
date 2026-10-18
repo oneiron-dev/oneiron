@@ -1,0 +1,166 @@
+//! A raw open's own machine profile, from the host's root secret (FIX 4730).
+//!
+//! The desktop app, N-API and C-FFI open a vault without serving it, so no
+//! serving start profiles the install they open. Given the vault's host root
+//! secret, such an open enrols this install as `Unanswered` through the same
+//! door a serving start uses, so the owner's acts carry from it. Only a new
+//! local-origin vault is rooted here, through the
+//! existing [`Vault::ensure_host_root_slip`]: never a store that was already
+//! there, which may be a replica awaiting its root (CALLS "root-secret
+//! raw-open door (l02/rootdoor)"). No machine is ever relabelled the owner's.
+
+use std::path::Path;
+
+use oneiron_keystore::{KeystoreSlot, SlotKind};
+use zeroize::Zeroizing;
+
+use crate::Vault;
+use crate::error::Result;
+
+use super::machine_identity::{SERVING_INSTALL_ROLE, SERVING_NO_ISSUER};
+use super::*;
+
+/// Hook (CALLS "rootdoor open gates", open): an explicit `initialize_root`
+/// on the N-API and C-FFI host-root openers roots only a store that open
+/// creates, as the desktop's does, so a store a host opened before (a
+/// replica awaiting its root among them) never roots on a later open.
+const RAW_OPEN_ROOTS_ONLY_A_STORE_IT_CREATES: bool = true;
+
+/// What [`Vault::profile_local_open`] did. Only `RootedAndProfiled` and
+/// `Profiled` checked the secret against the vault's live root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalOpenProfile {
+    /// No host root secret on this open: the install stays unprofiled, and
+    /// the owner's acts refuse "no carrier" here, as before.
+    Skipped,
+    /// This open rooted a new local-origin vault under the secret's issuer
+    /// and enrolled this install in it.
+    RootedAndProfiled,
+    /// The vault was rooted under the secret's issuer already; this open
+    /// enrolled this install.
+    Profiled,
+    /// A live profile of this install already stood, so nothing was
+    /// written and the secret was not checked.
+    AlreadyCarrying,
+}
+
+impl Vault {
+    /// Whether `path` names no vault yet: absent, or an empty directory.
+    /// Read before an open that may create the store, it tells an open that
+    /// brings a store into existence from one over a store that was there
+    /// already. Anything it cannot read counts as started.
+    #[must_use]
+    pub fn is_unstarted_vault_dir(path: &Path) -> bool {
+        match std::fs::read_dir(path) {
+            Ok(mut entries) => entries.next().is_none(),
+            Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+        }
+    }
+
+    /// Read before a host-root open of `path` (N-API, C-FFI): whether its
+    /// explicit `initialize_root` may root what it opens.
+    #[must_use]
+    pub fn host_root_open_may_root(path: &Path, initialize_root: bool) -> bool {
+        initialize_root
+            && (!RAW_OPEN_ROOTS_ONLY_A_STORE_IT_CREATES || Self::is_unstarted_vault_dir(path))
+    }
+
+    /// Profiles this install from the vault's host root `secret`, for an
+    /// open that serves nothing (FIX 4730). No secret is a skip. With
+    /// `initialize_root`, a vault whose authority is unstarted (no log row,
+    /// no pin, no adopted checkpoint) is rooted first through
+    /// [`Self::ensure_host_root_slip`], once this install's keys load; the
+    /// caller sets it only for a store its own open created as a new
+    /// local-origin vault. Then [`Self::ensure_serving_install_profile`] as
+    /// `Unanswered`, whose refusals come back with their reason.
+    /// A root committed before a refused profile stays, and is never minted
+    /// again.
+    pub fn profile_local_open(
+        &self,
+        secret: Option<&[u8]>,
+        initialize_root: bool,
+    ) -> Result<LocalOpenProfile> {
+        let Some(secret) = secret else {
+            return Ok(LocalOpenProfile::Skipped);
+        };
+        let issuer = HostSlipIssuer::from_secret(secret)?;
+        let rooted = initialize_root && self.authority_is_unstarted()?;
+        if rooted {
+            // A root this install could not carry is never minted.
+            self.prepare_install_signing()?;
+            self.ensure_host_root_slip(&issuer)?;
+        }
+        let (_, enrolled) = self.ensure_install_profile_reporting(&issuer, SERVING_INSTALL_ROLE)?;
+        Ok(match (rooted, enrolled) {
+            (true, _) => LocalOpenProfile::RootedAndProfiled,
+            (false, true) => LocalOpenProfile::Profiled,
+            (false, false) => LocalOpenProfile::AlreadyCarrying,
+        })
+    }
+
+    /// [`Self::profile_local_open`], logged with its reason under `open`: a
+    /// skip or a profile at debug, a refusal as a warning. The caller decides
+    /// whether the open goes on.
+    pub fn profile_local_open_logged(
+        &self,
+        secret: Option<&[u8]>,
+        initialize_root: bool,
+        open: &'static str,
+    ) -> Result<LocalOpenProfile> {
+        let outcome = self.profile_local_open(secret, initialize_root);
+        match &outcome {
+            Ok(LocalOpenProfile::Skipped) => {
+                tracing::debug!(
+                    open,
+                    reason = SERVING_NO_ISSUER,
+                    "no machine profile ensured"
+                );
+            }
+            Ok(profile) => tracing::debug!(open, ?profile, "this install's machine profile stands"),
+            Err(error) => tracing::warn!(
+                open,
+                kind = ?error.kind(),
+                reason = %error,
+                "this open did not profile the install, so the owner's acts refuse \
+                 \"no carrier\" here until a profile stands"
+            ),
+        }
+        outcome
+    }
+
+    /// This install's retained host root secret for this vault: its
+    /// this-device-only `HostRoot` keystore slot, `None` while empty.
+    /// `create` fills an empty slot with a fresh secret first, only for a
+    /// new local-origin vault this install roots itself with no configured
+    /// secret (the desktop's own vault). Never device-key residue.
+    pub fn retained_host_root_secret(&self, create: bool) -> Result<Option<Zeroizing<[u8; 32]>>> {
+        let keystore = self.device_keystore()?;
+        let machine = self.prepare_install_signing()?;
+        let slot = KeystoreSlot {
+            vault_id: *self.vault_id().as_bytes(),
+            install: *machine.as_bytes(),
+            kind: SlotKind::HostRoot,
+        };
+        if create {
+            return crate::world_keys::slot_seed(keystore.as_ref(), &slot).map(Some);
+        }
+        keystore
+            .get(&slot)
+            .map_err(crate::world_keys::keystore_error)
+    }
+
+    /// No authority log row, no pin and no adopted checkpoint: a vault no
+    /// root, replica or restore has reached. Never `vault_id == None`, which
+    /// a conflicted or invalid history has too.
+    fn authority_is_unstarted(&self) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        if !authority_log_rows_in_txn(&self.store, &txn)?.is_empty() {
+            return Ok(false);
+        }
+        let pin = super::pinned_root::read_pin_row_in_txn(&self.store, &txn)?;
+        if pin.pin.is_some() || pin.awaiting.is_some() {
+            return Ok(false);
+        }
+        Ok(adopted_authority_checkpoint_in_txn(&self.store, &txn)?.is_none())
+    }
+}

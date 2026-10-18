@@ -886,6 +886,16 @@ export_facade! {
     let output = client.vault_packs_hooks_list(&input)?;
     crate::codec::lift_record("vault.packs.hooks.list", &output)
 };
+"vault.packs.hooks.grant.set" => fn vault_packs_hooks_grant_set(&self, input: HookGrantSetRequest) -> HookGrantView = |client| {
+    let input: oneiron::task_verb::sdk::HookGrantSetRequest = crate::codec::lower_record("vault.packs.hooks.grant.set", input)?;
+    let output = client.vault_packs_hooks_grant_set(&input)?;
+    crate::codec::lift_record("vault.packs.hooks.grant.set", &output)
+};
+"vault.packs.hooks.grant.get" => fn vault_packs_hooks_grant_get(&self, input: HookGrantRequest) -> HookGrantView = |client| {
+    let input: oneiron::task_verb::sdk::HookGrantRequest = crate::codec::lower_record("vault.packs.hooks.grant.get", input)?;
+    let output = client.vault_packs_hooks_grant_get(&input)?;
+    crate::codec::lift_record("vault.packs.hooks.grant.get", &output)
+};
 "vault.packs.hooks.qualify" => fn vault_packs_hooks_qualify(&self, input: HubHookQualifyRequest) -> HubHookQualificationReceipt = |client| {
     let input: oneiron::task_verb::sdk::HubHookQualifyRequest = crate::codec::lower_record("vault.packs.hooks.qualify", input)?;
     let output = client.vault_packs_hooks_qualify(&input)?;
@@ -1276,6 +1286,21 @@ export_facade! {
     let output = client.vault_trusted_contacts_concern_deliver(&input)?;
     crate::codec::lift_record("vault.trusted_contacts.concern.deliver", &output)
 };
+"vault.guests.share" => fn vault_guests_share(&self, input: GuestDocumentShareRequest) -> GuestDocumentEnvelope = |client| {
+    let input: oneiron::task_verb::sdk::GuestDocumentShareRequest = crate::codec::lower_record("vault.guests.share", input)?;
+    let output = client.vault_guests_share(&input)?;
+    crate::codec::lift_record("vault.guests.share", &output)
+};
+"vault.guests.export_envelope" => fn vault_guests_export_envelope(&self, input: GuestDocumentShareRequest) -> GuestDocumentEnvelope = |client| {
+    let input: oneiron::task_verb::sdk::GuestDocumentShareRequest = crate::codec::lower_record("vault.guests.export_envelope", input)?;
+    let output = client.vault_guests_export_envelope(&input)?;
+    crate::codec::lift_record("vault.guests.export_envelope", &output)
+};
+"vault.guests.reshare" => fn vault_guests_reshare(&self, input: GuestDocumentShareRequest) -> GuestDocumentEnvelope = |client| {
+    let input: oneiron::task_verb::sdk::GuestDocumentShareRequest = crate::codec::lower_record("vault.guests.reshare", input)?;
+    let output = client.vault_guests_reshare(&input)?;
+    crate::codec::lift_record("vault.guests.reshare", &output)
+};
 "vault.guests.revoke" => fn vault_guests_revoke(&self, input: GuestRevokeRequest) -> GuestRevokeResponse = |client| {
     let input: oneiron::task_verb::sdk::GuestRevokeRequest = crate::codec::lower_record("vault.guests.revoke", input)?;
     let output = client.vault_guests_revoke(&input)?;
@@ -1375,6 +1400,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::RecordEraseConfirmRequest = crate::codec::lower_record("vault.records.erase_confirm", input)?;
     let output = client.vault_records_erase_confirm(&input)?;
     crate::codec::lift_record("vault.records.erase_confirm", &output)
+};
+"vault.records.erase_sweep" => fn vault_records_erase_sweep(&self, input: RecordEraseSweepRequest) -> Option<RecordEraseSweep> = |client| {
+    let input: oneiron::memory::erase_sweep::RecordEraseSweepRequest = crate::codec::lower_record("vault.records.erase_sweep", input)?;
+    let output = client.vault_records_erase_sweep(&input)?;
+    crate::codec::lift_record("vault.records.erase_sweep", &output)
 };
 "vault.research.create_child" => fn vault_research_create_child(&self, input: ResearchChildWire) -> ResearchChildReceipt = |client| {
     let input: oneiron::task_verb::sdk::ResearchChildWire = crate::codec::lower_record("vault.research.create_child", input)?;

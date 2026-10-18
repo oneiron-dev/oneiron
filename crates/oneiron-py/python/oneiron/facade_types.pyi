@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 827 facade rows, 2868 declarations.
-Inputs: 775 of 827 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 744 of 827 fully typed, 83 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 833 facade rows, 2881 declarations.
+Inputs: 781 of 833 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 750 of 833 fully typed, 83 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 100; unread shapes: 0.
 """
 
@@ -3934,9 +3934,23 @@ class PackHookBinding(TypedDict):
     selector: HookSelector
     enabled: bool
     author: HookAuthor
+class HookGrant(TypedDict):
+    reader: str
+    reader_class: HookActorClass
+    predicates: NotRequired[list[str]]
+    worlds: NotRequired[list[str]]
 class HubHookBindingRow(TypedDict):
     id: EntityId
     binding: PackHookBinding
+    grant: HookGrant
+class HookGrantSetRequest(TypedDict):
+    binding: EntityId
+    grant: HookGrant
+class HookGrantView(TypedDict):
+    binding: EntityId
+    grant: HookGrant
+class HookGrantRequest(TypedDict):
+    binding: EntityId
 class HubHookQualifyRequest(TypedDict):
     source: EntityId
 FactSource = Literal["claim_changelog", "settlement"]
@@ -4982,6 +4996,45 @@ class TrustedContactDeliveryReceipt(TypedDict):
     occurred_at: int
     provider_ref: NotRequired[str | None]
     delivery_may_have_occurred: bool
+class GuestDocumentShareRequest(TypedDict):
+    grant_ref: EntityId
+    world_ref: EntityId
+    window_key: str
+    facets: NotRequired[list[EntityId]]
+    bands: NotRequired[list[SelectorRange]]
+class GuestDocumentContext(TypedDict):
+    pact: str
+    epoch: int
+    ceiling: Scope
+    effective_scope: FederationDirectionScope
+AuthorityVaultId = list[int]
+class FederationGrantScopeVaultBody(TypedDict):
+    vault_id: int
+class FederationGrantScopeVault(TypedDict):
+    Vault: FederationGrantScopeVaultBody
+class FederationGrantScopeAskBody(TypedDict):
+    ask_ref: EntityId
+class FederationGrantScopeAsk(TypedDict):
+    Ask: FederationGrantScopeAskBody
+class FederationGrantScopeConnectBody(TypedDict):
+    peer_vault_id: AuthorityVaultId
+class FederationGrantScopeConnect(TypedDict):
+    Connect: FederationGrantScopeConnectBody
+FederationGrantScope = FederationGrantScopeVault | FederationGrantScopeAsk | FederationGrantScopeConnect
+class GuestShareEnvelopeBody(TypedDict):
+    scope: FederationGrantScope
+    member_ref: EntityId
+    selector: list[int]
+    window_key: str
+    update: list[int]
+class GuestShareEnvelope(TypedDict):
+    body: GuestShareEnvelopeBody
+    signature: list[int]
+class GuestDocumentEnvelope(TypedDict):
+    context: GuestDocumentContext
+    envelope: GuestShareEnvelope
+    signer: str
+    signature: list[int]
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]
@@ -5265,6 +5318,15 @@ class RecordEraseOutcome(TypedDict):
     first: DeleteReceipt
     first_act: NotRequired[str | None]
     same_bytes: list[EraseSameBytesRow]
+class RecordEraseSweepRequest(TypedDict):
+    receipt_ref: str
+class RecordEraseSweep(TypedDict):
+    receipt_ref: str
+    request_id: str
+    requested_at: int
+    sweep_queued_at: NotRequired[int | None]
+    deadline_at: NotRequired[int | None]
+    sweep_complete_at: NotRequired[int | None]
 class ResearchChildWire(TypedDict):
     root: EntityId
     parent: EntityId

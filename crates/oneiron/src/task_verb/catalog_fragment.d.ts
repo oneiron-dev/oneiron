@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 864 code-mode rows (840 host rows, 24 run rows), 2918 declarations.
-// Replies: 774 fully typed, 86 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 870 code-mode rows (846 host rows, 24 run rows), 2931 declarations.
+// Replies: 780 fully typed, 86 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -808,7 +808,11 @@ declare namespace Sdk {
   type HookSelector = { verbs: string[]; actors: HookActorClass[]; scope?: string | null; phase: HookPhase; priority: number; budget_ms: number; blocking: boolean; outcomes: HookOutcomeKind[]; served?: string[]; render_class?: HookRenderClass };
   type HookAuthor = { kind: "owner" } | { kind: "foreign_actor"; actor_kind: string; identity: string; hub: string; grant: string; actor: string };
   type PackHookBinding = { version: number; code: string; owner: string; source: string; pack: string; hook: string; hook_version: string; body_hash: string; selector: HookSelector; enabled: boolean; author: HookAuthor };
-  type HubHookBindingRow = { id: EntityId; binding: PackHookBinding };
+  type HookGrant = { reader: string; reader_class: HookActorClass; predicates?: string[]; worlds?: string[] };
+  type HubHookBindingRow = { id: EntityId; binding: PackHookBinding; grant: HookGrant };
+  type HookGrantSetRequest = { binding: EntityId; grant: HookGrant };
+  type HookGrantView = { binding: EntityId; grant: HookGrant };
+  type HookGrantRequest = { binding: EntityId };
   type HubHookQualifyRequest = { source: EntityId };
   type FactSource = "claim_changelog" | "settlement";
   type FactPositionHex = string;
@@ -1017,6 +1021,13 @@ declare namespace Sdk {
   type TrustedContactDeliverRequest = Record<string, never>;
   type TrustedContactNoticeAuthorization = { origin: "ask"; ask_ref: string } | { origin: "policy"; row_ref: string; tier: TrustedContactTier };
   type TrustedContactDeliveryReceipt = { fire_ref: string; person_ref: string; contact_ref: string; version: number; channel: string; verb: string; authorization: TrustedContactNoticeAuthorization; fact: TrustedContactConcernFact; outcome: string; gate_decision_id?: string | null; gate_outcome: string; gate_reason_codes: string[]; receipt_id: string; occurred_at: number; provider_ref?: string | null; delivery_may_have_occurred: boolean };
+  type GuestDocumentShareRequest = { grant_ref: EntityId; world_ref: EntityId; window_key: string; facets?: EntityId[]; bands?: SelectorRange[] };
+  type GuestDocumentContext = { pact: string; epoch: number; ceiling: Scope; effective_scope: FederationDirectionScope };
+  type AuthorityVaultId = number[];
+  type FederationGrantScope = { Vault: { vault_id: number } } | { Ask: { ask_ref: EntityId } } | { Connect: { peer_vault_id: AuthorityVaultId } };
+  type GuestShareEnvelopeBody = { scope: FederationGrantScope; member_ref: EntityId; selector: number[]; window_key: string; update: number[] };
+  type GuestShareEnvelope = { body: GuestShareEnvelopeBody; signature: number[] };
+  type GuestDocumentEnvelope = { context: GuestDocumentContext; envelope: GuestShareEnvelope; signer: string; signature: number[] };
   type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
   type NotRecallable = boolean;
@@ -1087,6 +1098,8 @@ declare namespace Sdk {
   type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null };
   type EraseSameBytesRow = { record: string; outcome: string; receipt?: DeleteReceipt | null; reason?: string | null; act_id?: string | null; error?: string | null };
   type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | null; same_bytes: EraseSameBytesRow[] };
+  type RecordEraseSweepRequest = { receipt_ref: string };
+  type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null };
   type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
   type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };
   type ResearchArchiveWire = { root: EntityId };
@@ -2920,7 +2933,7 @@ declare namespace Sdk {
   type TeamStartInput = { pattern: string; intentKey: string; members: TeamMemberInput[]; tournament?: string | null };
   type TeamPattern = "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type TeamMemberAnswer = { agent: string; attemptRef?: string | null; proposalRef?: string | null };
-  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; models: string[]; patternSkill?: string | null; replay: boolean };
+  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "proposed_widen"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; belowFloor: boolean; models: string[]; patternSkill?: string | null; replay: boolean };
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
   type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null };
@@ -4126,9 +4139,15 @@ declare const vault: Sdk.VaultHost & {
     ask(input: Sdk.GraphAskRequest): Promise<Sdk.GraphAskOutcome | StoredResult>;
   };
   guests: {
-    /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
+    /** The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket. */
+    export_envelope(input: Sdk.GuestDocumentShareRequest): Promise<Sdk.GuestDocumentEnvelope | StoredResult>;
+    /** The owner mints an Ask or active Connect guest capability slip bound to its live grant and the public key generated by the guest on their own device. */
     mint_slip(input: Sdk.GuestSlipMintRequest): Promise<Sdk.GuestSlipMinted | StoredResult>;
+    /** The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused. */
+    reshare(input: Sdk.GuestDocumentShareRequest): Promise<Sdk.GuestDocumentEnvelope | StoredResult>;
     revoke(input: Sdk.GuestRevokeRequest): Promise<Sdk.GuestRevokeResponse | StoredResult>;
+    /** The owner shares a locally authored named-world document through its live guest grant as a filtered signed envelope bound to the pact epoch. */
+    share(input: Sdk.GuestDocumentShareRequest): Promise<Sdk.GuestDocumentEnvelope | StoredResult>;
   };
   habits: {
     /** Appends one immutable check-in under a Habit TASK. */
@@ -4357,7 +4376,13 @@ declare const vault: Sdk.VaultHost & {
     hooks: {
       /** The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign. */
       bind(input: Sdk.HubHookBindRequest): Promise<Sdk.EntityId[] | StoredResult>;
-      /** Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants. */
+      grant: {
+        /** Reads a live hook binding's effective read grant as the owner: its manual assignment, or the author's ceiling when none was set. */
+        get(input: Sdk.HookGrantRequest): Promise<Sdk.HookGrantView | StoredResult>;
+        /** The owner sets or changes a live hook binding's read grant; outcomes still run as the hook's author. Returns the assigned grant. */
+        set(input: Sdk.HookGrantSetRequest): Promise<Sdk.HookGrantView | StoredResult>;
+      };
+      /** Reads live pack hook bindings and their effective read grants as the owner, excluding revoked foreign publisher grants. */
       list(input: Sdk.EmptyRequest): Promise<Sdk.HubHookBindingRow[] | StoredResult>;
       /** The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks. */
       qualify(input: Sdk.HubHookQualifyRequest): Promise<Sdk.HubHookQualificationReceipt | StoredResult>;
@@ -4481,6 +4506,8 @@ declare const vault: Sdk.VaultHost & {
     erase_confirm(input: Sdk.RecordEraseConfirmRequest): Promise<Sdk.RecordEraseOutcome | StoredResult>;
     /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
     erase_preview(input: Sdk.RecordEraseRequest): Promise<Sdk.RecordErasePreview | StoredResult>;
+    /** Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep. */
+    erase_sweep(input: Sdk.RecordEraseSweepRequest): Promise<Sdk.RecordEraseSweep | null | StoredResult>;
   };
   refs: {
     /** A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */

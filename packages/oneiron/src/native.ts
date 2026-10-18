@@ -207,6 +207,8 @@ vaultSkillsGovernanceGet(input: unknown): unknown
 vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
 vaultPacksHooksList(input: unknown): unknown
+vaultPacksHooksGrantSet(input: unknown): unknown
+vaultPacksHooksGrantGet(input: unknown): unknown
 vaultPacksHooksQualify(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksConnectorPrepare(input: unknown): unknown
@@ -285,6 +287,9 @@ vaultTrustedContactsConcernAsks(input: unknown): unknown
 vaultTrustedContactsConcernAuthorize(input: unknown): unknown
 vaultTrustedContactsConcernPropose(input: unknown): unknown
 vaultTrustedContactsConcernDeliver(input: unknown): unknown
+vaultGuestsShare(input: unknown): unknown
+vaultGuestsExportEnvelope(input: unknown): unknown
+vaultGuestsReshare(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultSupportGrantsMint(input: unknown): unknown
@@ -305,6 +310,7 @@ vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
+vaultRecordsEraseSweep(input: unknown): unknown
 vaultResearchCreateChild(input: unknown): unknown
 vaultResearchArchive(input: unknown): unknown
 vaultResearchArchiveInstall(input: unknown): unknown

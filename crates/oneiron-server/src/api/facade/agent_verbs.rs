@@ -188,6 +188,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.governance.set", post(facade_route))
         .route("/vault.packs.hooks.bind", post(facade_route))
         .route("/vault.packs.hooks.list", post(facade_route))
+        .route("/vault.packs.hooks.grant.set", post(facade_route))
+        .route("/vault.packs.hooks.grant.get", post(facade_route))
         .route("/vault.packs.hooks.qualify", post(facade_route))
         .route("/vault.packs.put", post(facade_route))
         .route("/vault.packs.connector.prepare", post(facade_route))
@@ -284,6 +286,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.trusted_contacts.concern.deliver",
             post(facade_route),
         )
+        .route("/vault.guests.share", post(facade_route))
+        .route("/vault.guests.export_envelope", post(facade_route))
+        .route("/vault.guests.reshare", post(facade_route))
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
         .route("/vault.support_grants.mint", post(facade_route))
@@ -304,6 +309,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.off_record.execute", post(facade_route))
         .route("/vault.records.erase_preview", post(facade_route))
         .route("/vault.records.erase_confirm", post(facade_route))
+        .route("/vault.records.erase_sweep", post(facade_route))
         .route("/vault.research.create_child", post(facade_route))
         .route("/vault.research.archive", post(facade_route))
         .route("/vault.research.archive.install", post(facade_route))
