@@ -2,11 +2,9 @@
 
 use super::documents::{NoteDocument, invalid, live_doc};
 use super::{NoteAnchor, NoteAuthorship, NoteKind, NoteVersion};
-use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
-use crate::memory::{
-    DiaryEntryAdmission, DiaryReadGate, Memory, MemoryError, MemoryResult,
-};
 use crate::WriteActor;
+use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
+use crate::memory::{DiaryEntryAdmission, DiaryReadGate, Memory, MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 
 /// One explicit NOTE read. Private notes require the caller's stated reason.
@@ -75,7 +73,6 @@ pub struct NoteHistoryView {
     pub complete: bool,
 }
 
-
 /// An explicit live editor handle. Close it when the editor leaves; a server
 /// restart drops all handles. Its id carries no authority by itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,7 +133,10 @@ impl Memory<'_> {
     }
 
     /// Embedded handles have no host-held editor to close.
-    pub fn close_note_editor(&self, _input: &NoteEditorCloseRequest) -> MemoryResult<NoteEditorClosed> {
+    pub fn close_note_editor(
+        &self,
+        _input: &NoteEditorCloseRequest,
+    ) -> MemoryResult<NoteEditorClosed> {
         Err(MemoryError::new(
             crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
             "a live NOTE editor requires a serving host",
@@ -201,7 +201,12 @@ impl Memory<'_> {
             Err(error) => return Err(error),
         };
         let result = lane.read_projected(&[PointRead::id(note)], None, |txn, rows| {
-            let Some(row) = rows.into_iter().next().flatten().filter(|row| row.body.is_some()) else {
+            let Some(row) = rows
+                .into_iter()
+                .next()
+                .flatten()
+                .filter(|row| row.body.is_some())
+            else {
                 return Ok::<_, MemoryError>((None, None));
             };
             if row.entity_type != crate::registry::ENTITY_TYPE_NOTE {
@@ -224,15 +229,18 @@ impl Memory<'_> {
             };
             if core.kind == NoteKind::Diary
                 && let Some(diary) = &mut gate
-                && diary.admit(self.vault(), txn, core.author_ref, note)? != DiaryEntryAdmission::Read
+                && diary.admit(self.vault(), txn, core.author_ref, note)?
+                    != DiaryEntryAdmission::Read
             {
                 return Ok((None, gate));
             }
             let view = project(live_doc(self.vault(), txn, note)?)?;
-            let value = serde_json::to_value(&view)
-                .map_err(|_| invalid("NOTE read view encoding"))?;
+            let value =
+                serde_json::to_value(&view).map_err(|_| invalid("NOTE read view encoding"))?;
             let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
-                &self.vault().store, txn, &value,
+                &self.vault().store,
+                txn,
+                &value,
             )?;
             let view = self.lifted_view(view, || Ok(keys))?;
             self.produced_from([note]);
@@ -242,6 +250,9 @@ impl Memory<'_> {
         if let Some(gate) = gate {
             gate.finish(self.vault())?;
         }
-        Ok(ScopedReadResult { value, receipt: result.receipt })
+        Ok(ScopedReadResult {
+            value,
+            receipt: result.receipt,
+        })
     }
 }

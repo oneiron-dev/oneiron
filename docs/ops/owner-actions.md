@@ -1410,7 +1410,7 @@ step. Refusals carry these codes:
 - 403 `live_run_unavailable`: an unknown run, a credential or agent that is not the attached
   one, or a run with no attachment. All of these get the same answer.
 - 409 `live_run_stale`: the run's lease moved on.
-- 409 `code_run_busy`: the run stayed mid-step or mid-action for those 5 seconds. Retry.
+- 409 `live_run_busy`: the run stayed mid-step or mid-action for those 5 seconds. Retry.
 - 409 `live_run_attached`: another credential is attached to this lease, and the attach did not
   ask to rebind.
 

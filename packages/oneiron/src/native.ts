@@ -353,6 +353,22 @@ vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
 vaultClaimsSeed(input: unknown): unknown
+vaultChannelIdentitiesProvision(input: unknown): unknown
+vaultChannelIdentitiesBind(input: unknown): unknown
+vaultChannelIdentitiesFulfill(input: unknown): unknown
+vaultChannelIdentitiesRotate(input: unknown): unknown
+vaultChannelIdentitiesRelease(input: unknown): unknown
+vaultChannelIdentitiesRouteInbound(input: unknown): unknown
+vaultChannelIdentitiesGet(input: unknown): unknown
+vaultChannelIdentitiesSelectionRules(input: unknown): unknown
+vaultChannelIdentitiesSelectionUpdate(input: unknown): unknown
+vaultChannelIdentitiesSelect(input: unknown): unknown
+vaultChannelIdentitiesPassportsGet(input: unknown): unknown
+vaultChannelIdentitiesPassportsList(input: unknown): unknown
+vaultDeliveryWindowPolicyPut(input: unknown): unknown
+vaultDeliveryWindowPolicyList(input: unknown): unknown
+vaultDeliveryWindowPolicyRetract(input: unknown): unknown
+vaultDeliveryWindowEvaluate(input: unknown): unknown
 connectorOutboundSchedule(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
@@ -365,6 +381,8 @@ vaultNotesSeal(requestJson: string): string
 vaultNotesLifecycle(requestJson: string): string
 vaultNotesSetOverrides(requestJson: string): string
 vaultNotesDefaults(requestJson: string): string
+selfAgentsSpawn(input: unknown): unknown
+selfLeaderSplit(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

@@ -5,6 +5,7 @@ mod emission;
 mod envelope;
 mod fold_verbs;
 mod human_speech;
+mod host_doors;
 mod leader;
 mod memory_verbs;
 mod reader_spawn;
@@ -32,6 +33,7 @@ use crate::off_record::OffRecordSession;
 use crate::vault::VaultId;
 use crate::{ClaimSource, Vault, WriteActor};
 
+pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
 pub(crate) use self::envelope::check_write_gate_against_vault;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};

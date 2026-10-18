@@ -172,7 +172,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
             let args: crate::code_run::LeaderSplitInput = decode(input)?;
             SelfCall::Leader(crate::code_run::SelfLeaderCall::Split {
                 leader: args.leader.as_deref().map(EntityId::from_hex).transpose()?,
-                slice: args.slice.map(decode).transpose()?,
+                slice: args.slice,
             })
         }
         RunVerb::SelfSpawn => {

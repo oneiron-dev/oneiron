@@ -276,6 +276,7 @@ mod sdk_fanout_launch;
 mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_legal_hold;
+mod sdk_live_run;
 mod sdk_mesh;
 mod sdk_record_erase;
 mod sdk_research;

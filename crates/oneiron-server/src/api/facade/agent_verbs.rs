@@ -331,6 +331,37 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.consolidation.enqueue", post(facade_route))
         .route("/vault.consolidation.status", post(facade_route))
         .route("/vault.claims.seed", post(facade_route))
+        .route("/vault.channel_identities.provision", post(facade_route))
+        .route("/vault.channel_identities.bind", post(facade_route))
+        .route("/vault.channel_identities.fulfill", post(facade_route))
+        .route("/vault.channel_identities.rotate", post(facade_route))
+        .route("/vault.channel_identities.release", post(facade_route))
+        .route(
+            "/vault.channel_identities.route_inbound",
+            post(facade_route),
+        )
+        .route("/vault.channel_identities.get", post(facade_route))
+        .route(
+            "/vault.channel_identities.selection.rules",
+            post(facade_route),
+        )
+        .route(
+            "/vault.channel_identities.selection.update",
+            post(facade_route),
+        )
+        .route("/vault.channel_identities.select", post(facade_route))
+        .route(
+            "/vault.channel_identities.passports.get",
+            post(facade_route),
+        )
+        .route(
+            "/vault.channel_identities.passports.list",
+            post(facade_route),
+        )
+        .route("/vault.delivery_window.policy.put", post(facade_route))
+        .route("/vault.delivery_window.policy.list", post(facade_route))
+        .route("/vault.delivery_window.policy.retract", post(facade_route))
+        .route("/vault.delivery_window.evaluate", post(facade_route))
         .route("/connector.outbound.schedule", post(facade_route))
         .route("/vault.notes.create", post(facade_route))
         .route("/vault.notes.from_entity", post(facade_route))
@@ -343,4 +374,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.notes.lifecycle", post(facade_route))
         .route("/vault.notes.set_overrides", post(facade_route))
         .route("/vault.notes.defaults", post(facade_route))
+        .route("/self.agents.spawn", post(facade_route))
+        .route("/self.leader.split", post(facade_route))
 }

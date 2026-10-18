@@ -300,6 +300,14 @@ export class Oneiron {
     decisions: {
       asks: (input: Facade.EmptyRequest = {}): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
     },
+    agents: {
+      /** Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity. */
+      spawn: (input: Facade.LiveRunRequest<Facade.AgentSpawnInput>): Facade.AgentSpawnOutput => this.#call(() => this.#client.selfAgentsSpawn(input) as Facade.AgentSpawnOutput),
+    },
+    leader: {
+      /** Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope. */
+      split: (input: Facade.LiveRunRequest<Facade.LeaderSplitInput>): Facade.LeaderSplitOutput => this.#call(() => this.#client.selfLeaderSplit(input) as Facade.LeaderSplitOutput),
+    },
   }
   readonly vault = {
     people: {
@@ -1010,6 +1018,48 @@ export class Oneiron {
       enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
       /** Reads the status of one consolidation attempt by its durable job reference. */
       status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
+    },
+    channel_identities: {
+      /** Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate. */
+      provision: (input: Facade.ChannelIdentityProvisionRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesProvision(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Bind a requested identity or an existing delegated account with transaction-verified custody. */
+      bind: (input: Facade.ChannelIdentityBindRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesBind(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated. */
+      fulfill: (input: Facade.ChannelIdentityRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesFulfill(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate. */
+      rotate: (input: Facade.ChannelIdentityRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesRotate(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule. */
+      release: (input: Facade.ChannelIdentityReleaseRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesRelease(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Read and receipt the gated inbound routing disposition of a channel identity, including retirement holds. */
+      route_inbound: (input: Facade.ChannelIdentityRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesRouteInbound(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send. */
+      get: (input: Facade.ChannelIdentityRequest): Facade.ChannelIdentityView => this.#call(() => this.#client.vaultChannelIdentitiesGet(input) as Facade.ChannelIdentityView),
+      selection: {
+        /** Read the compiled relationship selection law and authenticated writer provenance. */
+        rules: (input: Facade.EmptyRequest): Facade.ChannelIdentitySelectionRuleSet => this.#call(() => this.#client.vaultChannelIdentitiesSelectionRules(input) as Facade.ChannelIdentitySelectionRuleSet),
+        /** Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer. */
+        update: (input: Facade.ChannelSelectionUpdateRequest): Facade.ChannelIdentitySelectionRuleSet => this.#call(() => this.#client.vaultChannelIdentitiesSelectionUpdate(input) as Facade.ChannelIdentitySelectionRuleSet),
+      },
+      /** Select a live channel identity under relationship rules, retaining an existing thread passport mask. */
+      select: (input: Facade.ChannelSelectionRequest): Facade.ChannelSelectionView => this.#call(() => this.#client.vaultChannelIdentitiesSelect(input) as Facade.ChannelSelectionView),
+      passports: {
+        /** Read one receiving identity and Message-ID passport through the caller credential. */
+        get: (input: Facade.ThreadPassportRequest): Facade.ThreadPassportLookup => this.#call(() => this.#client.vaultChannelIdentitiesPassportsGet(input) as Facade.ThreadPassportLookup),
+        /** Read canonical thread passports and the sticky identity, actor and facet mask. */
+        list: (input: Facade.ThreadPassportsRequest): Facade.ThreadPassportsView => this.#call(() => this.#client.vaultChannelIdentitiesPassportsList(input) as Facade.ThreadPassportsView),
+      },
+    },
+    delivery_window: {
+      policy: {
+        /** The owner writes one typed interrupt-only delivery-window policy through the gated claim writer. */
+        put: (input: Facade.DeliveryWindowPolicyPutRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultDeliveryWindowPolicyPut(input) as Facade.CommitReceipt),
+        /** Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance. */
+        list: (input: Facade.DeliveryWindowPolicyRequest): Facade.DeliveryWindowPolicies => this.#call(() => this.#client.vaultDeliveryWindowPolicyList(input) as Facade.DeliveryWindowPolicies),
+        /** The owner retracts a delivery-window policy through the existing claim lifecycle door. */
+        retract: (input: Facade.DeliveryWindowPolicyRetractRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultDeliveryWindowPolicyRetract(input) as Facade.CommitReceipt),
+      },
+      /** Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect. */
+      evaluate: (input: Facade.DeliveryWindowEvaluateRequest): Facade.DeliveryWindowPreview => this.#call(() => this.#client.vaultDeliveryWindowEvaluate(input) as Facade.DeliveryWindowPreview),
     },
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */

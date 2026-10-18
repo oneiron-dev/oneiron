@@ -1616,6 +1616,86 @@ export_facade! {
     let output = client.vault_claims_seed(&input)?;
     Lift::lift(output)
 };
+"vault.channel_identities.provision" => fn vault_channel_identities_provision(&self, input: ChannelIdentityProvisionRequest) -> ChannelIdentityLifecycleReceipt = |client| {
+    let input: oneiron::memory::channel_doors::ChannelIdentityProvisionRequest = crate::codec::lower_record("vault.channel_identities.provision", input)?;
+    let output = client.vault_channel_identities_provision(&input)?;
+    crate::codec::lift_record("vault.channel_identities.provision", &output)
+};
+"vault.channel_identities.bind" => fn vault_channel_identities_bind(&self, input: ChannelIdentityBindRequest) -> ChannelIdentityLifecycleReceipt = |client| {
+    let input: oneiron::memory::channel_doors::ChannelIdentityBindRequest = crate::codec::lower_record("vault.channel_identities.bind", input)?;
+    let output = client.vault_channel_identities_bind(&input)?;
+    crate::codec::lift_record("vault.channel_identities.bind", &output)
+};
+"vault.channel_identities.fulfill" => fn vault_channel_identities_fulfill(&self, input: ChannelIdentityRequest) -> ChannelIdentityLifecycleReceipt = |client| {
+    let input: oneiron::memory::channel_doors::ChannelIdentityRequest = crate::codec::lower_record("vault.channel_identities.fulfill", input)?;
+    let output = client.vault_channel_identities_fulfill(&input)?;
+    crate::codec::lift_record("vault.channel_identities.fulfill", &output)
+};
+"vault.channel_identities.rotate" => fn vault_channel_identities_rotate(&self, input: ChannelIdentityRequest) -> ChannelIdentityLifecycleReceipt = |client| {
+    let input: oneiron::memory::channel_doors::ChannelIdentityRequest = crate::codec::lower_record("vault.channel_identities.rotate", input)?;
+    let output = client.vault_channel_identities_rotate(&input)?;
+    crate::codec::lift_record("vault.channel_identities.rotate", &output)
+};
+"vault.channel_identities.release" => fn vault_channel_identities_release(&self, input: ChannelIdentityReleaseRequest) -> ChannelIdentityLifecycleReceipt = |client| {
+    let input: oneiron::memory::channel_doors::ChannelIdentityReleaseRequest = crate::codec::lower_record("vault.channel_identities.release", input)?;
+    let output = client.vault_channel_identities_release(&input)?;
+    crate::codec::lift_record("vault.channel_identities.release", &output)
+};
+"vault.channel_identities.route_inbound" => fn vault_channel_identities_route_inbound(&self, input: ChannelIdentityRequest) -> ChannelIdentityLifecycleReceipt = |client| {
+    let input: oneiron::memory::channel_doors::ChannelIdentityRequest = crate::codec::lower_record("vault.channel_identities.route_inbound", input)?;
+    let output = client.vault_channel_identities_route_inbound(&input)?;
+    crate::codec::lift_record("vault.channel_identities.route_inbound", &output)
+};
+"vault.channel_identities.get" => fn vault_channel_identities_get(&self, input: ChannelIdentityRequest) -> ChannelIdentityView = |client| {
+    let input: oneiron::memory::channel_doors::ChannelIdentityRequest = crate::codec::lower_record("vault.channel_identities.get", input)?;
+    let output = client.vault_channel_identities_get(&input)?;
+    crate::codec::lift_record("vault.channel_identities.get", &output)
+};
+"vault.channel_identities.selection.rules" => fn vault_channel_identities_selection_rules(&self) -> ChannelIdentitySelectionRuleSet = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.channel_identities.selection.rules")?;
+    let output = client.vault_channel_identities_selection_rules(&input)?;
+    crate::codec::lift_record("vault.channel_identities.selection.rules", &output)
+};
+"vault.channel_identities.selection.update" => fn vault_channel_identities_selection_update(&self, input: ChannelSelectionUpdateRequest) -> ChannelIdentitySelectionRuleSet = |client| {
+    let input: oneiron::memory::channel_doors::ChannelSelectionUpdateRequest = crate::codec::lower_record("vault.channel_identities.selection.update", input)?;
+    let output = client.vault_channel_identities_selection_update(&input)?;
+    crate::codec::lift_record("vault.channel_identities.selection.update", &output)
+};
+"vault.channel_identities.select" => fn vault_channel_identities_select(&self, input: ChannelSelectionRequest) -> ChannelSelectionView = |client| {
+    let input: oneiron::memory::channel_doors::ChannelSelectionRequest = crate::codec::lower_record("vault.channel_identities.select", input)?;
+    let output = client.vault_channel_identities_select(&input)?;
+    crate::codec::lift_record("vault.channel_identities.select", &output)
+};
+"vault.channel_identities.passports.get" => fn vault_channel_identities_passports_get(&self, input: ThreadPassportRequest) -> ThreadPassportLookup = |client| {
+    let input: oneiron::memory::channel_doors::ThreadPassportRequest = crate::codec::lower_record("vault.channel_identities.passports.get", input)?;
+    let output = client.vault_channel_identities_passports_get(&input)?;
+    crate::codec::lift_record("vault.channel_identities.passports.get", &output)
+};
+"vault.channel_identities.passports.list" => fn vault_channel_identities_passports_list(&self, input: ThreadPassportsRequest) -> ThreadPassportsView = |client| {
+    let input: oneiron::memory::channel_doors::ThreadPassportsRequest = crate::codec::lower_record("vault.channel_identities.passports.list", input)?;
+    let output = client.vault_channel_identities_passports_list(&input)?;
+    crate::codec::lift_record("vault.channel_identities.passports.list", &output)
+};
+"vault.delivery_window.policy.put" => fn vault_delivery_window_policy_put(&self, input: DeliveryWindowPolicyPutRequest) -> CommitReceipt = |client| {
+    let input: oneiron::memory::channel_doors::DeliveryWindowPolicyPutRequest = crate::codec::lower_record("vault.delivery_window.policy.put", input)?;
+    let output = client.vault_delivery_window_policy_put(&input)?;
+    Lift::lift(output)
+};
+"vault.delivery_window.policy.list" => fn vault_delivery_window_policy_list(&self, input: DeliveryWindowPolicyRequest) -> DeliveryWindowPolicies = |client| {
+    let input: oneiron::memory::channel_doors::DeliveryWindowPolicyRequest = crate::codec::lower_record("vault.delivery_window.policy.list", input)?;
+    let output = client.vault_delivery_window_policy_list(&input)?;
+    crate::codec::lift_record("vault.delivery_window.policy.list", &output)
+};
+"vault.delivery_window.policy.retract" => fn vault_delivery_window_policy_retract(&self, input: DeliveryWindowPolicyRetractRequest) -> CommitReceipt = |client| {
+    let input: oneiron::memory::channel_doors::DeliveryWindowPolicyRetractRequest = crate::codec::lower_record("vault.delivery_window.policy.retract", input)?;
+    let output = client.vault_delivery_window_policy_retract(&input)?;
+    Lift::lift(output)
+};
+"vault.delivery_window.evaluate" => fn vault_delivery_window_evaluate(&self, input: DeliveryWindowEvaluateRequest) -> DeliveryWindowPreview = |client| {
+    let input: oneiron::memory::channel_doors::DeliveryWindowEvaluateRequest = crate::codec::lower_record("vault.delivery_window.evaluate", input)?;
+    let output = client.vault_delivery_window_evaluate(&input)?;
+    crate::codec::lift_record("vault.delivery_window.evaluate", &output)
+};
 "connector.outbound.schedule" => fn connector_outbound_schedule(&self, draft: OutboundDraftInput) -> OutboundIntentReceipt = |client| {
     let input: oneiron::task_verb::sdk::OutboundScheduleRequest = draft.lower()?;
     let output = client.connector_outbound_schedule(&input)?;
@@ -1675,5 +1755,15 @@ export_facade! {
     let input: oneiron::note::NoteRefRequest = crate::codec::lower_record("vault.notes.defaults", input)?;
     let output = client.vault_notes_defaults(&input)?;
     crate::codec::lift_record("vault.notes.defaults", &output)
+};
+"self.agents.spawn" => fn self_agents_spawn(&self, input: LiveRunRequestAgentSpawnInput) -> AgentSpawnOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::AgentSpawnInput> = crate::codec::lower_record("self.agents.spawn", input)?;
+    let output = client.self_agents_spawn(&input)?;
+    crate::codec::lift_record("self.agents.spawn", &output)
+};
+"self.leader.split" => fn self_leader_split(&self, input: LiveRunRequestLeaderSplitInput) -> LeaderSplitOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::LeaderSplitInput> = crate::codec::lower_record("self.leader.split", input)?;
+    let output = client.self_leader_split(&input)?;
+    crate::codec::lift_record("self.leader.split", &output)
 };
 }

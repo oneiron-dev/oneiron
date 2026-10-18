@@ -355,6 +355,12 @@ class Oneiron:
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
             return Oneiron._SelfDecisionsVerbs(self._client)
+        @property
+        def agents(self) -> "Oneiron._SelfAgentsVerbs":
+            return Oneiron._SelfAgentsVerbs(self._client)
+        @property
+        def leader(self) -> "Oneiron._SelfLeaderVerbs":
+            return Oneiron._SelfLeaderVerbs(self._client)
     class _SelfFocusVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -447,6 +453,18 @@ class Oneiron:
             self._client = client
         def asks(self, spec=None):
             return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps({} if spec is None else spec))))
+    class _SelfAgentsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def spawn(self, spec):
+            """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
+            return json.loads(_translate(lambda: self._client.self_agents_spawn(json.dumps(spec))))
+    class _SelfLeaderVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def split(self, spec):
+            """Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."""
+            return json.loads(_translate(lambda: self._client.self_leader_split(json.dumps(spec))))
     class _VaultVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -662,6 +680,12 @@ class Oneiron:
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
             return Oneiron._VaultConsolidationVerbs(self._client)
+        @property
+        def channel_identities(self) -> "Oneiron._VaultChannelIdentitiesVerbs":
+            return Oneiron._VaultChannelIdentitiesVerbs(self._client)
+        @property
+        def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs":
+            return Oneiron._VaultDeliveryWindowVerbs(self._client)
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
@@ -1778,6 +1802,78 @@ class Oneiron:
         def status(self, spec):
             """Reads the status of one consolidation attempt by its durable job reference."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
+    class _VaultChannelIdentitiesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def provision(self, spec):
+            """Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_provision(json.dumps(spec))))
+        def bind(self, spec):
+            """Bind a requested identity or an existing delegated account with transaction-verified custody."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_bind(json.dumps(spec))))
+        def fulfill(self, spec):
+            """Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_fulfill(json.dumps(spec))))
+        def rotate(self, spec):
+            """Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_rotate(json.dumps(spec))))
+        def release(self, spec):
+            """Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_release(json.dumps(spec))))
+        def route_inbound(self, spec):
+            """Read and receipt the gated inbound routing disposition of a channel identity, including retirement holds."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_route_inbound(json.dumps(spec))))
+        def get(self, spec):
+            """Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_get(json.dumps(spec))))
+        @property
+        def selection(self) -> "Oneiron._VaultChannelIdentitiesSelectionVerbs":
+            return Oneiron._VaultChannelIdentitiesSelectionVerbs(self._client)
+        def select(self, spec):
+            """Select a live channel identity under relationship rules, retaining an existing thread passport mask."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_select(json.dumps(spec))))
+        @property
+        def passports(self) -> "Oneiron._VaultChannelIdentitiesPassportsVerbs":
+            return Oneiron._VaultChannelIdentitiesPassportsVerbs(self._client)
+    class _VaultChannelIdentitiesSelectionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def rules(self, spec):
+            """Read the compiled relationship selection law and authenticated writer provenance."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_selection_rules(json.dumps(spec))))
+        def update(self, spec):
+            """Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_selection_update(json.dumps(spec))))
+    class _VaultChannelIdentitiesPassportsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one receiving identity and Message-ID passport through the caller credential."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_passports_get(json.dumps(spec))))
+        def list(self, spec):
+            """Read canonical thread passports and the sticky identity, actor and facet mask."""
+            return json.loads(_translate(lambda: self._client.vault_channel_identities_passports_list(json.dumps(spec))))
+    class _VaultDeliveryWindowVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def policy(self) -> "Oneiron._VaultDeliveryWindowPolicyVerbs":
+            return Oneiron._VaultDeliveryWindowPolicyVerbs(self._client)
+        def evaluate(self, spec):
+            """Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect."""
+            return json.loads(_translate(lambda: self._client.vault_delivery_window_evaluate(json.dumps(spec))))
+    class _VaultDeliveryWindowPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """The owner writes one typed interrupt-only delivery-window policy through the gated claim writer."""
+            return json.loads(_translate(lambda: self._client.vault_delivery_window_policy_put(json.dumps(spec))))
+        def list(self, spec):
+            """Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance."""
+            return json.loads(_translate(lambda: self._client.vault_delivery_window_policy_list(json.dumps(spec))))
+        def retract(self, spec):
+            """The owner retracts a delivery-window policy through the existing claim lifecycle door."""
+            return json.loads(_translate(lambda: self._client.vault_delivery_window_policy_retract(json.dumps(spec))))
     class _VaultNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

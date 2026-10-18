@@ -5838,6 +5838,216 @@
       "mcp_scope": "unrestricted"
     },
     {
+      "name": "vault.channel_identities.provision",
+      "description": "Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate.",
+      "input": "crate::memory::channel_doors::ChannelIdentityProvisionRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_provision_as(&memory.embedded_owner(\"vault.channel_identities.provision\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.bind",
+      "description": "Bind a requested identity or an existing delegated account with transaction-verified custody.",
+      "input": "crate::memory::channel_doors::ChannelIdentityBindRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_bind_as(&memory.embedded_owner(\"vault.channel_identities.bind\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.fulfill",
+      "description": "Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated.",
+      "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_fulfill_as(&memory.embedded_owner(\"vault.channel_identities.fulfill\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.rotate",
+      "description": "Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate.",
+      "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_rotate_as(&memory.embedded_owner(\"vault.channel_identities.rotate\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.release",
+      "description": "Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule.",
+      "input": "crate::memory::channel_doors::ChannelIdentityReleaseRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_release_as(&memory.embedded_owner(\"vault.channel_identities.release\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.route_inbound",
+      "description": "Read and receipt the gated inbound routing disposition of a channel identity, including retirement holds.",
+      "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_route_inbound_as(&memory.embedded_owner(\"vault.channel_identities.route_inbound\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.get",
+      "description": "Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send.",
+      "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityView",
+      "call": "memory.channel_identity_get(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.channel_identities.selection.rules",
+      "description": "Read the compiled relationship selection law and authenticated writer provenance.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::channel_identity_selection::ChannelIdentitySelectionRuleSet",
+      "call": "memory.channel_selection_rules()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.channel_identities.selection.update",
+      "description": "Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer.",
+      "input": "crate::memory::channel_doors::ChannelSelectionUpdateRequest",
+      "output": "crate::channel_identity_selection::ChannelIdentitySelectionRuleSet",
+      "call": "memory.channel_selection_update(input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.select",
+      "description": "Select a live channel identity under relationship rules, retaining an existing thread passport mask.",
+      "input": "crate::memory::channel_doors::ChannelSelectionRequest",
+      "output": "crate::memory::channel_doors::ChannelSelectionView",
+      "call": "memory.channel_identity_select(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.channel_identities.passports.get",
+      "description": "Read one receiving identity and Message-ID passport through the caller credential.",
+      "input": "crate::memory::channel_doors::ThreadPassportRequest",
+      "output": "crate::memory::channel_doors::ThreadPassportLookup",
+      "call": "memory.channel_thread_passport(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.channel_identities.passports.list",
+      "description": "Read canonical thread passports and the sticky identity, actor and facet mask.",
+      "input": "crate::memory::channel_doors::ThreadPassportsRequest",
+      "output": "crate::memory::channel_doors::ThreadPassportsView",
+      "call": "memory.channel_thread_passports(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.delivery_window.policy.put",
+      "description": "The owner writes one typed interrupt-only delivery-window policy through the gated claim writer.",
+      "input": "crate::memory::channel_doors::DeliveryWindowPolicyPutRequest",
+      "output": "crate::memory::CommitReceipt",
+      "call": "memory.delivery_window_put_as(&memory.embedded_owner(\"vault.delivery_window.policy.put\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.delivery_window.policy.list",
+      "description": "Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance.",
+      "input": "crate::memory::channel_doors::DeliveryWindowPolicyRequest",
+      "output": "crate::memory::channel_doors::DeliveryWindowPolicies",
+      "call": "memory.delivery_window_policies(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.delivery_window.policy.retract",
+      "description": "The owner retracts a delivery-window policy through the existing claim lifecycle door.",
+      "input": "crate::memory::channel_doors::DeliveryWindowPolicyRetractRequest",
+      "output": "crate::memory::CommitReceipt",
+      "call": "memory.delivery_window_retract_as(&memory.embedded_owner(\"vault.delivery_window.policy.retract\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.delivery_window.evaluate",
+      "description": "Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect.",
+      "input": "crate::memory::channel_doors::DeliveryWindowEvaluateRequest",
+      "output": "crate::memory::channel_doors::DeliveryWindowPreview",
+      "call": "memory.delivery_window_evaluate(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "connector.outbound.schedule",
       "description": "Schedules one send through a granted outbound connector, gated and held for delivery.",
       "refs": ["/content_ref"],
@@ -6178,7 +6388,11 @@
       "output": "crate::code_run::AgentSpawnOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "AgentsSpawn"
+      "effect": "AgentsSpawn",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>",
+        "description": "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."
+      }
     },
     {
       "name": "self.leader.advice",
@@ -6202,7 +6416,11 @@
       "output": "crate::code_run::LeaderSplitOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "LeaderSplit"
+      "effect": "LeaderSplit",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>",
+        "description": "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."
+      }
     },
     {
       "name": "self.skills.call",
