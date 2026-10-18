@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 614 facade rows, 2232 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 574.
+// UniFFI census: 623 facade rows, 2243 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 583.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -352,6 +352,60 @@ pub struct DiaryReviewAnswer {
     pub request: String,
     #[serde(rename = "approve")]
     pub approve: bool,
+}
+
+/// `oneiron::task_verb::sdk_standing::OwnStandingBlockRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OwnStandingBlockRequest {
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_standing::StandingBlockView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StandingBlockView {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "agent_ref")]
+    pub agent_ref: String,
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "token_floor")]
+    pub token_floor: u64,
+}
+
+/// `oneiron::task_verb::sdk_standing::StandingBlockEditRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StandingBlockEditRequest {
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+    #[serde(rename = "field")]
+    pub field: String,
+    #[serde(rename = "value")]
+    pub value: String,
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(
+        rename = "evidence_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub evidence_refs: Option<Vec<String>>,
+}
+
+/// `oneiron::task_verb::sdk_standing::StandingBlockEditReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StandingBlockEditReceipt {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "field")]
+    pub field: String,
 }
 
 /// `oneiron::dreamer_runner::maintenance::identity::IdentityAnswerRequest`.
@@ -21184,6 +21238,96 @@ pub struct AgentDefinitionUpdateRequest {
     pub expected_version: String,
     #[serde(rename = "definition")]
     pub definition: AgentDefinitionSpec,
+}
+
+/// `oneiron::task_verb::sdk_standing::AgentDreamingRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentDreamingRequest {
+    #[serde(rename = "agent_def_ref")]
+    pub agent_def_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_standing::DreamingModeInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DreamingModeInput {
+    #[serde(rename = "own")]
+    Own,
+    #[serde(rename = "inherit")]
+    Inherit,
+    #[serde(rename = "off")]
+    Off,
+}
+
+/// `oneiron::task_verb::sdk_standing::AgentDreamingView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgentDreamingView {
+    #[serde(rename = "agent_def_ref")]
+    pub agent_def_ref: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "mode", default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<DreamingModeInput>,
+    #[serde(rename = "effective_mode")]
+    pub effective_mode: DreamingModeInput,
+    #[serde(
+        rename = "dreaming_model",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dreaming_model: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_standing::AgentDreamingSetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentDreamingSetRequest {
+    #[serde(rename = "agent_def_ref")]
+    pub agent_def_ref: String,
+    #[serde(rename = "expected_version")]
+    pub expected_version: String,
+    #[serde(rename = "new_version")]
+    pub new_version: String,
+    #[serde(rename = "mode")]
+    pub mode: DreamingModeInput,
+    #[serde(
+        rename = "dreaming_model",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dreaming_model: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_standing::StandingBlockConfigureRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StandingBlockConfigureRequest {
+    #[serde(rename = "agent_ref")]
+    pub agent_ref: String,
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "token_floor")]
+    pub token_floor: u64,
+}
+
+/// `oneiron::task_verb::sdk_standing::StandingBlockRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StandingBlockRequest {
+    #[serde(rename = "agent_ref")]
+    pub agent_ref: String,
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_standing::StandingBlocksRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StandingBlocksRequest {
+    #[serde(rename = "agent_ref")]
+    pub agent_ref: String,
 }
 
 /// `oneiron::task_verb::sdk_workflows::WorkflowSaveRequest`.

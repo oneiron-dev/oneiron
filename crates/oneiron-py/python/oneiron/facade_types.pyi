@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 614 facade rows, 2294 declarations.
-Inputs: 562 of 614 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 545 of 614 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 623 facade rows, 2305 declarations.
+Inputs: 571 of 623 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 554 of 623 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -111,6 +111,26 @@ class DiaryReadsView(TypedDict):
 class DiaryReviewAnswer(TypedDict):
     request: str
     approve: bool
+class OwnStandingBlockRequest(TypedDict):
+    world_ref: EntityId
+class StandingBlockView(TypedDict):
+    handle: str
+    agent_ref: EntityId
+    world_ref: EntityId
+    name: str
+    token_floor: int
+class EmptyRequest(TypedDict):
+    ...
+class StandingBlockEditRequest(TypedDict):
+    world_ref: EntityId
+    field: str
+    value: str
+    run_ref: str
+    evidence_refs: NotRequired[list[EntityId]]
+class StandingBlockEditReceipt(TypedDict):
+    handle: str
+    claim_ref: EntityId
+    field: str
 class IdentityAnswerRequest(TypedDict):
     ask: str
     choice: str
@@ -336,8 +356,6 @@ class PeoplePage(TypedDict):
     more: int
 class PersonRequest(TypedDict):
     pr: str
-class EmptyRequest(TypedDict):
-    ...
 ShapePreset = Literal["personal", "family", "team", "org", "community"]
 ShapeMemberRole = Literal["owner", "admin", "member", "viewer"]
 ShapeCeiling = Literal["auto", "proposed"]
@@ -6845,6 +6863,31 @@ class AgentDefinitionUpdateRequest(TypedDict):
     agent_def_ref: EntityId
     expected_version: str
     definition: AgentDefinitionSpec
+class AgentDreamingRequest(TypedDict):
+    agent_def_ref: EntityId
+DreamingModeInput = Literal["own", "inherit", "off"]
+class AgentDreamingView(TypedDict):
+    agent_def_ref: EntityId
+    version: str
+    mode: NotRequired[DreamingModeInput | None]
+    effective_mode: DreamingModeInput
+    dreaming_model: NotRequired[str | None]
+class AgentDreamingSetRequest(TypedDict):
+    agent_def_ref: EntityId
+    expected_version: str
+    new_version: str
+    mode: DreamingModeInput
+    dreaming_model: NotRequired[str | None]
+class StandingBlockConfigureRequest(TypedDict):
+    agent_ref: EntityId
+    world_ref: EntityId
+    name: str
+    token_floor: int
+class StandingBlockRequest(TypedDict):
+    agent_ref: EntityId
+    world_ref: EntityId
+class StandingBlocksRequest(TypedDict):
+    agent_ref: EntityId
 class WorkflowSaveRequest(TypedDict):
     workflow_ref: EntityId
     name: str

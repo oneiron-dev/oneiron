@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 669 code-mode rows (648 host rows, 21 run rows), 2380 declarations.
-// Replies: 590 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 678 code-mode rows (657 host rows, 21 run rows), 2391 declarations.
+// Replies: 599 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -45,6 +45,11 @@ declare namespace Sdk {
   type DiaryReadRequest = { request: EntityId; reader: EntityId; reader_class: string; reason: string; asked_at: number; state: DiaryReviewState; answered_at?: number | null; read?: EntityId | null };
   type DiaryReadsView = { review: boolean; reads: DiaryReadRecord[]; requests: DiaryReadRequest[] };
   type DiaryReviewAnswer = { request: string; approve: boolean };
+  type OwnStandingBlockRequest = { world_ref: EntityId };
+  type StandingBlockView = { handle: string; agent_ref: EntityId; world_ref: EntityId; name: string; token_floor: number };
+  type EmptyRequest = Record<string, never>;
+  type StandingBlockEditRequest = { world_ref: EntityId; field: string; value: string; run_ref: string; evidence_refs?: EntityId[] };
+  type StandingBlockEditReceipt = { handle: string; claim_ref: EntityId; field: string };
   type IdentityAnswerRequest = { ask: string; choice: string };
   type IdentitySettled = { ask: string; entity: string };
   type IdentityEffect = "send" | "pay" | "invite" | "share";
@@ -94,7 +99,6 @@ declare namespace Sdk {
   type PersonRow = { person: EntityId; actors: EntityId[]; handle: string; name: string; kind: PersonKind; role: string; about?: string | null };
   type PeoplePage = { vault: string; page: number; people: PersonRow[]; more: number };
   type PersonRequest = { pr: string };
-  type EmptyRequest = Record<string, never>;
   type ShapePreset = "personal" | "family" | "team" | "org" | "community";
   type ShapeMemberRole = "owner" | "admin" | "member" | "viewer";
   type ShapeCeiling = "auto" | "proposed";
@@ -1431,6 +1435,13 @@ declare namespace Sdk {
   type AgentDefinitionView = { agent_def_ref: EntityId; definition: AgentDefinitionSpec; approval_status: ClaimApprovalStatus; lifecycle_status: AgentDefinitionLifecycle };
   type AgentDefinitionRequest = { agent_def_ref: EntityId };
   type AgentDefinitionUpdateRequest = { agent_def_ref: EntityId; expected_version: string; definition: AgentDefinitionSpec };
+  type AgentDreamingRequest = { agent_def_ref: EntityId };
+  type DreamingModeInput = "own" | "inherit" | "off";
+  type AgentDreamingView = { agent_def_ref: EntityId; version: string; mode?: DreamingModeInput | null; effective_mode: DreamingModeInput; dreaming_model?: string | null };
+  type AgentDreamingSetRequest = { agent_def_ref: EntityId; expected_version: string; new_version: string; mode: DreamingModeInput; dreaming_model?: string | null };
+  type StandingBlockConfigureRequest = { agent_ref: EntityId; world_ref: EntityId; name: string; token_floor: number };
+  type StandingBlockRequest = { agent_ref: EntityId; world_ref: EntityId };
+  type StandingBlocksRequest = { agent_ref: EntityId };
   type WorkflowSaveRequest = { workflow_ref: EntityId; name: string; steps: EntityId[] };
   type WorkflowView = { workflow_ref: EntityId; name: string; steps: EntityId[]; revision: number; forked_from?: EntityId | null };
   type WorkflowRequest = { workflow_ref: EntityId };
@@ -2675,6 +2686,14 @@ declare namespace self {
     save(input: Sdk.SkillSaveRequest): Promise<Sdk.SkillAuthoringReceipt | StoredResult>;
   };
   const spawn: (input: Sdk.ReaderSpawnInput) => Promise<Sdk.ReaderSpawnReceipt | StoredResult>;
+  const standing: {
+    /** This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited. */
+    edit(input: Sdk.StandingBlockEditRequest): Promise<Sdk.StandingBlockEditReceipt | StoredResult>;
+    /** This agent's configured standing block in one world: its handle, name and token floor. */
+    get(input: Sdk.OwnStandingBlockRequest): Promise<Sdk.StandingBlockView | StoredResult>;
+    /** Every standing block configured for this agent, one per world, in world order. */
+    list(input: Sdk.EmptyRequest): Promise<Sdk.StandingBlockView[] | StoredResult>;
+  };
   const team: {
     record(input: Sdk.TeamRecordInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
     start(input: Sdk.TeamStartInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
@@ -2718,6 +2737,12 @@ declare const vault: Sdk.VaultHost & {
   agents: {
     /** The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
     create(input: Sdk.AgentDefinitionCreateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
+    dreaming: {
+      /** The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot. */
+      get(input: Sdk.AgentDreamingRequest): Promise<Sdk.AgentDreamingView | StoredResult>;
+      /** The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary. */
+      set(input: Sdk.AgentDreamingSetRequest): Promise<Sdk.AgentDreamingView | StoredResult>;
+    };
     /** An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home. */
     export_pack(input: Sdk.AgentPackExportRequest): Promise<Sdk.AgentPackExport | StoredResult>;
     /** The owner reads one saved agent composition, including its declared refusal dial, version and approval state. */
@@ -3924,6 +3949,16 @@ declare const vault: Sdk.VaultHost & {
     resume_step(input: Sdk.SlimResumeStepRequest): Promise<Sdk.SavedResumeStep | StoredResult>;
     /** Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault. */
     state(input: Sdk.EmptyRequest): Promise<Sdk.SlimStateSnapshot | StoredResult>;
+  };
+  standing_blocks: {
+    /** The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle. */
+    configure(input: Sdk.StandingBlockConfigureRequest): Promise<Sdk.StandingBlockView | StoredResult>;
+    /** The owner reads one agent's configured standing block in one world: its handle, name and token floor. */
+    get(input: Sdk.StandingBlockRequest): Promise<Sdk.StandingBlockView | StoredResult>;
+    /** The owner lists every standing block configured for one agent, one per world, in world order. */
+    list(input: Sdk.StandingBlocksRequest): Promise<Sdk.StandingBlockView[] | StoredResult>;
+    /** The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened. */
+    reconfigure(input: Sdk.StandingBlockConfigureRequest): Promise<Sdk.StandingBlockView | StoredResult>;
   };
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */

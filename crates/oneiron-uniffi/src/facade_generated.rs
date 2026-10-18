@@ -35,6 +35,21 @@ export_facade! {
     let output = client.self_memory_diary_review(&input)?;
     crate::codec::lift_record("self.memory.diary.review", &output)
 };
+"self.standing.get" => fn self_standing_get(&self, input: OwnStandingBlockRequest) -> StandingBlockView = |client| {
+    let input: oneiron::task_verb::sdk::OwnStandingBlockRequest = crate::codec::lower_record("self.standing.get", input)?;
+    let output = client.self_standing_get(&input)?;
+    crate::codec::lift_record("self.standing.get", &output)
+};
+"self.standing.list" => fn self_standing_list(&self) -> Vec<StandingBlockView> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.standing.list")?;
+    let output = client.self_standing_list(&input)?;
+    crate::codec::lift_record("self.standing.list", &output)
+};
+"self.standing.edit" => fn self_standing_edit(&self, input: StandingBlockEditRequest) -> StandingBlockEditReceipt = |client| {
+    let input: oneiron::task_verb::sdk::StandingBlockEditRequest = crate::codec::lower_record("self.standing.edit", input)?;
+    let output = client.self_standing_edit(&input)?;
+    crate::codec::lift_record("self.standing.edit", &output)
+};
 "self.identity.answer" => fn self_identity_answer(&self, input: IdentityAnswerRequest) -> IdentitySettled = |client| {
     let input: oneiron::dreamer_runner::maintenance::identity::IdentityAnswerRequest = crate::codec::lower_record("self.identity.answer", input)?;
     let output = client.self_identity_answer(&input)?;
@@ -1765,6 +1780,36 @@ export_facade! {
     let input: oneiron::task_verb::sdk::AgentDefinitionUpdateRequest = crate::codec::lower_record("vault.agents.update", input)?;
     let output = client.vault_agents_update(&input)?;
     crate::codec::lift_record("vault.agents.update", &output)
+};
+"vault.agents.dreaming.get" => fn vault_agents_dreaming_get(&self, input: AgentDreamingRequest) -> AgentDreamingView = |client| {
+    let input: oneiron::task_verb::sdk::AgentDreamingRequest = crate::codec::lower_record("vault.agents.dreaming.get", input)?;
+    let output = client.vault_agents_dreaming_get(&input)?;
+    crate::codec::lift_record("vault.agents.dreaming.get", &output)
+};
+"vault.agents.dreaming.set" => fn vault_agents_dreaming_set(&self, input: AgentDreamingSetRequest) -> AgentDreamingView = |client| {
+    let input: oneiron::task_verb::sdk::AgentDreamingSetRequest = crate::codec::lower_record("vault.agents.dreaming.set", input)?;
+    let output = client.vault_agents_dreaming_set(&input)?;
+    crate::codec::lift_record("vault.agents.dreaming.set", &output)
+};
+"vault.standing_blocks.configure" => fn vault_standing_blocks_configure(&self, input: StandingBlockConfigureRequest) -> StandingBlockView = |client| {
+    let input: oneiron::task_verb::sdk::StandingBlockConfigureRequest = crate::codec::lower_record("vault.standing_blocks.configure", input)?;
+    let output = client.vault_standing_blocks_configure(&input)?;
+    crate::codec::lift_record("vault.standing_blocks.configure", &output)
+};
+"vault.standing_blocks.reconfigure" => fn vault_standing_blocks_reconfigure(&self, input: StandingBlockConfigureRequest) -> StandingBlockView = |client| {
+    let input: oneiron::task_verb::sdk::StandingBlockConfigureRequest = crate::codec::lower_record("vault.standing_blocks.reconfigure", input)?;
+    let output = client.vault_standing_blocks_reconfigure(&input)?;
+    crate::codec::lift_record("vault.standing_blocks.reconfigure", &output)
+};
+"vault.standing_blocks.get" => fn vault_standing_blocks_get(&self, input: StandingBlockRequest) -> StandingBlockView = |client| {
+    let input: oneiron::task_verb::sdk::StandingBlockRequest = crate::codec::lower_record("vault.standing_blocks.get", input)?;
+    let output = client.vault_standing_blocks_get(&input)?;
+    crate::codec::lift_record("vault.standing_blocks.get", &output)
+};
+"vault.standing_blocks.list" => fn vault_standing_blocks_list(&self, input: StandingBlocksRequest) -> Vec<StandingBlockView> = |client| {
+    let input: oneiron::task_verb::sdk::StandingBlocksRequest = crate::codec::lower_record("vault.standing_blocks.list", input)?;
+    let output = client.vault_standing_blocks_list(&input)?;
+    crate::codec::lift_record("vault.standing_blocks.list", &output)
 };
 "vault.workflows.save" => fn vault_workflows_save(&self, input: WorkflowSaveRequest) -> WorkflowView = |client| {
     let input: oneiron::task_verb::sdk::WorkflowSaveRequest = crate::codec::lower_record("vault.workflows.save", input)?;

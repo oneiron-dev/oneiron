@@ -266,6 +266,14 @@ export class Oneiron {
         query: (input: Facade.DiaryQueryRequest): Facade.DiaryQueryOutcome => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as Facade.DiaryQueryOutcome),
       }),
     },
+    standing: {
+      /** This agent's configured standing block in one world: its handle, name and token floor. */
+      get: (input: Facade.OwnStandingBlockRequest): Facade.StandingBlockView => this.#call(() => this.#client.selfStandingGet(input) as Facade.StandingBlockView),
+      /** Every standing block configured for this agent, one per world, in world order. */
+      list: (input: Facade.EmptyRequest = {}): Facade.StandingBlockView[] => this.#call(() => this.#client.selfStandingList(input) as Facade.StandingBlockView[]),
+      /** This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited. */
+      edit: (input: Facade.StandingBlockEditRequest): Facade.StandingBlockEditReceipt => this.#call(() => this.#client.selfStandingEdit(input) as Facade.StandingBlockEditReceipt),
+    },
     identity: {
       /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
       answer: (input: Facade.IdentityAnswerRequest): Facade.IdentitySettled => this.#call(() => this.#client.selfIdentityAnswer(input) as Facade.IdentitySettled),
@@ -1317,12 +1325,28 @@ export class Oneiron {
       get: (input: Facade.AgentDefinitionRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsGet(input) as Facade.AgentDefinitionView),
       /** The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial. */
       update: (input: Facade.AgentDefinitionUpdateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsUpdate(input) as Facade.AgentDefinitionView),
+      dreaming: {
+        /** The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot. */
+        get: (input: Facade.AgentDreamingRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingGet(input) as Facade.AgentDreamingView),
+        /** The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary. */
+        set: (input: Facade.AgentDreamingSetRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingSet(input) as Facade.AgentDreamingView),
+      },
       spawn: {
         /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
         get: (input: Facade.PlannedSpawnRead): Facade.PlannedSpawnObservation => this.#call(() => this.#client.vaultAgentsSpawnGet(input) as Facade.PlannedSpawnObservation),
       },
       /** The agent's travelling AgentPack folder (files base64) and what stayed home. */
       export_pack: (request: Facade.AgentPackExportRequest): Facade.AgentPackExport => this.#call(() => {  const result = JSON.parse(this.#client.vaultAgentsExportPack(keyedJson(request))) as Facade.AgentPackExport; return result }),
+    },
+    standing_blocks: {
+      /** The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle. */
+      configure: (input: Facade.StandingBlockConfigureRequest): Facade.StandingBlockView => this.#call(() => this.#client.vaultStandingBlocksConfigure(input) as Facade.StandingBlockView),
+      /** The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened. */
+      reconfigure: (input: Facade.StandingBlockConfigureRequest): Facade.StandingBlockView => this.#call(() => this.#client.vaultStandingBlocksReconfigure(input) as Facade.StandingBlockView),
+      /** The owner reads one agent's configured standing block in one world: its handle, name and token floor. */
+      get: (input: Facade.StandingBlockRequest): Facade.StandingBlockView => this.#call(() => this.#client.vaultStandingBlocksGet(input) as Facade.StandingBlockView),
+      /** The owner lists every standing block configured for one agent, one per world, in world order. */
+      list: (input: Facade.StandingBlocksRequest): Facade.StandingBlockView[] => this.#call(() => this.#client.vaultStandingBlocksList(input) as Facade.StandingBlockView[]),
     },
     workflows: {
       /** The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched. */

@@ -579,6 +579,7 @@ pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
 pub use super::sdk_skill_execution::*;
 pub use super::sdk_skills::*;
+pub use super::sdk_standing::*;
 pub use super::sdk_support_grant::*;
 pub use super::sdk_trusted_contact::*;
 pub use super::sdk_voice_bank::*;

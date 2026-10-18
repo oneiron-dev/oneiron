@@ -11,6 +11,9 @@ pub enum AgentVerb {
     SelfMemoryDiary,
     SelfMemoryDiaryReads,
     SelfMemoryDiaryReview,
+    SelfStandingGet,
+    SelfStandingList,
+    SelfStandingEdit,
     SelfIdentityAnswer,
     SelfIdentitySettle,
     SelfInboxList,
@@ -357,6 +360,12 @@ pub enum AgentVerb {
     VaultAgentsCreate,
     VaultAgentsGet,
     VaultAgentsUpdate,
+    VaultAgentsDreamingGet,
+    VaultAgentsDreamingSet,
+    VaultStandingBlocksConfigure,
+    VaultStandingBlocksReconfigure,
+    VaultStandingBlocksGet,
+    VaultStandingBlocksList,
     VaultWorkflowsSave,
     VaultWorkflowsGet,
     VaultWorkflowsUpdate,
@@ -671,6 +680,9 @@ impl AgentVerb {
         Self::SelfMemoryDiary,
         Self::SelfMemoryDiaryReads,
         Self::SelfMemoryDiaryReview,
+        Self::SelfStandingGet,
+        Self::SelfStandingList,
+        Self::SelfStandingEdit,
         Self::SelfIdentityAnswer,
         Self::SelfIdentitySettle,
         Self::SelfInboxList,
@@ -1017,6 +1029,12 @@ impl AgentVerb {
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
         Self::VaultAgentsUpdate,
+        Self::VaultAgentsDreamingGet,
+        Self::VaultAgentsDreamingSet,
+        Self::VaultStandingBlocksConfigure,
+        Self::VaultStandingBlocksReconfigure,
+        Self::VaultStandingBlocksGet,
+        Self::VaultStandingBlocksList,
         Self::VaultWorkflowsSave,
         Self::VaultWorkflowsGet,
         Self::VaultWorkflowsUpdate,
@@ -1334,6 +1352,9 @@ impl AgentVerb {
             Self::SelfMemoryDiary => "self.memory.diary",
             Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
+            Self::SelfStandingGet => "self.standing.get",
+            Self::SelfStandingList => "self.standing.list",
+            Self::SelfStandingEdit => "self.standing.edit",
             Self::SelfIdentityAnswer => "self.identity.answer",
             Self::SelfIdentitySettle => "self.identity.settle",
             Self::SelfInboxList => "self.inbox.list",
@@ -1692,6 +1713,12 @@ impl AgentVerb {
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
             Self::VaultAgentsUpdate => "vault.agents.update",
+            Self::VaultAgentsDreamingGet => "vault.agents.dreaming.get",
+            Self::VaultAgentsDreamingSet => "vault.agents.dreaming.set",
+            Self::VaultStandingBlocksConfigure => "vault.standing_blocks.configure",
+            Self::VaultStandingBlocksReconfigure => "vault.standing_blocks.reconfigure",
+            Self::VaultStandingBlocksGet => "vault.standing_blocks.get",
+            Self::VaultStandingBlocksList => "vault.standing_blocks.list",
             Self::VaultWorkflowsSave => "vault.workflows.save",
             Self::VaultWorkflowsGet => "vault.workflows.get",
             Self::VaultWorkflowsUpdate => "vault.workflows.update",
@@ -2009,6 +2036,9 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfStandingGet
+                | Self::SelfStandingList
+                | Self::SelfStandingEdit
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxList
@@ -2355,6 +2385,12 @@ impl AgentVerb {
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
                 | Self::VaultAgentsUpdate
+                | Self::VaultAgentsDreamingGet
+                | Self::VaultAgentsDreamingSet
+                | Self::VaultStandingBlocksConfigure
+                | Self::VaultStandingBlocksReconfigure
+                | Self::VaultStandingBlocksGet
+                | Self::VaultStandingBlocksList
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
@@ -2676,6 +2712,9 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfStandingGet
+                | Self::SelfStandingList
+                | Self::SelfStandingEdit
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxList
@@ -3022,6 +3061,12 @@ impl AgentVerb {
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
                 | Self::VaultAgentsUpdate
+                | Self::VaultAgentsDreamingGet
+                | Self::VaultAgentsDreamingSet
+                | Self::VaultStandingBlocksConfigure
+                | Self::VaultStandingBlocksReconfigure
+                | Self::VaultStandingBlocksGet
+                | Self::VaultStandingBlocksList
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
@@ -3305,7 +3350,8 @@ impl AgentVerb {
     pub const fn continuable(self) -> bool {
         matches!(
             self,
-            Self::SelfInboxList
+            Self::SelfStandingList
+                | Self::SelfInboxList
                 | Self::Describe
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalTurn
@@ -3331,6 +3377,7 @@ impl AgentVerb {
                 | Self::VaultCourtesyDeleteIncoming
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsThreadsList
+                | Self::VaultStandingBlocksList
                 | Self::VaultWorkspaceRoster
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -3411,6 +3458,9 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfStandingGet
+                | Self::SelfStandingList
+                | Self::SelfStandingEdit
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxConcern
@@ -3744,6 +3794,12 @@ impl AgentVerb {
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
                 | Self::VaultAgentsUpdate
+                | Self::VaultAgentsDreamingGet
+                | Self::VaultAgentsDreamingSet
+                | Self::VaultStandingBlocksConfigure
+                | Self::VaultStandingBlocksReconfigure
+                | Self::VaultStandingBlocksGet
+                | Self::VaultStandingBlocksList
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
@@ -4032,6 +4088,7 @@ impl AgentVerb {
                 | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfStandingEdit
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxMark
@@ -4251,6 +4308,9 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueRecover
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
+                | Self::VaultAgentsDreamingSet
+                | Self::VaultStandingBlocksConfigure
+                | Self::VaultStandingBlocksReconfigure
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
@@ -4429,7 +4489,8 @@ impl AgentVerb {
     pub const fn proposes(self) -> bool {
         matches!(
             self,
-            Self::Cancel
+            Self::SelfStandingEdit
+                | Self::Cancel
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
@@ -4459,6 +4520,9 @@ impl AgentVerb {
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
+            Self::SelfStandingGet => &["spec"],
+            Self::SelfStandingList => &["spec"],
+            Self::SelfStandingEdit => &["spec"],
             Self::SelfIdentityAnswer => &["spec"],
             Self::SelfIdentitySettle => &["spec"],
             Self::SelfInboxList => &["spec"],
@@ -4822,6 +4886,12 @@ impl AgentVerb {
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
             Self::VaultAgentsUpdate => &["spec"],
+            Self::VaultAgentsDreamingGet => &["spec"],
+            Self::VaultAgentsDreamingSet => &["spec"],
+            Self::VaultStandingBlocksConfigure => &["spec"],
+            Self::VaultStandingBlocksReconfigure => &["spec"],
+            Self::VaultStandingBlocksGet => &["spec"],
+            Self::VaultStandingBlocksList => &["spec"],
             Self::VaultWorkflowsSave => &["spec"],
             Self::VaultWorkflowsGet => &["spec"],
             Self::VaultWorkflowsUpdate => &["spec"],
@@ -5137,6 +5207,9 @@ impl AgentVerb {
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
+            Self::SelfStandingGet => &["spec"],
+            Self::SelfStandingList => &["spec"],
+            Self::SelfStandingEdit => &["spec"],
             Self::SelfIdentityAnswer => &["spec"],
             Self::SelfIdentitySettle => &["spec"],
             Self::SelfInboxList => &["spec"],
@@ -5483,6 +5556,12 @@ impl AgentVerb {
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
             Self::VaultAgentsUpdate => &["spec"],
+            Self::VaultAgentsDreamingGet => &["spec"],
+            Self::VaultAgentsDreamingSet => &["spec"],
+            Self::VaultStandingBlocksConfigure => &["spec"],
+            Self::VaultStandingBlocksReconfigure => &["spec"],
+            Self::VaultStandingBlocksGet => &["spec"],
+            Self::VaultStandingBlocksList => &["spec"],
             Self::VaultWorkflowsSave => &["spec"],
             Self::VaultWorkflowsGet => &["spec"],
             Self::VaultWorkflowsUpdate => &["spec"],
@@ -5816,6 +5895,15 @@ impl AgentVerb {
             }
             Self::SelfMemoryDiaryReview => {
                 "This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers."
+            }
+            Self::SelfStandingGet => {
+                "This agent's configured standing block in one world: its handle, name and token floor."
+            }
+            Self::SelfStandingList => {
+                "Every standing block configured for this agent, one per world, in world order."
+            }
+            Self::SelfStandingEdit => {
+                "This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited."
             }
             Self::SelfIdentityAnswer => {
                 "A vault owner's tap on an identity choice card: who a person named in their conversations is."
@@ -6818,6 +6906,24 @@ impl AgentVerb {
             }
             Self::VaultAgentsUpdate => {
                 "The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."
+            }
+            Self::VaultAgentsDreamingGet => {
+                "The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot."
+            }
+            Self::VaultAgentsDreamingSet => {
+                "The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."
+            }
+            Self::VaultStandingBlocksConfigure => {
+                "The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle."
+            }
+            Self::VaultStandingBlocksReconfigure => {
+                "The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened."
+            }
+            Self::VaultStandingBlocksGet => {
+                "The owner reads one agent's configured standing block in one world: its handle, name and token floor."
+            }
+            Self::VaultStandingBlocksList => {
+                "The owner lists every standing block configured for one agent, one per world, in world order."
             }
             Self::VaultWorkflowsSave => {
                 "The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."
