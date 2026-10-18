@@ -52437,7 +52437,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 64,
+      "re-export": 65,
       "struct": 40
      }
     },
@@ -52874,7 +52874,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 976
+      "fn": 985
      }
     },
     {
@@ -53219,6 +53219,28 @@
       "enum": 2,
       "fn": 1,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OffRecordRoomExport",
+      "OffRecordRoomExportTurn",
+      "OffRecordRoomNotice",
+      "OffRecordRoomRequest",
+      "OffRecordRoomSaved",
+      "OffRecordRoomSavedTurn",
+      "OffRecordRoomShortIdPair",
+      "OffRecordRoomStartRequest",
+      "OffRecordRoomSuggestion",
+      "OffRecordRoomView",
+      "OffRecordRoomWitnessRequest"
+     ],
+     "path": "src/task_verb/sdk_off_record_rooms.rs",
+     "purpose": "The typed room off-record doors (ARCH-0052 D5, PRIVACY-07)",
+     "surface": {
+      "struct": 11
      }
     },
     {
@@ -60386,7 +60408,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 181,
+     "files": 182,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60556,7 +60578,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3693,
+   "source_files": 3694,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69147,7 +69169,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 947
+      "fn": 956
      }
     },
     {
@@ -70210,7 +70232,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 948
+      "fn": 957
      }
     },
     {
@@ -73723,7 +73745,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 154
+      "crate-vis": 155
      }
     },
     {
@@ -73874,6 +73896,16 @@
      "purpose": "The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06)",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/off_record_room_doors.rs",
+     "purpose": "Typed room off-record verbs over the existing participant handlers",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -74813,7 +74845,7 @@
      "path": "src/api/off_record_rooms.rs",
      "purpose": "Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 11
      }
     },
     {
@@ -81736,7 +81768,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 419,
+     "files": 420,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82165,7 +82197,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 770,
+   "source_files": 771,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -84035,6 +84067,8 @@
       "MessageReactionExternal",
       "MessageReactionReceipt",
       "MessageReactionRequest",
+      "MessageResultAttachment",
+      "MessageResultSource",
       "MessageStreamHandle",
       "MessageStreamMode",
       "MessageStreamOptions",
@@ -84180,11 +84214,24 @@
       "OffRecordExecuted",
       "OffRecordMode",
       "OffRecordNoteRequest",
+      "OffRecordNoticeAct",
       "OffRecordRecallRequest",
+      "OffRecordRoomExport",
+      "OffRecordRoomExportTurn",
+      "OffRecordRoomNotice",
+      "OffRecordRoomRequest",
+      "OffRecordRoomSaved",
+      "OffRecordRoomSavedTurn",
+      "OffRecordRoomShortIdPair",
+      "OffRecordRoomStartRequest",
+      "OffRecordRoomSuggestion",
+      "OffRecordRoomView",
+      "OffRecordRoomWitnessRequest",
       "OffRecordRunStatus",
       "OffRecordSessionRequest",
       "OffRecordSessionView",
       "OffRecordStartRequest",
+      "OffRecordTalkMessage",
       "OffRecordWitnessRequest",
       "Offer",
       "OfferAnswer",
@@ -85566,8 +85613,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 782,
-      "struct": 2421
+      "enum": 783,
+      "struct": 2435
      }
     },
     {
