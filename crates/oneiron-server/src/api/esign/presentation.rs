@@ -1,6 +1,7 @@
 //! Stateless field editor and capability-scoped ceremony presentation adapters.
 use super::*;
 use oneiron::blob_artifact::esign::render::{self, PageGeometry};
+use serde::Deserialize;
 use oneiron::blob_artifact::esign::{EsignField, FieldValue};
 use std::collections::BTreeMap;
 
@@ -38,7 +39,7 @@ pub(super) async fn preview(
     headers: HeaderMap,
     peer: NetworkPeer,
     local_peer: LocalPeer,
-    Json(request): Json<PdfRequest>,
+    Json(request): Json<EsignSigningPdfRequest>,
 ) -> Response {
     let Ok(token) = EsignCapability::parse(&request.token) else {
         return refused();
@@ -111,15 +112,9 @@ pub(super) async fn upload_geometry(
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SignatureRead {
-    token: String,
-    image_ref: String,
-}
 pub(super) async fn signature(
     State(server): State<Arc<SyncServer>>,
-    Json(request): Json<SignatureRead>,
+    Json(request): Json<oneiron::blob_artifact::esign::EsignSigningSignatureRequest>,
 ) -> Response {
     let Ok(token) = EsignCapability::parse(&request.token) else {
         return refused();

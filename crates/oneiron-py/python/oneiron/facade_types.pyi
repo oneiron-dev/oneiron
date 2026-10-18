@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 913 facade rows, 3134 declarations.
-Inputs: 859 of 913 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 827 of 913 fully typed, 86 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 102; unread shapes: 0.
+Census: 947 facade rows, 3226 declarations.
+Inputs: 891 of 947 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 849 of 947 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -257,6 +257,18 @@ class ReportPayloadView(TypedDict):
 class ReportOutboundView(TypedDict):
     issue_ref: str
     payload: NotRequired[ReportPayloadView | None]
+class LiveRunRequest(TypedDict, Generic[T]):
+    live_run: str
+    spec: T
+class BoardWakeRequest(TypedDict):
+    ...
+class WakeEnvelope(TypedDict):
+    event_ref: str
+    task_ref: str
+    actor_ref: str
+    line: str
+class BoardWakeReply(TypedDict):
+    wakes: list[WakeEnvelope]
 class ScratchpadRecallRequest(TypedDict):
     session_id: str
     query: str
@@ -1534,9 +1546,6 @@ class TaskWaveRequest(TypedDict):
 class TaskWaveReceipt(TypedDict):
     attempt_ref: str
     state: str
-class LiveRunRequest(TypedDict, Generic[T]):
-    live_run: str
-    spec: T
 class FanoutChildInput(TypedDict):
     agent_ref: EntityId
     label: str
@@ -2951,17 +2960,31 @@ class AssetResolved(TypedDict):
     asset_text_ref: NotRequired[str | None]
     handle: NotRequired[str | None]
     receipt_refs: list[str]
+VectorSearchLane = Literal["ordinary", "voice_hot"]
 class VectorSearchRequest(TypedDict):
     space: NotRequired[str | None]
     query_kind: NotRequired[InputKind | None]
     query: list[float]
     kinds: NotRequired[list[InputKind]]
     limit: int
+    lane: NotRequired[VectorSearchLane]
 class VectorSearchHit(TypedDict):
     entity_ref: str
     source_revision_ref: NotRequired[str | None]
     score: float
     embedding_matches: list[EmbeddingMatchEvidence]
+class VectorRefinement(TypedDict):
+    stored_dimensions: int
+    candidate_dimensions: int
+    query_dimensions: int
+    score_dimensions: int
+    full_dimension_rescore: bool
+class VectorSearchResult(TypedDict):
+    hits: list[VectorSearchHit]
+    lane: VectorSearchLane
+    effective_limit: int
+    limit_clamped: bool
+    refinement: NotRequired[VectorRefinement | None]
 class PixelRegion(TypedDict):
     x: int
     y: int
@@ -8844,6 +8867,77 @@ class AnnotationStateRequest(TypedDict):
     artifact_ref: str
     thread_ref: str
     state: AnnotationThreadState
+class GraphFsReferenceLiveHead(TypedDict):
+    kind: Literal["live_head"]
+class GraphFsReferenceForkHash(TypedDict):
+    kind: Literal["fork_hash"]
+    repo: EntityId
+    hash: str
+class GraphFsReferenceRepoSnapshot(TypedDict):
+    kind: Literal["repo_snapshot"]
+    snapshot: EntityId
+GraphFsReference = GraphFsReferenceLiveHead | GraphFsReferenceForkHash | GraphFsReferenceRepoSnapshot
+class GraphFsMountRequest(TypedDict):
+    ref: GraphFsReference
+    page_byte_cap: NotRequired[int | None]
+    max_entries: NotRequired[int | None]
+class GraphFsMounted(TypedDict):
+    mount: GraphFsMountRequest
+    root: str
+    projection: str
+class GraphFsPathRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    cursor: NotRequired[str | None]
+GraphFsKind = Literal["directory", "file", "symlink", "cursor"]
+class GraphFsEntryView(TypedDict):
+    name: str
+    kind: GraphFsKind
+    target: NotRequired[str | None]
+    cursor: NotRequired[str | None]
+    byte_len: NotRequired[int | None]
+class GraphFsDirectoryView(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    entries: list[GraphFsEntryView]
+    next_cursor: NotRequired[str | None]
+GraphFsEncoding = Literal["utf8", "base64"]
+GraphFsPlan = Literal["pushdown", "walk"]
+class GraphFsOutput(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    output: str
+    encoding: GraphFsEncoding
+    next_cursor: NotRequired[str | None]
+    plan: GraphFsPlan
+class GraphFsLinkRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+class GraphFsLinkView(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    target: NotRequired[str | None]
+class GraphFsLsRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    cursor: NotRequired[str | None]
+    by_time: NotRequired[bool]
+class GraphFsFindRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    cursor: NotRequired[str | None]
+    newer_than: NotRequired[int | None]
+class GraphFsGrepRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    pattern: str
+    recursive: NotRequired[bool]
+    cursor: NotRequired[str | None]
+class GraphFsHeadRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    lines: NotRequired[int | None]
+    cursor: NotRequired[str | None]
 class CodeStateRequest(TypedDict):
     repo: str
     path: str
@@ -11879,6 +11973,209 @@ class AnonymousChatResponseBlocked(TypedDict):
     reason: AnonymousChatBlockReasonView
     model_notices: list[GateSystemNoticeRecord]
 AnonymousChatResponse = AnonymousChatResponseReply | AnonymousChatResponseBlocked
+ModelWireFormat = Literal["openai-compat", "anthropic-messages", "gemini", "own-server", "local"]
+class LlmCatalogCost(TypedDict):
+    input_per_million: str
+    output_per_million: str
+    cache_read_per_million: NotRequired[str | None]
+    cache_write_per_million: NotRequired[str | None]
+class LlmCatalogEntry(TypedDict):
+    model: ModelId
+    display_name: str
+    locality: ModelLocality
+    context_window_tokens: int
+    max_output_tokens: NotRequired[int | None]
+    cost: NotRequired[LlmCatalogCost | None]
+    capabilities: NotRequired[list[LlmCapability]]
+    metadata: NotRequired[dict[str, Any]]
+class ModelRegistryRow(TypedDict):
+    version: int
+    wire: ModelWireFormat
+    catalog: LlmCatalogEntry
+    scores: NotRequired[dict[str, dict[str, float]]]
+    fetched_at: NotRequired[dict[str, int]]
+    tokens_per_o200k: NotRequired[float | None]
+    stale_since: NotRequired[int | None]
+class CatalogSeed(TypedDict):
+    version: int
+    rows: list[ModelRegistryRow]
+class ScoreObservation(TypedDict):
+    model: ModelId
+    benchmark: str
+    score: float
+class ScoreSnapshot(TypedDict):
+    source: str
+    fetched_at: int
+    observations: list[ScoreObservation]
+class ModelCatalogRefresh(TypedDict):
+    revision: str
+    expected_revision: NotRequired[str | None]
+    catalog: CatalogSeed
+    scores: NotRequired[list[ScoreSnapshot]]
+class ModelScoreDiff(TypedDict):
+    model: ModelId
+    source: str
+    benchmark: str
+    previous: NotRequired[float | None]
+    score: float
+    fetched_at: int
+class ModelCatalogRevision(TypedDict):
+    revision: str
+    previous_revision: NotRequired[str | None]
+    catalog: CatalogSeed
+    rows: list[ModelRegistryRow]
+    score_diffs: list[ModelScoreDiff]
+    refreshed_at: int
+class ModelCatalogGet(TypedDict):
+    revision: NotRequired[str | None]
+ModelCatalogDiffRequest = TypedDict("ModelCatalogDiffRequest", {"from": str, "to": str})
+class ModelCatalogChange(TypedDict):
+    model: ModelId
+    previous: NotRequired[ModelRegistryRow | None]
+    current: NotRequired[ModelRegistryRow | None]
+ModelCatalogDiff = TypedDict("ModelCatalogDiff", {"from": str, "to": str, "changes": list[ModelCatalogChange]})
+class ModelBackendPin(TypedDict):
+    model: ModelId
+    backend: str
+    serving_revision: str
+    quantization: NotRequired[str | None]
+    context_window_tokens: int
+class TrialSetPin(TypedDict):
+    id: str
+    version: int
+    rubric_version: str
+class HeldOutSelection(TypedDict):
+    answer: EntityId
+    fact: EntityId
+    source_family: str
+class ModelTrialPolicy(TypedDict):
+    exploration_remaining: float
+    vault_cost_cap: NotRequired[float | None]
+    project_cost_cap: NotRequired[float | None]
+    auto_approve: NotRequired[bool]
+    candidate_needs_download: bool
+class ModelTrialRequest(TypedDict):
+    principal: EntityId
+    question: EntityId
+    question_version: int
+    goal: EntityId
+    incumbent: ModelBackendPin
+    candidate: ModelBackendPin
+    source: str
+    benchmark: str
+    set: TrialSetPin
+    held_out: list[HeldOutSelection]
+    incumbent_usage_bound: LlmUsage
+    candidate_usage_bound: LlmUsage
+    future_units: int
+    policy: ModelTrialPolicy
+class ModelTrialNominate(TypedDict):
+    catalog_revision: str
+    request: ModelTrialRequest
+class PricedModelBackend(TypedDict):
+    pin: ModelBackendPin
+    price: LlmCatalogCost
+class FrozenTrialCase(TypedDict):
+    selection: HeldOutSelection
+    unit: EntityId
+    source_frontier: list[int]
+    fact_value_hash: list[int]
+    label: bool
+    noise_weight: float
+    derived_from: list[EntityId]
+TrialAdmission = Literal["ready", "ask_exploration"]
+class ModelTrialEvidence(TypedDict):
+    measurements_hash: list[int]
+    incumbent_loss: NotRequired[float | None]
+    candidate_loss: NotRequired[float | None]
+    independent_families: int
+    incumbent_cost_per_thousand: float
+    candidate_cost_per_thousand: float
+    trial_cost: float
+class PairedQualityInterval(TypedDict):
+    low: float
+    high: float
+class TrialAssessment(TypedDict):
+    set: TrialSetPin
+    measurements_hash: list[int]
+    paired_gain: NotRequired[PairedQualityInterval | None]
+    retest_noise: float
+    stricter_margin: NotRequired[float | None]
+    required_families: int
+    rare_slices_sufficient: bool
+    versions_match: bool
+    canary_diverged: bool
+TrialQuality = Literal["better", "not_worse", "worse", "unknown"]
+ModelTrialAction = Literal["stay", "offer", "auto_approve", "ask_tradeoff", "unknown"]
+class ModelTrialReceipt(TypedDict):
+    assessment: TrialAssessment
+    quality: TrialQuality
+    action: ModelTrialAction
+    candidate_cost_per_unit: float
+    added_cost_per_thousand: float
+    added_future_cost: float
+    completed_at: int
+class ModelTrialView(TypedDict):
+    catalog_revision: str
+    id: EntityId
+    request: ModelTrialRequest
+    incumbent: PricedModelBackend
+    candidate: PricedModelBackend
+    nominated_score: float
+    score_fetched_at: int
+    cases: list[FrozenTrialCase]
+    estimated_cost: float
+    admission: TrialAdmission
+    prepared_at: int
+    execution_started: bool
+    evidence: NotRequired[ModelTrialEvidence | None]
+    receipt: NotRequired[ModelTrialReceipt | None]
+class ModelTrialRef(TypedDict):
+    question: EntityId
+    trial: EntityId
+class ModelTrialComplete(TypedDict):
+    question: EntityId
+    trial: EntityId
+    assessment: TrialAssessment
+ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach"]
+ModelDisposition = Literal["offline", "served"]
+class ModelBinding(TypedDict):
+    model: ModelId
+    slot: ModelSlot
+    tier: ModelTierRef
+    route_models: NotRequired[dict[str, ModelId]]
+    disposition: NotRequired[ModelDisposition | None]
+    reads_audio: NotRequired[bool]
+class ModelBindingPropose(TypedDict):
+    question: EntityId
+    trial: EntityId
+    role: ModelRole
+    binding: ModelBinding
+ModelBindingStatus = Literal["proposed", "accepted", "denied"]
+class ModelBindingProposal(TypedDict):
+    id: EntityId
+    principal: EntityId
+    role: ModelRole
+    previous: ModelBinding
+    proposed: ModelBinding
+    trial: ModelTrialView
+    status: ModelBindingStatus
+    proposed_at: int
+    settled_at: NotRequired[int | None]
+class ModelBindingProposalRef(TypedDict):
+    proposal: EntityId
+class ModelBindingRead(TypedDict):
+    role: ModelRole
+class TeacherProbeApproval(TypedDict):
+    probe_id: str
+    model: ModelId
+    binding_hash: str
+    f1_millionths: int
+    policy_hash: str
+    holder_ref: NotRequired[str | None]
+class ModelBindingAccept(TypedDict):
+    proposal: EntityId
+    teacher_approval: NotRequired[TeacherProbeApproval | None]
 class AiOptionsRequest(TypedDict):
     operation: NotRequired[str | None]
     inputs: NotRequired[list[str]]
@@ -12934,6 +13231,15 @@ class RecordLinks(TypedDict):
     texts: list[LinkedText]
     narrowing: NotRequired[ScopedReadReceipt | None]
     next_after: NotRequired[str | None]
+class VectorSearchConfig(TypedDict):
+    dimensions: int
+    fast_dims: NotRequired[int | None]
+class VectorPutRequest(TypedDict):
+    entity_ref: str
+    vector: list[float]
+class VectorPutReceipt(TypedDict):
+    entity_ref: str
+    dimensions: int
 class HybridPprQuery(TypedDict):
     seeds: list[str]
     depth: int
@@ -13269,6 +13575,115 @@ class EsignVoidRequest(TypedDict):
     reason: str
     on_behalf_of: NotRequired[str | None]
     idempotency_key: NotRequired[str | None]
+class SigningActionLoad(TypedDict):
+    action: Literal["load"]
+class SigningActionSaveField(TypedDict):
+    action: Literal["save_field"]
+    field: str
+    value: FieldValue
+class SigningActionComplete(TypedDict):
+    action: Literal["complete"]
+    consent: bool
+    next: NotRequired[str | None]
+class SigningActionReject(TypedDict):
+    action: Literal["reject"]
+    reason: str
+SigningAction = SigningActionLoad | SigningActionSaveField | SigningActionComplete | SigningActionReject
+class EsignSigningRequest(TypedDict):
+    token: str
+    action: SigningAction
+class FieldControlText(TypedDict):
+    kind: Literal["text"]
+    max_bytes: int
+    server_computed: bool
+class FieldControlCheckbox(TypedDict):
+    kind: Literal["checkbox"]
+class FieldControlSelect(TypedDict):
+    kind: Literal["select"]
+    options: list[str]
+class FieldControlSignature(TypedDict):
+    kind: Literal["signature"]
+FieldControl = FieldControlText | FieldControlCheckbox | FieldControlSelect | FieldControlSignature
+class FieldPresentation(TypedDict):
+    id: str
+    item: int
+    geometry: FieldGeometry
+    required: bool
+    control: FieldControl
+    value: NotRequired[FieldValue | None]
+class SigningPage(TypedDict):
+    item_count: int
+    title: str
+    recipient: str
+    fields: list[EsignField]
+    presentations: list[FieldPresentation]
+    values: dict[str, SignatureRow]
+class SigningOutcomePage(TypedDict):
+    outcome: Literal["page"]
+    data: SigningPage
+class SigningOutcomeNotYourTurn(TypedDict):
+    outcome: Literal["not_your_turn"]
+class SigningOutcomeTerminalContent(TypedDict):
+    status: DocumentStatus
+    item_count: int
+class SigningOutcomeTerminal(TypedDict):
+    outcome: Literal["terminal"]
+    data: SigningOutcomeTerminalContent
+class SigningOutcomeAwaitingSeal(TypedDict):
+    outcome: Literal["awaiting_seal"]
+class SigningOutcomeHeldForOwnerContent(TypedDict):
+    held_at: int
+class SigningOutcomeHeldForOwner(TypedDict):
+    outcome: Literal["held_for_owner"]
+    data: SigningOutcomeHeldForOwnerContent
+class SigningOutcomeConsentRequired(TypedDict):
+    outcome: Literal["consent_required"]
+SigningOutcome = SigningOutcomePage | SigningOutcomeNotYourTurn | SigningOutcomeTerminal | SigningOutcomeAwaitingSeal | SigningOutcomeHeldForOwner | SigningOutcomeConsentRequired
+class EsignSigningPdfRequest(TypedDict):
+    token: str
+    item: int
+class EsignSigningPdfView(TypedDict):
+    item: int
+    pdf_base64: str
+class EsignSigningImageRequest(TypedDict):
+    token: str
+    png_or_jpeg_base64: str
+class EsignSigningImageView(TypedDict):
+    image_ref: str
+class EsignSigningSignatureRequest(TypedDict):
+    token: str
+    image_ref: str
+class EsignSigningSignatureView(TypedDict):
+    image_ref: str
+    image_base64: str
+class EsignSealGetRequest(TypedDict):
+    document_ref: str
+class EsignSealAttemptView(TypedDict):
+    attempt_ref: str
+    kind: str
+    state: str
+    dedupe_key: NotRequired[str | None]
+    lease_owner: NotRequired[str | None]
+    attempt_count: int
+    created_at: int
+    updated_at: int
+    last_error: NotRequired[str | None]
+class EsignSealedItemView(TypedDict):
+    original_artifact: str
+    original_version: int
+    sealed_artifact: str
+    sealed_version: int
+    sha256: str
+class EsignSealedView(TypedDict):
+    attempt_ref: str
+    audit_chain_sha256: str
+    rejected: bool
+    items: list[EsignSealedItemView]
+class EsignSealView(TypedDict):
+    document_ref: str
+    status: DocumentStatus
+    attempts: list[EsignSealAttemptView]
+    sealed: NotRequired[EsignSealedView | None]
 class CoreWriteTextField(TypedDict):
     field: str
     value: str
@@ -15842,6 +16257,29 @@ class LeaderSplitOutput(TypedDict):
 class SkillCallInput(TypedDict):
     skill: str
     args: Any
+class BoardRefreshRequest(TypedDict):
+    frame_epoch: NotRequired[int | None]
+class DeltaRow(TypedDict):
+    key: str
+    line: str
+class FrameKindKeyframe(TypedDict):
+    kind: Literal["keyframe"]
+    payload: str
+class FrameKindDelta(TypedDict):
+    kind: Literal["delta"]
+    payload: list[DeltaRow]
+FrameKind = FrameKindKeyframe | FrameKindDelta
+class BoardStreamFrame(TypedDict):
+    epoch: int
+    kind: FrameKind
+class BoardFrameReply(TypedDict):
+    frame: BoardStreamFrame
+SubscriptionScope = Literal["my_tasks", "my_children", "consults_to_me", "memories", "worlds", "presence", "counts"]
+class BoardSubscriptionRequest(TypedDict):
+    scopes: list[SubscriptionScope]
+class BoardSubscriptionReply(TypedDict):
+    connection: str
+    active: list[SubscriptionScope]
 class LensFrameEventRequest(TypedDict):
     event: GeneratedUiActionEvent
     idempotencyKey: str

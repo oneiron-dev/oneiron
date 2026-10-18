@@ -124,6 +124,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_focus_wakes(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.wakes", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_focus_scratchpad_recall(
         &self,
         input: serde_json::Value,
@@ -4295,6 +4301,66 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn mount(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("mount", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_readdir(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.readdir", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_read_file(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.read_file", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_read_link(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.read_link", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_ls(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.ls", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_find(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.find", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_grep(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.grep", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_cat(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.cat", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_head(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.head", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_wc(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.wc", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_diff(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {
@@ -5822,6 +5888,123 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_models_catalog_refresh(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.catalog.refresh", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_catalog_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.catalog.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_catalog_diff(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.catalog.diff", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_nominate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.nominate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_approve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.approve", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_run(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.run", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_complete(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.complete", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_bindings_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.bindings.propose", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_bindings_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.bindings.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_bindings_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.bindings.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_bindings_accept(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.bindings.accept", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_bindings_deny(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.bindings.deny", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_options(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.options", js_json(input))
@@ -6482,6 +6665,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_search_vector_config(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.search.vector.config", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_vectors_put(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.vectors.put", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_search_hybrid(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.search.hybrid", js_json(input))
@@ -6599,6 +6797,51 @@ impl NativeClient {
     pub fn vault_esign_void(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.esign.void", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_signing_act(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.signing.act", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_signing_pdf(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.signing.pdf", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_signing_image(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.signing.image", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_signing_signature(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.signing.signature", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_seal_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.seal.get", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -8198,6 +8441,30 @@ impl NativeClient {
     pub fn self_skills_call(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.skills.call", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_focus_refresh(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.refresh", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_focus_subscribe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.subscribe", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_focus_unsubscribe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.unsubscribe", js_json(input))
             .map_err(facade_error)
     }
 }
