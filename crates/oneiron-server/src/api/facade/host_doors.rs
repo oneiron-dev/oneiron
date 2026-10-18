@@ -52,6 +52,7 @@ use crate::server::SyncServer;
 pub(crate) use super::artifact_hosting_doors::*;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
+pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
 pub(crate) use super::credential_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
@@ -1203,6 +1204,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.policy.owner.configure"
         | "vault.policy.owner.row.change"
         | "vault.consent.approve_once"
+        | "vault.consent.deny"
         | "vault.consent.create_standing_grant"
         | "vault.consent.registry"
         | "vault.consent.revoke"

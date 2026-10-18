@@ -277,6 +277,7 @@ pub mod sdk;
 mod sdk_agents;
 mod sdk_anonymous_chat;
 mod sdk_authority_history;
+mod sdk_browser;
 mod sdk_calendar;
 mod sdk_campaign_split;
 mod sdk_catalog_fragment;

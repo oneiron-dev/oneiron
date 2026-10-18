@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 669 code-mode rows (648 host rows, 21 run rows), 2380 declarations.
-// Replies: 590 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 670 code-mode rows (649 host rows, 21 run rows), 2381 declarations.
+// Replies: 591 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1102,7 +1102,8 @@ declare namespace Sdk {
   type HostedRelayDecision = { service_identity: string; verdict?: PolicyClassifyVerdict | null; degraded?: RelayBoundaryDegrade | null; resolution?: RelayResolution | null; hosted_evidence?: HostedPassEvidence | null; receipt_ref?: string | null; final_content?: string | null; outbound_halted: boolean; system_notice?: string | null; system_notices: GateSystemNoticeRecord[] };
   type ApproveOnceRequest = { effect_digest: string };
   type ConsentActReceipt = { decision_ref: string; outcome: string; reason_code: string; grant_ref?: string | null; diff_handle: number[] };
-  type ActionEnvelopeRequest = { project: string; audience: string[]; budget: number };
+  type DenyConsentRequest = { effect_digest: string };
+  type ActionEnvelopeRequest = { project: string; audience: string[]; budget?: number | null };
   type ActionBoundRequest = { actor: string; class: string; envelope: ActionEnvelopeRequest };
   type DisclosureEnvelopeRequest = { selectors: string[] };
   type DisclosureBoundRequest = { audience: string[]; class: string; envelope: DisclosureEnvelopeRequest };
@@ -1886,42 +1887,23 @@ declare namespace Sdk {
   type ConnectorSchemaReply = { source: string; foreign: boolean; input_schema?: unknown | null; destructive?: boolean | null; reasons?: string[] };
   type ConnectorCallStatusRequest = { call_ref: string };
   type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[] } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply };
-  type OpenInput = { url: string };
-  type Row = { ref: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
-  type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null };
+  type LibraryFindInput = { site?: string | null; subgoal?: string | null };
   type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number };
-  type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
-  type Observation2 = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null };
-  type ObservationPage = Observation2 & { next?: string | null };
-  type ObserveInput = { since?: number | null; cursor?: string | null };
-  type FindInput = { role?: string | null; name?: string | null; cursor?: string | null };
-  type FindOutput = { rows: Row[]; next?: string | null; partial?: PartialTree | null };
-  type ClickInput = { ref: string };
-  type PointInput = { image: string; x: number; y: number };
-  type TypeInput = { ref: string; text: string; clear?: boolean };
-  type SelectInput = { ref: string; option: string };
-  type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null; cursor?: string | null };
-  type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null; partial?: PartialTree | null };
-  type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
-  type ExpectOutput = { met: boolean; row?: Row | null; partial?: PartialTree | null };
+  type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type ScreenshotTrigger = "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt";
-  type ScreenshotInput = { trigger: ScreenshotTrigger };
-  type ScreenshotOutput = { image: string; media_type: string; width: number; height: number; bytes: number; trigger: ScreenshotTrigger; url: string; title: string };
-  type ViewInput = { image: string };
-  type ImageOutput = { image: string; media_type: string; width: number; height: number; bytes: number; source: string };
-  type CropInput = { image: string; x: number; y: number; width: number; height: number };
-  type ZoomInput = { image: string; x: number; y: number; width: number; height: number; scale?: number | null };
   type ScrollDirection = "up" | "down" | "left" | "right";
   type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; clear?: boolean; option?: string | null };
   type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
-  type BatchInput = { subgoal?: string | null; steps: BatchStep[]; until_ms?: number | null; no_model?: boolean };
-  type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
-  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null };
-  type LibraryFindInput = { site?: string | null; subgoal?: string | null };
-  type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
+  type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
   type WorkflowCheck = "solved" | "replay";
+  type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
+  type Row = { ref: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
+  type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null };
+  type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
+  type Observation2 = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null };
+  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null };
   type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; unmet?: number[]; replay?: BatchOutput | null };
   type LibraryRetireInput = { workflow: string; reason?: string | null };
   type LibraryRetireOutput = { retired: LibraryCard };
@@ -1930,15 +1912,34 @@ declare namespace Sdk {
   type LibraryRetiredOutput = { site: string; retired: RetiredCard[] };
   type LibraryRunInput = { workflow: string; args?: Record<string, string> };
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
-  type HandoverInput = { reason: string };
-  type HandoverOutput = { reason: string; asked_at_ms: number };
+  type OpenInput = { url: string };
+  type ObservationPage = Observation2 & { next?: string | null };
+  type ObserveInput = { since?: number | null; cursor?: string | null };
+  type FindInput = { role?: string | null; name?: string | null; cursor?: string | null };
+  type FindOutput = { rows: Row[]; next?: string | null; partial?: PartialTree | null };
+  type ClickInput = { ref: string };
+  type PointInput = { image: string; x: number; y: number };
+  type TypeInput = { ref: string; text: string; clear?: boolean };
+  type SelectInput = { ref: string; option: string };
   type KeyInput = { key: string; modifiers?: string[]; ref?: string | null };
   type HotkeyInput = { keys: string[] };
   type ScrollInput = { direction: ScrollDirection; amount?: number | null; ref?: string | null };
+  type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null; cursor?: string | null };
+  type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null; partial?: PartialTree | null };
+  type ExpectOutput = { met: boolean; row?: Row | null; partial?: PartialTree | null };
+  type ScreenshotInput = { trigger: ScreenshotTrigger };
+  type ScreenshotOutput = { image: string; media_type: string; width: number; height: number; bytes: number; trigger: ScreenshotTrigger; url: string; title: string };
+  type ViewInput = { image: string };
+  type ImageOutput = { image: string; media_type: string; width: number; height: number; bytes: number; source: string };
+  type CropInput = { image: string; x: number; y: number; width: number; height: number };
+  type ZoomInput = { image: string; x: number; y: number; width: number; height: number; scale?: number | null };
+  type BatchInput = { subgoal?: string | null; steps: BatchStep[]; until_ms?: number | null; no_model?: boolean };
   type WindowsInput = { app?: string | null };
   type DesktopWindow = { window: string; app: string; title: string; current: boolean; front: boolean };
   type WindowsOutput = { windows: DesktopWindow[] };
   type WindowInput = { window: string };
+  type HandoverInput = { reason: string };
+  type HandoverOutput = { reason: string; asked_at_ms: number };
   type ScopedCommitRequest = { claims: ScopedClaimInput[] };
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string };
@@ -3087,6 +3088,8 @@ declare const vault: Sdk.VaultHost & {
     approve_once(input: Sdk.ApproveOnceRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
     /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
     create_standing_grant(input: Sdk.CreateStandingGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    /** The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority. */
+    deny(input: Sdk.DenyConsentRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
     /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
     registry(input: Sdk.ConsentRegistryQuery): Promise<Sdk.ConsentRegistry | StoredResult>;
     /** The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted. */
