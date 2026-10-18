@@ -264,18 +264,6 @@ impl SyncClient {
                 "full-window vector exchange on federation lane",
             ));
         }
-        // Sealed relay is an owner-machine lane: a federation guest never
-        // holds a private world's packets, sealed or not.
-        if self.config.federation_peer.is_some()
-            && matches!(
-                sub_tag,
-                window_sub_tags::SEALED_UPDATE | window_sub_tags::SEALED_REQUEST
-            )
-        {
-            return Err(TransportError::InvalidPayload(
-                "sealed relay on federation lane",
-            ));
-        }
         match sub_tag {
             window_sub_tags::PROMOTION_GRANTED | window_sub_tags::PROMOTED_INVALIDATE
                 if self.config.residence_mode == SyncResidenceMode::Opened =>
@@ -383,22 +371,16 @@ impl SyncClient {
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
                     return Ok(vec![replacement_request(window_key)?]);
                 };
-                let mut responses = Vec::new();
-                if let Some(frame) = self.sealed_push_frame(&key, window_key, payload) {
-                    responses.push(frame);
-                }
-                responses.push(
+                let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
                         .into_result()?,
-                );
-                responses.push(
                     transport::encode_window_sync(
                         window_key,
                         window_sub_tags::VV_RESPONSE,
                         &doc_version_vector(doc),
                     )
                     .into_result()?,
-                );
+                ];
                 // Record the server VV only after a fully valid exchange — it
                 // becomes the convergence witness for this window (ONE-1128).
                 self.server_vvs.insert(window_key.to_string(), server_vv);
@@ -485,104 +467,12 @@ impl SyncClient {
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
                     return Ok(vec![replacement_request(window_key)?]);
                 };
-                let mut responses = Vec::new();
-                if let Some(frame) = self.sealed_push_frame(&key, window_key, payload) {
-                    responses.push(frame);
-                }
-                responses.push(
+                let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
                         .into_result()?,
-                );
+                ];
                 self.server_vvs.insert(window_key.to_string(), server_vv);
                 Ok(responses)
-            }
-            window_sub_tags::SEALED_UPDATE => {
-                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
-                    return Err(TransportError::FrameTooLarge {
-                        size: payload.len(),
-                        max: MAX_DECODED_PAYLOAD_BYTES,
-                    });
-                }
-                let Some(world) = key.world() else {
-                    return Err(TransportError::InvalidPayload(
-                        "sealed packet for a base window",
-                    ));
-                };
-                let packet = crate::world_keys::SealedResidenceContent::from_bytes(payload)
-                    .map_err(|_| TransportError::InvalidPayload("malformed sealed packet"))?;
-                // An opened-item machine materializes a packet only for a
-                // window it holds promoted, judged again once the handle is
-                // held: a demotion that ended since the request leaves the
-                // window emptied, and the held handle defers a later one. Any
-                // other window's packet waits in its mirror for a promotion.
-                let opened = self.config.residence_mode == SyncResidenceMode::Opened;
-                let held = if opened && self.full_window_exchange_allowed(window_key)? {
-                    Some(self.ensure_window(window_key)?)
-                } else {
-                    None
-                };
-                let materialize =
-                    !opened || (held.is_some() && self.full_window_exchange_allowed(window_key)?);
-                let taken = if materialize {
-                    self.manager
-                        .take_sealed_residence_content(world, &key, &packet)
-                } else {
-                    self.manager
-                        .take_sealed_residence_mirror(world, &key, &packet)
-                };
-                drop(held);
-                taken.map_err(|_| TransportError::InvalidPayload("sealed packet refused"))?;
-                Ok(Vec::new())
-            }
-            window_sub_tags::SEALED_REQUEST => {
-                // The peer is judged as the machine the home proved on this
-                // connection: a home that proved none is an unknown
-                // destination, so only a sealed copy that may rest with any
-                // holder (the cloud setting) leaves for it.
-                let Some(world) = key.world() else {
-                    return Ok(Vec::new());
-                };
-                let destination = self.home_destination();
-                let mut frames = Vec::new();
-                match self.manager.sealed_residence_content_for(
-                    world,
-                    &key,
-                    (!payload.is_empty()).then_some(payload),
-                    destination,
-                ) {
-                    Ok(Some(packet)) => frames.push(
-                        transport::encode_window_sync(
-                            window_key,
-                            window_sub_tags::SEALED_UPDATE,
-                            packet.as_bytes(),
-                        )
-                        .into_result()?,
-                    ),
-                    Ok(None) => {
-                        if self
-                            .vault
-                            .sealed_copy_may_rest_on(world, destination)
-                            .unwrap_or(false)
-                        {
-                            let shelved = self
-                                .vault
-                                .sealed_window_packets(window_key)
-                                .map_err(|e| TransportError::Storage(e.to_string()))?;
-                            for packet in shelved {
-                                frames.push(
-                                    transport::encode_window_sync(
-                                        window_key,
-                                        window_sub_tags::SEALED_UPDATE,
-                                        packet.as_bytes(),
-                                    )
-                                    .into_result()?,
-                                );
-                            }
-                        }
-                    }
-                    Err(error) => return Err(TransportError::Storage(error.to_string())),
-                }
-                Ok(frames)
             }
             _ => Ok(Vec::new()),
         }
@@ -1186,33 +1076,6 @@ impl SyncClient {
             WindowExport::Replacement(snapshot) if server_vv.is_empty() => Some(snapshot),
             WindowExport::Replacement(_) => None,
         })
-    }
-
-    /// The sealed packet this reader pushes alongside a version exchange, for
-    /// a home node that may hold it unread. The home is judged as the machine
-    /// it proved on this connection, else an unknown destination, for which
-    /// only the cloud sealed-copy setting sends; the server's live-window vector is not a mirror vector, so the packet
-    /// is a replacement until a mirror vector rides `SEALED_REQUEST`.
-    /// `None` for a base window, a world that reads everywhere, or a machine
-    /// that seals nothing: the plain exchange stands on its own.
-    fn sealed_push_frame(
-        &self,
-        key: &WindowKey,
-        window_key: &str,
-        server_vv: &[u8],
-    ) -> Option<Vec<u8>> {
-        let world = key.world()?;
-        let packet = self
-            .manager
-            .sealed_residence_content_for(world, key, Some(server_vv), self.home_destination())
-            .ok()??;
-        transport::encode_window_sync(
-            window_key,
-            window_sub_tags::SEALED_UPDATE,
-            packet.as_bytes(),
-        )
-        .into_result()
-        .ok()
     }
 
     /// `REPLACEMENT_REQUEST` frames asking the server for each of `windows` whole.

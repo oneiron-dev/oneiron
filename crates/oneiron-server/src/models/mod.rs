@@ -93,7 +93,9 @@ pub(crate) use responses_socket::{set_responses_chain_vault, set_responses_store
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
-pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
+pub use status::{
+    DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus,
+};
 pub use token_ratio::TokenRatios;
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
@@ -126,6 +128,9 @@ impl Seat {
 pub struct ModelRuntime {
     seats: BTreeMap<ModelRole, Seat>,
     router: Option<Arc<ModelRouter>>,
+    /// The router the raw routes call: the configured one, else an empty one
+    /// that only the models the owner's other nodes offer fill (FIX 3229).
+    raw_router: Arc<ModelRouter>,
     status: ModelsStatus,
     receipts: Arc<dyn RunReceiptSink>,
     host: Option<Arc<HostAccount>>,
@@ -149,6 +154,7 @@ impl ModelRuntime {
         Self {
             seats: BTreeMap::new(),
             router: None,
+            raw_router: Arc::new(ModelRouter::default()),
             status: ModelsStatus::unconfigured(),
             receipts: Arc::new(LoggedReceipts),
             host: None,
@@ -253,7 +259,11 @@ impl ModelRuntime {
         rests: Arc<OfferCooldowns>,
     ) -> Self {
         let Some(config) = config else {
-            return Self::unconfigured();
+            // A discovered model's rest outlives a restart here too.
+            return Self {
+                rests,
+                ..Self::unconfigured()
+            };
         };
         let mut status = ModelsStatus::default();
         let mut built = BTreeMap::new();
@@ -444,9 +454,11 @@ impl ModelRuntime {
         let token_ratios = tokio::runtime::Handle::try_current()
             .ok()
             .map(|runtime| Arc::new(TokenRatios::new(config, runtime)));
+        let router = Arc::new(router);
         Self {
             seats,
-            router: (!router.is_empty()).then(|| Arc::new(router)),
+            router: (!router.is_empty()).then(|| Arc::clone(&router)),
+            raw_router: router,
             status,
             receipts: Arc::new(LoggedReceipts),
             host: None,
@@ -520,8 +532,16 @@ impl ModelRuntime {
         self.router.clone()
     }
 
-    /// Serves on this runtime's router, beside the configured models, the
-    /// ones the owner's other nodes offer over `mesh` (FIX 3229), as the
+    /// The router the raw routes call: the configured models, and the ones
+    /// the owner's other nodes offer. With no configured model it holds only
+    /// those, so a device with no `[models]` still serves them (FIX 3229).
+    #[must_use]
+    pub(crate) fn raw_router(&self) -> Arc<ModelRouter> {
+        Arc::clone(&self.raw_router)
+    }
+
+    /// Serves on this runtime's raw router, beside the configured models,
+    /// the ones the owner's other nodes offer over `mesh` (FIX 3229), as the
     /// vault's discovery rows hold them now and after each refresh.
     #[cfg(feature = "mesh")]
     pub(crate) fn mesh_routes(
@@ -529,7 +549,7 @@ impl ModelRuntime {
         vault: &Arc<oneiron::Vault>,
         mesh: Arc<dyn oneiron_mesh_transport::MeshTransport>,
     ) -> MeshRoutes {
-        MeshRoutes::new(self.router.clone(), Arc::clone(&self.rests), vault, mesh)
+        MeshRoutes::new(self.raw_router(), Arc::clone(&self.rests), vault, mesh)
     }
 
     #[must_use]
@@ -556,6 +576,20 @@ impl ModelRuntime {
                 seat.live(ladder.health());
             }
         }
+        // Each model the mesh discovered, whatever its health (FIX 3229).
+        status.discovered = self
+            .raw_router
+            .discovered_routes()
+            .into_iter()
+            .filter_map(|(model, peer, ladder)| {
+                let (_, health) = ladder.health().into_iter().next()?;
+                Some(DiscoveredStatus {
+                    model: model.to_string(),
+                    peer,
+                    health,
+                })
+            })
+            .collect();
         status
     }
 }

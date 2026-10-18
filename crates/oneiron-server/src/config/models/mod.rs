@@ -36,7 +36,7 @@ pub use decision_read::{
 };
 pub use decisions::{
     BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings,
-    ImagePickSettings, SeatPickSettings, SystemOneSettings,
+    ImagePickSettings, ImportAudienceSettings, SeatPickSettings, SystemOneSettings,
 };
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
@@ -328,7 +328,7 @@ const DEFAULT_PASS_BUDGET_UNITS: u64 = 400_000;
 const DEFAULT_TURN_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_RETRY_BACKOFF_SECS: u64 = 30;
-const DEFAULT_RAW_BUDGET_UNITS: u64 = 10_000_000;
+pub(crate) const DEFAULT_RAW_BUDGET_UNITS: u64 = 10_000_000;
 const DEFAULT_CODE_MODE_BUDGET_UNITS: u64 = 10_000_000;
 /// Two scorings of a 50-candidate block at about 300 tokens a candidate.
 const DEFAULT_RERANK_BUDGET_UNITS: u64 = 32_000;

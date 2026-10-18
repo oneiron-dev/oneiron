@@ -117,6 +117,9 @@ pub struct LoadedWindow {
     _observer_room_facts: Option<Subscription>,
     /// Observer B for the document pin map (FIX 853), on a base window only.
     _observer_document_pins: Option<Subscription>,
+    /// Observer B for the MESSAGE document map (FIX 853), on a base window
+    /// only.
+    _observer_message_docs: Option<Subscription>,
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
@@ -193,6 +196,9 @@ impl LoadedWindow {
         let observer_document_pins = key.world().is_none().then(|| {
             bridge::register_document_pins_observer(&doc, vault, materializer, key.as_str())
         });
+        let observer_message_docs = key.world().is_none().then(|| {
+            bridge::register_message_docs_observer(&doc, vault, materializer, key.as_str())
+        });
 
         Self {
             doc,
@@ -203,6 +209,7 @@ impl LoadedWindow {
             _observer_room_turns: observer_room_turns,
             _observer_room_facts: observer_room_facts,
             _observer_document_pins: observer_document_pins,
+            _observer_message_docs: observer_message_docs,
             observer_a_state,
         }
     }

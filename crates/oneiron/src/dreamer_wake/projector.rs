@@ -543,6 +543,98 @@ pub(crate) fn erase_turn_in_txn(
     Ok(())
 }
 
+/// Takes the TURNs a window demotion removes out of the projection, in the
+/// remover's transaction before their rows go (OF-534). Their words are
+/// away, not erased: each round one gave words to holds nothing more and is
+/// retired as [`erase_turn_in_txn`] retires it, but only kept live turns go
+/// back on the carrier, its riders and, while it is queued, its other
+/// turns. A round with a participant under a legal hold stays whole, since
+/// retiring it would change that record's projection; it only stops
+/// holding, and the removed turn keeps its entry for it. A removed turn
+/// rides nothing more. Attempts and their receipts are not read.
+#[cfg(feature = "sync")]
+pub(crate) fn demote_turns_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    turns: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if let Some(latest) = LATEST.get(store, txn, &())?
+        && turns.contains(&latest.key.1)
+    {
+        release_hold_in_txn(store, txn, &latest.round)?;
+    }
+    for turn in turns {
+        unride_in_txn(store, txn, turn)?;
+        let Some(given) = GIVEN.get(store, txn, turn)? else {
+            continue;
+        };
+        let mut kept = Vec::new();
+        for id in given {
+            let Some(round) = ROUND.get(store, txn, &id)? else {
+                continue;
+            };
+            release_hold_in_txn(store, txn, &id)?;
+            if round_held_in_txn(store, txn, &round)? {
+                kept.push(id);
+                continue;
+            }
+            for at in &round.riders {
+                if let Some(rider) = RIDER.get(store, txn, at)? {
+                    RIDER_OF.delete(store, txn, &(rider.after.1, *at))?;
+                }
+                RIDER.delete(store, txn, at)?;
+                RIDES.delete(store, txn, &at.1)?;
+                if !turns.contains(&at.1) {
+                    requeue_turn_in_txn(store, txn, &at.1)?;
+                }
+            }
+            let batch: &[_] = if round.applied { &[] } else { &round.turns };
+            for member in batch.iter().filter(|member| !turns.contains(*member)) {
+                requeue_turn_in_txn(store, txn, member)?;
+            }
+            ROUND.delete(store, txn, &id)?;
+        }
+        if kept.is_empty() {
+            GIVEN.delete(store, txn, turn)?;
+        } else {
+            GIVEN.put(store, txn, turn, &kept)?;
+        }
+    }
+    Ok(())
+}
+
+/// The latest turn holds nothing more while it was queued by round `id`.
+#[cfg(feature = "sync")]
+fn release_hold_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &[u8; 32]) -> Result<()> {
+    if let Some(mut latest) = LATEST.get(store, txn, &())?
+        && latest.round == *id
+        && latest.reading.is_some()
+    {
+        latest.reading = None;
+        LATEST.put(store, txn, &(), &latest)?;
+    }
+    Ok(())
+}
+
+/// Whether a legal hold stands on a turn of `round` or on one of its riders.
+#[cfg(feature = "sync")]
+fn round_held_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    round: &ProjectionRound,
+) -> Result<bool> {
+    for turn in round
+        .turns
+        .iter()
+        .chain(round.riders.iter().map(|(_, rider)| rider))
+    {
+        if crate::store::legal_hold::held_in_txn(store, txn, turn.as_bytes())? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The latest turn, when its round's attempt has completed and its words
 /// still read as when it was queued.
 fn held_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<Held>> {
