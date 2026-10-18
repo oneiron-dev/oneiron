@@ -53,7 +53,9 @@ pub struct PackQualification {
     pub runtime: Option<PackRuntimeRecipe>,
     pub connector: Option<super::ConnectorPackQualification>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct PackRuntimeRecipe {
     pub adapter: super::PackAdapter,

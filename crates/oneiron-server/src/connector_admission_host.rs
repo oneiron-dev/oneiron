@@ -20,8 +20,8 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::connector_key::qualification::{
-    ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeTraceEvent,
-    ProbeWrite, QualificationConnection, QualificationConnector, QualificationFailure,
+    ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeTraceEvent, ProbeWrite,
+    QualificationConnection, QualificationConnector, QualificationFailure,
 };
 use oneiron::connector_key::{
     ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,

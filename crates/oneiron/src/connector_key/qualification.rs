@@ -108,7 +108,9 @@ pub struct QualificationCase {
     pub in_scope: bool,
     pub allowed_predicates: BTreeSet<String>,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum QualificationInjectionSurface {
     FetchedContent,
     ToolResult,

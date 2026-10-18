@@ -2,7 +2,9 @@
 //! socket and MCP projections all reach these same verb-table host doors.
 use std::sync::Arc;
 
-use oneiron::task_verb::sdk::{self, AuthorityHistoryImported, EmptyRequest, SignedAuthorityHistory};
+use oneiron::task_verb::sdk::{
+    self, AuthorityHistoryImported, EmptyRequest, SignedAuthorityHistory,
+};
 
 use super::host_doors::Listed;
 use super::legal_hold_doors::as_owner_naming;

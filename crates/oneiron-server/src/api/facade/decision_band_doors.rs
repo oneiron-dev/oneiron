@@ -66,8 +66,11 @@ pub(crate) async fn vault_decisions_bands_enforce(
     auth: &CoreAuth,
     input: DecisionBandEnforceRequest,
 ) -> Listed<LearnedBand> {
-    as_owner(server, auth, "vault.decisions.bands.enforce", move |bands| {
-        bands.enforce(&input.question, input.reversibility)
-    })
+    as_owner(
+        server,
+        auth,
+        "vault.decisions.bands.enforce",
+        move |bands| bands.enforce(&input.question, input.reversibility),
+    )
     .await
 }

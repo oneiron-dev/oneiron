@@ -357,7 +357,11 @@ pub(super) fn unit_texts(
             let mut units = Vec::new();
             for sheet in &book.sheets {
                 for cell in &sheet.cells {
-                    let address = CellRef { col: cell.col, row: cell.row }.to_a1();
+                    let address = CellRef {
+                        col: cell.col,
+                        row: cell.row,
+                    }
+                    .to_a1();
                     let locator = Locator::xlsx(sheet.name.clone(), &address).ok()?;
                     let text = cell_display_text(&book, cell);
                     units.push((locator, (!text.trim().is_empty()).then_some(text)));
@@ -370,17 +374,25 @@ pub(super) fn unit_texts(
             let mut units = Vec::new();
             for (index, slide) in deck.slides.iter().enumerate() {
                 for shape in &slide.shapes {
-                    let Some(identity) = shape.creation_id.clone()
+                    let Some(identity) = shape
+                        .creation_id
+                        .clone()
                         .or_else(|| shape.id.map(|id| id.to_string()))
                     else {
                         continue;
                     };
                     let wanted = guid_key(&identity);
-                    let matches = slide.shapes.iter().filter(|candidate| {
-                        candidate.creation_id.as_deref()
-                            .is_some_and(|guid| guid_key(guid) == wanted)
-                            || candidate.id.is_some_and(|id| id.to_string() == identity)
-                    }).count();
+                    let matches = slide
+                        .shapes
+                        .iter()
+                        .filter(|candidate| {
+                            candidate
+                                .creation_id
+                                .as_deref()
+                                .is_some_and(|guid| guid_key(guid) == wanted)
+                                || candidate.id.is_some_and(|id| id.to_string() == identity)
+                        })
+                        .count();
                     let locator = Locator::pptx(index as u64 + 1, identity).ok()?;
                     let quote = (matches == 1).then(|| shape_text(shape)).flatten();
                     units.push((locator, quote));

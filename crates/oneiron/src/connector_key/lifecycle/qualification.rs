@@ -94,7 +94,9 @@ impl Vault {
         if old_slate.slate_manifest().pack_source.is_some()
             && next_slate.slate_manifest().pack_source.is_none()
         {
-            return Err(invalid_body("a connector pack update must retain its source binding"));
+            return Err(invalid_body(
+                "a connector pack update must retain its source binding",
+            ));
         }
         // A pending, not-yet-consented expansion cannot be washed away by
         // another revision that makes no further expansion.
@@ -318,13 +320,20 @@ fn require_pack_qualification(
         return Ok(());
     };
     let source_id = EntityId::from_hex(&binding.source_ref)?;
-    let source = vault.pack_source_in_txn(txn, &source_id)?
+    let source = vault
+        .pack_source_in_txn(txn, &source_id)?
         .ok_or_else(|| invalid_body("connector pack source missing"))?;
-    let installed = vault.installed_pack_in_txn(txn, &source.manifest().name)?
+    let installed = vault
+        .installed_pack_in_txn(txn, &source.manifest().name)?
         .ok_or_else(|| invalid_body("connector pack has not qualified"))?;
-    let qualification = installed.connector_qualification.as_ref()
+    let qualification = installed
+        .connector_qualification
+        .as_ref()
         .ok_or_else(|| invalid_body("connector pack has not qualified"))?;
-    let manifest = record.pending_manifest.as_ref().map(|pending| &pending.manifest)
+    let manifest = record
+        .pending_manifest
+        .as_ref()
+        .map(|pending| &pending.manifest)
         .or(record.retained_manifest.as_ref())
         .ok_or_else(|| invalid_body("connector pack manifest has not qualified"))?;
     if source.content_hash().to_hex() != binding.content_hash

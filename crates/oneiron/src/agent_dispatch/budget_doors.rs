@@ -169,7 +169,9 @@ pub fn open_spend_lease_as_owner(
         &mut txn,
         scope.clone(),
         maximum,
-        Some(MaximumShown { at_ms: input.shown_at_ms }),
+        Some(MaximumShown {
+            at_ms: input.shown_at_ms,
+        }),
         crate::unix_seconds_now(),
     )?;
     txn.commit()?;
@@ -197,7 +199,9 @@ pub fn top_up_spend_lease_as_owner(
         &scope,
         input.expected_cap_units,
         maximum(input.cap_units, &input.unit)?,
-        MaximumShown { at_ms: input.shown_at_ms },
+        MaximumShown {
+            at_ms: input.shown_at_ms,
+        },
     )?;
     lease_view(&dispatcher, &scope)
 }
@@ -219,10 +223,13 @@ pub fn resume_budget_hold_as_owner(
     let actor = owner.revalidate_principal_ref(vault)?;
     let root = attempt_id(&input.run)?;
     let dispatcher = AgentDispatcher::new(vault);
-    let hold = dispatcher.refresh_budget_hold(root)?
+    let hold = dispatcher
+        .refresh_budget_hold(root)?
         .ok_or_else(|| invalid("run has no budget hold"))?;
     if !hold.resume_ready {
-        return Err(invalid("top up the held run's binding lease before resuming"));
+        return Err(invalid(
+            "top up the held run's binding lease before resuming",
+        ));
     }
     dispatcher.resume_budget_hold(root, actor, crate::unix_seconds_now())
 }
@@ -233,33 +240,45 @@ pub fn local_runner_budget_as_owner(
     input: &LocalRunnerBudgetRequest,
 ) -> Result<LocalRunnerBudgetView> {
     owner.revalidate(vault)?;
-    let counter = DreamerRunnerStore::new(vault).budget(&input.budget_id)?
+    let counter = DreamerRunnerStore::new(vault)
+        .budget(&input.budget_id)?
         .map(|row| LocalRunnerBudgetCounter {
             total_units: row.total_units,
             remaining_units: row.remaining_units,
             reserved_units: row.reserved_units,
             updated_at: row.updated_at,
         });
-    Ok(LocalRunnerBudgetView { budget_id: input.budget_id.clone(), counter })
+    Ok(LocalRunnerBudgetView {
+        budget_id: input.budget_id.clone(),
+        counter,
+    })
 }
 
 /// The saved dispatch must bind this exact attempt to the credential-backed
 /// memory handle's actor. A root is readable only within that same run.
-pub fn self_budget(memory: &Memory<'_>, input: &SelfBudgetRequest) -> MemoryResult<AgentBudgetView> {
+pub fn self_budget(
+    memory: &Memory<'_>,
+    input: &SelfBudgetRequest,
+) -> MemoryResult<AgentBudgetView> {
     let row = own_attempt(memory, &input.attempt)?;
     let root = same_run_root(memory.vault(), &row, input.run.as_deref())?;
     let dispatcher = AgentDispatcher::new(memory.vault());
-    let lease = dispatcher.spend_scope_for_attempt(row.id)?
-        .map(|scope| lease_view(&dispatcher, &scope)).transpose()?;
+    let lease = dispatcher
+        .spend_scope_for_attempt(row.id)?
+        .map(|scope| lease_view(&dispatcher, &scope))
+        .transpose()?;
     Ok(AgentBudgetView {
         attempt: crate::entity_id::bytes_to_hex_lower(row.id.as_bytes()),
         lease,
         landing_reserve: row.landing_reserve(),
         ordinary_limit_units: row.ordinary_budget_limit_units(),
         landing: row.landing().cloned(),
-        budget_notices: row.cancel_receipts().iter()
+        budget_notices: row
+            .cancel_receipts()
+            .iter()
             .filter(|receipt| receipt.trigger == Some(LandingTrigger::BudgetWarning))
-            .cloned().collect(),
+            .cloned()
+            .collect(),
         checkpoint: row.resume_point().cloned(),
         hold: dispatcher.plan_hold(root)?,
     })
@@ -272,7 +291,12 @@ pub fn land_for_budget(
     input: &BudgetLandRequest,
 ) -> MemoryResult<PartialResultHold> {
     {
-        let txn = memory.vault().store.env.read_txn().map_err(crate::Error::from)?;
+        let txn = memory
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         memory.verify_actor_write_in_txn(&txn)?;
     }
     let row = own_attempt(memory, &input.attempt)?;
@@ -296,7 +320,9 @@ pub fn land_for_budget(
         now,
     )?;
     if dispatcher.deliver_budget_notice(root)?.is_some() {
-        dispatcher.acknowledge_budget_notice(root, now).map_err(MemoryError::from)
+        dispatcher
+            .acknowledge_budget_notice(root, now)
+            .map_err(MemoryError::from)
     } else {
         Ok(hold)
     }
@@ -308,7 +334,8 @@ fn own_attempt(
 ) -> MemoryResult<crate::attempt_queue::AttemptRecord> {
     let vault = memory.vault();
     memory.read_key()?;
-    let row = AttemptQueue::new(vault).get(attempt_id(attempt)?)?
+    let row = AttemptQueue::new(vault)
+        .get(attempt_id(attempt)?)?
         .ok_or_else(|| MemoryError::bad_request("budget attempt is missing"))?;
     let actor = super::codec::record_dispatch_input(&row)
         .and_then(|input| super::agent_dispatch_actor(&input).ok());
@@ -327,22 +354,31 @@ fn same_run_root(
     row: &crate::attempt_queue::AttemptRecord,
     run: Option<&str>,
 ) -> MemoryResult<AttemptId> {
-    let Some(run) = run else { return Ok(row.id); };
+    let Some(run) = run else {
+        return Ok(row.id);
+    };
     let root = attempt_id(run)?;
     if root != row.id {
-        let root_row = AttemptQueue::new(vault).get(root)?
+        let root_row = AttemptQueue::new(vault)
+            .get(root)?
             .ok_or_else(|| MemoryError::bad_request("budget root is missing"))?;
         if row.run_id.is_none() || row.run_id != root_row.run_id {
-            return Err(MemoryError::bad_request("budget root belongs to another run"));
+            return Err(MemoryError::bad_request(
+                "budget root belongs to another run",
+            ));
         }
     }
     Ok(root)
 }
 
 fn lease_view(dispatcher: &AgentDispatcher<'_>, scope: &SpendScopeId) -> Result<SpendLeaseView> {
-    let lease = dispatcher.read_spend_scope(scope)?
+    let lease = dispatcher
+        .read_spend_scope(scope)?
         .ok_or_else(|| invalid("spend scope is missing"))?;
-    Ok(SpendLeaseView { lease, spend: dispatcher.spend_read(scope)? })
+    Ok(SpendLeaseView {
+        lease,
+        spend: dispatcher.spend_read(scope)?,
+    })
 }
 
 fn maximum(units: u64, unit: &str) -> Result<DeclaredMaximum> {

@@ -3,8 +3,8 @@
 //! holds, and the usage ledger owns settled physical-call receipts.
 use std::sync::Arc;
 
-use oneiron::agent_dispatch::budget_doors::{self, *};
 use oneiron::agent_dispatch::PartialResultHold;
+use oneiron::agent_dispatch::budget_doors::{self, *};
 use oneiron::memory::MemoryError;
 
 use super::host_doors::Listed;
@@ -17,10 +17,17 @@ pub(crate) async fn vault_budgets_lease_open(
     auth: &CoreAuth,
     input: OpenSpendLeaseRequest,
 ) -> Listed<SpendLeaseView> {
-    as_owner_naming(server, auth, "vault.budgets.lease.open", move |server, owner| {
-        budget_doors::open_spend_lease_as_owner(server.vault(), owner, &input)
-            .map_err(MemoryError::from)
-    }, |_| Vec::new()).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.budgets.lease.open",
+        move |server, owner| {
+            budget_doors::open_spend_lease_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
 }
 
 pub(crate) async fn vault_budgets_lease(
@@ -28,10 +35,17 @@ pub(crate) async fn vault_budgets_lease(
     auth: &CoreAuth,
     input: SpendScopeRequest,
 ) -> Listed<SpendLeaseView> {
-    as_owner_naming(server, auth, "vault.budgets.lease", move |server, owner| {
-        budget_doors::spend_lease_as_owner(server.vault(), owner, &input)
-            .map_err(MemoryError::from)
-    }, |_| Vec::new()).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.budgets.lease",
+        move |server, owner| {
+            budget_doors::spend_lease_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
 }
 
 pub(crate) async fn vault_budgets_lease_top_up(
@@ -39,10 +53,17 @@ pub(crate) async fn vault_budgets_lease_top_up(
     auth: &CoreAuth,
     input: TopUpSpendLeaseRequest,
 ) -> Listed<SpendLeaseView> {
-    as_owner_naming(server, auth, "vault.budgets.lease.top_up", move |server, owner| {
-        budget_doors::top_up_spend_lease_as_owner(server.vault(), owner, &input)
-            .map_err(MemoryError::from)
-    }, |_| Vec::new()).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.budgets.lease.top_up",
+        move |server, owner| {
+            budget_doors::top_up_spend_lease_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
 }
 
 pub(crate) async fn vault_budgets_hold(
@@ -50,10 +71,17 @@ pub(crate) async fn vault_budgets_hold(
     auth: &CoreAuth,
     input: BudgetHoldRequest,
 ) -> Listed<Option<PartialResultHold>> {
-    as_owner_naming(server, auth, "vault.budgets.hold", move |server, owner| {
-        budget_doors::budget_hold_as_owner(server.vault(), owner, &input)
-            .map_err(MemoryError::from)
-    }, |_| Vec::new()).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.budgets.hold",
+        move |server, owner| {
+            budget_doors::budget_hold_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
 }
 
 pub(crate) async fn vault_budgets_hold_resume(
@@ -61,10 +89,17 @@ pub(crate) async fn vault_budgets_hold_resume(
     auth: &CoreAuth,
     input: BudgetHoldRequest,
 ) -> Listed<PartialResultHold> {
-    as_owner_naming(server, auth, "vault.budgets.hold.resume", move |server, owner| {
-        budget_doors::resume_budget_hold_as_owner(server.vault(), owner, &input)
-            .map_err(MemoryError::from)
-    }, |_| Vec::new()).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.budgets.hold.resume",
+        move |server, owner| {
+            budget_doors::resume_budget_hold_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
 }
 
 pub(crate) async fn vault_budgets_local(
@@ -72,10 +107,17 @@ pub(crate) async fn vault_budgets_local(
     auth: &CoreAuth,
     input: LocalRunnerBudgetRequest,
 ) -> Listed<LocalRunnerBudgetView> {
-    as_owner_naming(server, auth, "vault.budgets.local", move |server, owner| {
-        budget_doors::local_runner_budget_as_owner(server.vault(), owner, &input)
-            .map_err(MemoryError::from)
-    }, |_| Vec::new()).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.budgets.local",
+        move |server, owner| {
+            budget_doors::local_runner_budget_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
 }
 
 pub(crate) async fn vault_budgets_settlements(
@@ -83,17 +125,30 @@ pub(crate) async fn vault_budgets_settlements(
     auth: &CoreAuth,
     input: RunSettlementsRequest,
 ) -> Listed<RunSettlementsView> {
-    as_owner_naming(server, auth, "vault.budgets.settlements", move |server, owner| {
-        owner.revalidate(server.vault())?;
-        let usage = server.vault_usage();
-        let settlements = usage.as_ref().map(|usage| {
-            server.usage_ledger.run_settlements(usage.owner(), usage.vault_id(), &input.run)
-                .map_err(|error| MemoryError::bad_request(error.to_string()))
-        }).transpose()?.unwrap_or_default();
-        Ok(RunSettlementsView {
-            run: input.run,
-            metering_enabled: usage.is_some(),
-            settlements,
-        })
-    }, |_| Vec::new()).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.budgets.settlements",
+        move |server, owner| {
+            owner.revalidate(server.vault())?;
+            let usage = server.vault_usage();
+            let settlements = usage
+                .as_ref()
+                .map(|usage| {
+                    server
+                        .usage_ledger
+                        .run_settlements(usage.owner(), usage.vault_id(), &input.run)
+                        .map_err(|error| MemoryError::bad_request(error.to_string()))
+                })
+                .transpose()?
+                .unwrap_or_default();
+            Ok(RunSettlementsView {
+                run: input.run,
+                metering_enabled: usage.is_some(),
+                settlements,
+            })
+        },
+        |_| Vec::new(),
+    )
+    .await
 }

@@ -32,7 +32,9 @@ impl Memory<'_> {
         request: &CalendarOccurrencesRequest,
     ) -> MemoryResult<ScopedReadResult<Vec<CalendarOccurrenceView>>> {
         if !request.range.is_ordered() {
-            return Err(MemoryError::bad_request("calendar range start must not exceed end"));
+            return Err(MemoryError::bad_request(
+                "calendar range start must not exceed end",
+            ));
         }
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         Ok(read_occurrences_scoped(&lane, request)?)
@@ -57,14 +59,25 @@ fn occurrences_in(
     master_id: EntityId,
     range: CalendarRangeDto,
 ) -> Result<Vec<CalendarOccurrenceView>> {
-    let Some(master) = event_row(lane, master_id)? else { return Ok(Vec::new()) };
+    let Some(master) = event_row(lane, master_id)? else {
+        return Ok(Vec::new());
+    };
     if master.facts.series_withheld() || master.facts.exception_withheld() {
         return Ok(Vec::new());
     }
-    let Some(series) = master.facts.series() else { return Ok(Vec::new()) };
-    let Some(at) = master.occurred else { return Ok(Vec::new()) };
+    let Some(series) = master.facts.series() else {
+        return Ok(Vec::new());
+    };
+    let Some(at) = master.occurred else {
+        return Ok(Vec::new());
+    };
     let withheld = lane.withheld_exception_series()?;
-    if master.facts.uids().iter().any(|uid| withheld.contains_key(&(master_id, uid.clone()))) {
+    if master
+        .facts
+        .uids()
+        .iter()
+        .any(|uid| withheld.contains_key(&(master_id, uid.clone())))
+    {
         return Ok(Vec::new());
     }
     let mut exceptions = Vec::new();
@@ -85,25 +98,46 @@ fn occurrences_in(
     for uid in master.facts.uids() {
         for start in mask_master_exceptions(master_id, uid, starts.clone(), &keys) {
             result.push(CalendarOccurrenceView {
-                event_ref: master_id.to_hex(), master_ref: master_id.to_hex(), uid: uid.clone(),
-                original_start_utc: start, start_utc: start, end_utc: start.saturating_add(duration),
+                event_ref: master_id.to_hex(),
+                master_ref: master_id.to_hex(),
+                uid: uid.clone(),
+                original_start_utc: start,
+                start_utc: start,
+                end_utc: start.saturating_add(duration),
             });
         }
         for (event, occurred, key) in &exceptions {
             if key.uid == *uid
                 && let Some(at) = occurred
-                && range.start <= at.start && at.start <= range.end
+                && range.start <= at.start
+                && at.start <= range.end
             {
                 result.push(CalendarOccurrenceView {
-                    event_ref: event.to_hex(), master_ref: master_id.to_hex(), uid: uid.clone(),
-                    original_start_utc: key.original_start_utc, start_utc: at.start, end_utc: at.end,
+                    event_ref: event.to_hex(),
+                    master_ref: master_id.to_hex(),
+                    uid: uid.clone(),
+                    original_start_utc: key.original_start_utc,
+                    start_utc: at.start,
+                    end_utc: at.end,
                 });
             }
         }
     }
     result.sort_unstable_by(|a, b| {
-        (a.start_utc, a.end_utc, &a.uid, a.original_start_utc, &a.event_ref)
-            .cmp(&(b.start_utc, b.end_utc, &b.uid, b.original_start_utc, &b.event_ref))
+        (
+            a.start_utc,
+            a.end_utc,
+            &a.uid,
+            a.original_start_utc,
+            &a.event_ref,
+        )
+            .cmp(&(
+                b.start_utc,
+                b.end_utc,
+                &b.uid,
+                b.original_start_utc,
+                &b.event_ref,
+            ))
     });
     Ok(result)
 }
@@ -118,17 +152,30 @@ impl Memory<'_> {
     ) -> MemoryResult<bool> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let checked = receipted(&read, |lane| {
-            let Some(row) = event_row(lane, master_id)? else { return Ok(false) };
-            if row.facts.series_withheld() || row.facts.exception_withheld()
+            let Some(row) = event_row(lane, master_id)? else {
+                return Ok(false);
+            };
+            if row.facts.series_withheld()
+                || row.facts.exception_withheld()
                 || !row.facts.uids().iter().any(|value| value == uid)
-                || lane.withheld_exception_series()?.contains_key(&(master_id, uid.to_owned()))
+                || lane
+                    .withheld_exception_series()?
+                    .contains_key(&(master_id, uid.to_owned()))
             {
                 return Ok(false);
             }
-            let Some(series) = row.facts.series() else { return Ok(false) };
-            Ok(expand_master_window(series, crate::TimeRange { start: original, end: original })
-                .map_err(|_| Error::InvalidConfig("calendar recurrence projection failed".into()))?
-                .contains(&original))
+            let Some(series) = row.facts.series() else {
+                return Ok(false);
+            };
+            Ok(expand_master_window(
+                series,
+                crate::TimeRange {
+                    start: original,
+                    end: original,
+                },
+            )
+            .map_err(|_| Error::InvalidConfig("calendar recurrence projection failed".into()))?
+            .contains(&original))
         })?;
         Ok(checked.value)
     }

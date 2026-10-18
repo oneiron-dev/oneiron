@@ -51,7 +51,10 @@ const REFUSALS: &[(&str, &str)] = &[
         "403",
         "The credential lacks the row's scope or authority, or the gate refused or held the write (`FORBIDDEN`).",
     ),
-    ("404", "A record the input names does not resolve for the caller (`NOT_FOUND`)."),
+    (
+        "404",
+        "A record the input names does not resolve for the caller (`NOT_FOUND`).",
+    ),
     (
         "409",
         "A record the input names is not in a state the row admits, or changed since it was read (`INVALID_STATE`).",

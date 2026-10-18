@@ -531,7 +531,9 @@ pub(crate) fn accept_slate(
     };
     let (id, current) = slate_of(vault, &catalog.record)?;
     if expected_slate.is_some_and(|expected| expected != id) {
-        return Err(OwnerError::Changed("the connector slate changed since review".to_owned()));
+        return Err(OwnerError::Changed(
+            "the connector slate changed since review".to_owned(),
+        ));
     }
     if request.all_manual && (!request.rows.is_empty() || request.facets.is_some()) {
         return Err(OwnerError::Invalid(

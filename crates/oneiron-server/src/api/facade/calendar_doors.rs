@@ -1,11 +1,11 @@
 //! Owner-authorized calendar file imports through the credential's own handle.
 use std::sync::Arc;
 
+use oneiron::EdgeActorClass;
 use oneiron::calendar::ingest::door::{
     CalendarIcsImportReceipt, CalendarIcsImportRequest, CalendarInstanceMoveRequest,
     import_ics_as_owner, move_instance_as_owner,
 };
-use oneiron::EdgeActorClass;
 
 use super::host_doors::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
@@ -25,9 +25,14 @@ pub(crate) async fn vault_calendar_ics_import(
         Ok(actor) => actor,
         Err(error) => return refused(error.into()),
     };
-    credential_listing(server, auth, (actor, EdgeActorClass::Human), VERB, move |_, _, memory| {
-        import_ics_as_owner(&memory, &owner, &input)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        (actor, EdgeActorClass::Human),
+        VERB,
+        move |_, _, memory| import_ics_as_owner(&memory, &owner, &input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_calendar_instances_move(
@@ -44,7 +49,12 @@ pub(crate) async fn vault_calendar_instances_move(
         Ok(actor) => actor,
         Err(error) => return refused(error.into()),
     };
-    credential_listing(server, auth, (actor, EdgeActorClass::Human), VERB, move |_, _, memory| {
-        move_instance_as_owner(&memory, &owner, &input)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        (actor, EdgeActorClass::Human),
+        VERB,
+        move |_, _, memory| move_instance_as_owner(&memory, &owner, &input),
+    )
+    .await
 }

@@ -24,14 +24,22 @@ impl Memory<'_> {
 
     fn annotation_moment(&self) -> (TimeRange, u64) {
         let now = self.vault().now_recorded_at();
-        (TimeRange { start: now, end: now }, now)
+        (
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
     }
 
     /// `vault.artifacts.units`: actual version units, or an explicit lack of
     /// an annotation adapter. Kind enum membership alone promises no reader.
     pub fn artifacts_units(&self, input: &ArtifactUnitsRequest) -> MemoryResult<ArtifactUnitsView> {
         let artifact = resolve_entity_ref(self.vault(), &input.artifact_ref)?;
-        let kind = self.vault().artifact_kind(&artifact)?
+        let kind = self
+            .vault()
+            .artifact_kind(&artifact)?
             .ok_or_else(|| MemoryError::not_found("artifact not found"))?;
         let unsupported = |kind| ArtifactUnitsView::Unsupported {
             artifact_id: artifact,
@@ -41,7 +49,8 @@ impl Memory<'_> {
         if kind == ArtifactKind::Code {
             return Ok(unsupported(kind));
         }
-        let file = self.export_blob_artifact_sighted(&artifact, input.version, None)?
+        let file = self
+            .export_blob_artifact_sighted(&artifact, input.version, None)?
             .ok_or_else(|| MemoryError::not_found("artifact version not found"))?;
         let Ok(format) = OfficeFormat::from_media_type(&file.media_type) else {
             return Ok(unsupported(file.kind));
@@ -53,7 +62,10 @@ impl Memory<'_> {
         let units = unit_texts(&file.bytes, format, &limits)
             .ok_or_else(|| MemoryError::bad_request("artifact units could not be read"))?
             .into_iter()
-            .map(|(locator, quote)| ArtifactUnitView { locator: (&locator).into(), quote })
+            .map(|(locator, quote)| ArtifactUnitView {
+                locator: (&locator).into(),
+                quote,
+            })
             .collect();
         Ok(ArtifactUnitsView::Supported {
             artifact_id: artifact,
@@ -66,9 +78,9 @@ impl Memory<'_> {
 
     /// The text of an exact immutable anchor, through the caller's file sight.
     fn annotation_anchor_view(&self, anchor: &Anchor) -> MemoryResult<AnnotationAnchorView> {
-        let file = self.export_blob_artifact_sighted(
-            &anchor.artifact_id, Some(anchor.version), None,
-        )?.ok_or_else(|| MemoryError::not_found("anchor version not found"))?;
+        let file = self
+            .export_blob_artifact_sighted(&anchor.artifact_id, Some(anchor.version), None)?
+            .ok_or_else(|| MemoryError::not_found("anchor version not found"))?;
         let limits = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             self.vault().text_limits_in_txn(&txn)?
@@ -88,7 +100,8 @@ impl Memory<'_> {
         input: &AnnotationPinRequest,
     ) -> MemoryResult<AnnotationAnchorView> {
         let artifact = resolve_entity_ref(self.vault(), &input.artifact_ref)?;
-        let file = self.export_blob_artifact_sighted(&artifact, input.version, None)?
+        let file = self
+            .export_blob_artifact_sighted(&artifact, input.version, None)?
             .ok_or_else(|| MemoryError::not_found("artifact version not found"))?;
         let locator = Locator::try_from(&input.locator)?;
         let format = OfficeFormat::from_media_type(&file.media_type)?;
@@ -99,11 +112,15 @@ impl Memory<'_> {
                 | (OfficeFormat::Pptx, Locator::Pptx { .. })
         );
         if !matches {
-            return Err(MemoryError::bad_request("locator format does not match the artifact"));
+            return Err(MemoryError::bad_request(
+                "locator format does not match the artifact",
+            ));
         }
         let pin = self.annotation_anchor_view(&Anchor::new(artifact, file.version, locator))?;
         if pin.quote.is_none() {
-            return Err(MemoryError::bad_request("the exact locator has no readable unambiguous quote"));
+            return Err(MemoryError::bad_request(
+                "the exact locator has no readable unambiguous quote",
+            ));
         }
         Ok(pin)
     }
@@ -115,9 +132,15 @@ impl Memory<'_> {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let mut first = None;
         for claim_id in vault.claims_for_subject_in_txn(&txn, &thread.anchor.artifact_id)? {
-            let Some(body) = vault.get_claim_in_txn(&txn, &claim_id)? else { continue };
-            if body.predicate != ANNOTATION_THREAD_PREDICATE { continue; }
-            let Ok(head) = decode_thread_head(&body.value) else { continue };
+            let Some(body) = vault.get_claim_in_txn(&txn, &claim_id)? else {
+                continue;
+            };
+            if body.predicate != ANNOTATION_THREAD_PREDICATE {
+                continue;
+            }
+            let Ok(head) = decode_thread_head(&body.value) else {
+                continue;
+            };
             if head.thread_id == thread.thread_id
                 && head.anchor_version == thread.origin_version
                 && first.as_ref().is_none_or(|(id, _)| claim_id < *id)
@@ -125,8 +148,14 @@ impl Memory<'_> {
                 first = Some((claim_id, head.locator));
             }
         }
-        let (_, locator) = first.ok_or(Error::InvariantViolation("annotation opening pin is missing"))?;
-        Ok(Anchor::new(thread.anchor.artifact_id, thread.origin_version, locator))
+        let (_, locator) = first.ok_or(Error::InvariantViolation(
+            "annotation opening pin is missing",
+        ))?;
+        Ok(Anchor::new(
+            thread.anchor.artifact_id,
+            thread.origin_version,
+            locator,
+        ))
     }
 
     fn annotation_brief_view(&self, brief: TaskBrief) -> MemoryResult<AnnotationBriefView> {
@@ -141,7 +170,10 @@ impl Memory<'_> {
         })
     }
 
-    fn annotation_thread_view(&self, thread: AnnotationThread) -> MemoryResult<AnnotationThreadView> {
+    fn annotation_thread_view(
+        &self,
+        thread: AnnotationThread,
+    ) -> MemoryResult<AnnotationThreadView> {
         let origin = self.annotation_origin(&thread)?;
         let resolution = if thread.drift.is_some() {
             AnnotationResolution::Drifted
@@ -150,12 +182,17 @@ impl Memory<'_> {
         } else {
             AnnotationResolution::Mapped
         };
-        let comments = self.vault().annotation_thread_comments(
-            &thread.anchor.artifact_id, &thread.thread_id,
-        )?.into_iter().map(AnnotationCommentView::from).collect();
-        let brief = self.vault().annotation_brief_for_thread(
-            &thread.anchor.artifact_id, &thread.thread_id,
-        )?.map(|brief| self.annotation_brief_view(brief)).transpose()?;
+        let comments = self
+            .vault()
+            .annotation_thread_comments(&thread.anchor.artifact_id, &thread.thread_id)?
+            .into_iter()
+            .map(AnnotationCommentView::from)
+            .collect();
+        let brief = self
+            .vault()
+            .annotation_brief_for_thread(&thread.anchor.artifact_id, &thread.thread_id)?
+            .map(|brief| self.annotation_brief_view(brief))
+            .transpose()?;
         Ok(AnnotationThreadView {
             thread_id: thread.thread_id,
             origin: self.annotation_anchor_view(&origin)?,
@@ -179,10 +216,18 @@ impl Memory<'_> {
             version: Some(input.version),
             locator: input.locator.clone(),
         })?;
-        let anchor = Anchor::new(pin.artifact_id, pin.version, Locator::try_from(&pin.locator)?);
+        let anchor = Anchor::new(
+            pin.artifact_id,
+            pin.version,
+            Locator::try_from(&pin.locator)?,
+        );
         let (occurred, now) = self.annotation_moment();
         let thread = self.vault().open_annotation_thread(
-            &anchor, self.annotation_actor(), &input.text, occurred, now,
+            &anchor,
+            self.annotation_actor(),
+            &input.text,
+            occurred,
+            now,
         )?;
         self.annotation_thread_view(thread)
     }
@@ -196,9 +241,17 @@ impl Memory<'_> {
         let artifact = resolve_entity_ref(self.vault(), &input.artifact_ref)?;
         let thread = EntityId::from_hex(&input.thread_ref)?;
         let (occurred, now) = self.annotation_moment();
-        Ok(self.vault().add_annotation_comment(
-            &artifact, &thread, self.annotation_actor(), &input.text, occurred, now,
-        )?.into())
+        Ok(self
+            .vault()
+            .add_annotation_comment(
+                &artifact,
+                &thread,
+                self.annotation_actor(),
+                &input.text,
+                occurred,
+                now,
+            )?
+            .into())
     }
 
     /// Reads the engine's current mapping or drift, never reattaching by text.
@@ -208,8 +261,10 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<AnnotationThreadView>> {
         let artifact = resolve_entity_ref(self.vault(), &input.artifact_ref)?;
         let thread = EntityId::from_hex(&input.thread_ref)?;
-        self.vault().get_annotation_thread(&artifact, &thread)?
-            .map(|thread| self.annotation_thread_view(thread)).transpose()
+        self.vault()
+            .get_annotation_thread(&artifact, &thread)?
+            .map(|thread| self.annotation_thread_view(thread))
+            .transpose()
     }
 
     pub fn artifacts_threads_list(
@@ -217,8 +272,11 @@ impl Memory<'_> {
         input: &ArtifactRefRequest,
     ) -> MemoryResult<Vec<AnnotationThreadView>> {
         let artifact = resolve_entity_ref(self.vault(), &input.artifact_ref)?;
-        self.vault().annotation_threads_for_artifact(&artifact)?
-            .into_iter().map(|thread| self.annotation_thread_view(thread)).collect()
+        self.vault()
+            .annotation_threads_for_artifact(&artifact)?
+            .into_iter()
+            .map(|thread| self.annotation_thread_view(thread))
+            .collect()
     }
 
     /// Assignment, durable transcript and any agent dispatch belong to the
@@ -229,11 +287,19 @@ impl Memory<'_> {
     ) -> MemoryResult<AnnotationBriefView> {
         let artifact = resolve_entity_ref(self.vault(), &input.artifact_ref)?;
         let thread = EntityId::from_hex(&input.thread_ref)?;
-        let assignee = input.assignee_ref.as_deref()
-            .map(|reference| resolve_entity_ref(self.vault(), reference)).transpose()?;
+        let assignee = input
+            .assignee_ref
+            .as_deref()
+            .map(|reference| resolve_entity_ref(self.vault(), reference))
+            .transpose()?;
         let (occurred, now) = self.annotation_moment();
         let brief = self.vault().assign_annotation_thread_to_brief(
-            &artifact, &thread, assignee, self.annotation_actor(), occurred, now,
+            &artifact,
+            &thread,
+            assignee,
+            self.annotation_actor(),
+            occurred,
+            now,
         )?;
         self.annotation_brief_view(brief)
     }
@@ -246,7 +312,12 @@ impl Memory<'_> {
         let thread = EntityId::from_hex(&input.thread_ref)?;
         let (occurred, now) = self.annotation_moment();
         let updated = self.vault().set_annotation_thread_state(
-            &artifact, &thread, input.state.into(), self.annotation_actor(), occurred, now,
+            &artifact,
+            &thread,
+            input.state.into(),
+            self.annotation_actor(),
+            occurred,
+            now,
         )?;
         self.annotation_thread_view(updated)
     }

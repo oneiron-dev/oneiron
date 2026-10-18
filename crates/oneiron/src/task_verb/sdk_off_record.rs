@@ -181,7 +181,9 @@ pub struct OffRecordExecuted {
 pub fn off_record_host_only<I, T>(_memory: &Memory<'_>, verb: &str, _input: &I) -> MemoryResult<T> {
     Err(MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
-        format!("{verb} acts on an off-record session a server holds; an embedded vault holds none"),
+        format!(
+            "{verb} acts on an off-record session a server holds; an embedded vault holds none"
+        ),
         &["Call it through the server that entered the session, with the owner's credential."],
     ))
 }

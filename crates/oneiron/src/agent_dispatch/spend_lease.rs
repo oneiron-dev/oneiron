@@ -152,7 +152,8 @@ impl AgentDispatcher<'_> {
             .map_err(|_| invalid("spend lease top-up requires a valid shown maximum"))?;
         let mut txn = self.vault.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self.vault, &txn)?;
-        let mut scope = SCOPE.get(&self.vault.store, &txn, &id.0)?
+        let mut scope = SCOPE
+            .get(&self.vault.store, &txn, &id.0)?
             .ok_or_else(|| invalid("spend scope is missing"))?;
         if scope.state != SpendState::Open || !scope.hard || scope.unit != maximum.unit {
             return Err(invalid("top up an open hard lease in its existing unit"));
@@ -166,7 +167,11 @@ impl AgentDispatcher<'_> {
         if scope.cap_units != expected_cap_units {
             return Err(invalid("spend cap changed; read the lease again"));
         }
-        if scope.payer.as_ref().is_some_and(|payer| payer.party != actor) {
+        if scope
+            .payer
+            .as_ref()
+            .is_some_and(|payer| payer.party != actor)
+        {
             return Err(invalid("only the payer may raise its accepted root cap"));
         }
         if let Some(payer) = &mut scope.payer {
@@ -177,7 +182,9 @@ impl AgentDispatcher<'_> {
         if scope.parent.is_some() {
             let host = self.open_parent_in_txn(&txn, &scope)?;
             let mut host = self.make_local_in_txn(&mut txn, host, additional)?;
-            host.held_units = host.held_units.checked_add(additional)
+            host.held_units = host
+                .held_units
+                .checked_add(additional)
                 .ok_or(crate::Error::ArithmeticOverflow("spend lease top-up"))?;
             SCOPE.put(&self.vault.store, &mut txn, &host.scope.0, &host)?;
         }
