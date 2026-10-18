@@ -18,10 +18,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/federation_pact.rs` | src | s | 3 struct · 4 enum · 6 fn | FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus | Federation lifecycle and pact types |
 | `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 12 fn | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
 | `src/authority/machine_profile.rs` | src | m | 2 struct · 2 enum · 5 fn · 4 const · 5 crate-vis | MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole | The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec |
-| `src/authority/mod.rs` | src | s | 16 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/mod.rs` | src | s | 17 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
 | `src/authority/owner_handover.rs` | src | s | 1 struct · 1 enum · 3 fn · 2 const · 2 crate-vis | OwnerHandover, OwnerHandoverCause | An Owner handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043, "Last-Owner successor… |
 | `src/authority/owner_root.rs` | src | s | 2 struct · 3 fn · 1 const · 3 crate-vis | OwnerRootRecord, RecoveryRootId | The owner's recovery root record and its wire codec (world privacy P6b) |
 | `src/authority/recovery_ceremony.rs` | src | s | 1 enum · 4 fn · 1 const | GenesisRecoveryStep | Explicit genesis recovery-secret acknowledgement and its visible fragile flag |
+| `src/authority/residence.rs` | src | m | 2 struct · 2 enum · 5 fn · 4 const · 5 crate-vis | ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus | The owner's residence directives to one of their machines, and each machine's result for one (OF-534) |
 | `src/authority/slip_claims.rs` | src | s | 2 struct · 4 fn · 1 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
 | `src/authority/slip_wire.rs` | src | s | 2 fn | — | Field-by-field signed capability claims and six-axis Scope wire codec |
 | `src/authority/wire_decode.rs` | src | m | 13 fn | — | `rmpv::Value` decoding for every authority type |

@@ -14,9 +14,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3312 | 902 | 188 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3314 | 902 | 188 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 2 | 0 | 0 |
-| [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 25 | 1 | 0 |
+| [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 26 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 15 | 5 | 0 |
 | [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 9 | 0 | 3 |
@@ -250,7 +250,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `subject_model` | file+dir | 15 | L | yes | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
 | `surface_event` | dir | 8 | m | yes | Inbound SurfaceEvent adapter contract (OF-347 CID-6) |
 | `sweep` | dir | 5 | L | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
-| `sync` | dir | 166 | L | yes | CRDT sync layer for Oneiron |
+| `sync` | dir | 168 | L | yes | CRDT sync layer for Oneiron |
 | `tagging` | dir | 14 | L | yes | The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036… |
 | `task_authority` | dir | 3 | L | yes | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
 | `task_type` | dir | 2 | L | — | ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree |
@@ -289,7 +289,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `authority` | dir | 17 | m | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `authority` | dir | 18 | m | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
 | `credential_door` | file | 1 | s | Credential-door bounds the authority log's slip checks share with the door itself |
 | `federation` | dir | 6 | m | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
 
