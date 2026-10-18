@@ -153,7 +153,9 @@ impl Vault {
     }
 
     /// Records the claims and import reviews seen in one topic. A known topic keeps its
-    /// state and gains the new members. A new topic opens with `opening`, either
+    /// state and gains the new members until it settles; a settled topic's members stay
+    /// the batches that came before the owner's answer, so a later import the rule
+    /// already reached never joins them. A new topic opens with `opening`, either
     /// [`ImportAudienceState::Clear`] or [`ImportAudienceState::Asked`]; with no opening
     /// it is left unrecorded and `None` comes back. Only the owner's answer settles a
     /// topic ([`Vault::settle_import_audience`]).
@@ -170,6 +172,9 @@ impl Vault {
         }
         self.with_write_txn(|txn| {
             let cluster = match CLUSTERS.get(&self.store, txn, topic)? {
+                Some(cluster) if matches!(cluster.state, ImportAudienceState::Settled { .. }) => {
+                    return Ok(Some(cluster));
+                }
                 Some(mut cluster) => {
                     let before = (cluster.claims.len(), cluster.reviews.len());
                     cluster.claims.extend(claims.iter().copied());
