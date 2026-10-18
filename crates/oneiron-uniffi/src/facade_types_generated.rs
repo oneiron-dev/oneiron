@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 883 facade rows, 3011 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 839.
+// UniFFI census: 890 facade rows, 3031 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 846.
 // WireJson rows: self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
+// WireJson leaves inside the generated types, past each serde_json::Value: CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -28269,6 +28269,271 @@ pub enum CheckoutTornDown {
         #[serde(rename = "reason")]
         reason: CheckoutRetention,
     },
+}
+
+/// `oneiron::code_view::VisibleFilePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VisibleFilePolicy {
+    #[serde(rename = "version")]
+    pub version: u32,
+    #[serde(rename = "include_prefixes")]
+    pub include_prefixes: Vec<String>,
+    #[serde(rename = "exclude_prefixes")]
+    pub exclude_prefixes: Vec<String>,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeViewMaterializeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeViewMaterializeRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "tested")]
+    pub tested: String,
+    #[serde(rename = "account")]
+    pub account: String,
+    #[serde(rename = "policy")]
+    pub policy: VisibleFilePolicy,
+}
+
+/// `oneiron::code_document::types::CodeDocumentFrontier`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeDocumentFrontier {
+    #[serde(rename = "document_id")]
+    pub document_id: Vec<u8>,
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "version")]
+    pub version: Vec<crate::WireJson>,
+    #[serde(rename = "op_fold")]
+    pub op_fold: Vec<u8>,
+    #[serde(rename = "text_hash")]
+    pub text_hash: Vec<u8>,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeViewFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeViewFile {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "content_hash_blake3")]
+    pub content_hash_blake3: String,
+    #[serde(rename = "frontier")]
+    pub frontier: CodeDocumentFrontier,
+    #[serde(rename = "text_sha256")]
+    pub text_sha256: String,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeWorkingView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeWorkingView {
+    #[serde(rename = "view")]
+    pub view: String,
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "base")]
+    pub base: String,
+    #[serde(rename = "account")]
+    pub account: String,
+    #[serde(rename = "fork_hash")]
+    pub fork_hash: String,
+    #[serde(rename = "files")]
+    pub files: Vec<CodeViewFile>,
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "host_path")]
+    pub host_path: String,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeViewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeViewRequest {
+    #[serde(rename = "view")]
+    pub view: String,
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "tested")]
+    pub tested: String,
+    #[serde(rename = "account")]
+    pub account: String,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeViewReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeViewReadRequest {
+    #[serde(rename = "view")]
+    pub view: CodeViewRequest,
+    #[serde(rename = "path")]
+    pub path: String,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeViewFileBytes`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeViewFileBytes {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "bytes")]
+    pub bytes: Vec<u8>,
+    #[serde(rename = "sha256")]
+    pub sha256: String,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeSecretTaintRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSecretTaintRef {
+    #[serde(rename = "secret_ref")]
+    pub secret_ref: String,
+    #[serde(rename = "rotation_generation")]
+    pub rotation_generation: u32,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeBuildClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeBuildClass {
+    #[serde(rename = "build")]
+    Build,
+    #[serde(rename = "verify")]
+    Verify,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeBuildSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeBuildSpec {
+    #[serde(rename = "argv")]
+    pub argv: Vec<String>,
+    #[serde(rename = "env_allowlist")]
+    pub env_allowlist: std::collections::HashMap<String, String>,
+    #[serde(rename = "platform")]
+    pub platform: std::collections::HashMap<String, String>,
+    #[serde(rename = "declared_outputs")]
+    pub declared_outputs: Vec<String>,
+    #[serde(rename = "secret_taint_refs")]
+    pub secret_taint_refs: Vec<CodeSecretTaintRef>,
+    #[serde(rename = "class")]
+    pub class: CodeBuildClass,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeViewActionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeViewActionRequest {
+    #[serde(rename = "view")]
+    pub view: CodeViewRequest,
+    #[serde(rename = "spec")]
+    pub spec: CodeBuildSpec,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeActionDigest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeActionDigest {
+    #[serde(rename = "hash")]
+    pub hash: String,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeViewAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeViewAction {
+    #[serde(rename = "action_digest")]
+    pub action_digest: CodeActionDigest,
+    #[serde(rename = "command_bytes")]
+    pub command_bytes: Vec<u8>,
+    #[serde(rename = "input_root_digest")]
+    pub input_root_digest: CodeActionDigest,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeViewBuildRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeViewBuildRequest {
+    #[serde(rename = "view")]
+    pub view: CodeViewRequest,
+    #[serde(rename = "spec")]
+    pub spec: CodeBuildSpec,
+    #[serde(rename = "action_digest")]
+    pub action_digest: CodeActionDigest,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeCacheState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeCacheState {
+    #[serde(rename = "hit")]
+    Hit,
+    #[serde(rename = "miss")]
+    Miss,
+    #[serde(rename = "denied")]
+    Denied,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeBuildOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeBuildOutput {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "output_sha256")]
+    pub output_sha256: String,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeBuildEntry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeBuildEntry {
+    #[serde(rename = "action_digest")]
+    pub action_digest: CodeActionDigest,
+    #[serde(rename = "account")]
+    pub account: String,
+    #[serde(rename = "exit_code")]
+    pub exit_code: i32,
+    #[serde(rename = "outputs")]
+    pub outputs: std::collections::HashMap<String, CodeBuildOutput>,
+    #[serde(
+        rename = "stdout_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stdout_ref: Option<String>,
+    #[serde(
+        rename = "stderr_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stderr_ref: Option<String>,
+    #[serde(rename = "secret_taint_refs")]
+    pub secret_taint_refs: Vec<CodeSecretTaintRef>,
+    #[serde(rename = "reusable")]
+    pub reusable: bool,
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeCacheOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeCacheOutcome {
+    #[serde(rename = "state")]
+    pub state: CodeCacheState,
+    #[serde(rename = "entry", default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<CodeBuildEntry>,
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<String>,
+}
+
+/// `oneiron::memory::code_view_doors::types::CodeCacheReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeCacheReadRequest {
+    #[serde(rename = "account")]
+    pub account: String,
+    #[serde(rename = "action_digest")]
+    pub action_digest: CodeActionDigest,
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeRepoPointer`.

@@ -4758,6 +4758,55 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_views_materialize(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.views.materialize")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.views.materialize", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_views_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.views.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.views.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_views_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.views.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.views.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_views_action(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.views.action")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.views.action", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_views_build(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.views.build")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.views.build", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_cache_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.cache.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.cache.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_cache_reuse(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.cache.reuse")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.cache.reuse", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_snapshots_ingest(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.code.snapshots.ingest")?;
         let output = py

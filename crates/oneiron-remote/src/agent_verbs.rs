@@ -1611,6 +1611,27 @@ impl OneironClient {
                 "vault.code.checkout.teardown" => remote_agent_verb_output::<
                     oneiron::memory::checkout_doors::CheckoutTornDown,
                 >(client, verb, &input),
+                "vault.code.views.materialize" => remote_agent_verb_output::<
+                    oneiron::memory::code_view_doors::CodeWorkingView,
+                >(client, verb, &input),
+                "vault.code.views.get" => remote_agent_verb_output::<
+                    oneiron::memory::code_view_doors::CodeWorkingView,
+                >(client, verb, &input),
+                "vault.code.views.read" => remote_agent_verb_output::<
+                    oneiron::memory::code_view_doors::CodeViewFileBytes,
+                >(client, verb, &input),
+                "vault.code.views.action" => remote_agent_verb_output::<
+                    oneiron::memory::code_view_doors::CodeViewAction,
+                >(client, verb, &input),
+                "vault.code.views.build" => remote_agent_verb_output::<
+                    oneiron::memory::code_view_doors::CodeCacheOutcome,
+                >(client, verb, &input),
+                "vault.code.cache.get" => remote_agent_verb_output::<
+                    oneiron::memory::code_view_doors::CodeCacheOutcome,
+                >(client, verb, &input),
+                "vault.code.cache.reuse" => remote_agent_verb_output::<
+                    oneiron::memory::code_view_doors::CodeCacheOutcome,
+                >(client, verb, &input),
                 "vault.code.snapshots.ingest" => remote_agent_verb_output::<
                     oneiron::memory::codebase_doors::CodeSnapshotView,
                 >(client, verb, &input),
@@ -9043,6 +9064,90 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.checkout.teardown", value)
+    }
+    pub fn vault_code_views_materialize(
+        &self,
+        input: &oneiron::memory::code_view_doors::CodeViewMaterializeRequest,
+    ) -> Result<oneiron::memory::code_view_doors::CodeWorkingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.views.materialize", value)
+    }
+    pub fn vault_code_views_get(
+        &self,
+        input: &oneiron::memory::code_view_doors::CodeViewRequest,
+    ) -> Result<oneiron::memory::code_view_doors::CodeWorkingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.views.get", value)
+    }
+    pub fn vault_code_views_read(
+        &self,
+        input: &oneiron::memory::code_view_doors::CodeViewReadRequest,
+    ) -> Result<oneiron::memory::code_view_doors::CodeViewFileBytes, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.views.read", value)
+    }
+    pub fn vault_code_views_action(
+        &self,
+        input: &oneiron::memory::code_view_doors::CodeViewActionRequest,
+    ) -> Result<oneiron::memory::code_view_doors::CodeViewAction, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.views.action", value)
+    }
+    pub fn vault_code_views_build(
+        &self,
+        input: &oneiron::memory::code_view_doors::CodeViewBuildRequest,
+    ) -> Result<oneiron::memory::code_view_doors::CodeCacheOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.views.build", value)
+    }
+    pub fn vault_code_cache_get(
+        &self,
+        input: &oneiron::memory::code_view_doors::CodeCacheReadRequest,
+    ) -> Result<oneiron::memory::code_view_doors::CodeCacheOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.cache.get", value)
+    }
+    pub fn vault_code_cache_reuse(
+        &self,
+        input: &oneiron::memory::code_view_doors::CodeViewBuildRequest,
+    ) -> Result<oneiron::memory::code_view_doors::CodeCacheOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.cache.reuse", value)
     }
     pub fn vault_code_snapshots_ingest(
         &self,

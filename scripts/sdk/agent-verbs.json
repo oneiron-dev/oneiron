@@ -7879,6 +7879,111 @@
       "openapi": true
     },
     {
+      "name": "vault.code.views.materialize",
+      "description": "Materialize a private linked working view from verified tested file frontiers in the authenticated owner account.",
+      "input": "crate::memory::code_view_doors::CodeViewMaterializeRequest",
+      "output": "crate::memory::code_view_doors::CodeWorkingView",
+      "call": "memory.code_view_materialize_as(&memory.embedded_owner(\"vault.code.views.materialize\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.views.get",
+      "description": "Read one working view and its immutable tested base under the authenticated owner account.",
+      "input": "crate::memory::code_view_doors::CodeViewRequest",
+      "output": "crate::memory::code_view_doors::CodeWorkingView",
+      "call": "memory.code_view_get_as(&memory.embedded_owner(\"vault.code.views.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.views.read",
+      "description": "Read the current bytes of one selected input in the authenticated owner working view.",
+      "input": "crate::memory::code_view_doors::CodeViewReadRequest",
+      "output": "crate::memory::code_view_doors::CodeViewFileBytes",
+      "call": "memory.code_view_read_as(&memory.embedded_owner(\"vault.code.views.read\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.views.action",
+      "description": "Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest.",
+      "input": "crate::memory::code_view_doors::CodeViewActionRequest",
+      "output": "crate::memory::code_view_doors::CodeViewAction",
+      "call": "memory.code_view_action_as(&memory.embedded_owner(\"vault.code.views.action\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.views.build",
+      "description": "Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted.",
+      "input": "crate::memory::code_view_doors::CodeViewBuildRequest",
+      "output": "crate::memory::code_view_doors::CodeCacheOutcome",
+      "call": "memory.code_view_build_as(&memory.embedded_owner(\"vault.code.views.build\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.cache.get",
+      "description": "Read one clean immutable account-local build result by action key without executing a command.",
+      "input": "crate::memory::code_view_doors::CodeCacheReadRequest",
+      "output": "crate::memory::code_view_doors::CodeCacheOutcome",
+      "call": "memory.code_cache_get_as(&memory.embedded_owner(\"vault.code.cache.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.cache.reuse",
+      "description": "Reuse an authorized clean action result into another matching working view without dispatching a cold build.",
+      "input": "crate::memory::code_view_doors::CodeViewBuildRequest",
+      "output": "crate::memory::code_view_doors::CodeCacheOutcome",
+      "call": "memory.code_cache_reuse_as(&memory.embedded_owner(\"vault.code.cache.reuse\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.snapshots.ingest",
       "description": "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt.",
       "input": "crate::memory::codebase_doors::CodeSnapshotIngestRequest",

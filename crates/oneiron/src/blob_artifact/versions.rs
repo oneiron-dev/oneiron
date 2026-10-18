@@ -421,11 +421,6 @@ impl Vault {
         if let Some(stamp) = calc_engine {
             stamp.validate()?;
         }
-        if bytes.is_empty() {
-            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "blob artifact version bytes must be non-empty",
-            )));
-        }
         let content_hash = *blake3::hash(bytes).as_bytes();
         let claim_id = EntityId::from_bytes(self.store.clock.ulid()?)?;
 

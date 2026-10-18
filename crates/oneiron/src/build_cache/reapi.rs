@@ -64,14 +64,15 @@ impl BuildAction {
     }
     pub fn reapi_digest(&self) -> BuildCacheResult<ReapiDigest> {
         validate_repo_ref(&self.input_root.repo_ref)?;
-        let root = match self.reapi_input_root {
-            Some(root) => root,
-            None => self.descriptor_directory_digest(),
-        };
+        let root = self.reapi_input_root_digest();
         Ok(ReapiDigest::action(
             ReapiDigest::of(&self.reapi_command_bytes()),
             root,
         ))
+    }
+    /// The exact Directory digest fed into this action's REAPI protobuf.
+    pub fn reapi_input_root_digest(&self) -> ReapiDigest {
+        self.reapi_input_root.unwrap_or_else(|| self.descriptor_directory_digest())
     }
     // Legacy engine snapshots have a blake3 manifest rather than a REAPI CAS
     // tree. Map their exact identity to a valid Directory containing one

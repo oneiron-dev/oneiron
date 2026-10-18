@@ -4461,6 +4461,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_views_materialize(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.materialize", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_action(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.action", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_build(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.build", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_cache_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.cache.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_cache_reuse(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.cache.reuse", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_snapshots_ingest(
         &self,
         input: serde_json::Value,

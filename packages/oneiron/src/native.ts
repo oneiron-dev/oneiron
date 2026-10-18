@@ -540,6 +540,13 @@ vaultCodeCheckoutTakeover(input: unknown): unknown
 vaultCodeCheckoutPublish(input: unknown): unknown
 vaultCodeCheckoutSettle(input: unknown): unknown
 vaultCodeCheckoutTeardown(input: unknown): unknown
+vaultCodeViewsMaterialize(input: unknown): unknown
+vaultCodeViewsGet(input: unknown): unknown
+vaultCodeViewsRead(input: unknown): unknown
+vaultCodeViewsAction(input: unknown): unknown
+vaultCodeViewsBuild(input: unknown): unknown
+vaultCodeCacheGet(input: unknown): unknown
+vaultCodeCacheReuse(input: unknown): unknown
 vaultCodeSnapshotsIngest(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
