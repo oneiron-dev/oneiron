@@ -2755,7 +2755,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
