@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "area": "code-custody",
+  "assets": [
+    {
+      "id": "code-custody-math-cjs",
+      "path": "repo/math.cjs",
+      "source": {
+        "uri": "independent-oracle:e2e/code-custody/repo/math.cjs",
+        "revision": "code-custody-fixtures-v1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "d2d804dab92b13193c911bfe87409648be3f10eca81308f916fb095e18ac57b2",
+      "expectedFacts": {
+        "repository_path": "math.cjs",
+        "sha256": "d2d804dab92b13193c911bfe87409648be3f10eca81308f916fb095e18ac57b2"
+      },
+      "scenarios": [
+        "CODE-CUSTODY-01",
+        "CODE-CUSTODY-02",
+        "CODE-CUSTODY-03",
+        "CODE-CUSTODY-04",
+        "CODE-CUSTODY-05",
+        "CODE-CUSTODY-07",
+        "CODE-CUSTODY-08",
+        "CODE-CUSTODY-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "code-custody-label-cjs",
+      "path": "repo/label.cjs",
+      "source": {
+        "uri": "independent-oracle:e2e/code-custody/repo/label.cjs",
+        "revision": "code-custody-fixtures-v1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "1d97dae7173de7bdacb2bc746644051b6b17893d3c34dbbc7a3924545a17ffef",
+      "expectedFacts": {
+        "repository_path": "label.cjs",
+        "sha256": "1d97dae7173de7bdacb2bc746644051b6b17893d3c34dbbc7a3924545a17ffef"
+      },
+      "scenarios": [
+        "CODE-CUSTODY-01",
+        "CODE-CUSTODY-02",
+        "CODE-CUSTODY-03",
+        "CODE-CUSTODY-04",
+        "CODE-CUSTODY-05",
+        "CODE-CUSTODY-07",
+        "CODE-CUSTODY-08",
+        "CODE-CUSTODY-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "code-custody-main-cjs",
+      "path": "repo/main.cjs",
+      "source": {
+        "uri": "independent-oracle:e2e/code-custody/repo/main.cjs",
+        "revision": "code-custody-fixtures-v1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "e06395f60fc5189fdf8841ffb1b5c7655adb31808efcccf08daed6c74e61acbb",
+      "expectedFacts": {
+        "repository_path": "main.cjs",
+        "sha256": "e06395f60fc5189fdf8841ffb1b5c7655adb31808efcccf08daed6c74e61acbb"
+      },
+      "scenarios": [
+        "CODE-CUSTODY-01",
+        "CODE-CUSTODY-02",
+        "CODE-CUSTODY-03",
+        "CODE-CUSTODY-04",
+        "CODE-CUSTODY-05",
+        "CODE-CUSTODY-07",
+        "CODE-CUSTODY-08",
+        "CODE-CUSTODY-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "code-custody-contract-check-cjs",
+      "path": "repo/contract-check.cjs",
+      "source": {
+        "uri": "independent-oracle:e2e/code-custody/repo/contract-check.cjs",
+        "revision": "code-custody-fixtures-v1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "f5e1807465ff4faf9571764a6876cc7fa9e54f767335b275edc91f0026a53b0d",
+      "expectedFacts": {
+        "repository_path": "contract-check.cjs",
+        "sha256": "f5e1807465ff4faf9571764a6876cc7fa9e54f767335b275edc91f0026a53b0d",
+        "argv": [
+          "node",
+          "contract-check.cjs"
+        ],
+        "baseline_exit": 0,
+        "removed_increment_export_exit": "nonzero",
+        "outside_truth": "public exports, numeric examples, exception class and exact stdout"
+      },
+      "scenarios": [
+        "CODE-CUSTODY-01",
+        "CODE-CUSTODY-02",
+        "CODE-CUSTODY-03",
+        "CODE-CUSTODY-04",
+        "CODE-CUSTODY-05",
+        "CODE-CUSTODY-07",
+        "CODE-CUSTODY-08",
+        "CODE-CUSTODY-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "code-custody-contract-json",
+      "path": "repo/contract.json",
+      "source": {
+        "uri": "independent-oracle:e2e/code-custody/repo/contract.json",
+        "revision": "code-custody-fixtures-v1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "7bbd860bfc60a2cb61afc56348a61da92cda7fa659e3f8d9fba38721aae7c5a2",
+      "expectedFacts": {
+        "repository_path": "contract.json",
+        "sha256": "7bbd860bfc60a2cb61afc56348a61da92cda7fa659e3f8d9fba38721aae7c5a2",
+        "contract": {
+          "public_symbols": [
+            "add",
+            "increment"
+          ],
+          "numeric_examples": [
+            {
+              "symbol": "add",
+              "args": [
+                2,
+                3
+              ],
+              "result": 5
+            },
+            {
+              "symbol": "add",
+              "args": [
+                -2,
+                3
+              ],
+              "result": 1
+            },
+            {
+              "symbol": "increment",
+              "args": [
+                3
+              ],
+              "result": 4
+            }
+          ],
+          "invalid_input_error": "TypeError",
+          "cli_stdout": "build:4\n"
+        }
+      },
+      "scenarios": [
+        "CODE-CUSTODY-01",
+        "CODE-CUSTODY-02",
+        "CODE-CUSTODY-03",
+        "CODE-CUSTODY-04",
+        "CODE-CUSTODY-05",
+        "CODE-CUSTODY-07",
+        "CODE-CUSTODY-08",
+        "CODE-CUSTODY-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "code-custody-large-blob",
+      "path": "large-blob.json",
+      "source": {
+        "uri": "independent-oracle:e2e/code-custody/large-blob.json",
+        "revision": "code-custody-fixtures-v1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "c1b415dd8024728e1c89d5bd94a2e6f4c5ef83ba62c362447944911eb8dd78cd",
+      "expectedFacts": {
+        "byte_length": 17825829,
+        "sha256": "9f7386e171318d816698406e576eba6cc6e5629f4a94c1d43a29d5e39f6f5200",
+        "above_16_mib": true,
+        "transfer": "basic",
+        "mirror_stdout": "build:4\nasset:9f7386e171318d816698406e576eba6cc6e5629f4a94c1d43a29d5e39f6f5200\n"
+      },
+      "scenarios": [
+        "CODE-CUSTODY-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "code-custody-mirror-check",
+      "path": "mirror-check.cjs",
+      "source": {
+        "uri": "independent-oracle:e2e/code-custody/mirror-check.cjs",
+        "revision": "code-custody-fixtures-v1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "6caf79cce6473a01c8328461ce70406b9a737c391bab7f9ebbea818128d0811c",
+      "expectedFacts": {
+        "argv": [
+          "node",
+          "mirror-check.cjs"
+        ],
+        "exit": 0,
+        "stdout": "build:4\nasset:9f7386e171318d816698406e576eba6cc6e5629f4a94c1d43a29d5e39f6f5200\n",
+        "needs_exported_lfs_bytes": true
+      },
+      "scenarios": [
+        "CODE-CUSTODY-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "code-custody-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:e2e/code-custody/scenarios.json",
+        "revision": "code-custody-fixtures-v1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "19e80945c9cfd1fb10ac9140c89d4dc45864d2da84b740dad5508d3a31ac63d0",
+      "expectedFacts": {
+        "test_ids": [
+          "CODE-CUSTODY-01",
+          "CODE-CUSTODY-02",
+          "CODE-CUSTODY-03",
+          "CODE-CUSTODY-04",
+          "CODE-CUSTODY-05",
+          "CODE-CUSTODY-06",
+          "CODE-CUSTODY-07",
+          "CODE-CUSTODY-08"
+        ],
+        "registry_rows": [
+          "OF-316",
+          "OF-322",
+          "OF-354",
+          "OF-424",
+          "OF-425",
+          "OF-428",
+          "OF-429",
+          "OF-430",
+          "OF-468",
+          "OF-480",
+          "OF-481",
+          "OF-482",
+          "OF-483",
+          "OF-484",
+          "OF-486"
+        ],
+        "binding_head": "cf8d4ce473ddffb6bf278f11263ae0cf84461117",
+        "source": "canon plus independently authored fixture facts, not engine output"
+      },
+      "scenarios": [
+        "CODE-CUSTODY-01",
+        "CODE-CUSTODY-02",
+        "CODE-CUSTODY-03",
+        "CODE-CUSTODY-04",
+        "CODE-CUSTODY-05",
+        "CODE-CUSTODY-06",
+        "CODE-CUSTODY-07",
+        "CODE-CUSTODY-08"
+      ],
+      "requires": []
+    }
+  ]
+}
