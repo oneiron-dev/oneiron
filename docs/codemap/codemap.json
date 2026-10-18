@@ -45769,7 +45769,7 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 4,
       "fn": 7,
       "re-export": 4,
@@ -45842,7 +45842,7 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 6,
       "struct": 5
@@ -46182,6 +46182,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
       "crate-vis": 13,
+      "mod": 2,
       "re-export": 17
      }
     },
@@ -46212,6 +46213,48 @@
       "enum": 4,
       "fn": 9,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OfferAnswerRequest",
+      "OfferListRequest",
+      "OfferPassRef",
+      "OfferPassRequest",
+      "OfferPassResult",
+      "OfferRef",
+      "OfferUndoReceipt",
+      "OfferView"
+     ],
+     "path": "src/skill_optimize/offer_doors.rs",
+     "purpose": "Typed owner doors for the production Coach offer pass and its evidence",
+     "surface": {
+      "fn": 6,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OfferCandidateQuery",
+      "OfferCandidateRecord",
+      "OfferCandidateSetup",
+      "OfferPilot",
+      "OfferPilotComplete",
+      "OfferPilotMeasurement",
+      "OfferPilotPrepare",
+      "OfferPilotPrepared",
+      "OfferPilotRef"
+     ],
+     "path": "src/skill_optimize/offer_pilot.rs",
+     "purpose": "Per-seat candidate pins and externally measured pilot evidence for OF-577",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 11,
+      "struct": 9
      }
     },
     {
@@ -51655,7 +51698,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 773
+      "fn": 784
      }
     },
     {
@@ -58809,7 +58852,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 40,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59070,7 +59113,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3606,
+   "source_files": 3608,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67602,7 +67645,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 742
+      "fn": 753
      }
     },
     {
@@ -68651,7 +68694,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 743
+      "fn": 754
      }
     },
     {
@@ -70470,11 +70513,31 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_offer.rs",
      "purpose": "The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_offer/cost.rs",
+     "purpose": "Fixed-code projection on the same dated workload, with each tokenizer",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_offer/pilot.rs",
+     "purpose": "Measured per-seat pilot evidence beside the production offer skill's brief",
      "surface": {
       "crate-vis": 2
      }
@@ -71711,6 +71774,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/coach_offer_doors.rs",
+     "purpose": "Typed owner doors for Coach offers and counted pilot evidence",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/code_doors.rs",
      "purpose": "Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137)",
      "surface": {
@@ -72014,7 +72087,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 129
+      "crate-vis": 130
      }
     },
     {
@@ -79796,14 +79869,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 45,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 392,
+     "files": 393,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80230,9 +80303,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 56,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 733,
+   "source_files": 736,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80915,6 +80988,7 @@
       "CompanionSharingTarget",
       "CompanionSharingView",
       "ComposerStamp",
+      "ComputeDestination",
       "ConcernCardRequest",
       "ConcernCardSummary",
       "ConcernMove",
@@ -81825,13 +81899,38 @@
       "OffRecordWitnessRequest",
       "Offer",
       "OfferAnswer",
+      "OfferAnswerRecord",
       "OfferAnswerRequest",
+      "OfferCandidate",
+      "OfferCandidateQuery",
+      "OfferCandidateRecord",
+      "OfferCandidateSetup",
       "OfferCard",
+      "OfferCheck",
       "OfferConnect",
+      "OfferCost",
       "OfferDraft",
+      "OfferEvidence",
+      "OfferIntent",
+      "OfferListRequest",
+      "OfferModelPin",
+      "OfferOption",
+      "OfferPassRef",
+      "OfferPassResult",
+      "OfferPilot",
+      "OfferPilotComplete",
+      "OfferPilotMeasurement",
+      "OfferPilotPrepare",
+      "OfferPilotPrepared",
+      "OfferPilotRef",
+      "OfferRef",
       "OfferReopenRequest",
+      "OfferSettleOfferAnswer",
+      "OfferSettleOfferAnswerRequest",
       "OfferSettlement",
       "OfferState",
+      "OfferUndoReceipt",
+      "OfferView",
       "OfferVoteRequest",
       "OfferVoteTally",
       "OffersPage",
@@ -82408,6 +82507,7 @@
       "SearchAxis",
       "SearchEvidence",
       "SeatInventory",
+      "SeatWorkload",
       "SecretGrantCleanup",
       "SecretGrantMintRequest",
       "SecretGrantPurpose",
@@ -82844,6 +82944,7 @@
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
+      "TrainingOffer",
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
       "TravelChoice",
@@ -83018,8 +83119,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 645,
-      "struct": 1943
+      "enum": 649,
+      "struct": 1967
      }
     },
     {

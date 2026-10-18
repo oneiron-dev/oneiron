@@ -52,7 +52,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/test_support.rs` | src | s | 11 crate-vis | — | Shared fixtures for the AI host's tests: a rooted, granted vault and `[models]` pointed at the local fake… |
 | `src/ai_host/tests.rs` | test | m | — | — | The host's start-up decisions and one real Dreamer pass on its own trigger, against the local fake model… |
 | `src/ai_host/trained_serving.rs` | src | s | 2 crate-vis | — | Whether this host serves a trained checkpoint its role binds (OF-577, FIX 857) |
-| `src/ai_host/training_offer.rs` | src | L | 2 crate-vis | — | The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads… |
+| `src/ai_host/training_offer.rs` | src | m | 2 crate-vis | — | The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads… |
+| `src/ai_host/training_offer/cost.rs` | src | s | 3 crate-vis | — | Fixed-code projection on the same dated workload, with each tokenizer |
+| `src/ai_host/training_offer/pilot.rs` | src | s | 2 crate-vis | — | Measured per-seat pilot evidence beside the production offer skill's brief |
 | `src/ai_host/training_pack.rs` | src | s | 3 crate-vis | — | An owner-authorized training run on the host (OF-577, OF-552) |
 | `src/ai_host/turn_actions.rs` | src | s | 1 crate-vis | — | The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)… |
 | `src/ai_host/turns.rs` | src | s | 9 crate-vis | — | Chat turns in flight |
@@ -177,6 +179,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/checkout_doors.rs` | src | s | 8 crate-vis | — | One credential-backed CHECKOUT door for HTTP, MCP and the generated SDK |
 | `src/api/facade/claim_settle_doors.rs` | src | s | 2 crate-vis | — | The host doors of one proposed claim's review and settlement (DOOR-115): `vault.claims.review` and… |
 | `src/api/facade/cleanup_doors.rs` | src | s | 2 crate-vis | — | Archive cleanup and evidence-backed re-mention, under the owner's own proof |
+| `src/api/facade/coach_offer_doors.rs` | src | s | 11 crate-vis | — | Typed owner doors for Coach offers and counted pilot evidence |
 | `src/api/facade/code_doors.rs` | src | s | 11 crate-vis | — | Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137) |
 | `src/api/facade/code_run_doors.rs` | src | s | 1 crate-vis | — | The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093) |
 | `src/api/facade/code_wait_doors.rs` | src | s | 2 crate-vis | — | Credential-bound host projections of the typed code consent wait doors (DOOR-079): answer one exact sealed… |
@@ -207,7 +210,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/graph_ask_doors.rs` | src | m | 11 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
-| `src/api/facade/host_doors.rs` | src | XL | 129 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 130 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/hub_doors.rs` | src | m | 17 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/learning_doors.rs` | src | s | 2 crate-vis | — | Read-only measured-learning doors under the vault owner's existing proof |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
