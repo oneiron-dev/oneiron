@@ -6608,6 +6608,7 @@ class DeckExportView(TypedDict):
     authoritative: bool
     noop: bool
     changed_parts: list[str]
+    effects: list[str]
     record: NotRequired[OfficeBodyExportRecord | None]
     proposed: NotRequired[PendingProposalView | None]
 class DeckGateRequest(TypedDict):

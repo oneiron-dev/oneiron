@@ -20,7 +20,7 @@ use crate::retained_opc::Package;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const C: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
-const DGM: &str = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
+pub(crate) const DGM: &str = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
 const OLE: &str = "http://schemas.openxmlformats.org/presentationml/2006/ole";
 const FRAME_DATA: &[(&str, &str)] = &[(A, "graphic"), (A, "graphicData")];
 
@@ -398,10 +398,45 @@ pub(crate) fn label(cell: &Cell) -> String {
     }
 }
 
-/// A SmartArt frame's text outline from its data part: each content point
-/// (a node or an assistant) in the order its parent lists it, at its depth
-/// below the document point. A point no parent lists follows at level 0.
+/// A SmartArt frame's text outline from its data part (see
+/// [`smart_art_points`]).
 fn smart_art(package: &Package, part: &str, tree: &XmlTree, data: usize) -> Option<NodePayload> {
+    let read = smart_art_points(package, part, tree, data)?;
+    Some(NodePayload::SmartArt {
+        nodes: read.points.into_iter().map(|(_, node)| node).collect(),
+    })
+}
+
+/// A SmartArt frame's data part and its content points in outline order,
+/// each by its model id.
+pub(crate) struct SmartArtPoints {
+    pub(crate) data: String,
+    pub(crate) points: Vec<(String, SmartArtNode)>,
+}
+
+/// The SmartArt in the graphic frame `frame` of slide `part`.
+pub(crate) fn smart_art_of(
+    package: &Package,
+    part: &str,
+    tree: &XmlTree,
+    frame: usize,
+) -> Option<SmartArtPoints> {
+    let data = xml::path(tree, frame, FRAME_DATA)?;
+    if tree.nodes[data].attr("uri")? != DGM {
+        return None;
+    }
+    smart_art_points(package, part, tree, data)
+}
+
+/// A SmartArt's content points from its data part: each point (a node or
+/// an assistant) in the order its parent lists it, at its depth below the
+/// document point. A point no parent lists follows at level 0.
+fn smart_art_points(
+    package: &Package,
+    part: &str,
+    tree: &XmlTree,
+    data: usize,
+) -> Option<SmartArtPoints> {
     let ids = xml::child(tree, data, DGM, "relIds")?;
     let dm = tree.nodes[ids].attr_ns(R, "dm")?;
     let rel = package
@@ -459,10 +494,13 @@ fn smart_art(package: &Package, part: &str, tree: &XmlTree, data: usize) -> Opti
     while let Some((id, level)) = stack.pop() {
         let below = match content.get(&id) {
             Some(text) => {
-                nodes.push(SmartArtNode {
-                    text: text.clone(),
-                    level,
-                });
+                nodes.push((
+                    id.clone(),
+                    SmartArtNode {
+                        text: text.clone(),
+                        level,
+                    },
+                ));
                 level.saturating_add(1)
             }
             None => level,
@@ -475,13 +513,14 @@ fn smart_art(package: &Package, part: &str, tree: &XmlTree, data: usize) -> Opti
     }
     for id in order {
         if !seen.contains(&id) {
-            nodes.push(SmartArtNode {
-                text: content.remove(&id).unwrap_or_default(),
-                level: 0,
-            });
+            let text = content.remove(&id).unwrap_or_default();
+            nodes.push((id, SmartArtNode { text, level: 0 }));
         }
     }
-    Some(NodePayload::SmartArt { nodes })
+    Some(SmartArtPoints {
+        data: rel.target,
+        points: nodes,
+    })
 }
 
 /// An OLE frame's program id and the preview picture its fallback shows.
