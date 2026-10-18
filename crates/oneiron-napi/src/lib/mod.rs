@@ -5,6 +5,7 @@ mod email;
 mod expression_preference;
 #[path = "../facade/mod.rs"]
 mod facade;
+mod host_root;
 #[path = "../types.rs"]
 mod types;
 mod vault;

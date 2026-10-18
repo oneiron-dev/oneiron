@@ -47,7 +47,8 @@ const SERVING_ROOT_CONFLICTED: &str =
 const SERVING_ROOT_NOT_ISSUER: &str =
     "this start's host root issuer is not the vault's live root; no root is minted for it";
 const SERVING_NO_OWNER: &str = "the vault names no owner to profile this install for";
-const SERVING_NO_ISSUER: &str = "no host root issuer on this start; this install stays unprofiled";
+pub(super) const SERVING_NO_ISSUER: &str =
+    "no host root issuer on this start; this install stays unprofiled";
 
 /// What a machine sends to join a vault: its row, its class, its keys, and
 /// its own signature over them for that vault.
@@ -354,6 +355,18 @@ impl Vault {
         issuer: &HostSlipIssuer,
         role: MachineRole,
     ) -> Result<FoldedMachine> {
+        self.ensure_install_profile_reporting(issuer, role)
+            .map(|(folded, _)| folded)
+    }
+
+    /// [`Self::ensure_serving_install_profile`], and whether it enrolled the
+    /// install: `false` for the no-op over a profile that already stands,
+    /// which never checks `issuer` (FIX 4730).
+    pub(super) fn ensure_install_profile_reporting(
+        &self,
+        issuer: &HostSlipIssuer,
+        role: MachineRole,
+    ) -> Result<(FoldedMachine, bool)> {
         let vault_id = self
             .authority_fold()?
             .vault_id
@@ -365,7 +378,7 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         if let Some(folded) = fold.machine(request.machine) {
             return if serving_profile_stands(&fold, folded, &request) {
-                Ok(folded.clone())
+                Ok((folded.clone(), false))
             } else {
                 Err(authority_refused(serving_profile_refusal(folded, &request)))
             };
@@ -381,7 +394,7 @@ impl Vault {
             .ok_or_else(|| authority_refused(SERVING_NO_OWNER))?;
         let folded = self.enroll_bootstrap_in_txn(&mut txn, issuer, owner, &request, role)?;
         txn.commit()?;
-        Ok(folded)
+        Ok((folded, true))
     }
 
     /// [`Self::ensure_serving_install_profile`] in [`SERVING_INSTALL_ROLE`]

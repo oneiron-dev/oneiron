@@ -71,6 +71,7 @@ mod alloc;
 mod engine;
 mod entity;
 mod guard;
+mod host_root;
 mod parse;
 mod query;
 mod types;
@@ -94,6 +95,7 @@ pub use self::entity::{
     oneiron_vault_get_entity, oneiron_vault_health_json, oneiron_vault_open,
     oneiron_vault_put_entity,
 };
+pub use self::host_root::oneiron_vault_open_with_host_root;
 pub use self::query::{
     oneiron_vault_ancestors, oneiron_vault_context_pack, oneiron_vault_edges_in,
     oneiron_vault_edges_out, oneiron_vault_entities_by_type, oneiron_vault_get_entity_type,

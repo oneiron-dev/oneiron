@@ -32,6 +32,10 @@ asr-mlx = []
 # the ordinary vault doors and never touches the sync wire itself; replication
 # to the elected home node is the existing device-sync path.
 oneiron = { path = "../../../crates/oneiron" }
+# Only for the server's own config resolver: the desktop reads the host root
+# secret (`auth_secret`) where `oneiron serve` does, never a second copy of
+# its file and environment precedence (FIX 4730). Nothing here serves.
+oneiron-server = { path = "../../../crates/oneiron-server", default-features = false }
 # Every subprocess starts with only the descriptors it is named.
 oneiron-spawn = { path = "../../../crates/oneiron-spawn" }
 tauri = { version = "2", features = ["tray-icon"] }
@@ -42,6 +46,7 @@ hound = "3.5"
 rmpv = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tracing = "0.1"
 
 # Core Audio process taps (macOS 14.2+). `coreaudio-rs` 0.14.2 exposes no
 # process-tap surface at all — `CATapDescription` is an Objective-C class, so

@@ -47,6 +47,29 @@ const MENU_QUIT: &str = "quit";
 const MAIN_WINDOW: &str = "main";
 /// Where the vault lives under the app's data directory.
 const VAULT_DIR: &str = "vault";
+/// Hook (FIX 4730; CALLS "root-secret raw-open door (l02/rootdoor)"): the app
+/// roots its own vault when this open created the store for a new
+/// local-origin vault and its authority log is empty. A store that was there
+/// already (it may be a replica awaiting its root) never roots here.
+const DESKTOP_ROOTS_FRESH_LOCAL_VAULT: bool = true;
+/// Hook (same row): where the host root secret comes from, first found wins.
+const DESKTOP_ROOT_SECRET_SOURCE: &[RootSecretSource] = &[
+    RootSecretSource::ServerConfig,
+    RootSecretSource::RetainedSlot,
+];
+/// What the engine's log names this open.
+const DESKTOP_OPEN: &str = "desktop app open";
+
+/// One place the desktop may find its vault's host root secret.
+#[derive(Clone, Copy)]
+enum RootSecretSource {
+    /// The `auth_secret` `oneiron serve` resolves for this vault: its config
+    /// file, environment and defaults, through the server's own resolver.
+    ServerConfig,
+    /// This device's retained `HostRoot` keystore slot, filled with a fresh
+    /// secret only when this open roots a new local-origin vault.
+    RetainedSlot,
+}
 
 /// The one piece of state the webview and the menu bar share.
 struct AppState {
@@ -170,12 +193,99 @@ where
 }
 
 fn open_vault<R: Runtime>(app: &AppHandle<R>) -> Result<Arc<Vault>, Box<dyn std::error::Error>> {
-    open_vault_at(&app.path().app_data_dir()?.join(VAULT_DIR))
+    open_vault_at_with_host_root(
+        &app.path().app_data_dir()?.join(VAULT_DIR),
+        DESKTOP_ROOT_SECRET_SOURCE,
+        DESKTOP_ROOTS_FRESH_LOCAL_VAULT,
+    )
+}
+
+/// [`open_vault_at`], then this install's own machine profile from the host
+/// root secret the first of `sources` holds (FIX 4730), so the owner's acts
+/// carry from this Mac. With `initialize_root`, a store this open created is
+/// a new local-origin vault, rooted through the engine's own door. Every
+/// failure is logged with its reason and the app opens as before.
+fn open_vault_at_with_host_root(
+    path: &std::path::Path,
+    sources: &[RootSecretSource],
+    initialize_root: bool,
+) -> Result<Arc<Vault>, Box<dyn std::error::Error>> {
+    // Read before the open creates anything: only a store this open brings
+    // into existence may root.
+    let new_local_origin = initialize_root && Vault::is_unstarted_vault_dir(path);
+    let vault = open_vault_at(path)?;
+    profile_install(&vault, path, sources, new_local_origin);
+    Ok(vault)
+}
+
+/// Profiles `vault` from the first secret `sources` holds, or logs why not.
+/// A source that fails stops the search: a secret the owner may have
+/// configured is never stood in for by one made here.
+fn profile_install(
+    vault: &Vault,
+    path: &std::path::Path,
+    sources: &[RootSecretSource],
+    new_local_origin: bool,
+) {
+    for source in sources {
+        match source {
+            RootSecretSource::ServerConfig => match configured_auth_secret(path) {
+                Ok(Some(secret)) => {
+                    profile_from(vault, Some(secret.as_bytes()), new_local_origin);
+                    return;
+                }
+                Ok(None) => {}
+                Err(reason) => {
+                    tracing::warn!(
+                        reason = %reason,
+                        "the server config did not resolve, so no host root secret is read; \
+                         this install stays unprofiled and the app opens on"
+                    );
+                    return;
+                }
+            },
+            RootSecretSource::RetainedSlot => {
+                match vault.retained_host_root_secret(new_local_origin) {
+                    Ok(Some(secret)) => {
+                        profile_from(vault, Some(&secret[..]), new_local_origin);
+                        return;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            kind = ?error.kind(),
+                            reason = %error,
+                            "this device's keystore gave no host root secret for the vault; \
+                             this install stays unprofiled and the app opens on"
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    profile_from(vault, None, false);
+}
+
+/// The configured `auth_secret` for the vault at `path`, as `oneiron serve`
+/// resolves it; an empty one is none. An error keeps only its top-level
+/// context, which names the file and never its contents.
+fn configured_auth_secret(path: &std::path::Path) -> Result<Option<String>, String> {
+    oneiron_server::embedded::embedded_serve_config(path, None, None)
+        .map(|config| config.auth_secret.filter(|secret| !secret.is_empty()))
+        .map_err(|error| error.to_string())
+}
+
+/// The engine's profile door for this open; it logs its own outcome, and the
+/// app opens whatever it says.
+fn profile_from(vault: &Vault, secret: Option<&[u8]>, new_local_origin: bool) {
+    let _ = vault.profile_local_open_logged(secret, new_local_origin, DESKTOP_OPEN);
 }
 
 /// Opens the recorder's vault at `path`. Crash output never carries world
 /// text (owner ruling 2026-10-14, fix 6), so the engine's panic hook goes in
-/// before the vault opens.
+/// before the vault opens. It never roots or profiles: a join, pair or
+/// adoption flow opens its replica's store through here (FIX 4730).
 fn open_vault_at(path: &std::path::Path) -> Result<Arc<Vault>, Box<dyn std::error::Error>> {
     oneiron::panic_report::install_panic_hook();
     std::fs::create_dir_all(path)?;

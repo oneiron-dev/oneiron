@@ -5,6 +5,7 @@ use oneiron::{EntityId, Memory, Vault, VaultConfig, parse_actor_key};
 use std::sync::Arc;
 
 use super::boundary::{boundary_error, facade_error};
+use crate::host_root::HostRootOpenOptions;
 
 // ── classes ─────────────────────────────────────────────────────────────
 
@@ -32,6 +33,25 @@ impl VaultBridge {
         Ok(Self {
             vault: Arc::new(vault),
         })
+    }
+
+    /// `open`, then this install's own machine profile from the vault's host
+    /// root secret (FIX 4730), so the owner's acts carry from it. With
+    /// `initializeRoot`, a store this open creates is rooted under the
+    /// secret first, as a new local-origin vault. A secret that cannot
+    /// profile the install refuses the open with the engine's reason.
+    #[napi(factory)]
+    pub fn open_with_host_root(
+        path: String,
+        dimensions: Option<u32>,
+        options: HostRootOpenOptions,
+    ) -> napi::Result<Self> {
+        let request = options.before_open(&path).map_err(boundary_error)?;
+        let opened = Self::open(path, dimensions)?;
+        request
+            .profile(&opened.vault)
+            .map_err(|e| boundary_error(format!("failed to profile this install: {e}")))?;
+        Ok(opened)
     }
 
     /// Binds an actor scope from the pinned key grammar
