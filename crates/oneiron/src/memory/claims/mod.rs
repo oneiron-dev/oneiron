@@ -68,7 +68,7 @@ pub struct ClaimInput {
 
 /// Receipt for one committed claim. A refused element of a batch never
 /// gets one: it answers [`CommitOutcome::Refused`] instead (OF-063).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CommitReceipt {
     /// Short-id ref of the written claim.
     pub claim_short_id: String,

@@ -52,19 +52,45 @@ impl HostSelfDispatcher<'_> {
     /// makes the same call there; a changed call, or a write that may have
     /// committed without its receipt, fails closed, never repeats.
     ///
-    /// A run bound to an off-record session forwards no verb, read or write:
-    /// the door runs on the canonical vault, outside the session's route and,
-    /// on record, its saver, so none of the session's checks would
-    /// hold in the transactions it opens.
+    /// A run bound to an off-record session forwards no verb through the
+    /// door: the door runs on the canonical vault, outside the session's
+    /// route and, on record, its saver, so none of the session's checks
+    /// would hold in the transactions it opens. While the room is off record
+    /// a `vault.notes.create` or `vault.claims.upsert` call writes through
+    /// the session's own handle instead, into the room's overlay (DOOR-127,
+    /// Engine ruling 10-18); every other call is refused.
     pub(super) fn dispatch_agent_verb(
         &self,
         call: SelfAgentVerbCall,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
-        if matches!(self.storage, ExecutorStorage::Session(_)) {
-            return Ok(answered(Err(AgentVerbRefusal {
-                code: AGENT_VERB_SESSION_BOUND.to_owned(),
-            })));
+        if let ExecutorStorage::Session(binding) = &self.storage {
+            if !crate::off_record::OffRecordSession::writes_verb(call.verb) {
+                return Ok(answered(Err(AgentVerbRefusal {
+                    code: AGENT_VERB_SESSION_BOUND.to_owned(),
+                })));
+            }
+            // The run-entry route must still stand: a flip since the run
+            // entered refuses here, as every other write of the run does.
+            binding.route.revalidate()?;
+            let origin = HostWriteOrigin::new(
+                self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?,
+            )
+            .with_model_provider(self.model_provider());
+            let written =
+                binding
+                    .session
+                    .forward_session_write(self.actor, origin, call.verb, &call.input);
+            return Ok(answered(match written {
+                Some(Ok(output)) => Ok(AgentVerbAnswer {
+                    output,
+                    rows: Some(Vec::new()),
+                }),
+                Some(Err(refused)) => Err(AgentVerbRefusal { code: refused.code }),
+                None => Err(AgentVerbRefusal {
+                    code: AGENT_VERB_SESSION_BOUND.to_owned(),
+                }),
+            }));
         }
         let Some(door) = &self.agent_verbs else {
             return Ok(answered(Err(AgentVerbRefusal {

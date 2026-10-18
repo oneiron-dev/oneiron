@@ -72,6 +72,7 @@ mod report;
 mod result_attachment;
 mod room_turn;
 mod scoped_export;
+mod session_writes;
 mod shape_doors;
 mod structural;
 mod subscriptions;

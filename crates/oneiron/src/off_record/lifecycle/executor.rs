@@ -293,7 +293,9 @@ impl OffRecordSession<'_> {
 
     /// Write-path gate check for a session-bound code run's durable write.
     /// The gate's decision is a write too, so it lands only as the write
-    /// would.
+    /// would: off record (DOOR-127) the write stages in the room, so the
+    /// gate is judged and its decision kept nowhere
+    /// ([`Self::session_gate_check`]).
     pub(crate) fn executor_check_write_gate(
         &self,
         route: &SessionWriteRoute,
@@ -302,6 +304,10 @@ impl OffRecordSession<'_> {
         envelope: &crate::WriteEnvelope,
         can_resolve_pending_consent: bool,
     ) -> Result<()> {
+        if route.target() == RouteTarget::Overlay {
+            route.revalidate()?;
+            return self.session_gate_check(id, body, envelope);
+        }
         let (vault, landing) = self.base_write_vault(route)?;
         crate::code_run::check_write_gate_against_vault(
             vault,
@@ -313,7 +319,8 @@ impl OffRecordSession<'_> {
         )
     }
 
-    /// `self.memory.write_fixture` on a session-bound run.
+    /// `self.memory.write_fixture` on a session-bound run: off record it
+    /// stages in the room (DOOR-127, [`Self::stage_session_claim`]).
     pub(crate) fn executor_batch_claim_candidate(
         &self,
         route: &SessionWriteRoute,
@@ -323,6 +330,11 @@ impl OffRecordSession<'_> {
         occurred: crate::TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        if route.target() == RouteTarget::Overlay {
+            return self
+                .stage_session_claim(route, *id, candidate, envelope, occurred, learned_at)
+                .map(drop);
+        }
         let (vault, landing) = self.base_write_vault(route)?;
         let predicate = candidate.predicate().to_owned();
         vault
@@ -334,7 +346,8 @@ impl OffRecordSession<'_> {
             })
     }
 
-    /// `vault.claims.put` on a session-bound run.
+    /// `vault.claims.put` on a session-bound run: off record it stages in
+    /// the room (DOOR-127, [`Self::stage_session_claim`]).
     pub(crate) fn executor_put_claim_candidate(
         &self,
         route: &SessionWriteRoute,
@@ -344,6 +357,11 @@ impl OffRecordSession<'_> {
         occurred: crate::TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        if route.target() == RouteTarget::Overlay {
+            return self
+                .stage_session_claim(route, *id, candidate, envelope, occurred, learned_at)
+                .map(drop);
+        }
         let (vault, landing) = self.base_write_vault(route)?;
         vault.put_claim_candidate_with_landing(
             id,

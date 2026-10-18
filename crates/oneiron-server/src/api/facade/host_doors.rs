@@ -70,6 +70,7 @@ pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
+pub(crate) use super::off_record_doors::*;
 pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
@@ -1129,7 +1130,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
-        | "vault.code.checkout.bind" => owner_proof(auth, server, verb).map(drop),
+        | "vault.code.checkout.bind"
+        | "vault.off_record.start"
+        | "vault.off_record.status"
+        | "vault.off_record.witness"
+        | "vault.off_record.discard"
+        | "vault.off_record.recall"
+        | "vault.off_record.notes.create"
+        | "vault.off_record.claims.upsert"
+        | "self.off_record.execute" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

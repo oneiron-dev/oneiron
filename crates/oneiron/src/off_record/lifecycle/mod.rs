@@ -63,6 +63,7 @@
 
 mod executor;
 mod on_record;
+mod overlay_writes;
 mod participant;
 mod promotion;
 mod registry;

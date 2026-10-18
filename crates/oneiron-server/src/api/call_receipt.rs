@@ -313,8 +313,12 @@ pub(crate) fn action_inputs(
 /// blocks nothing and changes nothing in the reply but its missing ref. It
 /// is logged as one warn line naming the row (transport, verb, actor class,
 /// outcome) and the error.
+///
+/// An off-record session's own rows (`NO_RECORD_ROWS`, DOOR-127) write none
+/// on any transport, as the owner's off-record routes write none: ARCH-0052
+/// keeps no wire receipt that a session ran.
 pub(crate) fn record(server: &SyncServer, anonymous: bool, input: CallReceiptInput) -> CallStamp {
-    if anonymous {
+    if anonymous || oneiron::task_verb::sdk::NO_RECORD_ROWS.contains(&input.verb.as_str()) {
         return CallStamp::NoRecord;
     }
     let transport = input.transport;

@@ -860,19 +860,19 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "get",
         path: "/off-record",
         summary: "Off record session.",
-        row: None,
+        row: Some("vault.off_record.status"),
     },
     OwnerRoute {
         method: "post",
         path: "/off-record",
         summary: "Enter off record.",
-        row: None,
+        row: Some("vault.off_record.start"),
     },
     OwnerRoute {
         method: "post",
         path: "/off-record/close",
         summary: "Close off record.",
-        row: None,
+        row: Some("vault.off_record.discard"),
     },
     OwnerRoute {
         method: "post",
@@ -896,7 +896,7 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/off-record/witness",
         summary: "Witness off record.",
-        row: None,
+        row: Some("vault.off_record.witness"),
     },
     OwnerRoute {
         method: "get",

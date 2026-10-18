@@ -22,6 +22,9 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+mod off_record_run;
+pub(crate) use self::off_record_run::off_record_run_id;
+
 /// The ONE place an MCP-derived durable id is minted (ONE-1704 M3).
 ///
 /// Every axis of the IMMUTABLE connector-scope identity is mixed in — the
