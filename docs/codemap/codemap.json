@@ -19255,7 +19255,7 @@
      "path": "src/dreamer_consolidation/nightly_merge.rs",
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -20843,8 +20843,25 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "mod": 3,
+      "mod": 4,
       "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WakeRecipeJobView",
+      "WakeSettlementRequest",
+      "WakeSettlementView",
+      "WakeSettlementsPage",
+      "WakeSettlementsRequest"
+     ],
+     "path": "src/dreamer_runner/observation.rs",
+     "purpose": "Owner reads of recipe receipts and their Dreamer/Coach descendants",
+     "surface": {
+      "fn": 2,
+      "struct": 5
      }
     },
     {
@@ -21125,7 +21142,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 1,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -21161,8 +21178,25 @@
      "surface": {
       "crate-vis": 6,
       "enum": 5,
-      "fn": 8,
+      "fn": 7,
+      "re-export": 1,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WakeCadenceReceipt",
+      "WakeCadenceRequest",
+      "WakeCadenceView",
+      "WakeRecipeInputView"
+     ],
+     "path": "src/dreamer_wake/policy/observation.rs",
+     "purpose": "The shared scheduler's last committed cadence decision, not a second tick source",
+     "surface": {
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -21279,6 +21313,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SieveEvidenceCursor",
+      "SieveEvidenceRequest",
+      "SieveEvidenceView"
+     ],
+     "path": "src/dreamer_wake/sieve/evidence.rs",
+     "purpose": "Identity-preserving replay of a stored TURN through the continuous sieve",
+     "surface": {
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -21297,6 +21346,7 @@
       "crate-vis": 6,
       "enum": 4,
       "fn": 2,
+      "mod": 1,
       "re-export": 3,
       "struct": 4
      }
@@ -52279,7 +52329,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 887
+      "fn": 892
      }
     },
     {
@@ -58834,7 +58884,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58848,7 +58898,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 31,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59851,7 +59901,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3651,
+   "source_files": 3654,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68395,7 +68445,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 856
+      "fn": 861
      }
     },
     {
@@ -69458,7 +69508,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 857
+      "fn": 862
      }
     },
     {
@@ -72931,7 +72981,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 143
+      "crate-vis": 144
      }
     },
     {
@@ -73312,6 +73362,16 @@
      "purpose": "The owner's sieve doors: the interest queue and its retained spans, consumed-span receipts, the sieve and…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/sieve_observation_doors.rs",
+     "purpose": "The owner's evidence replay and recorded shared-scheduler observations",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -80841,7 +80901,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 407,
+     "files": 408,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81270,7 +81330,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 756,
+   "source_files": 757,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81525,6 +81585,9 @@
       "AgentSpawnInput",
       "AgentSpawnKind",
       "AgentSpawnOutput",
+      "AgentWakePolicy",
+      "AgentWakeRole",
+      "AgentWakeTriggers",
       "AiAnswer",
       "AiCallRequest",
       "AiOperation",
@@ -81728,6 +81791,7 @@
       "ButtonControl",
       "BypassExtent",
       "BypassScope",
+      "CadencePrecedence",
       "CalendarConnectorConfigureRequest",
       "CalendarConnectorKillRequest",
       "CalendarConnectorKillSwitchState",
@@ -82312,6 +82376,7 @@
       "DreamerAttemptView",
       "DreamerParkCauseView",
       "DreamerParkedAttemptView",
+      "DreamerWakePolicy",
       "DreamingModeInput",
       "EditNoteRequest",
       "EffectReceipt",
@@ -83873,6 +83938,9 @@
       "SharedVaultRequest",
       "ShedBlocker",
       "ShedCause",
+      "SieveEvidenceCursor",
+      "SieveEvidenceRequest",
+      "SieveEvidenceView",
       "SieveLeaseCounter",
       "SieveLeaseRefillRequest",
       "SieveLeaseRequest",
@@ -84282,8 +84350,19 @@
       "VoiceVendorEviction",
       "WaitForInput",
       "WaitForOutput",
+      "WakeCadenceReceipt",
+      "WakeCadenceView",
+      "WakeIdleState",
+      "WakePolicyDecision",
       "WakePolicySetRequest",
+      "WakeRecipe",
+      "WakeRecipeInputView",
+      "WakeRecipeJobView",
       "WakeRecipePolicy",
+      "WakeSettlementRequest",
+      "WakeSettlementView",
+      "WakeSettlementsPage",
+      "WakeSettlementsRequest",
       "WeaveDigestCadence",
       "WeaveDigestRendered",
       "WeaveDigestRequest",
@@ -84296,6 +84375,7 @@
       "WeaveReaderKind",
       "WeaveReaderRef",
       "WeaveReceipt",
+      "WeaveRecipePriority",
       "WeaveReportRequest",
       "WeaveReportView",
       "WeaveScheduleCleared",
@@ -84388,8 +84468,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 717,
-      "struct": 2203
+      "enum": 722,
+      "struct": 2218
      }
     },
     {
