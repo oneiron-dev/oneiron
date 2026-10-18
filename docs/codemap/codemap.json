@@ -48593,7 +48593,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 30,
+      "re-export": 31,
       "struct": 36
      }
     },
@@ -48619,6 +48619,20 @@
       "enum": 3,
       "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BookingPageTokenRequest",
+      "BookingPageTokenResponse",
+      "CalendarFreebusyRequest"
+     ],
+     "path": "src/task_verb/sdk_calendar.rs",
+     "purpose": "Typed booking-page discovery and calendar occupancy inputs",
+     "surface": {
+      "struct": 3
      }
     },
     {
@@ -48805,7 +48819,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 420
+      "fn": 424
      }
     },
     {
@@ -55380,7 +55394,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 140,
+     "files": 141,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55550,7 +55564,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3381,
+   "source_files": 3382,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63945,7 +63959,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 371
+      "fn": 375
      }
     },
     {
@@ -64993,7 +65007,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 372
+      "fn": 376
      }
     },
     {
@@ -67860,6 +67874,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/booking_doors.rs",
+     "purpose": "Owner discovery of the opaque address of an existing booking page",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -68026,7 +68050,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 74
+      "crate-vis": 75
      }
     },
     {
@@ -75301,7 +75325,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 328,
+     "files": 329,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75716,7 +75740,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 650,
+   "source_files": 651,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76010,6 +76034,8 @@
       "BodyConflict",
       "BodyFormat",
       "BodyName",
+      "BookingPageTokenRequest",
+      "BookingPageTokenResponse",
       "BornFromArtifact",
       "BornFromRequest",
       "BornFromSource",
@@ -76026,6 +76052,13 @@
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
+      "CalendarEventView",
+      "CalendarFreebusyIntervalDto",
+      "CalendarFreebusyRequest",
+      "CalendarRangeDto",
+      "CalendarReadRequest",
+      "CalendarSearchRequest",
+      "CalendarSel",
       "CalibrationPair",
       "CallOutcome",
       "CallReceipt",
@@ -76956,7 +76989,10 @@
       "ScopedExportRecord",
       "ScopedExportRequest",
       "ScopedReadReceipt",
+      "ScopedReadResultCalendarEventViewList",
+      "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultLensFrameCard",
+      "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
       "ScopedReadResultOptionalNoteHistoryView",
       "ScopedReadResultOptionalNoteReadView",
@@ -77293,7 +77329,7 @@
      "purpose": "—",
      "surface": {
       "enum": 396,
-      "struct": 983
+      "struct": 995
      }
     },
     {
