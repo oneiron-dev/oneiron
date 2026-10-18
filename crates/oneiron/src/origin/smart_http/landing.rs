@@ -186,7 +186,9 @@ impl Vault {
                         receive_pack_provenance_refused("no journal-backed operation to replay")
                     })?;
                 recovered = ReceivePackAttribution {
-                    actor_id: existing.actor_id,
+                    actor_id: existing.actor_id.id().ok_or_else(|| {
+                        receive_pack_provenance_refused("the operation's actor was erased")
+                    })?,
                     provenance_claim_id: existing.provenance_claim_id,
                 };
                 &recovered
@@ -347,7 +349,12 @@ impl Vault {
                         })
                     })?;
                 ReceivePackAttribution {
-                    actor_id: existing.actor_id,
+                    actor_id: existing.actor_id.id().ok_or_else(|| {
+                        Error::Code(CodeError::ReceivePackLandingRefused {
+                            reason: "receive-pack replay of an erased actor's publication"
+                                .to_owned(),
+                        })
+                    })?,
                     provenance_claim_id: existing.provenance_claim_id,
                 }
             }

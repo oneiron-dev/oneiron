@@ -358,11 +358,13 @@ pub(crate) fn machine_claim_read_admitted(
             crate::claim::history_store::MachineHistoryKind::Birth => {
                 rows.birth.event_id().is_ok_and(|birth_id| birth_id == *id)
             }
+            // Membership in the whole history: the chain's union, not the
+            // tip's delta.
             crate::claim::history_store::MachineHistoryKind::Transition => {
-                packet.transitions.iter().any(|listed| {
+                rows.transitions.keys().any(|listed| {
                     rows.events.iter().any(|event| {
                         crate::claim::transition::machine_claim_transition_event_hash(event)
-                            .is_ok_and(|hash| hash == listed.hash)
+                            .is_ok_and(|hash| hash == *listed)
                             && crate::claim::transition::machine_claim_transition_event_id(event)
                                 .is_ok_and(|event_id| event_id == *id)
                     })

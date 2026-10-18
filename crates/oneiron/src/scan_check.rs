@@ -137,11 +137,17 @@ pub enum EngineScan {
     /// The Dreamer prefilter's skip and round receipt rows a receipt query
     /// walks.
     PrefilterReceiptRows,
+    /// One MACHINE claim's handoff chain, packet by packet, which each read
+    /// of its whole history walks.
+    MachineHandoffChain,
+    /// One MACHINE claim's target index: the ids of its birth, transitions
+    /// and handoffs.
+    MachineHistoryTargetRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 44] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -184,6 +190,8 @@ impl EngineScan {
         Self::PredicateClaimRows,
         Self::VaultEdgeRows,
         Self::PrefilterReceiptRows,
+        Self::MachineHandoffChain,
+        Self::MachineHistoryTargetRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -240,6 +248,8 @@ impl EngineScan {
             Self::PredicateClaimRows => "predicate_claim_rows",
             Self::VaultEdgeRows => "vault_edge_rows",
             Self::PrefilterReceiptRows => "prefilter_receipt_rows",
+            Self::MachineHandoffChain => "machine_handoff_chain",
+            Self::MachineHistoryTargetRows => "machine_history_target_rows",
         }
     }
 
@@ -287,6 +297,8 @@ impl EngineScan {
             Self::PredicateClaimRows => 67,
             Self::VaultEdgeRows => 68,
             Self::PrefilterReceiptRows => 69,
+            Self::MachineHandoffChain => 70,
+            Self::MachineHistoryTargetRows => 71,
         }]
     }
 }

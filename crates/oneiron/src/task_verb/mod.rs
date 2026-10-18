@@ -83,6 +83,7 @@ mod subproject;
 mod symbol_lease;
 mod terminal_state;
 mod training_offer_ask;
+mod training_swap_ask;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
@@ -91,6 +92,11 @@ pub(crate) use training_offer_ask::{
     OFFER_QUESTION_TYPE, issue_training_offer_asks, offer_question_key, offer_question_text,
     reserved_offer_question_in, training_offer_ask_key, void_training_offer_asks_in,
 };
+pub(crate) use training_swap_ask::{
+    SWAP_QUESTION_TYPE, is_training_swap_ask_intent, issue_training_swap_asks,
+    pending_swap_question_in, swap_question_key, training_swap_ask_key, void_training_swap_asks_in,
+};
+pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
 pub(crate) use wire_decode::{
     TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
     task_is_blocked_in, task_text_in,
@@ -280,8 +286,8 @@ pub(crate) use ask_option_link::{
 #[cfg(feature = "sync")]
 pub(crate) use ask_record::waits_for_ask_group;
 pub(crate) use ask_record::{
-    AttendeeEntryFact, admit_attendee_entry_in_txn, ask_notice_at_in, attendee_entry_id,
-    guard_ask_fact_put, read_attendee_entry_in,
+    AttendeeEntryFact, admit_attendee_entry_in_txn, admit_unasked_attendee_entry_in_txn,
+    ask_notice_at_in, attendee_entry_id, guard_ask_fact_put, read_attendee_entry_in,
 };
 pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,

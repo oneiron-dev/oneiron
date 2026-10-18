@@ -352,6 +352,11 @@ pub struct ServeConfig {
     /// [`oneiron::PAGE_SEAL_WARNING`]). The tier is chosen when the vault is
     /// created; a sealed vault opens sealed whatever this says.
     pub maximum_tier: bool,
+    /// `device_class = "phone"` or `"computer"`: what kind of machine this
+    /// install is, as this host declares it (FIX 3349). Its enrolment carries
+    /// it for the owner to approve; it is never read off the operating
+    /// system. A computer unless the file says otherwise.
+    pub device_class: oneiron::authority::MachineDeviceClass,
 }
 
 impl Default for ServeConfig {
@@ -422,6 +427,7 @@ impl Default for ServeConfig {
             hosted_kms_key_ref: None,
             hooks: true,
             maximum_tier: false,
+            device_class: vault.machine_device_class,
         }
     }
 }
@@ -499,6 +505,7 @@ impl fmt::Debug for ServeConfig {
             )
             .field("hooks", &self.hooks)
             .field("maximum_tier", &self.maximum_tier)
+            .field("device_class", &self.device_class)
             .finish()
     }
 }
@@ -559,6 +566,7 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         config.failure_signals = oneiron::config::failure_signals::FailureSignalConfig {

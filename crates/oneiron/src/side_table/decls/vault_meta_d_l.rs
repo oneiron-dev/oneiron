@@ -438,7 +438,8 @@ side_tables! {
     /// A folder the owner attached as a standing source of notes (OF-554): the folder, its
     /// include patterns, default kind, source and trust tier, and its last rescan. Key: hex16
     /// (hash of the folder).
-    FOLDER_SOURCE: VaultMeta b"folder-source:attached:v1:" Named;
+    FOLDER_SOURCE: VaultMeta b"folder-source:attached:v1:" Named
+        => crate::note::erase_folder_source_actor_in_txn;
     /// What an attached folder's rescans know of one file: its note, the hash of its text and of
     /// what the vault took from it, and whether it landed, waits as a fork or was retracted.
     /// Key: string (`folder hash:path`, a long path by its hash).

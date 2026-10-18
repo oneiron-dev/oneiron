@@ -3,6 +3,7 @@
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeKind;
@@ -17,8 +18,8 @@ use super::publication_types::{
     ORIGIN_PUBLICATION_CLAIM_ID_DOMAIN, ORIGIN_PUBLICATION_COMMIT_ID_DOMAIN,
     ORIGIN_PUBLICATION_ID_DOMAIN, ORIGIN_PUBLICATION_INTENT_PREDICATE,
     ORIGIN_PUBLICATION_MAX_FAILURE_BYTES, ORIGIN_PUBLICATION_PREDICATE,
-    ORIGIN_PUBLICATION_SCHEMA_VERSION, ORIGIN_PUBLICATION_VALUE_KEYS, OriginKeepRefKind,
-    OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus,
+    ORIGIN_PUBLICATION_SCHEMA_VERSION, ORIGIN_PUBLICATION_VALUE_KEYS, OriginActor,
+    OriginKeepRefKind, OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
 // Keys, tables and rows
@@ -232,7 +233,8 @@ pub(super) struct OriginPublicationRow {
     required_lfs_oids: Vec<(String, u64)>,
     provenance_claim_id: [u8; ENTITY_ID_LEN],
     publication_claim_id: Option<[u8; ENTITY_ID_LEN]>,
-    actor_id: [u8; ENTITY_ID_LEN],
+    /// `None` once the publication's actor was erased (FIX 3520).
+    actor_id: Option<[u8; ENTITY_ID_LEN]>,
     status: String,
     failure: Option<String>,
     occurred_start: u64,
@@ -265,7 +267,7 @@ impl OriginPublicationRow {
                 .collect(),
             provenance_claim_id: *record.provenance_claim_id.as_bytes(),
             publication_claim_id: record.publication_claim_id.map(|id| *id.as_bytes()),
-            actor_id: *record.actor_id.as_bytes(),
+            actor_id: record.actor_id.id().map(|id| *id.as_bytes()),
             status: record.status.as_str().to_owned(),
             failure: record.failure.clone(),
             occurred_start: record.occurred.start,
@@ -297,7 +299,9 @@ impl OriginPublicationRow {
             required_lfs_oids,
             provenance_claim_id: row_entity_id(self.provenance_claim_id)?,
             publication_claim_id: self.publication_claim_id.map(row_entity_id).transpose()?,
-            actor_id: row_entity_id(self.actor_id)?,
+            actor_id: self.actor_id.map_or(Ok(OriginActor::Erased), |id| {
+                row_entity_id(id).map(OriginActor::Actor)
+            })?,
             status: OriginPublicationStatus::parse(&self.status)?,
             failure: self.failure,
             occurred: TimeRange {
@@ -312,6 +316,46 @@ impl OriginPublicationRow {
 
 fn row_entity_id(bytes: [u8; ENTITY_ID_LEN]) -> Result<EntityId> {
     EntityId::from_bytes(bytes).map_err(|_| Error::CorruptedIndex("origin publication entity id"))
+}
+
+/// Erasing `actor` from the publication journal (FIX 3520): each publication
+/// it made keeps its row, its move, its objects, its state and its times, and
+/// names no one. The ref, its CAS row and its keep-ref owners stay as they
+/// are and nothing is retried; a replay of the publication is refused, as no
+/// actor matches it. One-way, in the erase's own transaction. An id whose
+/// entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a journal row that cannot be read.
+pub(crate) fn erase_publication_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if let Some(raw) = vault.get_raw_in(wtxn, actor)?
+        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+        && !matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_PERSON
+                | crate::registry::ENTITY_TYPE_MACHINE
+                | crate::registry::ENTITY_TYPE_AGENT_DEF
+        )
+    {
+        return Ok(());
+    }
+    let erased = Some(*actor.as_bytes());
+    let mut rows = Vec::new();
+    for (id, mut row) in PUBLICATIONS.scan(&vault.store, wtxn)? {
+        if row.actor_id == erased {
+            row.actor_id = None;
+            rows.push((id, row));
+        }
+    }
+    for (id, row) in rows {
+        PUBLICATIONS.put(&vault.store, wtxn, &id, &row)?;
+    }
+    Ok(())
 }
 
 /// Truncates failure text to the pinned bound on a character boundary.

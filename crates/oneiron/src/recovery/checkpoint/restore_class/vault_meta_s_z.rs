@@ -177,6 +177,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_OPTIMIZE_OFFER_ANSWER, LIVE),
     (&t::SKILL_OPTIMIZE_OFFER_CHECK, CONTENT),
     (&t::SKILL_OPTIMIZE_OFFER_SWITCH, LIVE),
+    (&t::SKILL_OPTIMIZE_OFFER_TRAINING, LIVE),
     (&t::SKILL_OPTIMIZE_RESPONSE_PAIR, CONTENT),
     (&t::SKILL_RELIABILITY_AMENDED, CONTENT),
     (&t::SKILL_RELIABILITY_CALL_INVOCATION, CONTENT),
@@ -222,6 +223,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_SYMBOL_LEASE, CONTENT),
     (&t::TASK_TRAINING_OFFER_ASK, CONTENT),
     (&t::TASK_TRAINING_OFFER_ASK_GROUP, CONTENT),
+    (&t::TASK_TRAINING_SWAP_ASK, CONTENT),
+    (&t::TASK_TRAINING_SWAP_ASK_GROUP, CONTENT),
     (&t::TASK_ASK_WAIT, CONTENT),
     // An approved, denied or launched hold never rewinds to waiting.
     (&t::TASK_FANOUT_LAUNCH, LIVE),

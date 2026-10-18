@@ -95,6 +95,12 @@ pub enum TaggingOutcome {
     /// The turn changed while the tagger read it; the marker is retried at
     /// once on the new text.
     Superseded { retry_at: u64 },
+    /// A MESSAGE the turn's saved tags were read from is away from this
+    /// replica (a window demoted back to thin, OF-534): no tagger call, the
+    /// saved set untouched, and the marker retried at `retry_at`
+    /// (store-clock seconds), on the whole text once a promotion brings the
+    /// row back.
+    Deferred { retry_at: u64 },
     /// The call failed or its answer was refused; retried at `retry_at`
     /// (store-clock seconds).
     Failed {

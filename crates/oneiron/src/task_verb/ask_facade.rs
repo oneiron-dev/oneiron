@@ -307,17 +307,19 @@ impl Memory<'_> {
     }
 
     /// An actor that may not ask is refused before any census runs. A
-    /// training offer intent takes the Coach's scoped offer-ask reach and
-    /// nothing else (`gate::coach_offer_ask_ceiling_in_txn`), never the
-    /// generic ceiling; a comm widen intent asks only as the run that
-    /// reserved it (FIX 1380); every other ask needs the actor's own Auto
+    /// training offer or training swap intent takes the Coach's scoped
+    /// offer-ask reach and nothing else (`gate::coach_offer_ask_ceiling_in_txn`),
+    /// never the generic ceiling; a comm widen intent asks only as the run
+    /// that reserved it (FIX 1380); every other ask needs the actor's own Auto
     /// ceiling.
     pub(super) fn require_ask_ceiling_in(
         &self,
         txn: &heed::RoTxn<'_>,
         input: &TaskAskSpec,
     ) -> MemoryResult<()> {
-        let auto = if super::training_offer_ask::is_training_offer_ask_intent(&input.intent_key) {
+        let coach_ask = super::training_offer_ask::is_training_offer_ask_intent(&input.intent_key)
+            || super::training_swap_ask::is_training_swap_ask_intent(&input.intent_key);
+        let auto = if coach_ask {
             crate::gate::coach_offer_ask_ceiling_in_txn(
                 self.vault(),
                 txn,

@@ -339,42 +339,58 @@ impl Vault {
         candidate_pin: Option<&str>,
         at: u64,
     ) -> Result<EvalRelease> {
+        self.with_write_txn_grouped(|txn| {
+            self.open_eval_cohort_in_txn(txn, cohort, kind, consumer, candidate_pin, at)
+        })
+    }
+
+    /// [`Self::open_eval_cohort`] under the caller's writer: the serving
+    /// counts only when the caller's act commits with it.
+    /// # Errors
+    /// As [`Self::open_eval_cohort`].
+    pub(crate) fn open_eval_cohort_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        cohort: &EntityId,
+        kind: EvalExposureKind,
+        consumer: &str,
+        candidate_pin: Option<&str>,
+        at: u64,
+    ) -> Result<EvalRelease> {
         if consumer.trim().is_empty()
             || consumer.len() > MAX_REF_BYTES
             || candidate_pin.is_some_and(|pin| pin.trim().is_empty() || pin.len() > MAX_REF_BYTES)
         {
             return Err(invalid("an eval exposure names a bounded consumer and pin"));
         }
-        self.with_write_txn_grouped(|txn| {
-            let row = cohort_in_txn(self, txn, cohort)?;
-            if row.retired_at.is_some() {
-                return Err(invalid("a retired eval cohort serves nothing"));
-            }
-            if membership_digest(&row.cases) != row.membership_digest {
-                return Err(Error::CorruptedIndex("eval cohort membership"));
-            }
-            let exposure = EvalExposure {
-                id: self.store.clock.entity_id()?,
-                cohort: *cohort,
-                kind,
-                consumer: consumer.to_owned(),
-                candidate_pin: candidate_pin.map(str::to_owned),
-                at,
-            };
-            self.store.vault_meta.put(
-                txn,
-                &[EXPOSURE_PREFIX, cohort.as_bytes(), exposure.id.as_bytes()].concat(),
-                &encode(&exposure)?,
-            )?;
-            let mut cases = Vec::with_capacity(row.cases.len());
-            for case in &row.cases {
-                cases.push(
-                    super::case_in_txn(self, txn, case)?
-                        .ok_or(Error::CorruptedIndex("eval cohort case"))?,
-                );
-            }
-            Ok(EvalRelease { exposure, cases })
-        })
+        let row = cohort_in_txn(self, txn, cohort)?;
+        if row.retired_at.is_some() {
+            return Err(invalid("a retired eval cohort serves nothing"));
+        }
+        if membership_digest(&row.cases) != row.membership_digest {
+            return Err(Error::CorruptedIndex("eval cohort membership"));
+        }
+        let exposure = EvalExposure {
+            id: self.store.clock.entity_id()?,
+            cohort: *cohort,
+            kind,
+            consumer: consumer.to_owned(),
+            candidate_pin: candidate_pin.map(str::to_owned),
+            at,
+        };
+        self.store.vault_meta.put(
+            txn,
+            &[EXPOSURE_PREFIX, cohort.as_bytes(), exposure.id.as_bytes()].concat(),
+            &encode(&exposure)?,
+        )?;
+        let mut cases = Vec::with_capacity(row.cases.len());
+        for case in &row.cases {
+            cases.push(
+                super::case_in_txn(self, txn, case)?
+                    .ok_or(Error::CorruptedIndex("eval cohort case"))?,
+            );
+        }
+        Ok(EvalRelease { exposure, cases })
     }
 
     /// What a cohort has served, by kind.
