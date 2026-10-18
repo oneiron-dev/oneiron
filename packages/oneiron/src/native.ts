@@ -494,6 +494,9 @@ vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
+vaultNotesHistoryPurge(input: unknown): unknown
+vaultNotesHistoryPurgeExecute(input: unknown): unknown
+vaultNotesHistoryPurgeReceipts(input: unknown): unknown
 vaultNotesEditorBind(input: unknown): unknown
 vaultNotesEditorClose(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown

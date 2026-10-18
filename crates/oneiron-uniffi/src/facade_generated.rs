@@ -2321,6 +2321,21 @@ export_facade! {
     let output = client.vault_notes_history(&input)?;
     crate::codec::lift_record("vault.notes.history", &output)
 };
+"vault.notes.history_purge" => fn vault_notes_history_purge(&self, input: NoteHistoryPurgeRequest) -> NoteHistoryPurgeOutcome = |client| {
+    let input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest = crate::codec::lower_record("vault.notes.history_purge", input)?;
+    let output = client.vault_notes_history_purge(&input)?;
+    crate::codec::lift_record("vault.notes.history_purge", &output)
+};
+"vault.notes.history_purge_execute" => fn vault_notes_history_purge_execute(&self, input: NoteHistoryPurgeExecuteRequest) -> NoteHistoryPurgeReceipt = |client| {
+    let input: oneiron::task_verb::sdk::NoteHistoryPurgeExecuteRequest = crate::codec::lower_record("vault.notes.history_purge_execute", input)?;
+    let output = client.vault_notes_history_purge_execute(&input)?;
+    crate::codec::lift_record("vault.notes.history_purge_execute", &output)
+};
+"vault.notes.history_purge_receipts" => fn vault_notes_history_purge_receipts(&self, input: NoteHistoryPurgeRequest) -> Vec<NoteHistoryPurgeReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest = crate::codec::lower_record("vault.notes.history_purge_receipts", input)?;
+    let output = client.vault_notes_history_purge_receipts(&input)?;
+    crate::codec::lift_record("vault.notes.history_purge_receipts", &output)
+};
 "vault.notes.editor.bind" => fn vault_notes_editor_bind(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteEditorBinding = |client| {
     let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.editor.bind", input)?;
     let output = client.vault_notes_editor_bind(&input)?;
