@@ -15,7 +15,7 @@ use crate::error::RecordError;
 impl Vault {
     /// A companion-profile grant names a live PERSON, and a live FACET when
     /// it is bounded to one. No other scope shape is judged here.
-    fn check_companion_profile_target(
+    pub(super) fn check_companion_profile_target(
         &self,
         txn: &heed::RoTxn<'_>,
         grant: &AccessGrant,

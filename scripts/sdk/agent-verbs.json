@@ -434,6 +434,66 @@
       "section": false
     },
     {
+      "name": "vault.companions.access_requests.answer",
+      "description": "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant.",
+      "input": "crate::task_verb::sdk::CompanionAccessRequestAnswerRequest",
+      "output": "crate::task_verb::sdk::CompanionAccessRequestAnswered",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.companions.access_requests.answer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.personas.preview",
+      "description": "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp.",
+      "input": "crate::task_verb::sdk::PersonaSnapshotPreviewRequest",
+      "output": "crate::task_verb::sdk::PersonaSnapshotPreview",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.preview\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.personas.export",
+      "description": "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent.",
+      "input": "crate::persona_snapshot::PersonaSnapshotCopyRequest",
+      "output": "crate::task_verb::sdk::PersonaSnapshotExportedCopy",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.export\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.personas.edit",
+      "description": "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version.",
+      "input": "crate::persona_snapshot::PersonaSnapshotCopyEditRequest",
+      "output": "crate::task_verb::sdk::PersonaSnapshotExportedCopy",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.edit\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "self.memory.diary.query",
       "description": "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log.",
       "input": "crate::task_verb::sdk::DiaryQueryRequest",

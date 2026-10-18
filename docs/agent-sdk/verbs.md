@@ -35,6 +35,10 @@ both bindings and their export-census tests in one change.
 - `vault.shape.apply`
 - `self.message`
 - `self.grants.ask`
+- `vault.companions.access_requests.answer`
+- `vault.personas.preview`
+- `vault.personas.export`
+- `vault.personas.edit`
 - `self.memory.diary.query`
 - `cancel`
 - `steer`
