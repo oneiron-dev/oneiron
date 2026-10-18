@@ -176,6 +176,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::ContributionJudgeTaskBytes),
         Self::Engine(EngineLimit::ContributionJudgeAnswerBytes),
         Self::Engine(EngineLimit::CallableNestDepth),
+        Self::Engine(EngineLimit::ExecutorRunSteps),
         Self::Engine(EngineLimit::VoiceReferenceBytes),
         Self::Engine(EngineLimit::EsignPdfBytes),
         Self::Engine(EngineLimit::StateVadTurns),

@@ -288,9 +288,6 @@ fn mcp_code_run_health(
         | oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. } => {
             McpRetrievalHealth::Partial
         }
-        oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
-            McpRetrievalHealth::Degraded
-        }
     }
 }
 
@@ -309,9 +306,6 @@ fn mcp_code_run_help(status: &oneiron::engine_executor::EngineExecutorStatus) ->
         oneiron::engine_executor::EngineExecutorStatus::Yielded { .. } => vec![
             "this run yielded at its soft step limit; the same run_ref continues it".to_owned(),
         ],
-        oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
-            vec!["this run reached its hard step limit and will not continue".to_owned()]
-        }
         oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. } => vec![
             "this run's context window is full and no compacted summary has landed yet".to_owned(),
             "the same run_ref continues it once compaction lands".to_owned(),
@@ -352,9 +346,6 @@ fn mcp_executor_status_value(status: &oneiron::engine_executor::EngineExecutorSt
             "status": "yielded",
             "next_step_seq": next_step_seq,
         }),
-        oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
-            json!({ "status": "hard_step_limit_reached" })
-        }
         oneiron::engine_executor::EngineExecutorStatus::WindowFull {
             next_step_seq,
             reason,

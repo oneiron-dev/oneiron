@@ -63,9 +63,7 @@ impl StoredTerminalStatus {
             EngineExecutorStatus::Waiting(wait) => Ok(Self::Waiting {
                 wait: StoredDurableWait::from_wait(wait),
             }),
-            EngineExecutorStatus::Yielded { .. }
-            | EngineExecutorStatus::HardStepLimitReached
-            | EngineExecutorStatus::WindowFull { .. } => {
+            EngineExecutorStatus::Yielded { .. } | EngineExecutorStatus::WindowFull { .. } => {
                 Err(Error::InvariantViolation("non-terminal executor status marker").into())
             }
         }
@@ -277,7 +275,6 @@ fn executor_config_hash(
     hash_str(&mut hasher, config.global_tier.as_str());
     hash_u64(&mut hasher, config.determinism.frozen_unix_ms);
     hash_bytes(&mut hasher, &config.determinism.rng_seed);
-    hash_u64(&mut hasher, u64::from(config.limits.hard_steps));
     if let Some(digest) = continuation {
         hash_bytes(&mut hasher, CONFIG_CONTINUATION_TAG);
         hash_bytes(&mut hasher, digest);

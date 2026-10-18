@@ -32,6 +32,7 @@ use crate::code_run::{
     SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
 };
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
+use crate::limit_ask::EngineLimit;
 use crate::off_record::ExecutorUtterance;
 use crate::prompt::resolve_engine_executor_wire_prompt;
 use crate::runtime_hooks::VerbHookStop;
@@ -149,13 +150,6 @@ impl EngineNativeExecutor<'_> {
         loop {
             cancel.check()?;
             let completed_steps = completed_step_count(&record)?;
-            if completed_steps >= u64::from(config.limits.hard_steps) {
-                return Ok(self.outcome(
-                    EngineExecutorStatus::HardStepLimitReached,
-                    steps_run,
-                    record,
-                ));
-            }
             if steps_run >= config.limits.soft_steps {
                 return Ok(self.outcome(
                     EngineExecutorStatus::Yielded {
@@ -201,6 +195,13 @@ impl EngineNativeExecutor<'_> {
                     steps_run,
                     record,
                 ));
+            }
+            // Rule 5 (FIX 4197): the first step past the `[limits]
+            // executor_run_steps` row asks whether everything is okay, once
+            // per run however often it re-enters, and the run keeps going.
+            let steps = self.storage.limit_watch();
+            if completed_steps == steps.bound(EngineLimit::ExecutorRunSteps) {
+                steps.measure(EngineLimit::ExecutorRunSteps, completed_steps + 1);
             }
             let request_hash = request.canonical_hash()?;
             self.capture_step_start(
@@ -1034,12 +1035,7 @@ impl EngineNativeExecutor<'_> {
         messages.push(LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
-                text: format!(
-                    "Run id: {}\nHard step limit: {}\nTask:\n{}",
-                    config.run_id.to_hex(),
-                    config.limits.hard_steps,
-                    config.task
-                ),
+                text: format!("Run id: {}\nTask:\n{}", config.run_id.to_hex(), config.task),
             }],
         });
 

@@ -688,9 +688,6 @@ impl Child {
                     EngineExecutorStatus::Waiting(_) => {
                         return ReaderRunEnd::Failed("reader_child_waited".to_owned());
                     }
-                    EngineExecutorStatus::HardStepLimitReached => {
-                        return ReaderRunEnd::Failed("step_limit".to_owned());
-                    }
                     EngineExecutorStatus::WindowFull { .. } => {
                         return ReaderRunEnd::Failed("window_full".to_owned());
                     }

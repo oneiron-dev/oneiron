@@ -195,7 +195,6 @@ pub(crate) struct StepStartBody {
     pub(crate) seat_effort: Option<ReasoningEffort>,
     pub(crate) global_tier: ModelTierRef,
     pub(crate) soft_steps: u32,
-    pub(crate) hard_steps: u32,
     /// The resolved teaching the run's provider work was produced under.
     pub(crate) prompt_fingerprint: String,
 }
@@ -224,7 +223,6 @@ pub(crate) struct StepStartCapture<'a> {
     pub(crate) seat_effort: Option<ReasoningEffort>,
     pub(crate) global_tier: &'a ModelTierRef,
     pub(crate) soft_steps: u32,
-    pub(crate) hard_steps: u32,
     pub(crate) prompt_fingerprint: &'a str,
 }
 
@@ -428,7 +426,6 @@ fn stage_start(
         seat_effort: start.seat_effort,
         global_tier: start.global_tier.clone(),
         soft_steps: start.soft_steps,
-        hard_steps: start.hard_steps,
         prompt_fingerprint: start.prompt_fingerprint.to_owned(),
     };
     let bytes = rmp_serde::to_vec_named(&body)
