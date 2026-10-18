@@ -157,7 +157,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/engine/mutate.rs` | src | m | 5 fn · 7 crate-vis | — | Retry/intervene/manifest append plus lease-cleanup mutation doors |
 | `src/attempt_queue/engine/place.rs` | src | s | 1 crate-vis | — | Placement inside a caller-owned writer: a row enqueued in the same transaction takes its worker and parent… |
 | `src/attempt_queue/engine/prune.rs` | src | s | 2 crate-vis | — | The doors an owner-retained kind's tries leave the ledger by: a settled attempt with every try it retried… |
-| `src/attempt_queue/engine/reads.rs` | src | m | 4 fn · 23 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
+| `src/attempt_queue/engine/reads.rs` | src | m | 4 fn · 24 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
 | `src/attempt_queue/engine/redirect.rs` | src | s | 1 fn | — | Atomic operator placement changes with lease fencing and cycle refusal |
 | `src/attempt_queue/engine/successor.rs` | src | s | 1 crate-vis | — | The successor of a terminally failed attempt (FIX 3694, OF-568): the one new try an owner-approved prompt… |
 | `src/attempt_queue/engine/task_lease.rs` | src | s | 2 crate-vis | — | Named-task lease doors for the task highway (OF-220): claim the one ready try of a named TASK, and renew a… |
@@ -3907,7 +3907,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/lifecycle_receipt.rs` | src | s | 8 crate-vis | — | The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked… |
 | `src/task_verb/linear_store.rs` | src | m | 1 struct · 5 fn · 10 crate-vis | VaultLinearTaskStore | Vault storage for the tracker mirror: replicated fields, local OCC and CAS links |
 | `src/task_verb/mirror_edit.rs` | src | s | 2 crate-vis | — | The owner's public title edit on `tasks.update` (OF-427 C8), and the Owner standing the mirror's mapping… |
-| `src/task_verb/mod.rs` | src | m | 1 fn · 2 mod · 25 re-export · 36 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
+| `src/task_verb/mod.rs` | src | m | 1 fn · 3 mod · 25 re-export · 36 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
 | `src/task_verb/owner_index.rs` | src | s | 3 fn · 2 crate-vis | — | Shared derived tasks-by-owner index for inbox and saved plan queries |
 | `src/task_verb/policy_change_followup.rs` | src | m | 2 crate-vis | — | Atomic, idempotent human TASK notification for one landed policy change |
 | `src/task_verb/presence_diagnostics.rs` | src | s | 3 crate-vis | — | Typed per-row presence read failures for the bounded TASKS projection |
@@ -3925,6 +3925,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/report_journal.rs` | src | s | 5 crate-vis | — | The per-attempt report journal (OF-220) |
 | `src/task_verb/room_thread.rs` | src | m | 5 crate-vis | — | Existing TASK intent and follow-up facts projected onto a room thread |
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 5 enum · 3 fn · 2 const · 2 crate-vis | TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome +2 | — |
+| `src/task_verb/run_doors.rs` | src | s | 5 struct · 2 fn | CancelForceReceipt, CancelForceRequest, RunBranchView, RunBranchesRequest, RunBranchesView | The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)… |
 | `src/task_verb/run_verb_catalog.rs` | src | s | 1 enum · 4 fn · 1 const | RunVerb | — |
 | `src/task_verb/runner_done.rs` | src | s | 2 struct · 2 fn · 1 crate-vis | RunnerDoneAnswer, RunnerDoneQuestion | A runner's "Done means met?", answered before it settles (OF-533) |
 | `src/task_verb/scheduling.rs` | src | s | 4 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
@@ -3946,7 +3947,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_explain.rs` | src | s | 6 struct | ExplainGateNotice, ExplainGateReply, ExplainGateRequest, ExplainMemoryReply, ExplainMemoryRequest, ExplainScoreEvidence | The wire shapes of `vault.explain.memory` and `vault.explain.gate` (OF-278): why a memory appeared in the… |
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
-| `src/task_verb/sdk_generated.rs` | src | XL | 607 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 609 fn · 4 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 27 struct · 6 enum · 25 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +25 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`… |
 | `src/task_verb/sdk_hub.rs` | src | m | 20 struct · 2 enum · 17 fn | HubConsentOutcome, HubConsentReceipt, HubHookBindRequest, HubHookBindingRow, HubHookQualificationReceipt, HubHookQualifyRequest, HubHookReplay, HubImportRequest +14 | Typed owner doors over configured hubs, foreign publishers and pinned imports |
