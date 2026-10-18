@@ -1466,6 +1466,71 @@ export_facade! {
     let output = client.vault_hooks_replay(&input)?;
     crate::codec::lift_record("vault.hooks.replay", &output)
 };
+"vault.artifacts.publish_approval" => fn vault_artifacts_publish_approval(&self, input: ArtifactPublishRequest) -> ArtifactPublishApproval = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPublishRequest = crate::codec::lower_record("vault.artifacts.publish_approval", input)?;
+    let output = client.vault_artifacts_publish_approval(&input)?;
+    crate::codec::lift_record("vault.artifacts.publish_approval", &output)
+};
+"vault.artifacts.publish" => fn vault_artifacts_publish(&self, input: ArtifactPublishRequest) -> ArtifactPublishView = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPublishRequest = crate::codec::lower_record("vault.artifacts.publish", input)?;
+    let output = client.vault_artifacts_publish(&input)?;
+    crate::codec::lift_record("vault.artifacts.publish", &output)
+};
+"vault.artifacts.repoint" => fn vault_artifacts_repoint(&self, input: ArtifactPublishRequest) -> ArtifactPublishView = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPublishRequest = crate::codec::lower_record("vault.artifacts.repoint", input)?;
+    let output = client.vault_artifacts_repoint(&input)?;
+    crate::codec::lift_record("vault.artifacts.repoint", &output)
+};
+"vault.artifacts.pointer" => fn vault_artifacts_pointer(&self, input: ArtifactPointerRequest) -> Option<ArtifactPointer> = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPointerRequest = crate::codec::lower_record("vault.artifacts.pointer", input)?;
+    let output = client.vault_artifacts_pointer(&input)?;
+    crate::codec::lift_record("vault.artifacts.pointer", &output)
+};
+"vault.artifacts.unpublish" => fn vault_artifacts_unpublish(&self, input: ArtifactPointerRequest) -> ArtifactUnpublished = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPointerRequest = crate::codec::lower_record("vault.artifacts.unpublish", input)?;
+    let output = client.vault_artifacts_unpublish(&input)?;
+    crate::codec::lift_record("vault.artifacts.unpublish", &output)
+};
+"vault.artifacts.link_token" => fn vault_artifacts_link_token(&self) -> ArtifactLinkToken = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.artifacts.link_token")?;
+    let output = client.vault_artifacts_link_token(&input)?;
+    crate::codec::lift_record("vault.artifacts.link_token", &output)
+};
+"vault.artifacts.live_preview.register" => fn vault_artifacts_live_preview_register(&self, input: ArtifactPreviewRegisterRequest) -> ArtifactPreviewView = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPreviewRegisterRequest = crate::codec::lower_record("vault.artifacts.live_preview.register", input)?;
+    let output = client.vault_artifacts_live_preview_register(&input)?;
+    crate::codec::lift_record("vault.artifacts.live_preview.register", &output)
+};
+"vault.artifacts.live_preview.read" => fn vault_artifacts_live_preview_read(&self, input: ArtifactPreviewRequest) -> Option<ArtifactPreviewView> = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPreviewRequest = crate::codec::lower_record("vault.artifacts.live_preview.read", input)?;
+    let output = client.vault_artifacts_live_preview_read(&input)?;
+    crate::codec::lift_record("vault.artifacts.live_preview.read", &output)
+};
+"vault.artifacts.live_preview.close" => fn vault_artifacts_live_preview_close(&self, input: ArtifactPreviewRequest) -> ArtifactPreviewClosed = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPreviewRequest = crate::codec::lower_record("vault.artifacts.live_preview.close", input)?;
+    let output = client.vault_artifacts_live_preview_close(&input)?;
+    crate::codec::lift_record("vault.artifacts.live_preview.close", &output)
+};
+"vault.artifacts.live_preview.invite" => fn vault_artifacts_live_preview_invite(&self, input: ArtifactPreviewInviteRequest) -> ArtifactPreviewInvitation = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPreviewInviteRequest = crate::codec::lower_record("vault.artifacts.live_preview.invite", input)?;
+    let output = client.vault_artifacts_live_preview_invite(&input)?;
+    crate::codec::lift_record("vault.artifacts.live_preview.invite", &output)
+};
+"vault.artifacts.live_preview.revoke_invite" => fn vault_artifacts_live_preview_revoke_invite(&self, input: ArtifactPreviewInviteRequest) -> ArtifactPreviewInvitation = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPreviewInviteRequest = crate::codec::lower_record("vault.artifacts.live_preview.revoke_invite", input)?;
+    let output = client.vault_artifacts_live_preview_revoke_invite(&input)?;
+    crate::codec::lift_record("vault.artifacts.live_preview.revoke_invite", &output)
+};
+"vault.artifacts.live_preview.share" => fn vault_artifacts_live_preview_share(&self, input: ArtifactPreviewRequest) -> ArtifactPreviewShare = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPreviewRequest = crate::codec::lower_record("vault.artifacts.live_preview.share", input)?;
+    let output = client.vault_artifacts_live_preview_share(&input)?;
+    crate::codec::lift_record("vault.artifacts.live_preview.share", &output)
+};
+"vault.artifacts.live_preview.revoke_share" => fn vault_artifacts_live_preview_revoke_share(&self, input: ArtifactPreviewRequest) -> ArtifactPreviewShare = |client| {
+    let input: oneiron::artifact_hosting::door_types::ArtifactPreviewRequest = crate::codec::lower_record("vault.artifacts.live_preview.revoke_share", input)?;
+    let output = client.vault_artifacts_live_preview_revoke_share(&input)?;
+    crate::codec::lift_record("vault.artifacts.live_preview.revoke_share", &output)
+};
 "vault.artifacts.view" => fn vault_artifacts_view(&self, input: ArtifactRefRequest) -> Option<ArtifactView> = |client| {
     let input: oneiron::blob_artifact::ArtifactRefRequest = crate::codec::lower_record("vault.artifacts.view", input)?;
     let output = client.vault_artifacts_view(&input)?;
