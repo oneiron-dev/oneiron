@@ -204,5 +204,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ROOMS_TASK_TURN, CONTENT),
     (&t::ROOMS_THREAD_CHILDREN, CONTENT),
     (&t::ROOMS_TURN, CONTENT),
+    (&t::RUN_REVIEW_SETTLEMENT, CONTENT),
     (&t::RUN_TREE_ASK_WAIT, CONTENT),
 ];

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 831 code-mode rows (808 host rows, 23 run rows), 2811 declarations.
-// Replies: 744 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 835 code-mode rows (812 host rows, 23 run rows), 2829 declarations.
+// Replies: 748 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2750,6 +2750,24 @@ declare namespace Sdk {
   type FoldHistoryEpoch = { summary_ref: string; epoch: number; from: number; through: number; text?: string | null };
   type FoldHistoryStep = { step: number; code: string; console: string };
   type FoldHistory = { run: string; completed_steps: number; compacted_through?: number | null; state: FoldList; folds: FoldDescription[]; unfolds: FoldUnfold[]; epochs: FoldHistoryEpoch[]; steps: FoldHistoryStep[]; next?: number | null };
+  type RunReviewChange = { kind: "claim"; claim_ref: string } | { kind: "edge"; provenance_ref: string } | { kind: "note"; note_ref: string; fork_ref: string } | { kind: "topology"; event_ref: string } | { kind: "external_effect"; receipt_ref: string } | { kind: "delete"; entity_ref: string } | { kind: "erase"; entity_ref: string };
+  type RunReviewRequest = { run_id: string; changes: RunReviewChange[] };
+  type RunChangeVerdict = "landed" | "rejected" | "waiting" | "let_go";
+  type RunChangeOutcome = { change: string; verdict: RunChangeVerdict; receipt?: string | null };
+  type RunReviewExplainer = { text: string; read_refs: string[] };
+  type RunReview = { run_id: string; review_id: string; changes: RunChangeOutcome[]; explainer: RunReviewExplainer };
+  type RunSettleDecision = "approve" | "reject";
+  type RunSettleRequest = { review: RunReviewRequest; review_id: string; decision: RunSettleDecision };
+  type RunSettlementKind = "ProposalOutcome";
+  type RunAnsweredBy = { word_ref: string } | { row: string } | { grant: string };
+  type RunSettlementReason = "owner_approved" | "owner_rejected";
+  type RunSettlement = { kind: RunSettlementKind; run_id: string; receipt: string; changes: RunChangeOutcome[]; verdict: RunChangeVerdict; answered_by: RunAnsweredBy; reason: RunSettlementReason; summary: string; revert_handle: string };
+  type RunSettlementRequest = { run_id: string };
+  type RevertRunRequest = { run_id: string; changes?: string[] | null };
+  type RunCompensation = { change: string; receipt: string };
+  type RunNotUndoneReason = "one_way" | "backup_only" | "dependent" | "not_selected" | "not_landed";
+  type RunNotUndone = { change: string; reason: RunNotUndoneReason };
+  type RevertRunOutcome = { run_id: string; compensated: RunCompensation[]; not_undone: RunNotUndone[] };
   type LibraryFindInput = { site?: string | null; subgoal?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
@@ -4451,6 +4469,8 @@ declare const vault: Sdk.VaultHost & {
       get(input: Sdk.EmptyRequest): Promise<Sdk.RetrievalWeightsView | StoredResult>;
     };
   };
+  /** The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why. */
+  revert_run(input: Sdk.RevertRunRequest): Promise<Sdk.RevertRunOutcome | StoredResult>;
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
     claim(input: Sdk.RoomClaimRequest): Promise<Sdk.RoomClaimOutcome | StoredResult>;
@@ -4506,6 +4526,12 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
     checkpoint(input: Sdk.CheckpointReadRequest): Promise<Sdk.CheckpointView | null | StoredResult>;
+    /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
+    review(input: Sdk.RunReviewRequest): Promise<Sdk.RunReview | StoredResult>;
+    /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */
+    settle(input: Sdk.RunSettleRequest): Promise<Sdk.RunSettlement | StoredResult>;
+    /** The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle. */
+    settlement(input: Sdk.RunSettlementRequest): Promise<Sdk.RunSettlement | StoredResult>;
     /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
     step(input: Sdk.SettledStepRequest): Promise<Sdk.SettledStepView | null | StoredResult>;
   };
