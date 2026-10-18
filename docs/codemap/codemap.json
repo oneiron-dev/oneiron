@@ -50851,6 +50851,8 @@
       "JoinRefusal",
       "JoinRequest",
       "MembershipConsent",
+      "RoomFunding",
+      "RoomSpend",
       "RoomWork",
       "SpendConsent"
      ],
@@ -50858,10 +50860,10 @@
      "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
       "crate-vis": 5,
-      "enum": 6,
-      "fn": 5,
+      "enum": 7,
+      "fn": 7,
       "re-export": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -65546,7 +65548,7 @@
      "path": "src/ai_host/payer_funding.rs",
      "purpose": "Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -66390,13 +66392,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_pack/media_query.rs",
      "purpose": "The media query both retrieval doors take (OF-370): `POST /v1/core/context-pack` (and the Context Board's…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -73085,7 +73087,7 @@
      "path": "src/server/media_embedding.rs",
      "purpose": "The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
