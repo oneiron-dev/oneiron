@@ -41,9 +41,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/actor_claims/write.rs` | src | m | 3 fn · 5 crate-vis | — | The `actor.*` write chokepoint, cardinality core, and TASK-lane projector |
 | `src/affect/annotation.rs` | src | s | 12 crate-vis | — | Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers |
 | `src/affect/claim_vad.rs` | src | s | 3 struct · 1 const · 4 crate-vis | ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence | Claim-level VAD evidence aggregation: turn-evidence refs, mean VAD, and consolidation result types |
-| `src/affect/consolidation.rs` | src | m | 6 fn · 5 crate-vis | — | Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans |
+| `src/affect/consolidation.rs` | src | L | 6 fn · 6 crate-vis | — | Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans |
 | `src/affect/coping.rs` | src | m | 3 struct · 1 enum · 18 fn · 1 const · 1 crate-vis | CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue, CopingStrategy | — |
-| `src/affect/mod.rs` | src | s | 3 mod · 3 re-export · 3 crate-vis | — | — |
+| `src/affect/mod.rs` | src | s | 3 mod · 3 re-export · 4 crate-vis | — | — |
 | `src/affect/state_index.rs` | src | m | 3 struct · 4 fn · 3 const · 2 crate-vis | ModeGateInputs, StateIndex, StateIndexEvidence | Provenance-carrying composite state for mode selection, never a diagnostic label |
 | `src/affect/state_index/tests.rs` | test | s | — | — | — |
 | `src/affect/state_inputs.rs` | src | s | 1 struct · 2 crate-vis | StateWindow | The composite state index's inputs, measured from the subject's own records (OF-335) |
@@ -1940,7 +1940,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/owner_policy_mutation/tests.rs` | test | s | — | — | — |
 | `src/gate/pack_install_policy.rs` | src | s | 1 struct · 12 crate-vis | PackInstallPolicyOverride | Vault-resident connector-pack install rows; default behavior is shipped data |
 | `src/gate/policy_manifest_doors/content_policy.rs` | src | s | 4 struct · 2 fn | OwnerPolicyConfiguration, OwnerPolicyConfigurationReceipt, OwnerPolicyConfigurationView, OwnerPolicyConfigureRequest | The owner's content-policy configuration, kept in the existing default manifest |
-| `src/gate/policy_manifest_doors/mod.rs` | src | m | 5 fn · 2 re-export | — | Typed policy reads, owner edits and inert untrusted contributions |
+| `src/gate/policy_manifest_doors/mod.rs` | src | m | 5 fn · 3 re-export · 1 crate-vis | — | Typed policy reads, owner edits and inert untrusted contributions |
+| `src/gate/policy_manifest_doors/retrieval_weights.rs` | src | s | 4 struct · 2 fn · 4 crate-vis | RetrievalWeights, RetrievalWeightsConfigureRequest, RetrievalWeightsReceipt, RetrievalWeightsView | Owner-configured retrieval priors in the existing trusted default manifest |
 | `src/gate/policy_manifest_doors/types.rs` | src | s | 15 struct · 7 enum | ActorCeiling, GateCheckerReceipt, GateCheckerSet, GateCheckerView, PolicyAxes, PolicyCeiling, PolicyCriticality, PolicyManifest +14 | Typed DEC-0005 policy axes |
 | `src/gate/policy_upgrade.rs` | src | m | 2 fn · 4 crate-vis | — | A vault's untouched seeded policy manifest taking the one this build ships, and the re-gate of every consent… |
 | `src/gate/policy_values.rs` | src | m | 26 crate-vis | — | Typed behaviour values and deterministic, scoped manifest-row selection |
@@ -2393,6 +2394,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/maintain/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
 | `src/maintain/tests.rs` | test | XL | — | — | — |
 | `src/maintain/text_ops.rs` | src | s | 4 crate-vis | — | Text-index clear, PPR cleanup, and postings compaction |
+| `src/memory/affect.rs` | src | s | 4 struct · 2 fn | AffectAnnotationPut, AffectClaimConsolidateRequest, AffectClaimConsolidation, AffectTurnEvidence | Typed affect evidence setup through ordinary claim admission and VAD consolidation |
 | `src/memory/answer_boundary.rs` | src | s | 1 enum · 1 fn | AnswerAdmission | The answer boundary (OF-063, Engine ruling 1231): an answer's citations checked against the evidence it was… |
 | `src/memory/archive_purge.rs` | src | s | 2 struct · 4 fn | ArchivePurgeEntry, ArchivePurgePreview | Owner-only archive impact preview and confirmed ARCH-0038 delete |
 | `src/memory/asset_resolve.rs` | src | L | 8 struct · 2 enum · 14 fn · 1 const · 6 crate-vis | AssetConsumer, HydratedAsset, ImageHandle, ImagePick, ImageViewRequest, LandedImage, PixelRegion, PulledImage +2 | Generated images and the form each consumer reads (OF-328, OF-329) |
@@ -2456,7 +2458,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/operations.rs` | src | s | 6 fn | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 9 struct | MergeQueueBatchRequest, MergeQueueBatchView, MergeQueueEnqueueRequest, MergeQueueObservation, MergeQueueObserveRequest, MergeQueuePathView, MergeQueuePointersView, MergeQueueRepoRequest +1 | — |
 | `src/memory/message_result.rs` | src | s | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | s | 10 mod · 43 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | s | 11 mod · 43 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
@@ -3961,7 +3963,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_explain.rs` | src | s | 6 struct | ExplainGateNotice, ExplainGateReply, ExplainGateRequest, ExplainMemoryReply, ExplainMemoryRequest, ExplainScoreEvidence | The wire shapes of `vault.explain.memory` and `vault.explain.gate` (OF-278): why a memory appeared in the… |
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
-| `src/task_verb/sdk_generated.rs` | src | XL | 630 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 634 fn · 4 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 27 struct · 6 enum · 25 fn · 4 const · 1 crate-vis | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +25 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`… |
 | `src/task_verb/sdk_hub.rs` | src | m | 20 struct · 2 enum · 17 fn | HubConsentOutcome, HubConsentReceipt, HubHookBindRequest, HubHookBindingRow, HubHookQualificationReceipt, HubHookQualifyRequest, HubHookReplay, HubImportRequest +14 | Typed owner doors over configured hubs, foreign publishers and pinned imports |
