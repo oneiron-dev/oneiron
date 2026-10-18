@@ -197,6 +197,26 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // The owner's machine answer is signed the same way, by its carrier's
+    // install key under his act (mesh PR1b): the roster consent rule never
+    // reads it, and `device_can_authority_consent` stays as it is for every
+    // roster-signed revision below.
+    if let AuthorityOp::MachineProfile(profile) = &entry.op
+        && profile.act.is_some()
+    {
+        if let Err(issue) = super::machine_profile::apply_owner_answer(
+            &mut state,
+            entry,
+            profile,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     if let AuthorityOp::WorldKeyWraps(record) = &entry.op {
         if let Err(issue) =
             super::world_key_fold::apply_world_key_wraps(&mut state, entry, record, hash, context)

@@ -134,14 +134,15 @@ pub(super) struct CheckpointSafety {
     /// (actor revocations, slip withdrawals and burns, machine removals),
     /// the retired keys, the closed handoffs, whether a handoff is
     /// unsettled, the settlement's issues, the parents no folded row is, and
-    /// the owner-held roster marks before custody is judged.
+    /// the accepted roster marks before custody is judged: an owner-held
+    /// signer or an admitted owner answer (`MarkProof`).
     pub(super) revoke_facts: RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
     pub(super) missing_parents: BTreeSet<AuthorityEntryHash>,
-    pub(super) marks: Vec<(AuthorityEntryHash, AuthorityKey)>,
+    pub(super) marks: Vec<(AuthorityEntryHash, MarkProof)>,
     /// Actor: the final merge's revocations, every binding any state holds,
     /// and the keys a main state holds a live binding for.
     pub(super) revocations: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,

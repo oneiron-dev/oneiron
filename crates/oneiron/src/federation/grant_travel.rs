@@ -13,6 +13,7 @@
 //! gesture.
 
 use crate::Vault;
+use crate::authority::ActSurface;
 use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -79,6 +80,10 @@ struct GrantTravelAct<'a> {
     after: Option<&'a GrantTravel>,
     /// The main-log heads the act observed.
     frontier: [u8; 32],
+    /// The grant's revision the signed act names as seen (mesh PR1b), and
+    /// where the owner said so (audit only).
+    seen: [u8; 32],
+    surface: ActSurface,
 }
 
 impl GrantTravelAct<'_> {
@@ -92,6 +97,8 @@ impl GrantTravelAct<'_> {
             format!("entry:{}", bytes_to_hex_lower(&self.entry_hash)),
             format!("before:{}", bytes_to_hex_lower(&before)),
             format!("after:{}", bytes_to_hex_lower(&after)),
+            format!("seen:{}", bytes_to_hex_lower(&self.seen)),
+            format!("surface:{}", surface_name(self.surface)),
         ];
         let reason = if self.clear {
             GRANT_TRAVEL_CLEAR_REASON
@@ -125,6 +132,15 @@ impl GrantTravelAct<'_> {
     }
 }
 
+/// The act surface's name in a decision's details: audit only.
+fn surface_name(surface: ActSurface) -> &'static str {
+    match surface {
+        ActSurface::ThisInstall => "this_install",
+        ActSurface::LinkedDevice { .. } => "linked_device",
+        ActSurface::HostedConsole => "hosted_console",
+    }
+}
+
 impl Vault {
     /// The born-with text `grant`'s windows carry to another vault, read in
     /// the caller's snapshot: the fold's effective choice; `None` sends none,
@@ -147,13 +163,18 @@ impl Vault {
     /// `travel`, or with `None` or a choice of no field clears it, and
     /// answers the effective choice after. The owner is revalidated and the
     /// grant must be live, for a clear too; this install signs the action
-    /// and the Gate decision lands beside it.
+    /// under his act and the Gate decision lands beside it. `surface` is
+    /// where he said so (audit only); `seen` is the grant's revision the
+    /// deciding surface showed him (`Vault::grant_travel_revision`), and a
+    /// stale one is a conflict; `None` takes the current one.
     pub(crate) fn set_federation_grant_travel_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
+        surface: ActSurface,
         grant: &EntityId,
         travel: Option<TravelChoice>,
+        seen: Option<[u8; 32]>,
         now: u64,
     ) -> Result<Option<GrantTravel>> {
         let actor = owner.revalidate_in_txn(self, txn)?;
@@ -164,7 +185,8 @@ impl Vault {
         let frontier = self
             .authority_view_readonly_in_txn(txn)?
             .append_heads_digest();
-        let signed = self.append_grant_travel_set_in_txn(txn, actor, *grant, choice, now)?;
+        let signed =
+            self.append_grant_travel_set_in_txn(txn, actor, surface, *grant, choice, seen, now)?;
         let after = self.federation_grant_travel_in_txn(txn, grant)?;
         GrantTravelAct {
             actor,
@@ -175,6 +197,8 @@ impl Vault {
             before: before.as_ref(),
             after: after.as_ref(),
             frontier,
+            seen: signed.seen,
+            surface,
         }
         .record_in_txn(self, txn)?;
         Ok(after)

@@ -1,9 +1,12 @@
 //! The L02 side of the owner-act record (mesh contract §3): the one rule
-//! every owner act's carrier is judged by, and what an act's receipt says of
-//! the key work that follows it (contract §5). The record itself, its codec
+//! every owner act's carrier is judged by, the owner's liveness at an act's
+//! causal point (§4), and what an act's receipt says of the key work that
+//! follows it (contract §5). The record itself, its codec
 //! and its shape check are `oneiron_authority::authority::OwnerAct`.
 
 use std::collections::BTreeMap;
+
+use crate::entity_id::EntityId;
 
 use super::*;
 
@@ -43,6 +46,35 @@ pub(crate) fn owner_act_signer_admits(
                     .any(|(_, chain)| chain.is_live() && chain.profile.machine_key == *key)
         })
 }
+
+/// Whether `owner` is a live owner at an act's causal point, as the fold
+/// state `state` of its parents holds it (mesh contract §4): every replica
+/// that holds the owner's removal before the act refuses it. The vault's
+/// owner set itself lives in its membership rows, which no authority-log row
+/// carries, so the fold reads the one owner fact the log does carry: the
+/// owner's human actor bindings. An owner every binding of whom the log
+/// revoked is removed; an owner the log binds nowhere is trusted on the
+/// carrier's word, as a replica without an agent's Grant row trusts it, since
+/// the writer revalidated him in its own transaction (CALLS "mesh1b owner
+/// liveness in the fold", [`OWNER_UNBOUND_TRUSTS_CARRIER`]).
+pub(super) fn owner_live_at(state: &FoldState, owner: EntityId) -> bool {
+    let mut bound = false;
+    for (key, binding) in &state.actor_bindings {
+        if binding.actor_ref != owner || binding.actor_class != "human" {
+            continue;
+        }
+        if state.live_actor_binding(key).is_some() {
+            return true;
+        }
+        bound = true;
+    }
+    !bound && OWNER_UNBOUND_TRUSTS_CARRIER
+}
+
+/// The policy hook behind [`owner_live_at`]: an owner no authority-log row
+/// binds is taken as live at the act's causal point (CALLS "mesh1b owner
+/// liveness in the fold", open).
+const OWNER_UNBOUND_TRUSTS_CARRIER: bool = true;
 
 /// What an owner act's commit did about the key work that follows it (mesh
 /// contract §5, the honest receipt). Only a holder opens, mints or rewraps a

@@ -113,12 +113,24 @@ pub(super) fn apply_grant_travel(
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
+    // The act names the grant's live choices its parents carry (mesh PR1b):
+    // the choice the owner saw, so it supersedes exactly those.
+    let live = state
+        .grant_travel
+        .get(&set.grant)
+        .into_iter()
+        .flat_map(|frontier| frontier.live.keys().copied());
+    if set.act.seen != grant_travel_revision(live) {
+        return Err(AuthorityFoldIssue::InvalidEntry(hash));
+    }
     let roster = StandingView::Under(MachineAdmitter::Roster);
     let admitted = standing.admits_owner_act_signer(set.machine, &key, roster);
     let marks = standing.live_signing_chains(set.machine, signer);
     let narrow_only = !standing.admits_owner_act_signer(set.machine, &key, StandingView::Install);
     drop(standing);
-    if !admitted {
+    // A carrier the one rule does not admit, or an owner the act's parents
+    // hold removed (mesh contract §4), carries a valid choice without effect.
+    if !admitted || !super::owner_act::owner_live_at(state, set.act.owner) {
         state.refused_grant_travel.insert(hash);
         return Ok(());
     }

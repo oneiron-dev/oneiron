@@ -11,11 +11,13 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::share_travel::TravelChoice;
 use serde::{Deserialize, Serialize};
 
+use super::machine_routes::{act_surface, parse_revision, revision_hex};
 use super::{OwnerReply, blocking, owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
@@ -112,6 +114,10 @@ struct SetGrantTravel {
     /// The born-with text its windows carry; none sends none.
     #[serde(default)]
     travel: Option<TravelChoice>,
+    /// The grant's revision the surface showed the owner, as 64 hex (the
+    /// read's `revision`); none takes the current one (mesh PR1b).
+    #[serde(default)]
+    seen: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +132,8 @@ struct GrantTravel {
     grant: String,
     travel: Option<TravelChoice>,
     set: Option<String>,
+    /// The grant's revision, to present back as `seen`, as 64 hex.
+    revision: String,
 }
 
 /// `GET /v1/owner/federation/grant-travel?grant=<id>`: the travel choice
@@ -147,10 +155,12 @@ async fn get_travel(
             return Err(OwnerError::NotFound("grant", query.grant));
         }
         let bound = server.vault().federation_grant_travel(&grant)?;
+        let revision = revision_hex(&server.vault().grant_travel_revision(&grant)?);
         Ok(GrantTravel {
             grant: grant.to_hex(),
             set: bound.as_ref().map(|bound| rfc3339_secs(bound.set_at)),
             travel: bound.map(|bound| bound.travel),
+            revision,
         })
     })
     .await?;
@@ -164,24 +174,39 @@ async fn get_travel(
 /// host's operator root stays `HostActionRequiresSupportGrant` (FIX 2222).
 async fn set_travel(
     auth: CoreAuth,
+    headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<SetGrantTravel>, JsonRejection>,
 ) -> OwnerReply<GrantTravel> {
     let owner = owner(&auth, &server)?;
+    let surface = act_surface(&server, &auth, &headers);
     let request = json_payload(payload)?;
     let travel = blocking(move || -> OwnerResult<GrantTravel> {
         let grant = entity_id("grant", &request.grant)?;
+        // The revision the surface presented, passed through: a stale one is
+        // a conflict, never manufactured from current state here.
+        let seen = request
+            .seen
+            .as_deref()
+            .map(|seen| parse_revision("seen", seen))
+            .transpose()?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs());
-        let effective =
-            server
-                .vault()
-                .set_federation_grant_travel_as(&owner, &grant, request.travel, now)?;
+        let effective = server.vault().set_federation_grant_travel_as(
+            &owner,
+            surface,
+            &grant,
+            request.travel,
+            seen,
+            now,
+        )?;
+        let revision = revision_hex(&server.vault().grant_travel_revision(&grant)?);
         Ok(GrantTravel {
             grant: grant.to_hex(),
             set: effective.as_ref().map(|bound| rfc3339_secs(bound.set_at)),
             travel: effective.map(|bound| bound.travel),
+            revision,
         })
     })
     .await?;

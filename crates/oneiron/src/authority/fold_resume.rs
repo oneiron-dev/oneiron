@@ -111,8 +111,9 @@ struct Settlement {
     /// Parents a judged row names that no judged row is.
     missing_parents: BTreeSet<AuthorityEntryHash>,
     /// The valid machine profiles heading their own roster chain under an
-    /// owner-held key, with that key: the marks before custody is judged.
-    marks: Vec<(AuthorityEntryHash, AuthorityKey)>,
+    /// owner-held key, with that key, or as an admitted owner answer: the
+    /// marks before custody is judged ([`MarkProof`]).
+    marks: Vec<(AuthorityEntryHash, MarkProof)>,
 }
 
 /// One settled once fold, and what its projection read of each row's state.
@@ -226,8 +227,9 @@ impl Once {
                     .machines
                     .get(&profile.machine)?
                     .get(&MachineAdmitter::Roster)?;
-                (chain.head.entry == *hash && chain.head.signer_class == SignerClass::OwnerHeld)
-                    .then(|| (*hash, chain.head.signer.clone()))
+                MarkProof::of(&chain.head)
+                    .filter(|_| chain.head.entry == *hash)
+                    .map(|proof| (*hash, proof))
             })
             .collect();
         let missing_parents = by_hash
@@ -388,8 +390,9 @@ impl ImageFold {
                     .machines
                     .get(&profile.machine)?
                     .get(&MachineAdmitter::Roster)?;
-                (chain.head.entry == *hash && chain.head.signer_class == SignerClass::OwnerHeld)
-                    .then(|| (*hash, chain.head.signer.clone()))
+                MarkProof::of(&chain.head)
+                    .filter(|_| chain.head.entry == *hash)
+                    .map(|proof| (*hash, proof))
             })
             .collect();
         let missing_parents = by_hash
@@ -1008,8 +1011,9 @@ impl FoldBase {
 /// fold's base, or an adopted checkpoint image's settled fold (OF-469).
 pub(super) struct Resumed<'a> {
     /// The valid machine profiles heading their own roster chain under an
-    /// owner-held key, with that key: the marks before custody is judged.
-    pub(super) marks: &'a [(AuthorityEntryHash, AuthorityKey)],
+    /// owner-held key, with that key, or as an admitted owner answer: the
+    /// marks before custody is judged ([`MarkProof`]).
+    pub(super) marks: &'a [(AuthorityEntryHash, MarkProof)],
     /// The base's projected fold.
     pub(super) fold: &'a AuthorityFold,
     /// The base's final merge's revocations, by key.
@@ -1034,9 +1038,7 @@ impl RowStates for Resumed<'_> {
         // No chain row is a machine profile.
         self.marks
             .iter()
-            .filter(|(_, signer)| {
-                !(merged.hosted && super::machine_profile::in_host_custody(merged, signer))
-            })
+            .filter(|(_, proof)| proof.accepted(merged))
             .map(|(hash, _)| *hash)
             .collect()
     }

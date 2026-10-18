@@ -350,12 +350,30 @@ impl Vault {
                     .machine_encryption_key(vault_id)
                     .and_then(|own| self.machine_enrolment_request(vault_id, own));
                 let request = request?;
-                self.enroll_machine(
-                    issuer,
-                    &owner,
-                    &request,
-                    MachineRole::Owned(MachineOwnership::Yours),
-                )?;
+                // The install the vault never profiled joins on the explicit
+                // self-host bootstrap arm (C4), as pairing's does: the test
+                // host's root signs the owner's answer, with no act. A
+                // profiled install takes his answer carried by itself.
+                let mut txn = self.store.env.write_txn()?;
+                let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+                let fold = self.authority_view_readonly_in_txn(&txn)?;
+                let yours = MachineRole::Owned(MachineOwnership::Yours);
+                if fold.machine(request.machine).is_none() {
+                    drop(fold);
+                    self.enroll_bootstrap_in_txn(&mut txn, issuer, actor, &request, yours)?;
+                    txn.commit()?;
+                    #[cfg(feature = "sync")]
+                    self.reseal_after_machine_admission()?;
+                } else {
+                    drop((fold, txn));
+                    self.set_machine_role(
+                        &owner,
+                        ActSurface::ThisInstall,
+                        request.machine,
+                        yours,
+                        None,
+                    )?;
+                }
                 request.machine
             }
         };

@@ -40,6 +40,16 @@ pub(super) struct Revision {
 }
 
 impl Revision {
+    /// The profile the entry carried.
+    pub(super) fn profile(&self) -> &MachineProfile {
+        &self.profile
+    }
+
+    /// The chain's revisions in this one's own past.
+    pub(super) fn past(&self) -> &BTreeSet<AuthorityEntryHash> {
+        &self.past
+    }
+
     /// One entry applied over two different pasts (a removal's proof beside
     /// the ordinary fold) keeps what both copies grant: it takes "yours"
     /// away with acknowledgement only when both would, from the same mark,

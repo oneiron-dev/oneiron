@@ -176,16 +176,21 @@ impl Vault {
     /// clears it, for every machine of the owner's that serves the grant,
     /// and answers the effective choice after: concurrent choices meet.
     /// Windows exported from now on carry the text it names; text a guest
-    /// already holds stays its copy.
+    /// already holds stays its copy. The owner says so from any surface
+    /// where he is authenticated (`surface`, audit only); `seen` is the
+    /// grant's revision that surface showed him
+    /// ([`Vault::grant_travel_revision`]), `None` the current one.
     pub fn set_federation_grant_travel_as(
         &self,
         owner: &AuthenticatedOwner,
+        surface: crate::authority::ActSurface,
         grant: &EntityId,
         travel: Option<TravelChoice>,
+        seen: Option<[u8; 32]>,
         now: u64,
     ) -> Result<Option<GrantTravel>> {
         self.with_write_txn_grouped(|txn| {
-            self.set_federation_grant_travel_in_txn(txn, owner, grant, travel, now)
+            self.set_federation_grant_travel_in_txn(txn, owner, surface, grant, travel, seen, now)
         })
     }
 }
