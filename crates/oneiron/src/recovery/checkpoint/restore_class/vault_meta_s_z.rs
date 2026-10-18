@@ -162,9 +162,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_OPTIMIZE_DISPLACED_JUDGE, CONTENT),
     (&t::SKILL_OPTIMIZE_DISPLACED_REVISION, CONTENT),
     (&t::SKILL_OPTIMIZE_EVAL_CASE, CONTENT),
-    // A restore cannot make a spent cohort fresh: cut, retirement and every
-    // serving stand as the live vault holds them.
+    // A restore cannot make a spent cohort fresh: cut, audit, retirement and
+    // every serving stand as the live vault holds them.
     (&t::SKILL_OPTIMIZE_EVAL_COHORT, LIVE),
+    (&t::SKILL_OPTIMIZE_EVAL_CUT_AUDIT, LIVE),
     (&t::SKILL_OPTIMIZE_EVAL_EXPOSURE, LIVE),
     (&t::SKILL_OPTIMIZE_EVAL_FAMILY, CONTENT),
     (&t::SKILL_OPTIMIZE_EVAL_LABEL_ASK, CONTENT),

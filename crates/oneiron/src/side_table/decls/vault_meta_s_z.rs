@@ -428,6 +428,9 @@ side_tables! {
     SKILL_OPTIMIZE_EVAL_CASE: VaultMeta b"skill_optimize:eval_case:v1:" Raw;
     /// One date-cut sealed eval cohort (MessagePack named map). Key: id16 (cohort).
     SKILL_OPTIMIZE_EVAL_COHORT: VaultMeta b"skill_optimize:eval_cohort:v1:" Raw;
+    /// The near-copy audit one eval cohort was cut with: refs, scores and coverage, never text.
+    /// Key: id16 (cohort).
+    SKILL_OPTIMIZE_EVAL_CUT_AUDIT: VaultMeta b"skill_optimize:eval_cut_audit:v1:" Named;
     /// One counted serving of a sealed eval cohort (MessagePack named map). Key: id16 (cohort) +
     /// id16 (exposure).
     SKILL_OPTIMIZE_EVAL_EXPOSURE: VaultMeta b"skill_optimize:eval_exposure:v1:" Raw;

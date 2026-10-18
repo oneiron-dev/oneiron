@@ -37,6 +37,7 @@ mod code_fix;
 mod connector_event;
 mod contribution;
 mod dreamer;
+mod eval_authoring;
 pub(crate) mod failure_signals;
 mod harness;
 pub(crate) mod home_digests;

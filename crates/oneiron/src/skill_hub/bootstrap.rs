@@ -36,7 +36,7 @@ impl Vault {
 /// Marker (engine version string) that the built-in bootstrap skill set has
 /// been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_BOOTSTRAP_SEED);
-const FILES: [(&str, &str); 14] = [
+const FILES: [(&str, &str); 15] = [
     (
         "skill-optimize",
         include_str!("../../../../skills/skill-optimize/SKILL.md"),
@@ -86,6 +86,10 @@ const FILES: [(&str, &str); 14] = [
     (
         "training-offer",
         include_str!("../../../../skills/training-offer/SKILL.md"),
+    ),
+    (
+        "eval-authoring",
+        include_str!("../../../../skills/eval-authoring/SKILL.md"),
     ),
 ];
 
@@ -210,9 +214,11 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
     .with_governance_tier(SkillGovernanceTier::Standard)
     .with_role(
         // The CEO starter, the team-shape planner and the coordination
-        // patterns are workflows: the leader path loads only workflows.
+        // patterns are workflows: the leader path loads only workflows. The
+        // Coach's eval-authoring pass runs its skill as a procedure.
         if name == "team-lead"
             || name == crate::agent_dispatch::TEAM_SHAPE_SKILL_NAME
+            || name == "eval-authoring"
             || PATTERNS
                 .iter()
                 .any(|(pattern_name, ..)| *pattern_name == name)
