@@ -204,7 +204,11 @@ pub(super) async fn hold_live_run(
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     handle: &str,
-) -> MemoryResult<(WriteActor, crate::server::ResolvedLiveRun, crate::server::HeldLiveRun)> {
+) -> MemoryResult<(
+    WriteActor,
+    crate::server::ResolvedLiveRun,
+    crate::server::HeldLiveRun,
+)> {
     if session.is_some() {
         return Err(MemoryError::new(
             oneiron::memory::MEMORY_CODE_OFF_RECORD_SESSION_DOOR,

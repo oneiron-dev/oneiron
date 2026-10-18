@@ -134,6 +134,14 @@ pub(super) const BODY_KEY_CORE_DIGEST: &str = "core_digest";
 pub(super) const BODY_KEY_VERDICT: &str = "verdict";
 pub(super) const BODY_KEY_REASON: &str = "reason";
 pub(super) const BODY_KEY_SIGNER: &str = "signer_pk";
+/// The MACHINE whose install key signed a seal: its carrier (mesh
+/// PR2-topology).
+pub(super) const BODY_KEY_CARRIER: &str = "carrier";
+/// A decision seal's owner act (`topology_seal`), the authority-log record
+/// map; exclusive with [`BODY_KEY_SEAL_CAUSE`].
+pub(super) const BODY_KEY_SEAL_ACT: &str = "act";
+/// An engine seal's typed cause; exclusive with [`BODY_KEY_SEAL_ACT`].
+pub(super) const BODY_KEY_SEAL_CAUSE: &str = "cause";
 pub(super) const BODY_KEY_SIGNATURE: &str = "signature";
 pub(super) const EVENT_KIND_AUTHOR_ATTRIBUTION: &str = "author_attribution";
 pub(super) const EVENT_KIND_AUTHOR_REDACTION: &str = "author_redaction";

@@ -1,6 +1,14 @@
 //! Typed policy reads, owner edits and inert untrusted contributions.
 //! The owner writer is the same one `install_owner_policy_manifest` takes;
 //! composition and validation remain the existing manifest resolver's.
+mod claim_aging;
+pub(crate) use claim_aging::{
+    CLAIM_AGING_PROFILES_KEY, claim_aging_profiles_for_run, decode_claim_aging_profiles,
+};
+pub use claim_aging::{
+    ClaimAgingProfilesConfigureRequest, ClaimAgingProfilesReceipt, ClaimAgingProfilesView,
+    claim_aging_profiles_as_owner, configure_claim_aging_profiles_as_owner,
+};
 mod content_policy;
 pub use content_policy::*;
 mod retrieval_weights;

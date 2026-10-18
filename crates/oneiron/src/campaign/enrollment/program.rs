@@ -11,10 +11,8 @@ use crate::campaign::surface::{
     CampaignLifecycle, CampaignRecord, campaign_type_byte, load_campaign_in_txn,
     owned_campaign_in_txn, read_campaign,
 };
-use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::ports::TombstoneStoreRead;
 use crate::saved_query::{
     EvalMode, SavedQueryLifecycle, SavedQueryRecord, load_saved_query_in_txn,
 };
@@ -753,25 +751,7 @@ fn require_step_sender_in_txn(
     txn: &heed::RoTxn<'_>,
     step: &CampaignProgramStepDraft,
 ) -> Result<()> {
-    let not_an_identity = || invalid("a step's sender_ref is not a live channel identity");
-    if vault
-        .store
-        .port_deletion_state(txn, &step.sender_ref)?
-        .deleted
-    {
-        return Err(not_an_identity());
-    }
-    let identity = match vault.get_channel_identity_in_txn(txn, &step.sender_ref) {
-        Ok(Some(identity)) => identity,
-        Ok(None) | Err(Error::InvalidEntityType(_)) => return Err(not_an_identity()),
-        Err(error) => return Err(error),
-    };
-    if normalize_channel_class(identity.channel()) != normalize_channel_class(&step.channel) {
-        return Err(invalid(
-            "a step's sender_ref is a channel identity of another channel",
-        ));
-    }
-    Ok(())
+    super::manual::require_channel_sender_in_txn(vault, txn, &step.channel, step.sender_ref)
 }
 
 /// Whether a sweep enrolls from `query` into this program now. The sweep reads

@@ -1,5 +1,7 @@
 mod codec;
 mod lifecycle;
+pub(crate) mod teardown;
+pub(crate) mod transactions;
 mod types;
 
 pub use self::codec::checkout_result_identity;

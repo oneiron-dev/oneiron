@@ -696,7 +696,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.budget.land",
@@ -708,7 +709,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.lease.open",
@@ -767,7 +769,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.hold.resume",
@@ -781,7 +784,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.local",
@@ -1035,6 +1039,36 @@
         "output": "MemoryPack"
       },
       "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.retrieval.aging.get",
+      "description": "The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages.",
+      "input": "EmptyRequest",
+      "output": "crate::policy_manifest_doors::ClaimAgingProfilesView",
+      "call": "crate::policy_manifest_doors::claim_aging_profiles_as_owner(memory.vault(), &memory.embedded_owner(\"vault.retrieval.aging.get\")?).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.aging.configure",
+      "description": "The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies.",
+      "input": "crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest",
+      "output": "crate::policy_manifest_doors::ClaimAgingProfilesReceipt",
+      "call": "crate::policy_manifest_doors::configure_claim_aging_profiles_as_owner(memory.vault(), &memory.embedded_owner(\"vault.retrieval.aging.configure\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.retrieval.weights.get",
@@ -1350,6 +1384,20 @@
       "openapi": true
     },
     {
+      "name": "vault.scope.position",
+      "description": "Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt.",
+      "input": "crate::memory::RecordPositionRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::RecordPosition>>",
+      "call": "memory.scope_position(&input)?",
+      "scope": "Read",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.scope.ceiling",
       "description": "Reads the caller credential ceiling as a typed ceiling, never as a record position.",
       "input": "EmptyRequest",
@@ -1629,6 +1677,48 @@
           "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
         }
       }
+    },
+    {
+      "name": "vault.campaign.enroll",
+      "description": "Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing.",
+      "input": "crate::campaign::surface::CampaignEnrollRequest",
+      "output": "crate::campaign::surface::CampaignEnrollmentReceipt",
+      "call": "memory.campaign_enroll(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "openapi": true,
+      "section": false
+    },
+    {
+      "name": "vault.campaign.stage.evidence",
+      "description": "Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing.",
+      "input": "crate::campaign::surface::CampaignStageEvidenceRequest",
+      "output": "crate::campaign::surface::CampaignStageEvidenceReceipt",
+      "call": "memory.campaign_stage_evidence(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "openapi": true,
+      "section": false,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.campaign.unsubscribe",
+      "description": "Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction.",
+      "input": "crate::campaign::surface::CampaignUnsubscribeRequest",
+      "output": "crate::campaign::surface::CampaignUnsubscribeReceipt",
+      "call": "memory.campaign_unsubscribe(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "openapi": true,
+      "section": false
     },
     {
       "name": "vault.campaign.program.create",
@@ -2081,6 +2171,66 @@
       "input": "HubSkillPermissionRequest",
       "output": "crate::task_verb::sdk::HubConsentReceipt",
       "call": "crate::task_verb::sdk::hub_skill_permissions_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.permissions.approve\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.start",
+      "description": "The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued.",
+      "input": "SkillOptimizeStartRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeStartReceipt",
+      "call": "crate::task_verb::sdk::skill_optimize_start_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.start\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.result",
+      "description": "Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal.",
+      "input": "SkillOptimizeResultRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+      "call": "crate::task_verb::sdk::skill_optimize_result_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.result\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.governance.get",
+      "description": "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::SkillGovernanceView",
+      "call": "crate::task_verb::sdk::skill_governance_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.governance.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.governance.set",
+      "description": "The owner marks or clears one skill governance tier; the mark changes no instruction content or version.",
+      "input": "SkillGovernanceSetRequest",
+      "output": "crate::task_verb::sdk::SkillGovernanceView",
+      "call": "crate::task_verb::sdk::skill_governance_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.governance.set\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -3463,7 +3613,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.off_record.notes.create",
@@ -3565,7 +3716,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.research.archive.install",
@@ -3657,7 +3809,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.evals.cohorts.setup",
@@ -5673,6 +5826,126 @@
       "input": "crate::memory::origin_doors::CheckoutDoorBindRequest",
       "output": "crate::memory::origin_doors::CheckoutDoorBinding",
       "call": "memory.checkout_door_bind_as(&memory.embedded_owner(\"vault.code.checkout.bind\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.claim",
+      "description": "Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence.",
+      "input": "crate::memory::checkout_doors::CheckoutClaimInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.claim\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.get",
+      "description": "Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it.",
+      "input": "crate::memory::checkout_doors::CheckoutGetInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.get\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.renew",
+      "description": "Renew the caller's still-live checkout under its exact holder and epoch fence.",
+      "input": "crate::memory::checkout_doors::CheckoutRenewInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.renew\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.reclaim",
+      "description": "Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch.",
+      "input": "crate::memory::checkout_doors::CheckoutReclaimInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.reclaim\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.takeover",
+      "description": "Explicitly take over a checkout as its task owner, including effect work, at the named epoch.",
+      "input": "crate::memory::checkout_doors::CheckoutTakeoverInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.takeover\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.publish",
+      "description": "Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head.",
+      "input": "crate::memory::checkout_doors::CheckoutPublishInput",
+      "output": "crate::memory::checkout_doors::CheckoutPublished",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.publish\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.settle",
+      "description": "Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt.",
+      "input": "crate::memory::checkout_doors::CheckoutSettleInput",
+      "output": "crate::memory::checkout_doors::CheckoutSettled",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.settle\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.teardown",
+      "description": "Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees.",
+      "input": "crate::memory::checkout_doors::CheckoutTeardownInput",
+      "output": "crate::memory::checkout_doors::CheckoutTornDown",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.teardown\", &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -8885,6 +9158,124 @@
       "openapi": true
     },
     {
+      "name": "calendar.invite",
+      "description": "Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe.",
+      "input": "crate::memory::CalendarInviteSurfaceInput",
+      "output": "crate::memory::OutboundIntentReceipt",
+      "call": "memory.calendar_invite(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.configure",
+      "description": "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorConfigureRequest",
+      "output": "crate::calendar::connectors::door::CalendarConnectorRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.configure\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.get",
+      "description": "Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorRequest",
+      "output": "Option<crate::calendar::connectors::door::CalendarConnectorRegistration>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.pull",
+      "description": "Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorRequest",
+      "output": "crate::calendar::CalendarSyncOutcome",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.pull\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.write",
+      "description": "Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorWriteRequest",
+      "output": "crate::calendar::RemoteWriteReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.write\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.kill",
+      "description": "Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorKillRequest",
+      "output": "crate::calendar::connectors::door::CalendarConnectorRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.kill\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.imip.configure",
+      "description": "Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity.",
+      "input": "crate::calendar::connectors::door::CalendarImipTransportConfig",
+      "output": "crate::calendar::connectors::door::CalendarImipTransportConfig",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.imip.configure\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.imip.get",
+      "description": "Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value.",
+      "input": "EmptyRequest",
+      "output": "Option<crate::calendar::connectors::door::CalendarImipTransportConfig>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.imip.get\", &_input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.calendar.create",
       "description": "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time.",
       "input": "crate::calendar::door::CalendarEventCreateRequest",
@@ -10389,7 +10780,40 @@
         "spec": "$"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.step",
+      "description": "Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work.",
+      "input": "crate::llm::model_step::SettledStepRequest",
+      "output": "Option<crate::llm::model_step::SettledStepView>",
+      "call": "crate::llm::model_step::settled_step_as_owner(memory, &memory.embedded_owner(\"vault.runs.step\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.checkpoint",
+      "description": "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run.",
+      "input": "crate::engine_executor::checkpoint_read::CheckpointReadRequest",
+      "output": "Option<crate::engine_executor::checkpoint_read::CheckpointView>",
+      "call": "crate::engine_executor::checkpoint_read::checkpoint_as_owner(memory, &memory.embedded_owner(\"vault.runs.checkpoint\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.consolidation.promote",

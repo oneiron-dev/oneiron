@@ -27,6 +27,7 @@
 //! kept to what an addressable, versioned, archivable campaign needs. Membership
 //! stays where CA-01 put it: `campaign.member` claims on the PERSON.
 
+mod actions;
 mod campaign;
 mod codec_json;
 mod membership;
@@ -36,6 +37,12 @@ mod program;
 mod tests;
 mod verbs;
 
+pub use self::actions::{
+    CampaignActionProvenance, CampaignEnrollRequest, CampaignEnrollmentReceipt,
+    CampaignEnrollmentState, CampaignMemberChannelSpec, CampaignStageEvidence,
+    CampaignStageEvidenceOutcome, CampaignStageEvidenceReceipt, CampaignStageEvidenceRequest,
+    CampaignUnsubscribeReceipt, CampaignUnsubscribeRequest,
+};
 pub use self::campaign::{
     CAMPAIGN_SCHEMA_VERSION, CampaignDefinition, CampaignLifecycle, CampaignRecord,
     CreateCampaignRequest, UpdateCampaignRequest, archive_campaign, create_campaign, read_campaign,

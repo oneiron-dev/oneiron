@@ -86,8 +86,8 @@ mod observation_policy;
 mod op_apply;
 mod owner_act;
 mod owner_project_slip;
-mod owner_work;
 mod owner_roots;
+mod owner_work;
 mod pinned_root;
 mod readonly_fold;
 mod recover_many;
@@ -144,7 +144,7 @@ pub use oneiron_authority::authority::{
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
     SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, WORLD_MODEL_ROUTE_MAX_BYTES,
-    WORLD_MODEL_ROUTES_MAX, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
+    WORLD_MODEL_ROUTES_MAX, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
     authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
     authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
     federation_pact_transcript, federation_scope_digest, genesis_vault_id,
@@ -205,8 +205,11 @@ pub use machine_profile::{
 pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
-pub use owner_act::KeyWork;
-pub(crate) use owner_act::owner_act_signer_admits;
+pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
+pub(crate) use owner_act::{
+    GrantStanding, authority_refusal_as, authority_refused, grant_standing_in_txn,
+    owner_act_signer_admits, owner_live_in_fold,
+};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{
