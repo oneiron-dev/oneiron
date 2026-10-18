@@ -223,9 +223,11 @@ side_tables! {
     /// Marker (engine version string) that the built-in bootstrap skill set has been seeded. Key: ().
     SKILL_HUB_BOOTSTRAP_SEED: VaultMeta b"bootstrap_skills/seeded/v1" Raw;
     /// A replay library program a retire took out, with whose word, when and why. Key: id16.
-    BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored;
+    BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored
+        => crate::browser_library::erase_retired_actor_in_txn;
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
-    BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored;
+    BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored
+        => crate::browser_library::erase_workflow_actor_in_txn;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
     BUDGET_RSI_LINE: VaultMeta b"budget.rsi.line.v1" LegacyJson;
     /// The tenant/account identity a build-cache vault is bound to. Key: ().
@@ -251,7 +253,8 @@ side_tables! {
     SYNC_CALENDAR_ORIGIN_PENDING: VaultMeta b"calendar_origin_pending:v1:" Raw;
     /// One wire call's lasting receipt (OF-538): who called on which credential, which verb, how
     /// it ended, and digests of what was asked and answered; never the bodies. Key: id16.
-    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored;
+    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored
+        => crate::Vault::erase_call_receipt_actor_in_txn;
     /// The currently active campaign compliance rule pack. Key: ().
     CAMPAIGN_COMPLIANCE_ACTIVE: VaultMeta b"campaign:compliance:active:v1" Named;
     /// Durable UTF-8 activation notice for one compliance-pack version, one row per version. Key:
@@ -397,6 +400,11 @@ side_tables! {
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
     /// id16(run) + id16(summary).
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
+    /// One contribution check's matched-fork rows (FIX 3028): each fork's receipt (the capsule it
+    /// regenerated, its request hash, model, seed, response body ref, anchor hash and score), or
+    /// why the pair is unavailable for good. Key: hash32(attempt receipt, skill, axis) +
+    /// string(row: `with_skill`, `without_skill` or `unavailable`).
+    CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
     /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
     /// + fold u64 BE). Key: id16(dependent).
@@ -434,6 +442,10 @@ side_tables! {
     CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored;
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
+    /// A canonical attempt's step replay capsule (FIX 3028): the request the step sent by its body
+    /// ref and hash, each skill exposure in it, its seed and the rung that answered it. Key:
+    /// id16(attempt) + be64(lease generation) + be64(step).
+    CODE_RUN_REPLAY_CAPSULE: VaultMeta b"code_run:replay_capsule:v1:" Named Authored;
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
     CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored;

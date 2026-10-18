@@ -96,6 +96,11 @@ pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
 /// `attribution_unclear_floor` fitter reads model answers (see
 /// [`super::attribution_audits`]).
 pub const COACH_ATTRIBUTION_AUDITS_FACET: &str = "coach.attribution_audits";
+/// Judge-label re-checks (ARCH-0042 judge re-pin, OF-420): after an edit of
+/// the judge's rubric, each pick it stamped pending is put to the Coach's
+/// model; one that no longer fits, or that the model cannot judge, waits for
+/// its person's re-grade (see [`super::judge_label_rechecks`]).
+pub const COACH_JUDGE_LABEL_RECHECKS_FACET: &str = "coach.judge_label_rechecks";
 /// Type-tree upkeep (ARCH-0079 #task-type, OF-541): the vault tree recounted
 /// from its receipts, split and merged on anchored decisions, its new types
 /// named on the host, and a changed tree put in force (see
@@ -117,7 +122,7 @@ pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 9] = [
+const HOST_FACETS: [&str; 10] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -127,6 +132,7 @@ const HOST_FACETS: [&str; 9] = [
     COACH_SEAL_CHECKS_FACET,
     COACH_TYPE_TREE_UPKEEP_FACET,
     COACH_ATTRIBUTION_AUDITS_FACET,
+    COACH_JUDGE_LABEL_RECHECKS_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 10] = [
