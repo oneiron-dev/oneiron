@@ -26,6 +26,7 @@
 
 pub(super) mod action_routes;
 mod agent_verbs;
+mod budget_doors;
 mod call_context;
 mod campaign_split_doors;
 mod connector_call_doors;
