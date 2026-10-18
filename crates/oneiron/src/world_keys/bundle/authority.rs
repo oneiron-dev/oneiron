@@ -75,7 +75,8 @@ impl std::fmt::Debug for SealedWorldAuthority {
 }
 
 /// What one seal carries on besides sections: the pad object of the latest
-/// generation, and each world's authority (FIX 4211).
+/// generation, each world's authority (FIX 4211), and the owner work request
+/// the upload publishes for.
 #[derive(Default)]
 pub(crate) struct BundleCarry<'a> {
     /// The pad object of the generation the carried sections come from.
@@ -85,6 +86,10 @@ pub(crate) struct BundleCarry<'a> {
     pub(crate) fresh_authority: Vec<(EntityId, &'a [Vec<u8>])>,
     /// Capsules of the latest generation, carried unchanged.
     pub(crate) carried_authority: Vec<&'a SealedWorldAuthority>,
+    /// The counted bundle publication request naming this install that the
+    /// upload is for, signed into its provenance (WILL L04 row 03); `None`
+    /// for the cadence's own upload.
+    pub(crate) request: Option<crate::authority::AuthorityEntryHash>,
 }
 
 impl SealedWorldAuthority {

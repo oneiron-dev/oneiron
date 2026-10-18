@@ -379,7 +379,7 @@ impl Vault {
     }
 
     /// Transaction-composable [`Vault::resolve_identity_proposal_as`].
-    fn resolve_identity_proposal_in_txn(
+    pub(crate) fn resolve_identity_proposal_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         proposal: &EntityId,
@@ -388,6 +388,21 @@ impl Vault {
         seal: &TopologySeal,
         now: u64,
     ) -> Result<(ProposalOutcome, EntityId)> {
+        self.resolve_identity_proposal_with_applied_in_txn(wtxn, proposal, ruling, write, seal, now)
+            .map(|(outcome, resolution, _)| (outcome, resolution))
+    }
+
+    /// The ordinary ruling plus the actual op it applied, for a run's undo
+    /// currency. Both ids come from the ruling, never from author or time.
+    pub(crate) fn resolve_identity_proposal_with_applied_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        proposal: &EntityId,
+        ruling: ProposalRuling<'_>,
+        write: &IdentityOpWrite,
+        seal: &TopologySeal,
+        now: u64,
+    ) -> Result<(ProposalOutcome, EntityId, Option<EntityId>)> {
         if !write.is_effective() {
             return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                 IdentityTopologyRejection::ProposalRulingNotEffective,
@@ -428,27 +443,27 @@ impl Vault {
 
         let scope = self.proposal_scope_in_txn(&*wtxn, &record, &proposed_op)?;
         let proposer_evidence = record.evidence.as_ref();
-        let (outcome, amended_body) = match (&ruling, amended) {
-            (ProposalRuling::Reject, _) => (ProposalOutcome::Rejected, None),
+        let (outcome, amended_body, applied) = match (&ruling, amended) {
+            (ProposalRuling::Reject, _) => (ProposalOutcome::Rejected, None, None),
             (ProposalRuling::Approve, _) => {
-                self.apply_resolved_identity_op_in_txn(
+                let applied = self.apply_resolved_identity_op_in_txn(
                     wtxn,
                     &proposed_op,
                     proposer_evidence,
                     (write, &seal),
                     now,
                 )?;
-                (ProposalOutcome::ApprovedUntouched, None)
+                (ProposalOutcome::ApprovedUntouched, None, Some(applied))
             }
             (ProposalRuling::AmendThenApprove(_), Some((amended_op, body))) => {
-                self.apply_resolved_identity_op_in_txn(
+                let applied = self.apply_resolved_identity_op_in_txn(
                     wtxn,
                     &amended_op,
                     proposer_evidence,
                     (write, &seal),
                     now,
                 )?;
-                (ProposalOutcome::ApprovedAmended, Some(body))
+                (ProposalOutcome::ApprovedAmended, Some(body), Some(applied))
             }
             // `amended` is Some exactly when the ruling is AmendThenApprove.
             (ProposalRuling::AmendThenApprove(_), None) => {
@@ -498,7 +513,7 @@ impl Vault {
                 "identity proposal resolution must be effective",
             ));
         };
-        Ok((outcome, event_id))
+        Ok((outcome, event_id, applied))
     }
 
     /// Applies the op a ruling approved, under `Approved` consent — the
@@ -515,7 +530,7 @@ impl Vault {
         proposer_evidence: Option<&IdentityOpEvidence>,
         (write, seal): (&IdentityOpWrite, &ResolvedSeal),
         now: u64,
-    ) -> Result<()> {
+    ) -> Result<EntityId> {
         let applied_write = IdentityOpWrite {
             approval: ClaimApprovalStatus::Approved,
             ..*write
@@ -535,8 +550,18 @@ impl Vault {
             }
             _ => op.clone(),
         };
-        self.apply_identity_topology_op_resolved_in_txn(wtxn, &op, &applied_write, seal, now)?;
-        Ok(())
+        match self.apply_identity_topology_op_resolved_in_txn(
+            wtxn,
+            &op,
+            &applied_write,
+            seal,
+            now,
+        )? {
+            IdentityOpOutcome::Applied { event, .. } => Ok(event),
+            _ => Err(Error::InvariantViolation(
+                "an approved topology ruling must apply",
+            )),
+        }
     }
 
     /// Stamps the DEC-0006 ramp scope of a resolved proposal: the op kind,

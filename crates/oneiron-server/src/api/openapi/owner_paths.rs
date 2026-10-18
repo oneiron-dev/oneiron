@@ -260,7 +260,13 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/connectors/proxy",
         summary: "Admits the OpenAI proxy for one paired actor.",
-        row: None,
+        row: Some("vault.connectors.proxy.admit"),
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/connectors/proxy/revoke-write",
+        summary: "Revokes only the proxy remember grant at the reviewed key and slate revision, preserving read access and stored memory.",
+        row: Some("vault.connectors.proxy.revoke_write"),
     },
     OwnerRoute {
         method: "post",

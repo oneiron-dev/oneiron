@@ -526,7 +526,17 @@ pub struct TokenPairArgs {
     /// answers for a machine.
     #[arg(long, value_parser = ["yours", "work_school", "rented"])]
     pub machine: Option<String>,
+
+    /// Whom the slip's holder may message (FIX 3899): `parent`, `subtree`,
+    /// `project` or `vault`, signed into the slip. Outside a run, anything
+    /// narrower than `vault` reaches the vault's owners only. Omit it for
+    /// `vault`; a wider reach later is a new mint.
+    #[arg(long, value_parser = COMM_REACHES)]
+    pub comm: Option<String>,
 }
+
+/// The comm reaches `--comm` takes, as a slip spells them (FIX 3899).
+const COMM_REACHES: [&str; 4] = ["parent", "subtree", "project", "vault"];
 
 /// This machine and its home.
 #[derive(Subcommand)]
@@ -567,6 +577,13 @@ pub struct TokenReadArgs {
     #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
     pub lifetime_secs: u64,
 
+    /// Whom the slip's holder may message (FIX 3899): `parent`, `subtree`,
+    /// `project` or `vault`, signed into the slip. Outside a run, anything
+    /// narrower than `vault` reaches the vault's owners only. Omit it for
+    /// `vault`; a wider reach later is a new mint.
+    #[arg(long, value_parser = COMM_REACHES)]
+    pub comm: Option<String>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }
@@ -589,6 +606,13 @@ pub struct TokenAgentArgs {
     /// The credential's lifetime in seconds, capped by the vault's policy.
     #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
     pub lifetime_secs: u64,
+
+    /// Whom the slip's holder may message (FIX 3899): `parent`, `subtree`,
+    /// `project` or `vault`, signed into the slip. Outside a run, anything
+    /// narrower than `vault` reaches the vault's owners only. Omit it for
+    /// `vault`; a wider reach later is a new mint.
+    #[arg(long, value_parser = COMM_REACHES)]
+    pub comm: Option<String>,
 
     /// Write the credential to this new file, readable by its owner only, and
     /// print only its slip id and principal. Without it the credential is

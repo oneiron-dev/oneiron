@@ -137,6 +137,7 @@ impl SyncServer {
                     tracing::warn!(panicked = error.is_panic(), "housekeeping task failed");
                 }
             }
+            super::consult_settle::settle_consults(Arc::clone(server.vault())).await;
             server.prune_mcp_credentials().await;
             // OF-181: a parked run cancelled, which no entry or call touches
             // again, leaves the host's live runs here.
@@ -331,6 +332,7 @@ impl SyncServer {
     pub(crate) async fn housekeeping_now(&self) -> Option<oneiron::Result<HousekeepingReport>> {
         let (report, reported) = tokio::sync::oneshot::channel();
         let vault = Arc::clone(self.vault());
+        let consults = Arc::clone(&vault);
         let budget = self.housekeeping_passes.budget(OWNER_PASS_BUDGET);
         let pass = tokio::spawn(async move {
             if let Ok(done) =
@@ -338,6 +340,8 @@ impl SyncServer {
             {
                 let _ = report.send(done);
             }
+            // Overdue consults expire on the owner's pass too (DOOR-063).
+            super::consult_settle::settle_consults(consults).await;
         });
         self.housekeeping_passes.hold(pass);
         reported.await.ok()

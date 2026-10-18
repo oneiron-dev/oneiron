@@ -244,17 +244,22 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
             let mut written = 0;
             for (transition, value) in &judged {
                 let value = value.as_ref().map(|value| value.as_slice());
-                if apply_custody_transition_in_txn(
+                let applied = apply_custody_transition_in_txn(
                     vault,
                     wtxn,
                     transition,
                     value,
                     transition.signed_at,
-                )? == CustodyApplied::Written
-                {
+                )?;
+                if applied == CustodyApplied::Written {
                     written += 1;
                 }
-                remember_custody_transition_in_txn(vault, wtxn, transition)?;
+                // A carrier an admitted revoke of its id refused in this
+                // transaction is not kept, so it is never relayed or sealed
+                // again from here (WILL L04 row 04).
+                if applied != CustodyApplied::Refused {
+                    remember_custody_transition_in_txn(vault, wtxn, transition)?;
+                }
             }
             Ok(written)
         })
