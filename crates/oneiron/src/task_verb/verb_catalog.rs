@@ -63,6 +63,14 @@ pub enum AgentVerb {
     VaultFanoutAck,
     TasksUpdate,
     TasksAccept,
+    VaultCommitMessage,
+    VaultBeginMessageStream,
+    VaultAppendToStream,
+    VaultFlushStream,
+    VaultFinalizeStream,
+    VaultCancelStream,
+    VaultMessageStreamPartial,
+    VaultMessagesDurability,
     VaultWitness,
     VaultClaimsUpsert,
     VaultRecall,
@@ -869,6 +877,14 @@ impl AgentVerb {
         Self::VaultFanoutAck,
         Self::TasksUpdate,
         Self::TasksAccept,
+        Self::VaultCommitMessage,
+        Self::VaultBeginMessageStream,
+        Self::VaultAppendToStream,
+        Self::VaultFlushStream,
+        Self::VaultFinalizeStream,
+        Self::VaultCancelStream,
+        Self::VaultMessageStreamPartial,
+        Self::VaultMessagesDurability,
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
@@ -1678,6 +1694,14 @@ impl AgentVerb {
             Self::VaultFanoutAck => "vault.fanout.ack",
             Self::TasksUpdate => "tasks.update",
             Self::TasksAccept => "tasks.accept",
+            Self::VaultCommitMessage => "vault.commit_message",
+            Self::VaultBeginMessageStream => "vault.begin_message_stream",
+            Self::VaultAppendToStream => "vault.append_to_stream",
+            Self::VaultFlushStream => "vault.flush_stream",
+            Self::VaultFinalizeStream => "vault.finalize_stream",
+            Self::VaultCancelStream => "vault.cancel_stream",
+            Self::VaultMessageStreamPartial => "vault.message_stream_partial",
+            Self::VaultMessagesDurability => "vault.messages.durability",
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
@@ -2505,6 +2529,14 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::VaultCommitMessage
+                | Self::VaultBeginMessageStream
+                | Self::VaultAppendToStream
+                | Self::VaultFlushStream
+                | Self::VaultFinalizeStream
+                | Self::VaultCancelStream
+                | Self::VaultMessageStreamPartial
+                | Self::VaultMessagesDurability
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
@@ -3338,6 +3370,14 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::VaultCommitMessage
+                | Self::VaultBeginMessageStream
+                | Self::VaultAppendToStream
+                | Self::VaultFlushStream
+                | Self::VaultFinalizeStream
+                | Self::VaultCancelStream
+                | Self::VaultMessageStreamPartial
+                | Self::VaultMessagesDurability
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
@@ -4248,6 +4288,14 @@ impl AgentVerb {
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
+                | Self::VaultCommitMessage
+                | Self::VaultBeginMessageStream
+                | Self::VaultAppendToStream
+                | Self::VaultFlushStream
+                | Self::VaultFinalizeStream
+                | Self::VaultCancelStream
+                | Self::VaultMessageStreamPartial
+                | Self::VaultMessagesDurability
                 | Self::VaultWitness
                 | Self::VaultRetrievalAgingGet
                 | Self::VaultRetrievalAgingConfigure
@@ -4995,6 +5043,12 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::VaultCommitMessage
+                | Self::VaultBeginMessageStream
+                | Self::VaultAppendToStream
+                | Self::VaultFlushStream
+                | Self::VaultFinalizeStream
+                | Self::VaultCancelStream
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRetrievalAgingConfigure
@@ -5542,6 +5596,14 @@ impl AgentVerb {
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
             Self::TasksAccept => &["spec", "task_ref"],
+            Self::VaultCommitMessage => &["spec"],
+            Self::VaultBeginMessageStream => &["spec"],
+            Self::VaultAppendToStream => &["spec"],
+            Self::VaultFlushStream => &["spec"],
+            Self::VaultFinalizeStream => &["spec"],
+            Self::VaultCancelStream => &["spec"],
+            Self::VaultMessageStreamPartial => &["spec"],
+            Self::VaultMessagesDurability => &["spec"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -6349,6 +6411,14 @@ impl AgentVerb {
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
             Self::TasksAccept => &["spec", "task_ref"],
+            Self::VaultCommitMessage => &["spec"],
+            Self::VaultBeginMessageStream => &["spec"],
+            Self::VaultAppendToStream => &["spec"],
+            Self::VaultFlushStream => &["spec"],
+            Self::VaultFinalizeStream => &["spec"],
+            Self::VaultCancelStream => &["spec"],
+            Self::VaultMessageStreamPartial => &["spec"],
+            Self::VaultMessagesDurability => &["spec"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -7268,6 +7338,30 @@ impl AgentVerb {
             }
             Self::TasksAccept => {
                 "Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."
+            }
+            Self::VaultCommitMessage => {
+                "Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."
+            }
+            Self::VaultBeginMessageStream => {
+                "Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation."
+            }
+            Self::VaultAppendToStream => {
+                "Appends one authored delta to this actor's generation-bound stream through its existing write gate."
+            }
+            Self::VaultFlushStream => {
+                "Publishes the current partial at once when streamed visibility allows it; atomic mode stays private."
+            }
+            Self::VaultFinalizeStream => {
+                "Commits the stream as final and releases its handle, returning the immutable terminal receipt."
+            }
+            Self::VaultCancelStream => {
+                "Keeps the stream's text as one incomplete MESSAGE with cancelled finality and the caller's explicit reason."
+            }
+            Self::VaultMessageStreamPartial => {
+                "Reads only this actor's accepted in-memory partial using its generation-bound stream handle."
+            }
+            Self::VaultMessagesDurability => {
+                "Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."
             }
             Self::VaultWitness => {
                 "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch."

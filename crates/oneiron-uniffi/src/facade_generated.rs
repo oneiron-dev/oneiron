@@ -293,6 +293,46 @@ export_facade! {
     let output = client.tasks_accept(&input)?;
     crate::codec::lift_record("tasks.accept", &output)
 };
+"vault.commit_message" => fn vault_commit_message(&self, input: CommitMessageRequest) -> WitnessReceipt = |client| {
+    let input: oneiron::memory::CommitMessageRequest = crate::codec::lower_record("vault.commit_message", input)?;
+    let output = client.vault_commit_message(&input)?;
+    Lift::lift(output)
+};
+"vault.begin_message_stream" => fn vault_begin_message_stream(&self, input: BeginMessageStreamRequest) -> MessageStreamHandle = |client| {
+    let input: oneiron::memory::BeginMessageStreamRequest = crate::codec::lower_record("vault.begin_message_stream", input)?;
+    let output = client.vault_begin_message_stream(&input)?;
+    crate::codec::lift_record("vault.begin_message_stream", &output)
+};
+"vault.append_to_stream" => fn vault_append_to_stream(&self, input: AppendToStreamRequest) -> WireJson = |client| {
+    let input: oneiron::memory::AppendToStreamRequest = crate::codec::lower_record("vault.append_to_stream", input)?;
+    let output = client.vault_append_to_stream(&input)?;
+    crate::codec::encode("vault.append_to_stream", &output)
+};
+"vault.flush_stream" => fn vault_flush_stream(&self, input: MessageStreamRequest) -> WireJson = |client| {
+    let input: oneiron::memory::MessageStreamRequest = crate::codec::lower_record("vault.flush_stream", input)?;
+    let output = client.vault_flush_stream(&input)?;
+    crate::codec::encode("vault.flush_stream", &output)
+};
+"vault.finalize_stream" => fn vault_finalize_stream(&self, input: MessageStreamRequest) -> MessageStreamReceipt = |client| {
+    let input: oneiron::memory::MessageStreamRequest = crate::codec::lower_record("vault.finalize_stream", input)?;
+    let output = client.vault_finalize_stream(&input)?;
+    crate::codec::lift_record("vault.finalize_stream", &output)
+};
+"vault.cancel_stream" => fn vault_cancel_stream(&self, input: CancelStreamRequest) -> MessageStreamReceipt = |client| {
+    let input: oneiron::memory::CancelStreamRequest = crate::codec::lower_record("vault.cancel_stream", input)?;
+    let output = client.vault_cancel_stream(&input)?;
+    crate::codec::lift_record("vault.cancel_stream", &output)
+};
+"vault.message_stream_partial" => fn vault_message_stream_partial(&self, input: MessageStreamRequest) -> MessageStreamPartial = |client| {
+    let input: oneiron::memory::MessageStreamRequest = crate::codec::lower_record("vault.message_stream_partial", input)?;
+    let output = client.vault_message_stream_partial(&input)?;
+    crate::codec::lift_record("vault.message_stream_partial", &output)
+};
+"vault.messages.durability" => fn vault_messages_durability(&self, input: MessageDurabilityRequest) -> ScopedReadResultOptionalMessageDurability = |client| {
+    let input: oneiron::memory::MessageDurabilityRequest = crate::codec::lower_record("vault.messages.durability", input)?;
+    let output = client.vault_messages_durability(&input)?;
+    crate::codec::lift_record("vault.messages.durability", &output)
+};
 "vault.witness" => fn vault_witness(&self, turn: WitnessTurn) -> WitnessReceipt = |client| {
     let turn: oneiron::memory::WitnessTurn = turn.lower()?;
     let output = client.vault_witness(&turn)?;

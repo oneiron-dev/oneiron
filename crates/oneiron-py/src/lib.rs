@@ -721,6 +721,62 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_commit_message(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commit_message")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.commit_message", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_begin_message_stream(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.begin_message_stream")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.begin_message_stream", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_append_to_stream(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.append_to_stream")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.append_to_stream", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_flush_stream(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.flush_stream")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.flush_stream", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_finalize_stream(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.finalize_stream")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.finalize_stream", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_cancel_stream(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.cancel_stream")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.cancel_stream", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_message_stream_partial(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.message_stream_partial")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.message_stream_partial", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_messages_durability(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.messages.durability")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.messages.durability", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_witness(&self, py: Python<'_>, turn_json: &str) -> PyResult<String> {
         let turn_json = decode::<WitnessTurnInput>(turn_json, "witness turn")?
             .into_engine()

@@ -421,6 +421,72 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_commit_message(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commit_message", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_begin_message_stream(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.begin_message_stream", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_append_to_stream(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.append_to_stream", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_flush_stream(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.flush_stream", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_finalize_stream(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.finalize_stream", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cancel_stream(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cancel_stream", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_message_stream_partial(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.message_stream_partial", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_messages_durability(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.messages.durability", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_witness(&self, turn: NapiWitnessTurnInput) -> napi::Result<NapiWitnessReceipt> {
         let turn = turn.into_engine()?;
         let output = self.inner.vault_witness(&turn).map_err(facade_error)?;

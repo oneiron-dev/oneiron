@@ -1349,6 +1349,194 @@ async fn tasks_accept(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_commit_message(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.commit_message",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_begin_message_stream(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.begin_message_stream",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_append_to_stream(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.append_to_stream",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_flush_stream(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.flush_stream",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_finalize_stream(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.finalize_stream",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_cancel_stream(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.cancel_stream",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_message_stream_partial(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.message_stream_partial",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_messages_durability(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    {
+        let (worlds, facets) = auth.verified_slip().map_or(
+            (
+                oneiron::federation::ScopeAxis::All,
+                oneiron::federation::ScopeAxis::All,
+            ),
+            |proof| (proof.scope().worlds.clone(), proof.scope().facets.clone()),
+        );
+        auth.require_record_scope_carried(worlds, facets)?;
+    }
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.messages.durability",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_witness(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -18434,6 +18622,14 @@ pub(crate) async fn call_verb(
         "vault.fanout.ack" => vault_fanout_ack(server, call, input).await,
         "tasks.update" => tasks_update(server, call, input).await,
         "tasks.accept" => tasks_accept(server, call, input).await,
+        "vault.commit_message" => vault_commit_message(server, call, input).await,
+        "vault.begin_message_stream" => vault_begin_message_stream(server, call, input).await,
+        "vault.append_to_stream" => vault_append_to_stream(server, call, input).await,
+        "vault.flush_stream" => vault_flush_stream(server, call, input).await,
+        "vault.finalize_stream" => vault_finalize_stream(server, call, input).await,
+        "vault.cancel_stream" => vault_cancel_stream(server, call, input).await,
+        "vault.message_stream_partial" => vault_message_stream_partial(server, call, input).await,
+        "vault.messages.durability" => vault_messages_durability(server, call, input).await,
         "vault.witness" => vault_witness(server, call, input).await,
         "vault.claims.upsert" => vault_claims_upsert(server, call, input).await,
         "vault.recall" => vault_recall(server, call, input).await,

@@ -361,6 +361,26 @@ export class Oneiron {
       /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
       settlements: (input: Facade.RunSettlementsRequest): Facade.RunSettlementsView => this.#call(() => this.#client.vaultBudgetsSettlements(input) as Facade.RunSettlementsView),
     },
+    /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
+    commit_message: (input: Facade.CommitMessageRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultCommitMessage(input) as Facade.WitnessReceipt),
+    /** Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation. */
+    begin_message_stream: (input: Facade.BeginMessageStreamRequest): Facade.MessageStreamHandle => this.#call(() => this.#client.vaultBeginMessageStream(input) as Facade.MessageStreamHandle),
+    /** Appends one authored delta to this actor's generation-bound stream through its existing write gate. */
+    append_to_stream: (input: Facade.AppendToStreamRequest): null => this.#call(() => this.#client.vaultAppendToStream(input) as null),
+    /** Publishes the current partial at once when streamed visibility allows it; atomic mode stays private. */
+    flush_stream: (input: Facade.MessageStreamRequest): null => this.#call(() => this.#client.vaultFlushStream(input) as null),
+    /** Commits the stream as final and releases its handle, returning the immutable terminal receipt. */
+    finalize_stream: (input: Facade.MessageStreamRequest): Facade.MessageStreamReceipt => this.#call(() => this.#client.vaultFinalizeStream(input) as Facade.MessageStreamReceipt),
+    /** Keeps the stream's text as one incomplete MESSAGE with cancelled finality and the caller's explicit reason. */
+    cancel_stream: (input: Facade.CancelStreamRequest): Facade.MessageStreamReceipt => this.#call(() => this.#client.vaultCancelStream(input) as Facade.MessageStreamReceipt),
+    /** Reads only this actor's accepted in-memory partial using its generation-bound stream handle. */
+    message_stream_partial: (input: Facade.MessageStreamRequest): Facade.MessageStreamPartial => this.#call(() => this.#client.vaultMessageStreamPartial(input) as Facade.MessageStreamPartial),
+    messages: {
+      /** Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane. */
+      durability: (input: Facade.MessageDurabilityRequest): Facade.ScopedReadResult<Facade.MessageDurability | null> => this.#call(() => this.#client.vaultMessagesDurability(input) as Facade.ScopedReadResult<Facade.MessageDurability | null>),
+      /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
+      react: (input: Facade.MessageReactionRequest): Facade.MessageReactionReceipt => this.#call(() => this.#client.vaultMessagesReact(input) as Facade.MessageReactionReceipt),
+    },
     /**
    * Witnesses one conversational turn.
    *
@@ -1646,10 +1666,6 @@ export class Oneiron {
         /** Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once. */
         append: (input: Facade.DagRecordAppendInput): Facade.DagRecordAppendReceipt => this.#call(() => this.#client.vaultConversationsRecordsAppend(input) as Facade.DagRecordAppendReceipt),
       },
-    },
-    messages: {
-      /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
-      react: (input: Facade.MessageReactionRequest): Facade.MessageReactionReceipt => this.#call(() => this.#client.vaultMessagesReact(input) as Facade.MessageReactionReceipt),
     },
     voices: {
       packs: {

@@ -371,6 +371,30 @@ class Oneiron:
         @property
         def budgets(self) -> "Oneiron._VaultBudgetsVerbs":
             return Oneiron._VaultBudgetsVerbs(self._client)
+        def commit_message(self, spec):
+            """Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."""
+            return json.loads(_translate(lambda: self._client.vault_commit_message(json.dumps(spec))))
+        def begin_message_stream(self, spec):
+            """Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation."""
+            return json.loads(_translate(lambda: self._client.vault_begin_message_stream(json.dumps(spec))))
+        def append_to_stream(self, spec):
+            """Appends one authored delta to this actor's generation-bound stream through its existing write gate."""
+            return json.loads(_translate(lambda: self._client.vault_append_to_stream(json.dumps(spec))))
+        def flush_stream(self, spec):
+            """Publishes the current partial at once when streamed visibility allows it; atomic mode stays private."""
+            return json.loads(_translate(lambda: self._client.vault_flush_stream(json.dumps(spec))))
+        def finalize_stream(self, spec):
+            """Commits the stream as final and releases its handle, returning the immutable terminal receipt."""
+            return json.loads(_translate(lambda: self._client.vault_finalize_stream(json.dumps(spec))))
+        def cancel_stream(self, spec):
+            """Keeps the stream's text as one incomplete MESSAGE with cancelled finality and the caller's explicit reason."""
+            return json.loads(_translate(lambda: self._client.vault_cancel_stream(json.dumps(spec))))
+        def message_stream_partial(self, spec):
+            """Reads only this actor's accepted in-memory partial using its generation-bound stream handle."""
+            return json.loads(_translate(lambda: self._client.vault_message_stream_partial(json.dumps(spec))))
+        @property
+        def messages(self) -> "Oneiron._VaultMessagesVerbs":
+            return Oneiron._VaultMessagesVerbs(self._client)
         def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
             """Witnesses one conversational turn.
 
@@ -592,9 +616,6 @@ class Oneiron:
         @property
         def conversations(self) -> "Oneiron._VaultConversationsVerbs":
             return Oneiron._VaultConversationsVerbs(self._client)
-        @property
-        def messages(self) -> "Oneiron._VaultMessagesVerbs":
-            return Oneiron._VaultMessagesVerbs(self._client)
         @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs":
             return Oneiron._VaultVoicesVerbs(self._client)
@@ -871,6 +892,15 @@ class Oneiron:
         def resume(self, spec):
             """The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion."""
             return json.loads(_translate(lambda: self._client.vault_budgets_hold_resume(json.dumps(spec))))
+    class _VaultMessagesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def durability(self, spec):
+            """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
+            return json.loads(_translate(lambda: self._client.vault_messages_durability(json.dumps(spec))))
+        def react(self, spec):
+            """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
+            return json.loads(_translate(lambda: self._client.vault_messages_react(json.dumps(spec))))
     class _VaultClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3046,12 +3076,6 @@ class Oneiron:
         def append(self, spec):
             """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
             return json.loads(_translate(lambda: self._client.vault_conversations_records_append(json.dumps(spec))))
-    class _VaultMessagesVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def react(self, spec):
-            """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
-            return json.loads(_translate(lambda: self._client.vault_messages_react(json.dumps(spec))))
     class _VaultVoicesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

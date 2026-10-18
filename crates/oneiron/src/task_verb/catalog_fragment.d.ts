@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 816 code-mode rows (793 host rows, 23 run rows), 2766 declarations.
-// Replies: 729 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 824 code-mode rows (801 host rows, 23 run rows), 2791 declarations.
+// Replies: 737 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -357,9 +357,35 @@ declare namespace Sdk {
   type ReaderReportReceipt = { task: EntityId; ref: string; replay: boolean };
   type TaskAccept = { task_ref: EntityId; intent_key: string };
   type WitnessAuthor = "user" | "companion" | "system";
-  type QuoteSpan = { message: EntityId; start: number; end: number };
-  type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
   type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] };
+  type QuoteSpan = { message: EntityId; start: number; end: number };
+  type MessageBirth = { conversation_ref: string; turn_ref?: string | null; author: WitnessAuthor; message_type: string; metadata?: unknown | null; is_visible: boolean; order: number; occurred_at: number; assertions?: WitnessAssertions; quote?: QuoteSpan | null };
+  type MessageCommitOptions = { register?: string | null };
+  type CommitMessageRequest = { message_id: string; content: string; birth: MessageBirth; options?: MessageCommitOptions };
+  type StreamSyncVisibility = "originator_only" | "all_devices";
+  type StreamCadence = "per_token" | "per_sentence" | { per_window: { chars: number } } | "manual";
+  type MessageStreamMode = { kind: "atomic" } | { kind: "streamed"; syncVisibility: StreamSyncVisibility; cadence: StreamCadence };
+  type MessageStreamOptions = { mode?: MessageStreamMode | null; register?: string | null };
+  type BeginMessageStreamRequest = { message_id: string; birth?: MessageBirth | null; options?: MessageStreamOptions };
+  type MessageStreamHandle = { message: EntityId; generation: EntityId };
+  type AppendToStreamRequest = { handle: MessageStreamHandle; delta: string };
+  type MessageStreamRequest = { handle: MessageStreamHandle };
+  type StreamFinality = "final" | "partial" | "cancelled";
+  type StreamFinalityReason = "explicit_finalize" | "idle_timeout30s" | { idle_timeout: { timeout_ms: number } } | "process_crash_recovery" | "user_interrupted" | "agent_aborted" | "external_signal" | { custom: string };
+  type FinishReason = "stop" | "length" | "tool_calls" | "content_filtered" | "cancelled" | { other: { name: string } };
+  type MessageStreamReceipt = { message_id: EntityId; actor: EntityId; generation: EntityId; finality: StreamFinality; finality_reason: StreamFinalityReason; finish_reason?: FinishReason | null; bytes: number; recovered: boolean; ephemeral_text_lost: boolean; receipt_ref: string };
+  type MessageCancelKind = "user_interrupted" | "agent_aborted" | "external_signal";
+  type MessageCustomCancelKind = "custom";
+  type MessageCustomCancel = { kind: MessageCustomCancelKind; description: string };
+  type MessageCancelReason = MessageCancelKind | MessageCustomCancel;
+  type CancelStreamRequest = { handle: MessageStreamHandle; reason: MessageCancelReason };
+  type MessageWriteMode = "atomic" | { streamed: { visibility: StreamSyncVisibility; cadence: StreamCadence } };
+  type MessageStreamPartial = { message_id: EntityId; text: string; sequence: number; mode: MessageWriteMode };
+  type MessageDurabilityRequest = { message_id: string; after_generation?: string | null; limit?: number | null };
+  type MessageCompletion = { incomplete: boolean; generating: boolean; finish_reason?: FinishReason | null };
+  type MessageDocumentState = { frontier: number[]; content: string };
+  type MessageDurability = { message_id: string; completion: MessageCompletion; latest_receipt?: MessageStreamReceipt | null; receipts: MessageStreamReceipt[]; next_after_generation?: string | null; document_exists: boolean; document_history: MessageDocumentState[] };
+  type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
   type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
   type ScopedClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; scope: ClaimScope; sensitivity?: number | null; evidence_turn_refs?: string[]; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
@@ -2038,7 +2064,6 @@ declare namespace Sdk {
   type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
   type LlmOutputUsage = { total: number; text: number; reasoning: number };
   type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
-  type FinishReason = "stop" | "length" | "tool_calls" | "content_filtered" | "cancelled" | { other: { name: string } };
   type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason };
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
@@ -3177,6 +3202,8 @@ declare const vault: Sdk.VaultHost & {
     /** The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial. */
     update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
   };
+  /** Appends one authored delta to this actor's generation-bound stream through its existing write gate. */
+  append_to_stream(input: Sdk.AppendToStreamRequest): Promise<null | StoredResult>;
   artifacts: {
     anchors: {
       /** Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable. */
@@ -3328,6 +3355,8 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
   batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.CoreBatchWriteReceipt | StoredResult>;
+  /** Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation. */
+  begin_message_stream(input: Sdk.BeginMessageStreamRequest): Promise<Sdk.MessageStreamHandle | StoredResult>;
   booking: {
     /** Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking. */
     constraint_turn(input: Sdk.BookingConstraintTurnRequest): Promise<Sdk.BookingConstraintTurnResponse | StoredResult>;
@@ -3410,6 +3439,8 @@ declare const vault: Sdk.VaultHost & {
     /** Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction. */
     unsubscribe(input: Sdk.CampaignUnsubscribeRequest): Promise<Sdk.CampaignUnsubscribeReceipt | StoredResult>;
   };
+  /** Keeps the stream's text as one incomplete MESSAGE with cancelled finality and the caller's explicit reason. */
+  cancel_stream(input: Sdk.CancelStreamRequest): Promise<Sdk.MessageStreamReceipt | StoredResult>;
   channel_identities: {
     /** Bind a requested identity or an existing delegated account with transaction-verified custody. */
     bind(input: Sdk.ChannelIdentityBindRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
@@ -3606,6 +3637,8 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
   commit(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
+  /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
+  commit_message(input: Sdk.CommitMessageRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
   companions: {
     access_requests: {
       /** The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant. */
@@ -3878,6 +3911,10 @@ declare const vault: Sdk.VaultHost & {
       unlink(input: Sdk.CoreferencePairRequest): Promise<Sdk.CoreferenceUnlinkReceipt | StoredResult>;
     };
   };
+  /** Commits the stream as final and releases its handle, returning the immutable terminal receipt. */
+  finalize_stream(input: Sdk.MessageStreamRequest): Promise<Sdk.MessageStreamReceipt | StoredResult>;
+  /** Publishes the current partial at once when streamed visibility allows it; atomic mode stays private. */
+  flush_stream(input: Sdk.MessageStreamRequest): Promise<null | StoredResult>;
   /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
   forget(input: Sdk.ForgetRequest): Promise<Sdk.CommitReceipt[] | StoredResult>;
   gate: {
@@ -4015,7 +4052,11 @@ declare const vault: Sdk.VaultHost & {
     /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
     path_receipts(input: Sdk.MeshPathReceiptsRequest): Promise<Sdk.MeshPathReceipt[] | StoredResult>;
   };
+  /** Reads only this actor's accepted in-memory partial using its generation-bound stream handle. */
+  message_stream_partial(input: Sdk.MessageStreamRequest): Promise<Sdk.MessageStreamPartial | StoredResult>;
   messages: {
+    /** Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane. */
+    durability(input: Sdk.MessageDurabilityRequest): Promise<Sdk.ScopedReadResult<Sdk.MessageDurability | null> | StoredResult>;
     /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
     react(input: Sdk.MessageReactionRequest): Promise<Sdk.MessageReactionReceipt | StoredResult>;
   };

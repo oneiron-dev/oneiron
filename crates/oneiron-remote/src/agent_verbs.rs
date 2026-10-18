@@ -222,6 +222,28 @@ impl OneironClient {
                 "tasks.accept" => remote_agent_verb_output::<oneiron::task_verb::TaskCallReceipt>(
                     client, verb, &input,
                 ),
+                "vault.commit_message" => {
+                    remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.begin_message_stream" => remote_agent_verb_output::<
+                    oneiron::memory::MessageStreamHandle,
+                >(client, verb, &input),
+                "vault.append_to_stream" => remote_agent_verb_output::<()>(client, verb, &input),
+                "vault.flush_stream" => remote_agent_verb_output::<()>(client, verb, &input),
+                "vault.finalize_stream" => remote_agent_verb_output::<
+                    oneiron::memory::MessageStreamReceipt,
+                >(client, verb, &input),
+                "vault.cancel_stream" => remote_agent_verb_output::<
+                    oneiron::memory::MessageStreamReceipt,
+                >(client, verb, &input),
+                "vault.message_stream_partial" => remote_agent_verb_output::<
+                    oneiron::memory::MessageStreamPartial,
+                >(client, verb, &input),
+                "vault.messages.durability" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::memory::MessageDurability>>,
+                >(client, verb, &input),
                 "vault.witness" => remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
                     client, verb, &input,
                 ),
@@ -3194,6 +3216,105 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("tasks.accept", value)
+    }
+    pub fn vault_commit_message(
+        &self,
+        input: &oneiron::memory::CommitMessageRequest,
+    ) -> Result<oneiron::memory::WitnessReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commit_message", value)
+    }
+    pub fn vault_begin_message_stream(
+        &self,
+        input: &oneiron::memory::BeginMessageStreamRequest,
+    ) -> Result<oneiron::memory::MessageStreamHandle, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.begin_message_stream", value)
+    }
+    pub fn vault_append_to_stream(
+        &self,
+        input: &oneiron::memory::AppendToStreamRequest,
+    ) -> Result<(), MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.append_to_stream", value)
+    }
+    pub fn vault_flush_stream(
+        &self,
+        input: &oneiron::memory::MessageStreamRequest,
+    ) -> Result<(), MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.flush_stream", value)
+    }
+    pub fn vault_finalize_stream(
+        &self,
+        input: &oneiron::memory::MessageStreamRequest,
+    ) -> Result<oneiron::memory::MessageStreamReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.finalize_stream", value)
+    }
+    pub fn vault_cancel_stream(
+        &self,
+        input: &oneiron::memory::CancelStreamRequest,
+    ) -> Result<oneiron::memory::MessageStreamReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cancel_stream", value)
+    }
+    pub fn vault_message_stream_partial(
+        &self,
+        input: &oneiron::memory::MessageStreamRequest,
+    ) -> Result<oneiron::memory::MessageStreamPartial, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.message_stream_partial", value)
+    }
+    pub fn vault_messages_durability(
+        &self,
+        input: &oneiron::memory::MessageDurabilityRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::memory::MessageDurability>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.messages.durability", value)
     }
     /// Witnesses one conversational turn.
     ///
