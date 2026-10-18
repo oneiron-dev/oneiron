@@ -23,7 +23,9 @@ fn invalid(reason: &'static str) -> Error {
 
 /// The caller's host, lent to a callable skill, with the skill's streamed
 /// result kept in its outcome: its answer is JSON the call checks against
-/// its contract, never a body for the caller's store.
+/// its contract, never a body for the caller's store. A callable that calls
+/// another reaches the caller's host, which runs the inner one nested under
+/// the callable's own step token.
 struct SkillHost<'h>(&'h mut dyn JsCodeModeHost);
 
 impl JsCodeModeHost for SkillHost<'_> {
@@ -33,6 +35,24 @@ impl JsCodeModeHost for SkillHost<'_> {
 
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
         self.0.dispatch_self(call)
+    }
+
+    fn dispatch_self_nested(
+        &mut self,
+        call: SelfCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+    ) -> Result<SelfDispatchResponse> {
+        self.0.dispatch_self_nested(call, runtime)
+    }
+
+    fn dispatch_self_nested_cancellable(
+        &mut self,
+        call: SelfCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+        cancel: &StepCancellation,
+    ) -> Result<SelfDispatchResponse> {
+        self.0
+            .dispatch_self_nested_cancellable(call, runtime, cancel)
     }
 }
 

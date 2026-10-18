@@ -591,6 +591,7 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "skills_call_lease_lost",
     "skills_call_no_runtime",
     "skills_call_no_executor",
+    "skills_call_depth_exceeded",
     "team_unbound",
     "team_off_record",
     "team_start_invalid_agent",

@@ -83,7 +83,15 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The run's executor, `provider/name@revision`, as the callable skills
     /// its program calls are credited to (OF-353).
     skill_executor: Option<String>,
+    /// Callable skills this host is running now, each nested in the one
+    /// before: a callable that calls another runs its step inside its own.
+    callable_depth: u32,
 }
+
+/// The deepest callable skills nest. Each runs its step inside its caller's,
+/// on the same thread's stack, so a call past it fails
+/// `skills_call_depth_exceeded` before its step runs.
+const CALLABLE_NEST_DEPTH: u32 = 8;
 
 /// The name a reader child reads its parent's source by.
 const READER_SOURCE_NAME: &str = "src";
@@ -139,6 +147,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             left_a_gap: false,
             declined: None,
             skill_executor: None,
+            callable_depth: 0,
         }
     }
 
@@ -226,7 +235,8 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// The skill runs under a child of `parent`, the caller's step token: a
     /// stop of the caller stops it, and its owner's suspension stops it alone
     /// (FIX 600). A cancelled skill answers `code_step_cancelled`, and the
-    /// caller's step goes on.
+    /// caller's step goes on. A callable's own call nests inside it, at most
+    /// [`CALLABLE_NEST_DEPTH`] deep.
     fn call_skill(
         &mut self,
         seq: u64,
@@ -242,6 +252,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 error,
             })
         };
+        if self.callable_depth >= CALLABLE_NEST_DEPTH {
+            return Ok(failed("skills_call_depth_exceeded".to_owned()));
+        }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq,
@@ -274,6 +287,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             return Ok(failed("skills_call_no_executor".to_owned()));
         };
         let (run_id, determinism) = (self.run_id, self.determinism);
+        self.callable_depth += 1;
         let ran = crate::skill::execute_callable_skill_cancellable(
             &lease.vault,
             &lease.leased,
@@ -288,6 +302,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             started_at_ms / 1000,
             parent,
         );
+        self.callable_depth -= 1;
         if self.hard_failure.is_some() || self.left_a_gap {
             return Ok(failed("host_bridge_halted".to_owned()));
         }

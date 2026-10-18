@@ -104,11 +104,18 @@ pub enum EngineLimit {
     /// Stored cells one workbook import writes into a live office body,
     /// every sheet together. Past it the workbook is imported whole.
     ImportXlsxLiveCells,
+    /// UTF-8 bytes of the task a contribution check's judge reads for one
+    /// fork: the replayed step's non-system message text. Past it the row
+    /// asks whether everything is okay and the judge reads the task whole.
+    ContributionJudgeTaskBytes,
+    /// UTF-8 bytes of one contribution fork's answer its judge reads. Past
+    /// it the row asks and the judge reads the answer whole.
+    ContributionJudgeAnswerBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 25] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -132,6 +139,8 @@ impl EngineLimit {
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
         Self::ImportXlsxLiveCells,
+        Self::ContributionJudgeTaskBytes,
+        Self::ContributionJudgeAnswerBytes,
     ];
 
     /// The config key that sets the row.
@@ -160,6 +169,8 @@ impl EngineLimit {
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
+            Self::ContributionJudgeTaskBytes => "limits.contribution_judge_task_bytes",
+            Self::ContributionJudgeAnswerBytes => "limits.contribution_judge_answer_bytes",
         }
     }
 
@@ -190,6 +201,8 @@ impl EngineLimit {
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
             Self::ImportXlsxLiveCells => 200_000,
+            Self::ContributionJudgeTaskBytes => 1 << 20,
+            Self::ContributionJudgeAnswerBytes => 256 << 10,
         }
     }
 }
