@@ -85,6 +85,24 @@ pub fn home_search_candidates(
     Ok(results)
 }
 
+/// The forwarded `residence.search` a device signs and its home verifies
+/// (FIX 2907): the query, the limit as a big-endian `u64` and the device
+/// selector's wire bytes, in that order. Both ends build it here, from the
+/// values the request carries, so the two never sign different bytes.
+pub fn with_forwarded_search<R>(
+    query: &str,
+    limit: usize,
+    selector_wire: &[u8],
+    with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
+) -> R {
+    let limit = (limit as u64).to_be_bytes();
+    let fields: [&[u8]; 3] = [query.as_bytes(), &limit, selector_wire];
+    with(&crate::authority::ForwardedRequest {
+        method: "residence.search",
+        fields: &fields,
+    })
+}
+
 /// The canonical window that holds one entity: a CLAIM that names a world
 /// lives in that world's month partition, every other row in the base month.
 /// A malformed carrier stays in the base partition, as window admission keeps it.

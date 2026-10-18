@@ -48,13 +48,36 @@ impl HomeSearch {
         query: &str,
         limit: usize,
     ) -> Result<ResidenceSearch, TransportError> {
+        self.ask(query, limit, None).await
+    }
+
+    /// [`Self::search`] for a caller narrower than this device's owner
+    /// (FIX 2907): the home judges `caller`'s own holder proof, which this
+    /// install signs over with the request, and answers within the caller's
+    /// reach and this device's selector. No home, or a refusal, is no home
+    /// hits, never this device's own unscoped scan.
+    pub async fn search_for(
+        &self,
+        query: &str,
+        limit: usize,
+        caller: &crate::authority::ForwardedCallerProof,
+    ) -> Result<ResidenceSearch, TransportError> {
+        self.ask(query, limit, Some(caller)).await
+    }
+
+    async fn ask(
+        &self,
+        query: &str,
+        limit: usize,
+        caller: Option<&crate::authority::ForwardedCallerProof>,
+    ) -> Result<ResidenceSearch, TransportError> {
         let limit = match self.vault.residence_operation_budgets() {
             Ok(Some(budgets)) => limit.min(budgets.search_limit),
             _ => limit,
         };
         let mut config = self.config.clone();
         config.residence_mode = *self.mode.borrow();
-        crate::sync::client::search_resident(&self.vault, &config, query, limit).await
+        crate::sync::client::search_resident(&self.vault, &config, query, limit, caller).await
     }
 }
 
