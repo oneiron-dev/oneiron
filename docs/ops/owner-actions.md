@@ -1427,7 +1427,10 @@ A running server holds the frame of each card `vault.lenses.default`, `vault.wea
   A model round-trip action goes back to the agent that rendered the card, as that agent's next
   turn: it answers `202 {"queued", "callbackId"}`, and the agent decides what to do with it. The
   same credential, card and key answer the same callback. A card a person's view or a system job
-  rendered answers `409`.
+  rendered answers `409`. A tool action whose verb acts on a live run acts for the run that
+  rendered the card, through your credential's attachment to it, and names no `liveRun`: attach
+  that credential to the run first. A card no run rendered, or a run your credential is not
+  attached to, answers `live_run_unavailable`.
 - `DELETE /v1/core/lens-frames/{card_id}` closes the card; an unknown card answers `NOT_FOUND`.
 
 ## Widen proposals
