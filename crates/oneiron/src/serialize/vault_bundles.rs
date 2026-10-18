@@ -1,19 +1,18 @@
 //! Build portable facets after every native body has passed credential nulling.
 use super::{ExportBody, export_source_tree};
 use crate::agent_def::KnowledgeFormat;
-use crate::batch::export::{
-    AgentBundleOmission, ExportAgentBundle, ExportEntity, WholeVaultDocument,
-};
+use crate::batch::export::{AgentBundleOmission, ExportAgentBundle, ExportEntity};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use std::collections::BTreeMap;
 
 /// Each AGENT_DEF's portable facets, with its selected knowledge in
 /// `knowledge`: an export writes the current form, and an import re-derives
-/// an archive in the form its engine wrote.
+/// an archive in the form its engine wrote. The import recomputes each
+/// agent's facets alone instead (FIX 3678, [`agent_bundle`]).
+#[cfg(test)]
 pub(crate) fn populate_agent_bundles(
-    document: &mut WholeVaultDocument,
+    document: &mut crate::batch::export::WholeVaultDocument,
     bindings: &BTreeMap<EntityId, String>,
     knowledge: KnowledgeFormat,
 ) -> Result<()> {
@@ -22,7 +21,7 @@ pub(crate) fn populate_agent_bundles(
         .evidence_ledger
         .entities
         .iter()
-        .filter(|row| row.entity_type == ENTITY_TYPE_AGENT_DEF)
+        .filter(|row| row.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF)
         .collect();
     document.agent_packs = agent_bundles(&agents, &skills, &document.claims, bindings, knowledge)?;
     Ok(())
@@ -52,50 +51,65 @@ pub(crate) fn agent_bundles(
     bindings: &BTreeMap<EntityId, String>,
     knowledge: KnowledgeFormat,
 ) -> Result<Vec<ExportAgentBundle>> {
-    let mut bundles = Vec::new();
-    for row in agents {
-        let id = EntityId::from_hex(&row.id)?;
-        let mut bundle = ExportAgentBundle {
-            entity_id: row.id.clone(),
-            fork_hash: bindings.get(&id).cloned(),
-            source_tree: None,
-            omission: None,
-        };
-        let definition = row
-            .body
-            .to_bytes()
-            .ok()
-            .and_then(|b| crate::agent_def::decode_agent_definition(&b).ok());
-        if let Some(definition) = definition {
-            if let Some(refs) = crate::agent_def::resolve_agent_skill_refs(&definition, skills) {
-                let selected = crate::agent_def::select_agent_knowledge(&id, claims);
-                let files = crate::agent_def::agent_pack_files_in(
-                    knowledge,
-                    &id,
-                    &definition,
-                    &refs,
-                    &selected,
-                )?;
-                let tree = export_source_tree(&files)?;
-                bundle.omission = if tree.content_hash.is_none() {
-                    Some(AgentBundleOmission::CredentialRedaction)
-                } else if bundle.fork_hash.is_none() {
-                    Some(AgentBundleOmission::ForkBindingUnavailable)
-                } else {
-                    None
-                };
-                bundle.source_tree = Some(tree);
+    agents
+        .iter()
+        .map(|row| {
+            let fork_hash = bindings.get(&EntityId::from_hex(&row.id)?).cloned();
+            agent_bundle(row, skills, claims, fork_hash, knowledge)
+        })
+        .collect()
+}
+
+/// One AGENT_DEF row's portable facets: `skills` holds at least the records
+/// of the skills its definition names, `claims` at least the claims about it,
+/// and `fork_hash` is its binding. An import (FIX 3678) passes only those.
+pub(crate) fn agent_bundle(
+    row: &ExportEntity,
+    skills: &[(EntityId, crate::skill::SkillRecord)],
+    claims: &[ExportEntity],
+    fork_hash: Option<String>,
+    knowledge: KnowledgeFormat,
+) -> Result<ExportAgentBundle> {
+    let id = EntityId::from_hex(&row.id)?;
+    let mut bundle = ExportAgentBundle {
+        entity_id: row.id.clone(),
+        fork_hash,
+        source_tree: None,
+        omission: None,
+    };
+    let definition = row
+        .body
+        .to_bytes()
+        .ok()
+        .and_then(|b| crate::agent_def::decode_agent_definition(&b).ok());
+    if let Some(definition) = definition {
+        if let Some(refs) = crate::agent_def::resolve_agent_skill_refs(&definition, skills) {
+            let selected = crate::agent_def::select_agent_knowledge(&id, claims);
+            let files = crate::agent_def::agent_pack_files_in(
+                knowledge,
+                &id,
+                &definition,
+                &refs,
+                &selected,
+            )?;
+            let tree = export_source_tree(&files)?;
+            bundle.omission = if tree.content_hash.is_none() {
+                Some(AgentBundleOmission::CredentialRedaction)
+            } else if bundle.fork_hash.is_none() {
+                Some(AgentBundleOmission::ForkBindingUnavailable)
             } else {
-                bundle.omission = Some(AgentBundleOmission::UnresolvedSkill);
-            }
+                None
+            };
+            bundle.source_tree = Some(tree);
         } else {
-            // Redacted definition fields cannot be reinterpreted as an empty agent.
-            bundle.omission = Some(AgentBundleOmission::CredentialRedaction);
+            bundle.omission = Some(AgentBundleOmission::UnresolvedSkill);
         }
-        if matches!(row.body, ExportBody::Nulled) {
-            bundle.fork_hash = None;
-        }
-        bundles.push(bundle);
+    } else {
+        // Redacted definition fields cannot be reinterpreted as an empty agent.
+        bundle.omission = Some(AgentBundleOmission::CredentialRedaction);
     }
-    Ok(bundles)
+    if matches!(row.body, ExportBody::Nulled) {
+        bundle.fork_hash = None;
+    }
+    Ok(bundle)
 }

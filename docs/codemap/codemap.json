@@ -4293,10 +4293,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/export/archive_index.rs",
+     "purpose": "FIX 3678 (rule 5): the whole-vault import's disk-backed row index",
+     "surface": {
+      "crate-vis": 56
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/export/archive_read.rs",
      "purpose": "Reads the whole-vault archive (OF-222) member by member from a seekable source (FIX 2766, rule 5): only the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -4390,7 +4400,7 @@
      "path": "src/batch/export/bundle_validation.rs",
      "purpose": "Validate source identities, facet/body agreement and explicit archive-only omissions",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 13
      }
     },
     {
@@ -4469,7 +4479,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/document_validation.rs",
@@ -4491,7 +4501,7 @@
      "path": "src/batch/export/embedding_setup.rs",
      "purpose": "The vault's embedding setup in the logical whole-vault exports (OF-370): each declared space's descriptor…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 4,
       "struct": 5
      }
@@ -4577,7 +4587,7 @@
      "path": "src/batch/export/expression_import.rs",
      "purpose": "Dependency scheduling for the owning expression-preference archive adapter",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 5
      }
     },
     {
@@ -4642,13 +4652,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/provenance_import.rs",
      "purpose": "Ordered archive restore through MODEL and edge-provenance owning doors",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 10
      }
     },
     {
@@ -11887,7 +11897,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 11,
       "struct": 2
      }
@@ -40743,7 +40753,7 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 5
      }
     },
@@ -40881,7 +40891,7 @@
      "path": "src/serialize/vault_bundles.rs",
      "purpose": "Build portable facets after every native body has passed credential nulling",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -43906,6 +43916,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/archive_scratch.rs",
+     "purpose": "FIX 3678 (rule 5): the scratch environment a whole-vault import keeps its row index in",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -44188,7 +44208,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 1,
       "re-export": 13
      }
@@ -44555,7 +44575,7 @@
      "path": "src/store/root_directory.rs",
      "purpose": "Descriptor-bound directory identity shared by store opens and writer leases",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 5,
       "struct": 1
      }
@@ -53667,7 +53687,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 127,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54885,7 +54905,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55111,7 +55131,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3355,
+   "source_files": 3357,
    "test_files": 902
   },
   "oneiron-android": {
