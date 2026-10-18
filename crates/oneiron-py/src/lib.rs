@@ -2034,6 +2034,58 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_export(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.export")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.export", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_authority_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.authority.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.authority.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_authority_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.authority.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.authority.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_publications(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.publications")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.publications", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_checkout_bind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.checkout.bind")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.checkout.bind", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_export(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.artifacts.export")?;
         let output = py
@@ -2761,6 +2813,37 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.booking.page_token")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.booking.page_token", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_ics_import(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.ics.import")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.ics.import", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_occurrences(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.occurrences")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.occurrences", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_instances_move(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.instances.move")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.calendar.instances.move", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

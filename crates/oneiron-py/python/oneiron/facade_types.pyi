@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 399 facade rows, 1562 declarations.
-Inputs: 356 of 399 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 354 of 399 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 408 facade rows, 1584 declarations.
+Inputs: 365 of 408 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 363 of 408 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -4568,6 +4568,72 @@ class CodeRepoDiffView(TypedDict):
     files: list[CodeFileDiffView]
     not_text: list[str]
     rendered: str
+class CodeExportRequest(TypedDict):
+    repo: str
+    checkout: str
+    epoch: int
+    revision: EntityId
+    ref_name: str
+    expected_old_oid: NotRequired[str | None]
+    endpoint: str
+OriginPublicationState = Literal["prepared", "published", "failed", "conflicted"]
+class OriginPublicationView(TypedDict):
+    receipt: EntityId
+    repo_id: EntityId
+    ref_name: str
+    git_commit: str
+    provenance_receipt: EntityId
+    publication_claim: NotRequired[EntityId | None]
+    actor: NotRequired[EntityId | None]
+    status: OriginPublicationState
+    failure: NotRequired[str | None]
+    created_at: int
+    finished_at: NotRequired[int | None]
+class CodeExportResult(TypedDict):
+    revision: EntityId
+    git_commit: str
+    remote_url: str
+    receipt: EntityId
+    publication: OriginPublicationView
+    ref_was_already_applied: bool
+    wire_replayed: bool
+    wire_rejected: bool
+class OriginRepoRequest(TypedDict):
+    repo: str
+OriginResidence = Literal["local-vault", "cloud-vault"]
+class OriginAuthority(TypedDict):
+    epoch: int
+    residence: OriginResidence
+    writer: str
+    mirror: bool
+class OriginAuthorityView(TypedDict):
+    repo: str
+    host: NotRequired[str | None]
+    authority: NotRequired[OriginAuthority | None]
+class OriginAuthoritySetRequest(TypedDict):
+    repo: str
+    expected_epoch: NotRequired[int | None]
+    residence: OriginResidence
+    writer: NotRequired[str | None]
+    mirror: NotRequired[bool]
+class OriginPublicationsRequest(TypedDict):
+    repo: str
+    ref_name: str
+    git_commit: str
+class OriginPublicationsView(TypedDict):
+    repo: str
+    publications: list[OriginPublicationView]
+class CheckoutDoorBindRequest(TypedDict):
+    repo: str
+    checkout: str
+    epoch: int
+    endpoint: str
+class CheckoutDoorBinding(TypedDict):
+    repo: str
+    checkout: str
+    epoch: int
+    checkout_path: str
+    remote_url: str
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
@@ -6224,6 +6290,61 @@ class BookingPageTokenRequest(TypedDict):
     page_ref: str
 class BookingPageTokenResponse(TypedDict):
     page_token: str
+class CalendarRangeDto(TypedDict):
+    start: int
+    end: int
+class CalendarEventCreateRequestNative(TypedDict):
+    origin: Literal["native"]
+    summary: str
+    occurredAt: CalendarRangeDto
+class CalendarEventCreateRequestDreamer(TypedDict):
+    origin: Literal["dreamer"]
+    summary: str
+    occurredAt: CalendarRangeDto
+    evidenceTurnIds: list[str]
+    sourceFrontiers: list[str]
+CalendarEventCreateRequest = CalendarEventCreateRequestNative | CalendarEventCreateRequestDreamer
+class CalendarEventCreated(TypedDict):
+    event_ref: str
+    origin: str
+    recorded_at: int
+class CalendarIcsImportRequest(TypedDict):
+    system: str
+    source_blob_ref: str
+    source_version: int
+class CalendarImportClaimReceipt(TypedDict):
+    claim_ref: str
+    predicate: str
+    approval: str
+    lifecycle: str
+class CalendarImportedEvent(TypedDict):
+    event_ref: str
+    uid: str
+    original_start_utc: NotRequired[int | None]
+    claims: list[CalendarImportClaimReceipt]
+class CalendarIcsImportReceipt(TypedDict):
+    source_blob_ref: str
+    source_version: int
+    events: list[CalendarImportedEvent]
+    screen_verdict: str
+class CalendarOccurrencesRequest(TypedDict):
+    master_ref: str
+    range: CalendarRangeDto
+class CalendarOccurrenceView(TypedDict):
+    event_ref: str
+    master_ref: str
+    uid: str
+    original_start_utc: int
+    start_utc: int
+    end_utc: int
+class CalendarInstanceMoveRequest(TypedDict):
+    system: str
+    source_blob_ref: str
+    source_version: int
+    uid: str
+    original_start_utc: int
+    start_utc: int
+    end_utc: int
 class CalendarReadRequest(TypedDict):
     event_ref: str
 class CalendarEventView(TypedDict):
@@ -6236,9 +6357,6 @@ class CalendarEventView(TypedDict):
     blocks_time: bool
 class CalendarSel(TypedDict):
     system: NotRequired[str | None]
-class CalendarRangeDto(TypedDict):
-    start: int
-    end: int
 class CalendarSearchRequest(TypedDict):
     calendars: list[CalendarSel]
     range: NotRequired[CalendarRangeDto | None]

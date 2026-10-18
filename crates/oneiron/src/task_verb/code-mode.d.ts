@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 457 code-mode rows (436 host rows, 21 run rows), 1653 declarations.
-// Replies: 401 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 466 code-mode rows (445 host rows, 21 run rows), 1675 declarations.
+// Replies: 410 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -942,6 +942,19 @@ declare namespace Sdk {
   type CodeFileChange = "added" | "removed" | "modified" | "renamed";
   type CodeFileDiffView = { path: string; change: CodeFileChange; renamed_from?: string | null; before?: CodeStateView | null; after?: CodeStateView | null; changes: CodeChangeView[] };
   type CodeRepoDiffView = { files: CodeFileDiffView[]; not_text: string[]; rendered: string };
+  type CodeExportRequest = { repo: string; checkout: string; epoch: number; revision: EntityId; ref_name: string; expected_old_oid?: string | null; endpoint: string };
+  type OriginPublicationState = "prepared" | "published" | "failed" | "conflicted";
+  type OriginPublicationView = { receipt: EntityId; repo_id: EntityId; ref_name: string; git_commit: string; provenance_receipt: EntityId; publication_claim?: EntityId | null; actor?: EntityId | null; status: OriginPublicationState; failure?: string | null; created_at: number; finished_at?: number | null };
+  type CodeExportResult = { revision: EntityId; git_commit: string; remote_url: string; receipt: EntityId; publication: OriginPublicationView; ref_was_already_applied: boolean; wire_replayed: boolean; wire_rejected: boolean };
+  type OriginRepoRequest = { repo: string };
+  type OriginResidence = "local-vault" | "cloud-vault";
+  type OriginAuthority = { epoch: number; residence: OriginResidence; writer: string; mirror: boolean };
+  type OriginAuthorityView = { repo: string; host?: string | null; authority?: OriginAuthority | null };
+  type OriginAuthoritySetRequest = { repo: string; expected_epoch?: number | null; residence: OriginResidence; writer?: string | null; mirror?: boolean };
+  type OriginPublicationsRequest = { repo: string; ref_name: string; git_commit: string };
+  type OriginPublicationsView = { repo: string; publications: OriginPublicationView[] };
+  type CheckoutDoorBindRequest = { repo: string; checkout: string; epoch: number; endpoint: string };
+  type CheckoutDoorBinding = { repo: string; checkout: string; epoch: number; checkout_path: string; remote_url: string };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type AgentSkillInput = { skill_id: string; min_version?: string | null };
@@ -1304,10 +1317,19 @@ declare namespace Sdk {
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
   type BookingPageTokenRequest = { page_ref: string };
   type BookingPageTokenResponse = { page_token: string };
+  type CalendarRangeDto = { start: number; end: number };
+  type CalendarEventCreateRequest = { origin: "native"; summary: string; occurredAt: CalendarRangeDto } | { origin: "dreamer"; summary: string; occurredAt: CalendarRangeDto; evidenceTurnIds: string[]; sourceFrontiers: string[] };
+  type CalendarEventCreated = { event_ref: string; origin: string; recorded_at: number };
+  type CalendarIcsImportRequest = { system: string; source_blob_ref: string; source_version: number };
+  type CalendarImportClaimReceipt = { claim_ref: string; predicate: string; approval: string; lifecycle: string };
+  type CalendarImportedEvent = { event_ref: string; uid: string; original_start_utc?: number | null; claims: CalendarImportClaimReceipt[] };
+  type CalendarIcsImportReceipt = { source_blob_ref: string; source_version: number; events: CalendarImportedEvent[]; screen_verdict: string };
+  type CalendarOccurrencesRequest = { master_ref: string; range: CalendarRangeDto };
+  type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
+  type CalendarInstanceMoveRequest = { system: string; source_blob_ref: string; source_version: number; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
   type CalendarReadRequest = { event_ref: string };
   type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean };
   type CalendarSel = { system?: string | null };
-  type CalendarRangeDto = { start: number; end: number };
   type CalendarSearchRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number };
   type CalendarFreebusyRequest = { calendars: CalendarSel[]; range: CalendarRangeDto };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
@@ -2066,8 +2088,20 @@ declare const vault: Sdk.VaultHost & {
     settlements(input: Sdk.RunSettlementsRequest): Promise<Sdk.RunSettlementsView | StoredResult>;
   };
   calendar: {
+    /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
+    create(input: Sdk.CalendarEventCreateRequest): Promise<Sdk.CalendarEventCreated | StoredResult>;
     /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
     freebusy(input: Sdk.CalendarFreebusyRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarFreebusyDto> | StoredResult>;
+    ics: {
+      /** The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent. */
+      import(input: Sdk.CalendarIcsImportRequest): Promise<Sdk.CalendarIcsImportReceipt | StoredResult>;
+    };
+    instances: {
+      /** The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances. */
+      move(input: Sdk.CalendarInstanceMoveRequest): Promise<Sdk.CalendarIcsImportReceipt | StoredResult>;
+    };
+    /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
+    occurrences(input: Sdk.CalendarOccurrencesRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrenceView[]> | StoredResult>;
     /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
@@ -2142,8 +2176,24 @@ declare const vault: Sdk.VaultHost & {
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
     blame(input: Sdk.CodeStateRequest): Promise<Sdk.CodeBlameView | null | StoredResult>;
+    checkout: {
+      /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
+      bind(input: Sdk.CheckoutDoorBindRequest): Promise<Sdk.CheckoutDoorBinding | StoredResult>;
+    };
     /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
     diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;
+    /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
+    export(input: Sdk.CodeExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
+    origin: {
+      authority: {
+        /** Read one served origin authority and this host identity under the owner credential. */
+        get(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginAuthorityView | StoredResult>;
+        /** Cut over one existing served origin under the owner proof and expected authority epoch. */
+        set(input: Sdk.OriginAuthoritySetRequest): Promise<Sdk.OriginAuthorityView | StoredResult>;
+      };
+      /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
+      publications(input: Sdk.OriginPublicationsRequest): Promise<Sdk.OriginPublicationsView | StoredResult>;
+    };
     /** One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied. */
     proposal_view(input: Sdk.CodeProposalViewRequest): Promise<Sdk.CodeProposalView | null | StoredResult>;
     /** Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it. */

@@ -51,6 +51,7 @@ use crate::server::SyncServer;
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
+pub(crate) use super::calendar_doors::*;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
@@ -99,6 +100,8 @@ pub(crate) use super::craft_candidate_doors::*;
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
+// The owner's origin and checkout doors (DOOR-139), likewise.
+pub(crate) use super::origin_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
@@ -1009,7 +1012,9 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.packs.put"
+        "vault.calendar.ics.import"
+        | "vault.calendar.instances.move"
+        | "vault.packs.put"
         | "vault.packs.remove"
         | "vault.skill_hubs.put"
         | "vault.skill_hubs.get"
@@ -1074,7 +1079,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.hold.resume"
         | "vault.budgets.local"
         | "vault.budgets.settlements"
-        | "vault.research.evaluate_split" => owner_proof(auth, server, verb).map(drop),
+        | "vault.research.evaluate_split"
+        | "vault.code.export"
+        | "vault.code.origin.authority.get"
+        | "vault.code.origin.authority.set"
+        | "vault.code.origin.publications"
+        | "vault.code.checkout.bind" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

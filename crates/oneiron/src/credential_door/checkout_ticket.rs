@@ -2,6 +2,7 @@
 
 use super::door_types::{CredentialDoorError, DoorResult, log_unreachable, repo_record};
 use super::{CredentialDoorService, DoorCredential};
+use crate::Vault;
 use crate::checkout::lease::{CheckoutId, CheckoutLeaseAct, CheckoutLeaseState, load_act_in_txn};
 use crate::codebase::RepoRef;
 
@@ -31,38 +32,53 @@ fn parse_ticket(text: &str) -> DoorResult<(CheckoutId, u64)> {
     Ok((id, epoch))
 }
 
-impl CredentialDoorService {
-    fn checkout_act(&self, txn: &heed::RoTxn<'_>, ticket: &str) -> DoorResult<CheckoutLeaseAct> {
-        let (id, epoch) = parse_ticket(ticket)?;
-        let lease = load_act_in_txn(self.vault(), txn, id)
-            .map_err(log_unreachable)?
-            .ok_or(CredentialDoorError::AuthorityRejected)?;
-        let now = self
-            .vault()
-            .instant_in_txn(txn)
-            .map_err(log_unreachable)?
-            .secs();
-        if lease.epoch != epoch
-            || lease.state != CheckoutLeaseState::Active
-            || lease.lease_expires_at.is_none_or(|expiry| now >= expiry)
-            || now < lease.claimed_at
-        {
-            return Err(CredentialDoorError::AuthorityRejected);
-        }
-        Ok(lease)
+/// The stored lease a ticket names, live at the vault's own time.
+fn checkout_act(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ticket: &str,
+) -> DoorResult<CheckoutLeaseAct> {
+    let (id, epoch) = parse_ticket(ticket)?;
+    let lease = load_act_in_txn(vault, txn, id)
+        .map_err(log_unreachable)?
+        .ok_or(CredentialDoorError::AuthorityRejected)?;
+    let now = vault.instant_in_txn(txn).map_err(log_unreachable)?.secs();
+    if lease.epoch != epoch
+        || lease.state != CheckoutLeaseState::Active
+        || lease.lease_expires_at.is_none_or(|expiry| now >= expiry)
+        || now < lease.claimed_at
+    {
+        return Err(CredentialDoorError::AuthorityRejected);
     }
+    Ok(lease)
+}
 
+/// The redemption gate over a borrowed vault: the ticket's stored lease, live
+/// at the vault's own time, held by `principal` on exactly `repo`. A door
+/// that holds `&Vault` (a Memory door) takes the same gate
+/// [`CredentialDoorService::checkout_credential`] does.
+pub(crate) fn require_checkout_lease(
+    vault: &Vault,
+    ticket: &str,
+    principal: &str,
+    repo: &RepoRef,
+) -> DoorResult<CheckoutLeaseAct> {
+    let txn = vault.store.env.read_txn().map_err(log_unreachable)?;
+    let lease = checkout_act(vault, &txn, ticket)?;
+    if lease.holder_ref != principal || repo_record(&lease.repo_ref) != repo_record(repo) {
+        return Err(CredentialDoorError::AuthorityRejected);
+    }
+    Ok(lease)
+}
+
+impl CredentialDoorService {
     pub(crate) fn checkout_credential(
         &self,
         ticket: &str,
         principal: &str,
         repo: &RepoRef,
     ) -> DoorResult<DoorCredential> {
-        let txn = self.vault().store.env.read_txn().map_err(log_unreachable)?;
-        let lease = self.checkout_act(&txn, ticket)?;
-        if lease.holder_ref != principal || repo_record(&lease.repo_ref) != repo_record(repo) {
-            return Err(CredentialDoorError::AuthorityRejected);
-        }
+        let lease = require_checkout_lease(self.vault(), ticket, principal, repo)?;
         Ok(Self::checkout_view(ticket, &lease))
     }
 
@@ -76,7 +92,7 @@ impl CredentialDoorService {
         credential: &DoorCredential,
         ticket: &str,
     ) -> DoorResult<()> {
-        let lease = self.checkout_act(txn, ticket)?;
+        let lease = checkout_act(self.vault(), txn, ticket)?;
         if *credential != Self::checkout_view(ticket, &lease) {
             return Err(CredentialDoorError::AuthorityRejected);
         }

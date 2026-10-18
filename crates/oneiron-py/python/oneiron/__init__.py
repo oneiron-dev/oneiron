@@ -1679,6 +1679,39 @@ class Oneiron:
         def repo_diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."""
             return json.loads(_translate(lambda: self._client.vault_code_repo_diff(json.dumps(request, allow_nan=False))))
+        def export(self, spec):
+            """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
+            return json.loads(_translate(lambda: self._client.vault_code_export(json.dumps(spec))))
+        @property
+        def origin(self) -> "Oneiron._VaultCodeOriginVerbs":
+            return Oneiron._VaultCodeOriginVerbs(self._client)
+        @property
+        def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs":
+            return Oneiron._VaultCodeCheckoutVerbs(self._client)
+    class _VaultCodeOriginVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs":
+            return Oneiron._VaultCodeOriginAuthorityVerbs(self._client)
+        def publications(self, spec):
+            """Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_publications(json.dumps(spec))))
+    class _VaultCodeOriginAuthorityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one served origin authority and this host identity under the owner credential."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_authority_get(json.dumps(spec))))
+        def set(self, spec):
+            """Cut over one existing served origin under the owner proof and expected authority epoch."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_authority_set(json.dumps(spec))))
+    class _VaultCodeCheckoutVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_bind(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1955,6 +1988,18 @@ class Oneiron:
     class _VaultCalendarVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def create(self, spec):
+            """Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_create(json.dumps(spec))))
+        @property
+        def ics(self) -> "Oneiron._VaultCalendarIcsVerbs":
+            return Oneiron._VaultCalendarIcsVerbs(self._client)
+        def occurrences(self, spec):
+            """Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_occurrences(json.dumps(spec))))
+        @property
+        def instances(self) -> "Oneiron._VaultCalendarInstancesVerbs":
+            return Oneiron._VaultCalendarInstancesVerbs(self._client)
         def read(self, spec):
             """Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_calendar_read(json.dumps(spec))))
@@ -1967,6 +2012,18 @@ class Oneiron:
         @property
         def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs":
             return Oneiron._VaultCalendarTranscriptVerbs(self._client)
+    class _VaultCalendarIcsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def import_(self, spec):
+            """The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_ics_import(json.dumps(spec))))
+    class _VaultCalendarInstancesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def move(self, spec):
+            """The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_instances_move(json.dumps(spec))))
     class _VaultCalendarTranscriptVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
