@@ -24083,7 +24083,7 @@
      "path": "src/gate/mail_policy.rs",
      "purpose": "Vault-resident native-mail posture and CID-5 graduation policy rows",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
