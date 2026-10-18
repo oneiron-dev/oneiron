@@ -31,6 +31,11 @@ import type {
 export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
+feedbackPreview(input: unknown): unknown
+feedbackSend(input: unknown): unknown
+vaultReportsDisclosure(input: unknown): unknown
+vaultReportsRoute(input: unknown): unknown
+vaultReportsOutbound(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
@@ -376,6 +381,8 @@ vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeWaitsResolve(input: unknown): unknown
+vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown
 vaultResultsRecover(input: unknown): unknown
 vaultResultsRead(input: unknown): unknown
@@ -415,6 +422,7 @@ vaultWorkflowsStatus(input: unknown): unknown
 vaultTaskTypesPin(input: unknown): unknown
 vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
+vaultAgentsSpawn(input: unknown): unknown
 vaultTasksCancelForce(input: unknown): unknown
 vaultRunsBranchesGet(input: unknown): unknown
 vaultConsultsGet(input: unknown): unknown
@@ -524,6 +532,9 @@ vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
 vaultQuestionsRefresh(input: unknown): unknown
+vaultQuestionsOutcomes(input: unknown): unknown
+vaultQuestionsOutcomesProject(input: unknown): unknown
+vaultQuestionsSchedule(input: unknown): unknown
 vaultDecisionsBandsRead(input: unknown): unknown
 vaultDecisionsBandsLearn(input: unknown): unknown
 vaultDecisionsBandsEnforce(input: unknown): unknown
@@ -550,6 +561,9 @@ vaultCalendarSearch(input: unknown): unknown
 vaultCalendarFreebusy(input: unknown): unknown
 vaultCalendarTranscriptIngest(input: unknown): unknown
 vaultClaimsList(input: unknown): unknown
+vaultClaimsDemote(input: unknown): unknown
+vaultClaimsListFiltered(input: unknown): unknown
+vaultClaimsReadFiltered(input: unknown): unknown
 vaultClaimsHistory(input: unknown): unknown
 vaultDelete(input: unknown): unknown
 vaultWritesPending(input: unknown): unknown
