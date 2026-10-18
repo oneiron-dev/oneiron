@@ -3130,7 +3130,7 @@
     },
     {
       "name": "vault.off_record.start",
-      "description": "The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it.",
+      "description": "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it.",
       "input": "crate::task_verb::sdk::OffRecordStartRequest",
       "output": "crate::task_verb::sdk::OffRecordSessionView",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.start\", &input)?",
@@ -3146,7 +3146,7 @@
     },
     {
       "name": "vault.off_record.status",
-      "description": "The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing.",
+      "description": "The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows.",
       "input": "crate::task_verb::sdk::OffRecordSessionRequest",
       "output": "crate::task_verb::sdk::OffRecordSessionView",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.status\", &input)?",
@@ -3162,7 +3162,7 @@
     },
     {
       "name": "vault.off_record.witness",
-      "description": "The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close.",
+      "description": "The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close.",
       "input": "crate::task_verb::sdk::OffRecordWitnessRequest",
       "output": "crate::memory::WitnessReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.witness\", &input)?",
@@ -3178,7 +3178,7 @@
     },
     {
       "name": "vault.off_record.discard",
-      "description": "The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay.",
+      "description": "The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay.",
       "input": "crate::task_verb::sdk::OffRecordSessionRequest",
       "output": "crate::task_verb::sdk::OffRecordClosed",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.discard\", &input)?",
@@ -3194,7 +3194,7 @@
     },
     {
       "name": "vault.off_record.recall",
-      "description": "The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike.",
+      "description": "The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike.",
       "input": "crate::task_verb::sdk::OffRecordRecallRequest",
       "output": "crate::memory::MemoryPack",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.recall\", &input)?",
@@ -3209,7 +3209,7 @@
     },
     {
       "name": "vault.off_record.notes.create",
-      "description": "The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
+      "description": "The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
       "input": "crate::task_verb::sdk::OffRecordNoteRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.notes.create\", &input)?",
@@ -3225,7 +3225,7 @@
     },
     {
       "name": "vault.off_record.claims.upsert",
-      "description": "The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
+      "description": "The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
       "input": "crate::task_verb::sdk::OffRecordClaimRequest",
       "output": "crate::memory::CommitReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.claims.upsert\", &input)?",
@@ -3241,7 +3241,7 @@
     },
     {
       "name": "self.off_record.execute",
-      "description": "The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.",
+      "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.",
       "input": "crate::task_verb::sdk::OffRecordExecuteRequest",
       "output": "crate::task_verb::sdk::OffRecordExecuted",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.execute\", &input)?",

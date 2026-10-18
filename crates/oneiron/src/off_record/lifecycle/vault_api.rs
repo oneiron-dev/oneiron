@@ -7,6 +7,7 @@ use crate::error::{Error, Result};
 use crate::receipt::SessionLocalReceiptLog;
 use crate::session_overlay::OverlayKeyspace;
 
+use super::creator::OffRecordCreator;
 use super::registry::{
     OffRecordSessionEntry, OffRecordSessionEntryState, SessionStart, live_session_entry,
     session_entry_state, vet_off_record_session_ref,
@@ -128,6 +129,42 @@ impl Vault {
             0,
             OffRecordMode::Anonymous,
             SessionStart::Alone(entered_by),
+            &self.store.clock,
+        )
+    }
+
+    /// A stretch entered alone for `creator`, off record or anonymous
+    /// (`OffRecordSessionVault::enter_as_creator`): as the other roomless
+    /// entries, with the creator on this instance's entry. An anonymous one
+    /// keeps the creator as the one caller its no-record exception serves.
+    pub(super) fn enter_created_session_entry(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        mode: OffRecordMode,
+        creator: OffRecordCreator,
+    ) -> Result<Arc<OffRecordSessionEntry>> {
+        if !self.config.off_record_enabled {
+            return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
+        }
+        vet_off_record_session_ref(session_ref)?;
+        vet_roomless_session_ref(session_ref)?;
+        let budget_bytes = match mode {
+            OffRecordMode::OffRecord => self.config.off_record_overlay_budget_bytes,
+            OffRecordMode::Anonymous => 0,
+            OffRecordMode::OnRecord => {
+                return Err(Error::InvalidConfig(
+                    "an off-record session enters off record or anonymous, never on record"
+                        .to_owned(),
+                ));
+            }
+        };
+        self.store.off_record_sessions.enter(
+            session_ref,
+            backend,
+            budget_bytes,
+            mode,
+            SessionStart::Created(creator),
             &self.store.clock,
         )
     }
@@ -310,13 +347,25 @@ impl Vault {
                 "off-record close requires an off-record receipt log",
             ));
         }
+        let entry = live_session_entry(&self.store, session_ref)?;
+        self.close_off_record_entry(session_ref, &entry, receipt_log)
+    }
+
+    /// [`Self::close_off_record_session`] of the instance `entry`, the one a
+    /// handle bound: a stretch that took the name since is never the one
+    /// closed. The caller has vetted the ref and the receipt log.
+    pub(super) fn close_off_record_entry(
+        &self,
+        session_ref: &str,
+        entry: &Arc<OffRecordSessionEntry>,
+        receipt_log: SessionLocalReceiptLog,
+    ) -> Result<OffRecordCloseOutcome> {
         // Freeze the in-process record under its short per-session lock, then
         // release it before draining overlay leases. Mutators observe the
         // published closing bit and reject while close reconciles the frozen
         // record after every blocking phase.
-        let entry = live_session_entry(&self.store, session_ref)?;
         let (record, close_overlay) = {
-            let mut state = session_entry_state(&entry)?;
+            let mut state = session_entry_state(entry)?;
             if state.gone {
                 return Err(Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
                     session_ref: session_ref.to_owned(),
@@ -352,7 +401,7 @@ impl Vault {
         #[cfg(unix)]
         self.store.remove_session_bodies(session_ref)?;
         let (internal_receipt_log, post_flip_emit_log) = {
-            let mut state = session_entry_state(&entry)?;
+            let mut state = session_entry_state(entry)?;
             if state.gone || state.record != record {
                 return Err(Error::InvariantViolation(
                     "off-record session record drifted during overlay close",
@@ -394,7 +443,7 @@ impl Vault {
         // registry entry. Neither the session record nor its content ever had
         // a durable row to remove.
         {
-            let mut state = session_entry_state(&entry)?;
+            let mut state = session_entry_state(entry)?;
             if state.gone || state.record != record {
                 return Err(Error::InvariantViolation(
                     "off-record session record drifted during close",
@@ -405,7 +454,7 @@ impl Vault {
         }
         self.store
             .off_record_sessions
-            .remove_if_same(session_ref, &entry)?;
+            .remove_if_same(session_ref, entry)?;
 
         Ok(OffRecordCloseOutcome {
             turns_deleted,

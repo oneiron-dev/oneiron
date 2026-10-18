@@ -428,6 +428,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_BUDGET_SPENT
         | oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED
         | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
+        | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,
@@ -443,6 +444,11 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // FIX 2222: one stable kind for the typed host refusal, whichever
         // door reported it.
         oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => Some(MCP_HOST_ACTION_REFUSED),
+        // WILL-PLAN L13 row 03: the room's audience gave no consent to this
+        // management; an agent reads the name, not the sentence.
+        oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
+            Some("off_record_room_management_consent_unavailable")
+        }
         _ => None,
     };
     if let Some(kind) = kind {
