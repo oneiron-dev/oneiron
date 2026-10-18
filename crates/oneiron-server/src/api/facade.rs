@@ -29,6 +29,7 @@ mod affect_doors;
 mod agent_definition_doors;
 mod agent_verbs;
 mod artifact_hosting_doors;
+mod asr_doors;
 mod authority_history_doors;
 mod booking_doors;
 mod budget_doors;
@@ -109,6 +110,7 @@ mod wave_doors;
 mod weave_doors;
 mod widen_proposal_doors;
 
+pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};

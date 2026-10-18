@@ -3977,6 +3977,36 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_voice_asr_open(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.asr.open", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_asr_hypothesis(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.asr.hypothesis", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_asr_finalize(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.asr.finalize", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_asr_close(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.asr.close", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_voice_start(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.voice.start", input)

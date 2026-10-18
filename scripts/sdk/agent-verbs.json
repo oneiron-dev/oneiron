@@ -7082,6 +7082,68 @@
       "openapi": true
     },
     {
+      "name": "ai.voice.asr.open",
+      "description": "Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline.",
+      "input": "crate::task_verb::sdk::AsrOpenRequest",
+      "output": "crate::task_verb::sdk::AsrSession",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.open\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.asr.hypothesis",
+      "description": "Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt.",
+      "input": "crate::task_verb::sdk::AsrHypothesisRequest",
+      "output": "crate::task_verb::sdk::AsrHypothesisReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.hypothesis\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.asr.finalize",
+      "description": "Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting.",
+      "input": "crate::task_verb::sdk::AsrHypothesisRequest",
+      "output": "crate::task_verb::sdk::AsrFinalReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.finalize\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.asr.close",
+      "description": "Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval.",
+      "input": "crate::task_verb::sdk::AsrCloseRequest",
+      "output": "crate::task_verb::sdk::AsrClosed",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.close\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.voice.start",
       "description": "Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates.",
       "input": "crate::task_verb::sdk::LiveVoiceStartRequest",

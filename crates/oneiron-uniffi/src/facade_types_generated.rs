@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 616 facade rows, 2242 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 576.
+// UniFFI census: 620 facade rows, 2251 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 580.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -21634,17 +21634,15 @@ pub struct PlannedSpawnRead {
     pub spawn_ref: String,
 }
 
-/// `oneiron::team::doors::SpawnPhase`.
+/// `oneiron::team::spawn_intent::SpawnPhase`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SpawnPhase {
-    #[serde(rename = "reserved")]
-    Reserved,
     #[serde(rename = "planned")]
     Planned,
     #[serde(rename = "launched")]
     Launched,
-    #[serde(rename = "in_doubt")]
-    InDoubt,
+    #[serde(rename = "refused")]
+    Refused,
 }
 
 /// `oneiron::team::doors::CoordinationPatternView`.
@@ -27320,6 +27318,184 @@ pub struct ContextEmitReceipt {
     pub result_digest: String,
     #[serde(rename = "context")]
     pub context: ContextReceiptFields,
+}
+
+/// `oneiron::task_verb::sdk_asr::AsrOpenRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AsrOpenRequest {
+    #[serde(rename = "utterance_id")]
+    pub utterance_id: String,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<WireRecallScope>,
+    #[serde(
+        rename = "fire_limit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub fire_limit: Option<u64>,
+    #[serde(
+        rename = "final_limit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub final_limit: Option<u64>,
+    #[serde(
+        rename = "deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_ms: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_asr::AsrSession`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AsrSession {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "utterance_id")]
+    pub utterance_id: String,
+    #[serde(rename = "scope")]
+    pub scope: WireRecallScope,
+    #[serde(rename = "max_fires")]
+    pub max_fires: u8,
+    #[serde(rename = "fire_limit")]
+    pub fire_limit: u64,
+    #[serde(rename = "final_limit")]
+    pub final_limit: u64,
+    #[serde(rename = "limit_clamped")]
+    pub limit_clamped: bool,
+    #[serde(rename = "deadline_ms")]
+    pub deadline_ms: u64,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::task_verb::sdk_asr::AsrHypothesisRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AsrHypothesisRequest {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "entity_labels")]
+    pub entity_labels: Vec<String>,
+    #[serde(rename = "salient_terms")]
+    pub salient_terms: Vec<String>,
+    #[serde(
+        rename = "query_vector",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_vector: Option<Vec<f64>>,
+}
+
+/// `oneiron::task_verb::sdk_asr::AsrFireDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AsrFireDecision {
+    #[serde(rename = "fired")]
+    Fired,
+    #[serde(rename = "missed_deadline")]
+    MissedDeadline,
+    #[serde(rename = "skipped_unchanged")]
+    SkippedUnchanged,
+    #[serde(rename = "skipped_empty_signature")]
+    SkippedEmptySignature,
+    #[serde(rename = "skipped_cap_exhausted")]
+    SkippedCapExhausted,
+}
+
+/// `oneiron::task_verb::sdk_asr::AsrHypothesisReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AsrHypothesisReceipt {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "utterance_id")]
+    pub utterance_id: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "scope")]
+    pub scope: WireRecallScope,
+    #[serde(rename = "decision")]
+    pub decision: AsrFireDecision,
+    #[serde(rename = "fires_used")]
+    pub fires_used: u8,
+    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(rename = "partial")]
+    pub partial: bool,
+    #[serde(rename = "result_refs")]
+    pub result_refs: Vec<String>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::task_verb::sdk_asr::AsrFinalDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AsrFinalDecision {
+    #[serde(rename = "promoted")]
+    Promoted,
+    #[serde(rename = "finalized")]
+    Finalized,
+}
+
+/// `oneiron::task_verb::sdk_asr::AsrFinalReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AsrFinalReceipt {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "utterance_id")]
+    pub utterance_id: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "scope")]
+    pub scope: WireRecallScope,
+    #[serde(rename = "decision")]
+    pub decision: AsrFinalDecision,
+    #[serde(
+        rename = "reused_fire_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reused_fire_receipt: Option<String>,
+    #[serde(rename = "fires_used")]
+    pub fires_used: u8,
+    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(rename = "warm_appended")]
+    pub warm_appended: u64,
+    #[serde(rename = "partial")]
+    pub partial: bool,
+    #[serde(rename = "result_refs")]
+    pub result_refs: Vec<String>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::task_verb::sdk_asr::AsrCloseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AsrCloseRequest {
+    #[serde(rename = "handle")]
+    pub handle: String,
+}
+
+/// `oneiron::task_verb::sdk_asr::AsrClosed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AsrClosed {
+    #[serde(rename = "handle")]
+    pub handle: String,
 }
 
 /// `oneiron::task_verb::sdk_live_voice::LiveVoiceStartRequest`.

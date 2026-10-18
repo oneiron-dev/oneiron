@@ -187,6 +187,27 @@ impl OwnerAct {
     }
 }
 
+/// The revision an act's `seen` names, in the [`PolicyRevision`] shape:
+/// BLAKE3 over `context` and the target's sorted distinct live head entry
+/// hashes, or zero for a target with no head. Each act kind names its own
+/// `context`, so one kind's revision never stands for another's.
+#[must_use]
+pub fn act_revision(
+    context: &[u8],
+    heads: impl IntoIterator<Item = AuthorityEntryHash>,
+) -> [u8; 32] {
+    let heads: std::collections::BTreeSet<_> = heads.into_iter().collect();
+    if heads.is_empty() {
+        return [0; 32];
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(context);
+    for head in heads {
+        hasher.update(&head);
+    }
+    *hasher.finalize().as_bytes()
+}
+
 /// The record's value, the map an op carries under [`OP_KEY_ACT`].
 pub(super) fn owner_act_value(act: &OwnerAct) -> Value {
     let id = |id: &EntityId| Value::from(id.to_hex());
