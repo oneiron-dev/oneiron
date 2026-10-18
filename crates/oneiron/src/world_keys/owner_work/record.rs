@@ -11,6 +11,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::world_keys::bundle::bundle_publish_executor;
 use crate::world_keys::recipients;
 use crate::world_keys::root_work::root_work_executor;
 use crate::{EntityId, TimeRange, Vault};
@@ -43,7 +44,8 @@ fn parent_bound(named: usize) -> Error {
 /// another can do the work: an install that could do it all does it in the
 /// act's own commit. It names itself only when it alone holds the key the
 /// work needs (FIX 4634). A root change names its target exactly (CALLS
-/// ROOT_WORK_EXECUTOR).
+/// ROOT_WORK_EXECUTOR); a bundle publication the lowest install that holds
+/// every key the bundle seals (CALLS BUNDLE_PUBLISH_EXECUTOR).
 pub(crate) fn owner_work_executor(
     fold: &AuthorityFold,
     kind: OwnerWorkKind,
@@ -55,6 +57,7 @@ pub(crate) fn owner_work_executor(
             world_key_executor(fold, target, recorder).ok_or(OWNER_WORK_NO_EXECUTOR)
         }
         OwnerWorkKind::Root => root_work_executor(fold, target, recorder),
+        OwnerWorkKind::PublishBundle => bundle_publish_executor(fold, target),
     }
 }
 

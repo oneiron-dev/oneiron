@@ -13,7 +13,8 @@
 //!   this machine keeps for it. A holder that is a machine of the owner's also
 //!   gets the worlds whose sealed copies go to "My machines"
 //!   (`world_keys::bundle`).
-//! - A publisher seals a fresh section of each carried world it reads, and
+//! - A publisher seals a fresh section of each carried world it reads and holds
+//!   whole ([`WindowManager::assemble_sealed_bundle`]), and
 //!   carries every other section of the latest generation byte for byte, except
 //!   those of a world it knows was deleted here or is no longer eligible for
 //!   this holder ([`SEALED_BUNDLE_CARRY_FILTER`]), read here or not: it knows a
@@ -31,15 +32,16 @@ use loro::LoroDoc;
 use zeroize::Zeroizing;
 
 use super::discover_local_window_keys;
-use super::policy::resolve_residence_mode;
 use crate::Vault;
 use crate::authority::{
-    Destination, EditOrigin, EffectiveRead, decode_authority_log_entry_body, side_world,
+    AuthorityEntryHash, Destination, EditOrigin, EffectiveRead, decode_authority_log_entry_body,
+    side_world,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::ports::TombstoneStoreRead;
+use crate::sync::WindowManager;
 use crate::sync::loro_support::{import_doc, map_delete, map_for_each_value_bytes};
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::{WindowKey, authority_wrap_world};
@@ -47,11 +49,10 @@ use crate::sync::window::{
     ReplacementByteBound, apply_pending_window_updates, export_history_free_window_snapshot,
     export_window_replacement, load_window_from_state, reverse_rematerialize,
 };
-use crate::sync::{SyncResidenceMode, WindowManager};
 use crate::world_keys::{
-    BundleCarry, KitConfirmation, OpenedBundleSection, RecoveryRootSeed, RootRestore,
-    SealedKeyPads, SealedVaultBundle, SealedVaultUpload, pad_body_world, refused,
-    world_keys_destroyed_in_txn,
+    BundleCarry, KitConfirmation, OpenedBundleSection, OpenedVaultBundle, RecoveryRootSeed,
+    RootRestore, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldKey, pad_body_world,
+    refused, world_keys_destroyed_in_txn,
 };
 
 /// The base section's encoding version.
@@ -126,48 +127,29 @@ pub struct SealedKitRestore {
 impl WindowManager {
     /// Seals this machine's upload for UTC slot `slot`, for `holder`, the home
     /// that keeps it: the base section, a fresh section of every world the
-    /// bundle carries for `holder` that this machine reads, and every other
-    /// section of `latest` (the holder's newest generation and its pad object)
-    /// unchanged, minus the sections [`SEALED_BUNDLE_CARRY_FILTER`] drops. Each
-    /// such world's authority capsule is sealed fresh from the entries held
-    /// here, or, for a world this machine may not read whose capsule `latest`
-    /// files, carried unchanged under the same filter (FIX 4211).
-    /// Refused on an opened-item machine.
+    /// bundle carries for `holder` that this machine reads and holds whole
+    /// ([`Self::complete_source`]), and every other section of `latest` (the
+    /// holder's newest generation and its pad object) unchanged, minus the
+    /// sections [`SEALED_BUNDLE_CARRY_FILTER`] drops. Each such world's
+    /// authority capsule is sealed fresh from the entries held here, or, for a
+    /// world this machine may not read whose capsule `latest` files, carried
+    /// unchanged under the same filter (FIX 4211). `request` is the owner's
+    /// counted ask this upload publishes for (WILL L04 row 03), signed into
+    /// its provenance.
     pub fn assemble_sealed_bundle(
         &self,
         slot: u64,
         holder: Destination,
         latest: Option<(&SealedVaultBundle, &SealedKeyPads)>,
-        configured: SyncResidenceMode,
+        request: Option<AuthorityEntryHash>,
     ) -> Result<SealedVaultUpload> {
         let vault = self.vault();
-        // Judged from what this machine keeps, as its connection judges it, with
-        // the host's `configured` mode for a machine the owner never chose for
-        // (FIX 3364).
-        if resolve_residence_mode(vault, configured)? == SyncResidenceMode::Opened {
-            return Err(refused("an opened-item machine seals no bundle"));
-        }
         let windows = discover_local_window_keys(vault)?;
         let (base, eligible, sides) = self.sealed_bundle_base(&windows, holder)?;
-        let mut fresh = Vec::new();
-        for &world in &eligible {
-            // A world this machine does not read now keeps the section it has.
-            if vault.world_key(world).is_err() {
-                continue;
-            }
-            let mut snapshots = Vec::new();
-            for window in windows
-                .iter()
-                .filter(|window| window.world() == Some(world))
-            {
-                snapshots.push((window.clone(), self.sealed_mirror_snapshot(world, window)?));
-            }
-            fresh.push((world, encode_world_section(world, &snapshots)?));
-        }
         let latest = match latest {
             None => None,
             Some((bundle, pads)) => {
-                let opened = vault.open_vault_bundle_to_carry(bundle)?;
+                let opened = vault.open_vault_bundle(bundle, holder)?;
                 let pads = vault.open_key_pads(pads)?;
                 if pads.generation() != opened.generation() {
                     return Err(refused("the pad object is another generation's"));
@@ -175,12 +157,32 @@ impl WindowManager {
                 Some((opened, pads))
             }
         };
+        let keys = match &latest {
+            Some((_, pads)) => vault.bundle_reader_keys(Some(pads), true)?,
+            None => Vec::new(),
+        };
+        let mut fresh = Vec::new();
+        for &world in &eligible {
+            // A world this machine does not read now, or does not hold whole,
+            // keeps the section it has.
+            if vault.world_key(world).is_err() {
+                continue;
+            }
+            let opened = latest.as_ref().map(|(opened, _)| opened);
+            let Some(held) = self.complete_source(world, &windows, opened, &keys) else {
+                continue;
+            };
+            let mut snapshots = Vec::new();
+            for window in &held {
+                snapshots.push((window.clone(), self.sealed_mirror_snapshot(world, window)?));
+            }
+            fresh.push((world, encode_world_section(world, &snapshots)?));
+        }
         // A section whose world this machine knows goes when that world has a
         // fresh one or the carry filter drops it.
         let known = vault.sealed_bundle_known_worlds()?;
         let mut carried = Vec::new();
         if let Some((opened, pads)) = &latest {
-            let keys = vault.bundle_reader_keys(Some(pads), true)?;
             for (key, section) in opened.sections_known(&keys, pads) {
                 if let Some(key) = key
                     && (fresh.iter().any(|(sealed, _)| *sealed == key.world)
@@ -197,6 +199,7 @@ impl WindowManager {
             .collect();
         let mut carry = BundleCarry {
             latest: latest.as_ref().map(|(_, pads)| pads),
+            request,
             ..BundleCarry::default()
         };
         // A machine that may not read a world never overwrites the capsule it
@@ -227,18 +230,19 @@ impl WindowManager {
         vault.seal_vault_bundle_carrying(slot, holder, &base, &worlds, &carried, &carry)
     }
 
-    /// Takes `bundle` and its pad object in: opens every section this machine
-    /// may read and merges each window into its mirror. A full machine
-    /// materializes the rows; an `opened`-item machine keeps them in the mirror
-    /// until a promotion materializes it.
+    /// Takes `bundle` and its pad object in, read from `holder`: opens every
+    /// section this machine may read and merges each window into its mirror.
+    /// A full machine materializes the rows; an `opened`-item machine keeps
+    /// them in the mirror until a promotion materializes it.
     pub fn take_sealed_bundle(
         &self,
         bundle: &SealedVaultBundle,
         pads: &SealedKeyPads,
+        holder: Destination,
         opened: bool,
     ) -> Result<SealedBundleTake> {
         let vault = self.vault();
-        let outer = vault.open_vault_bundle(bundle)?;
+        let outer = vault.open_vault_bundle(bundle, holder)?;
         let pads = vault.open_key_pads(pads)?;
         if pads.generation() != outer.generation() {
             return Err(refused("the pad object is another generation's"));
@@ -259,8 +263,9 @@ impl WindowManager {
     /// machine of the vault's yet: `bundle` and its pad object `pads` open with
     /// the kit's `seed` for the vault `vault_id`. The base section's signed
     /// authority history goes in first, with every world capsule's the kit
-    /// opens (FIX 4211), so the root's wraps and every world's policy are here. Once a machine the owner vouched for proves to have
-    /// signed the bundle, each base window installs as a replacement, of any
+    /// opens (FIX 4211), so the root's wraps and every world's policy are here. Once the
+    /// publisher check passes on that authority (a machine the owner vouched
+    /// for, or the install he asked to publish), each base window installs as a replacement, of any
     /// length the section carried; one that does not install fails the
     /// restore, and the windows installed before it stay. The pad object's
     /// pads are stored, the world keys restore from the kit as
@@ -299,9 +304,7 @@ impl WindowManager {
             if fold.vault_id != Some(*vault_id) {
                 return Err(refused("the bundle's authority is another vault's"));
             }
-            if !opened.signed_by_owner_machine(&fold) {
-                return Err(refused("no machine of the owner's signed the bundle"));
-            }
+            opened.require_publisher(&fold, None)?;
         }
         // Base windows first: a window of a world read everywhere may name a
         // base row.
@@ -326,6 +329,44 @@ impl WindowManager {
             self.take_section(&section, true, &mut restore.take);
         }
         Ok(restore)
+    }
+
+    /// The windows a fresh section of `world` carries, so that it never
+    /// carries less than the section of `latest` it replaces: each window of
+    /// the world held here, and each window that section carries (opened with
+    /// one of `keys`), merged into its mirror first. The actual source and key
+    /// access decide, never the machine's residence mode (WILL L04 row 03):
+    /// an opened-item machine seals what it holds whole. `None` when that
+    /// section does not open, decode or merge here: it rides on unchanged.
+    fn complete_source(
+        &self,
+        world: EntityId,
+        windows: &[WindowKey],
+        latest: Option<&OpenedVaultBundle>,
+        keys: &[WorldKey],
+    ) -> Option<Vec<WindowKey>> {
+        let mut held: Vec<WindowKey> = windows
+            .iter()
+            .filter(|window| window.world() == Some(world))
+            .cloned()
+            .collect();
+        let Some(latest) = latest else {
+            return Some(held);
+        };
+        for key in keys.iter().filter(|key| key.id().world == world) {
+            let Some(section) = latest.open_section(key).ok()? else {
+                continue;
+            };
+            let carried = decode_world_section(&section.payload, world).ok()?;
+            for (window, snapshot) in carried {
+                self.merge_bundle_mirror(world, &window, &snapshot, false)
+                    .ok()?;
+                if !held.contains(&window) {
+                    held.push(window);
+                }
+            }
+        }
+        Some(held)
     }
 
     /// Merges each window of an opened world `section` into its mirror,

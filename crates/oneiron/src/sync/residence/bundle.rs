@@ -11,8 +11,10 @@
 //! Erase replaces a kept generation's pad object in place, at the same length;
 //! the old object is deleted, and the home keeps no prior versions. Every door
 //! in this module serves only a machine of the owner's whose proof stands here,
-//! and none asks which worlds it reads: the home never learns which worlds a
-//! reader wants. A commit names the recovery root its publisher pins, and the
+//! or, for the turn, a stage, a commit, a list and a get, the install he asked
+//! to publish here, in any role and of any device class (`publication`, WILL
+//! L04 row 03). None asks which worlds it reads: the home never learns which
+//! worlds a reader wants. A commit names the recovery root its publisher pins, and the
 //! kit door (`kit_fetch`) serves that generation to the holder of that root's
 //! kit.
 //!
@@ -21,9 +23,13 @@
 //! serves it one. A phone still lists the generations and rewrites their pad
 //! objects, so an erase made on it sweeps them.
 
+mod publication;
+
+pub(super) use self::publication::{Asked, asked_of};
+
 use super::bundle_turn::{hold_turn_in, published_in};
 use crate::Vault;
-use crate::authority::{MachineDeviceClass, PeerMachine};
+use crate::authority::{AuthorityEntryHash, MachineDeviceClass, PeerMachine};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::side_table::{self, Raw, SideTable};
@@ -252,10 +258,16 @@ pub(crate) fn holds_sealed_bundle(class: MachineDeviceClass) -> bool {
 }
 
 /// The machine `peer` proved, when it is a machine of the owner's whose proof
-/// stands here on the key it proved, on a home that keeps sealed copies. A door
-/// that takes or serves the `bundle` object itself also refuses a peer whose
-/// trusted profile is a phone's. Any other peer is refused.
-pub(super) fn owner_machine(vault: &Vault, peer: PeerMachine, bundle: bool) -> Result<EntityId> {
+/// stands here on the key it proved, or one he asked to publish here as
+/// `asked` admits, on a home that keeps sealed copies. A door that takes or
+/// serves the `bundle` object itself also refuses a peer whose trusted profile
+/// is a phone's, unless he asked it. Any other peer is refused.
+pub(super) fn owner_machine(
+    vault: &Vault,
+    peer: PeerMachine,
+    bundle: bool,
+    asked: Asked,
+) -> Result<EntityId> {
     let PeerMachine::Proven { machine, key } = peer else {
         return Err(denied());
     };
@@ -268,10 +280,10 @@ pub(super) fn owner_machine(vault: &Vault, peer: PeerMachine, bundle: bool) -> R
         .trusted_machine(machine)
         .filter(|_| fold.machine_proof_key(machine) == Some(key))
     else {
-        return Err(denied());
+        return publication::asked_publisher(vault, &txn, &fold, machine, key, asked);
     };
     if bundle && !holds_sealed_bundle(trusted.profile.device_class) {
-        return Err(denied());
+        return publication::asked_publisher(vault, &txn, &fold, machine, key, asked);
     }
     Ok(machine)
 }
@@ -411,7 +423,8 @@ pub fn stage_sealed_bundle_part(
     offset: u64,
     part: &[u8],
 ) -> Result<u64> {
-    let machine = owner_machine(vault, peer, stage.object == SealedBundleObject::Bundle)?;
+    let bundle = stage.object == SealedBundleObject::Bundle;
+    let machine = owner_machine(vault, peer, bundle, Asked::Any)?;
     let end = offset.checked_add(part.len() as u64).ok_or_else(denied)?;
     if part.is_empty() || part.len() > SEALED_BUNDLE_PUT_PART_MAX || end > stage.total {
         return Err(denied());
@@ -524,7 +537,7 @@ pub fn commit_sealed_bundle(
     parent: Option<SealedBundleGeneration>,
     root: Option<RecoveryRootId>,
 ) -> Result<SealedBundleEntry> {
-    let machine = owner_machine(vault, peer, true)?;
+    let machine = owner_machine(vault, peer, true, Asked::Any)?;
     let kit = match root {
         None => None,
         Some(root) => {
@@ -632,7 +645,7 @@ pub fn replace_sealed_bundle_pads(
     generation: SealedBundleGeneration,
     replaces: &[u8; 32],
 ) -> Result<SealedBundleEntry> {
-    let machine = owner_machine(vault, peer, false)?;
+    let machine = owner_machine(vault, peer, false, Asked::No)?;
     let staged = {
         let txn = vault.store.env.read_txn()?;
         staged_whole(vault, &txn, machine, SealedBundleObject::Pads)?
@@ -674,8 +687,9 @@ pub fn replace_sealed_bundle_pads(
 }
 
 /// The generations the home keeps, newest first, for a machine of the owner's
-/// whose proof stands here. Generations aged out since the last commit are
-/// retired first, so they go even when uploads stop.
+/// whose proof stands here, or the one his `request` asked to publish here.
+/// Generations aged out since the last commit are retired first, so they go
+/// even when uploads stop.
 ///
 /// # Errors
 ///
@@ -683,8 +697,9 @@ pub fn replace_sealed_bundle_pads(
 pub fn sealed_bundle_generations(
     vault: &Vault,
     peer: PeerMachine,
+    request: Option<AuthorityEntryHash>,
 ) -> Result<Vec<SealedBundleEntry>> {
-    owner_machine(vault, peer, false)?;
+    owner_machine(vault, peer, false, Asked::named(request))?;
     let (now_slot, mut kept) = {
         let txn = vault.store.env.read_txn()?;
         (
@@ -705,9 +720,10 @@ pub fn sealed_bundle_generations(
 
 /// One slice of a kept generation's `object`, at most
 /// [`SEALED_BUNDLE_READ_PART_MAX`] bytes from `offset`, with the generation's
-/// entry, for a machine of the owner's whose proof stands here: an object is
-/// read in slices. `generation` names one, or `None` the newest. `None` for a
-/// generation not kept and an offset at or past the object's end.
+/// entry, for a machine of the owner's whose proof stands here, or the one his
+/// `request` asked to publish here: an object is read in slices. `generation`
+/// names one, or `None` the newest. `None` for a generation not kept and an
+/// offset at or past the object's end.
 ///
 /// # Errors
 ///
@@ -718,8 +734,10 @@ pub fn sealed_bundle_part(
     generation: Option<SealedBundleGeneration>,
     object: SealedBundleObject,
     offset: u64,
+    request: Option<AuthorityEntryHash>,
 ) -> Result<Option<(SealedBundleEntry, Vec<u8>)>> {
-    owner_machine(vault, peer, object == SealedBundleObject::Bundle)?;
+    let bundle = object == SealedBundleObject::Bundle;
+    owner_machine(vault, peer, bundle, Asked::named(request))?;
     let txn = vault.store.env.read_txn()?;
     let entry = match generation {
         Some(generation) => entry_in(vault, &txn, &generation)?,

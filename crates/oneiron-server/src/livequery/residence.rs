@@ -174,9 +174,14 @@ struct BundleCommitRequest {
     root: Option<String>,
 }
 
+/// A list, naming the owner's bundle publication request when the machine is
+/// the install he asked to publish here (WILL L04 row 03): entry hash in hex.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BundleListRequest {}
+struct BundleListRequest {
+    #[serde(default)]
+    request: Option<String>,
+}
 
 /// A machine's ask for the publisher turn, or with `leave` its giving its
 /// place up (FIX 3351).
@@ -188,6 +193,7 @@ struct BundleTurnRequest {
 }
 
 /// One slice of a kept generation's object; no generation names the newest.
+/// `request` as a list names it.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BundleGetRequest {
@@ -195,6 +201,8 @@ struct BundleGetRequest {
     generation: Option<String>,
     object: String,
     offset: u64,
+    #[serde(default)]
+    request: Option<String>,
 }
 
 /// Erase's rewrite of a kept generation's pad object, staged whole:
@@ -880,6 +888,12 @@ fn bundle_object(name: &str) -> Result<SealedBundleObject, AppError> {
     SealedBundleObject::from_name(name).ok_or_else(AppError::invalid_params)
 }
 
+/// The bundle publication request a list or a get names, in hex.
+fn bundle_request(hex: Option<&str>) -> Result<Option<[u8; 32]>, AppError> {
+    hex.map(|hex| sealed_digest_from_hex(hex).ok_or_else(AppError::invalid_params))
+        .transpose()
+}
+
 fn bundle_entry(entry: &SealedBundleEntry) -> Value {
     json!({
         "generation": sealed_generation_hex(&entry.generation),
@@ -984,13 +998,15 @@ fn bundle_commit(
 }
 
 /// The generations the home keeps, newest first, for a machine of the
-/// owner's (FIX 922). It names no world. A stage idled out since gives its
-/// room on the disk back (FIX 3354).
+/// owner's, or the one his named request asked to publish here (FIX 922). It
+/// names no world. A stage idled out since gives its room on the disk back
+/// (FIX 3354).
 fn bundle_list(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
-    let BundleListRequest {} =
+    let BundleListRequest { request } =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let request = bundle_request(request.as_deref())?;
     server.transfers.reconcile_sealed_stages(&server.vault);
-    let generations: Vec<Value> = sealed_bundle_generations(&server.vault, peer)
+    let generations: Vec<Value> = sealed_bundle_generations(&server.vault, peer, request)
         .map_err(|_| AppError::not_found("sealed bundle", None))?
         .iter()
         .map(bundle_entry)
@@ -1011,9 +1027,17 @@ fn bundle_get(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<A
         .map(bundle_generation)
         .transpose()?;
     let object = bundle_object(&input.object)?;
-    let (entry, part) = sealed_bundle_part(&server.vault, peer, generation, object, input.offset)
-        .map_err(|_| AppError::not_found("sealed bundle", None))?
-        .ok_or_else(|| AppError::not_found("sealed bundle", None))?;
+    let request = bundle_request(input.request.as_deref())?;
+    let (entry, part) = sealed_bundle_part(
+        &server.vault,
+        peer,
+        generation,
+        object,
+        input.offset,
+        request,
+    )
+    .map_err(|_| AppError::not_found("sealed bundle", None))?
+    .ok_or_else(|| AppError::not_found("sealed bundle", None))?;
     let (total, digest) = entry.object(object);
     Ok((
         json!({
