@@ -1254,7 +1254,12 @@ def facade_dispatch(facade_rows):
                         (output, producers.take())
                     }}
                     (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, auth.locality())?,
-                    (None, None, Some(owner)) => server.vault.export_with_authenticated_owner_listing(&input, &owner, auth.locality())?,
+                    (None, None, Some(owner)) => {{
+                        // Its receipt records the owner's act, with where
+                        // he spoke from (audit only).
+                        let surface = super::owner_binding::act_surface(auth);
+                        server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, auth.locality())?
+                    }}
                     (None, None, None) => {{
                         return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
                     }}

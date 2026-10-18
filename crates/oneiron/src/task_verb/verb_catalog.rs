@@ -57,6 +57,10 @@ pub enum AgentVerb {
     VaultRetrievalWeightsGet,
     VaultRetrievalWeightsConfigure,
     VaultAffectAnnotationsPut,
+    VaultTaggingStatus,
+    VaultTaggingTags,
+    VaultTaggingHistory,
+    VaultTaggingMentions,
     VaultAffectClaimsConsolidate,
     VaultRetrievalRecall,
     VaultRetrievalRuns,
@@ -638,6 +642,7 @@ pub enum AgentVerb {
     VaultSummariesProposalsSwitch,
     VaultSummariesProposalsReject,
     VaultNotesCreate,
+    VaultNotesAuthorTake,
     VaultNotesFromEntity,
     VaultNotesRead,
     VaultNotesHistory,
@@ -733,6 +738,10 @@ impl AgentVerb {
         Self::VaultRetrievalWeightsGet,
         Self::VaultRetrievalWeightsConfigure,
         Self::VaultAffectAnnotationsPut,
+        Self::VaultTaggingStatus,
+        Self::VaultTaggingTags,
+        Self::VaultTaggingHistory,
+        Self::VaultTaggingMentions,
         Self::VaultAffectClaimsConsolidate,
         Self::VaultRetrievalRecall,
         Self::VaultRetrievalRuns,
@@ -1314,6 +1323,7 @@ impl AgentVerb {
         Self::VaultSummariesProposalsSwitch,
         Self::VaultSummariesProposalsReject,
         Self::VaultNotesCreate,
+        Self::VaultNotesAuthorTake,
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
         Self::VaultNotesHistory,
@@ -1412,6 +1422,10 @@ impl AgentVerb {
             Self::VaultRetrievalWeightsGet => "vault.retrieval.weights.get",
             Self::VaultRetrievalWeightsConfigure => "vault.retrieval.weights.configure",
             Self::VaultAffectAnnotationsPut => "vault.affect.annotations.put",
+            Self::VaultTaggingStatus => "vault.tagging.status",
+            Self::VaultTaggingTags => "vault.tagging.tags",
+            Self::VaultTaggingHistory => "vault.tagging.history",
+            Self::VaultTaggingMentions => "vault.tagging.mentions",
             Self::VaultAffectClaimsConsolidate => "vault.affect.claims.consolidate",
             Self::VaultRetrievalRecall => "vault.retrieval.recall",
             Self::VaultRetrievalRuns => "vault.retrieval.runs",
@@ -2009,6 +2023,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => "vault.summaries.proposals.switch",
             Self::VaultSummariesProposalsReject => "vault.summaries.proposals.reject",
             Self::VaultNotesCreate => "vault.notes.create",
+            Self::VaultNotesAuthorTake => "vault.notes.author_take",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
             Self::VaultNotesHistory => "vault.notes.history",
@@ -2103,6 +2118,10 @@ impl AgentVerb {
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultTaggingStatus
+                | Self::VaultTaggingTags
+                | Self::VaultTaggingHistory
+                | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
@@ -2644,6 +2663,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
@@ -2786,6 +2806,10 @@ impl AgentVerb {
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultTaggingStatus
+                | Self::VaultTaggingTags
+                | Self::VaultTaggingHistory
+                | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
@@ -3327,6 +3351,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
@@ -3530,6 +3555,10 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultTaggingStatus
+                | Self::VaultTaggingTags
+                | Self::VaultTaggingHistory
+                | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
@@ -4089,6 +4118,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesFork
                 | Self::VaultNotesProposalsOpen
@@ -4506,6 +4536,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesFork
                 | Self::VaultNotesProposalsOpen
@@ -4626,6 +4657,10 @@ impl AgentVerb {
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
+            Self::VaultTaggingStatus => &["spec"],
+            Self::VaultTaggingTags => &["spec"],
+            Self::VaultTaggingHistory => &["spec"],
+            Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
@@ -5207,6 +5242,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => &["spec"],
             Self::VaultSummariesProposalsReject => &["spec"],
             Self::VaultNotesCreate => &["spec"],
+            Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
@@ -5303,6 +5339,10 @@ impl AgentVerb {
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
+            Self::VaultTaggingStatus => &["spec"],
+            Self::VaultTaggingTags => &["spec"],
+            Self::VaultTaggingHistory => &["spec"],
+            Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
@@ -5884,6 +5924,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => &["spec"],
             Self::VaultSummariesProposalsReject => &["spec"],
             Self::VaultNotesCreate => &["spec"],
+            Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
@@ -6080,6 +6121,18 @@ impl AgentVerb {
             }
             Self::VaultAffectAnnotationsPut => {
                 "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."
+            }
+            Self::VaultTaggingStatus => {
+                "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."
+            }
+            Self::VaultTaggingTags => {
+                "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."
+            }
+            Self::VaultTaggingHistory => {
+                "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."
+            }
+            Self::VaultTaggingMentions => {
+                "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."
             }
             Self::VaultAffectClaimsConsolidate => {
                 "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."
@@ -7733,6 +7786,9 @@ impl AgentVerb {
             }
             Self::VaultNotesCreate => {
                 "Creates a NOTE of a registered kind, its first authored text as its birth."
+            }
+            Self::VaultNotesAuthorTake => {
+                "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."
             }
             Self::VaultNotesFromEntity => {
                 "Creates a NOTE of a registered kind from an existing entity."
