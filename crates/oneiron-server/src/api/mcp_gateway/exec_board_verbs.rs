@@ -93,6 +93,7 @@ pub(crate) async fn execute_mcp_execute_code(
     // for the run's next entry (CUA-001).
     if terminal {
         server.desktop_seats.end_run(run_id);
+        server.browser_seats.end_run(run_id);
     }
     // Non-continuable: the step log is a run's own, not a re-enumerable
     // producer set, so a non-terminal page here states

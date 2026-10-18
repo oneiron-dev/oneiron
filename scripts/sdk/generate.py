@@ -88,6 +88,14 @@ for row in ROWS:
     # an empty list standing in for it, and the call's answer goes unlisted.
     if row.get('host_door_lists') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door lists its rows')
+    # `host_door_lens_owner` hands a live lens door the owner its card is held
+    # for (OF-181, FIX 2612), never a field of its input: the facade call's
+    # host-bound creating run and subscription (`FacadeCall::lens_owner`), or
+    # a code-mode call's run and the request's own subscription
+    # (`McpRowSurface::lens_owner`). A door handed `None` holds its card
+    # unowned, as every HTTP call and direct tool call does.
+    if row.get('host_door_lens_owner') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes a lens owner')
     # Rule 5: `task_work` marks a row whose run is one piece of task work. The
     # server's dispatch and its MCP dispatch take one turn for it
     # (`SyncServer::admit_task_work`, never refused) before the engine call and
@@ -647,9 +655,12 @@ def mcp_input_dispatch(row):
         # A host door answers from the server's own state, under the same
         # credential the REST facade passes it.
         session_arg = 'actor.off_record_session.as_deref().map(oneiron::EntityId::from_hex).transpose().map_err(|_| invalid())?, ' if row.get('host_door_session') else ''
-        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}input).await'
+        lens_arg = 'owner, ' if row.get('host_door_lens_owner') else ''
+        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}{lens_arg}input).await'
+        # The card's owner names the request as the row runs it, before it decodes.
+        lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
-                 f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
+                 f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + lens_owner + decode +
                  (f'let (output, listed) = {door};\n'
                   '// Derived from the rows its reads listed, when its path lists them.\n'
                   'served.extend(crate::api::facade::host_doors::ListedRows::rows(listed).into_iter().flatten());\n'
@@ -743,7 +754,8 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
     result += '''/// Runs one verb from its whole typed input, with the actor ceiling and
 /// gate every other door applies. Every MCP door reaches the verb table here.
 /// The input names only fields the verb's advertised closed schema lists, and
-/// a code-mode call's claims are written under its run's host `origin`.
+/// a code-mode call's claims are written under its `run`'s host origin, the
+/// live lens cards it renders held for that run.
 /// Every row the result was derived from is listed in `served`: those its
 /// input names, and those the verb's reads picked themselves. A board read
 /// leaves the hook blocks its answer shows in `board_hooks`; the caller spends
@@ -753,12 +765,12 @@ pub(crate) async fn execute_agent_verb_input(
         tool: &str,
         input: Value,
         actor: &McpCallContext,
-        origin: Option<oneiron::memory::HostWriteOrigin>,
+        run: Option<McpCodeRun>,
         served: &mut Vec<oneiron::EntityId>,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
-        let produced = execute_agent_verb_listing(server, tool, input, actor, origin, &producers, served, board_hooks).await;
+        let produced = execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks).await;
         served.extend(producers.take());
         produced
     }
@@ -772,7 +784,7 @@ async fn execute_agent_verb_listing(
         tool: &str,
         input: Value,
         actor: &McpCallContext,
-        origin: Option<oneiron::memory::HostWriteOrigin>,
+        run: Option<McpCodeRun>,
         producers: &oneiron::memory::ProducerRows,
         served: &mut Vec<oneiron::EntityId>,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
@@ -791,7 +803,7 @@ async fn execute_agent_verb_listing(
         position.facet = Some(facet);
     }
     let invocation = actor.invocation.unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
-    let surface = McpRowSurface { position, invocation, origin };
+    let surface = McpRowSurface { position, invocation, run };
     // The direct caller's own proof, on the rows whose HTTP door binds it
     // outside a room turn (OF-417, OF-365).
     let memory = mcp_direct_authorship(server, tool, actor, surface.memory(server, actor, producers))?;
@@ -1133,7 +1145,8 @@ def facade_dispatch(facade_rows):
             lands = r.get('lands_turn')
             landed = " server.ai.turn_landed_by(server.vault(), landed_by.0, landed_by.1);" if lands else ""
             session_arg = 'call.session()?, ' if r.get('host_door_session') else ''
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await'
+            lens_arg = 'call.lens_owner(), ' if r.get('host_door_lens_owner') else ''
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}{lens_arg}facade_input(hooks.args.clone())?).await'
             answer = (f'''let (output, listed) = {door};
                 let output = facade_output(output?)?;{landed}
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else

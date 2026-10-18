@@ -65,7 +65,7 @@ use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
-use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
@@ -323,7 +323,7 @@ fn promote_one(
 
     // Rule A: the claim is concluded from the evidence that survived
     // admission, the head it supersedes and the MESSAGEs its evidence cites,
-    // the first MAX_BIRTH_INPUTS of them, taken before `surviving` moves.
+    // every one of them, taken before `surviving` moves.
     let birth = {
         let cited = verified
             .map(VerifiedEvidenceSet::cited_messages)
@@ -333,7 +333,6 @@ fn promote_one(
             .chain(&candidate.supersedes)
             .chain(&cited)
             .copied()
-            .take(MAX_BIRTH_INPUTS)
             .collect();
         RowBirth::written(
             run.agent_actor,
@@ -370,6 +369,23 @@ fn promote_one(
         .clone()
         .into_claim_body(&envelope, default_facet)
         .map_err(|error| error.to_string())?;
+    let mut scope = scope_with_taint(probe_body.scope.clone(), source);
+    // OF-492: a claim from a later import of a topic the owner answered is
+    // born into the audience they chose, before it is signed. Conflict
+    // bookkeeping keeps its marker's project.
+    if let Some(review) = import_review.as_deref().filter(|_| {
+        !is_conflict_marker && probe_body.predicate != crate::claim::PREDICATE_CONFLICT_RESOLVED
+    }) {
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| error.to_string())?;
+        scope = crate::federation::record_scope::stamp_import_audience_birth(
+            vault, &txn, scope, review,
+        )
+        .map_err(|error| format!("import audience read failed: {error}"))?;
+    }
     let claim_candidate = candidate
         .candidate
         .with_evidence(evidence_value)
@@ -377,7 +393,7 @@ fn promote_one(
         // classes (§4): the central lineage guard compares src against this
         // key, so leaving it absent would leave a claim whose lineage
         // nothing can check.
-        .with_scope(scope_with_taint(probe_body.scope.clone(), source));
+        .with_scope(scope);
 
     // Defence in depth (§5): the runtime validator at the write chokepoint
     // is authoritative; this catches an internal regression that lets the

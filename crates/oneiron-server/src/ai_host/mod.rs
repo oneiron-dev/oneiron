@@ -37,6 +37,7 @@ mod code_fix;
 mod connector_event;
 mod contribution;
 mod dreamer;
+mod eval_authoring;
 pub(crate) mod failure_signals;
 mod harness;
 pub(crate) mod home_digests;
@@ -72,7 +73,8 @@ pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
 };
 pub(crate) use weave_lens::{
-    WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_listing,
+    WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_for_run,
+    render_live_weave_lens_listing,
 };
 
 use dreamer::{DreamerHost, DreamerStart};
