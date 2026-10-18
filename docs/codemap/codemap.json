@@ -2677,7 +2677,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/guest_revoke.rs",
-     "purpose": "OF-232: the owner mints an ask guest's capability slip, bound to its grant, and withdraws one guest's access…",
+     "purpose": "OF-232: the owner mints an Ask or Connect guest's capability slip, bound to its grant, and withdraws one…",
      "surface": {
       "crate-vis": 2,
       "fn": 2
@@ -2872,6 +2872,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LocalOpenProfile"
+     ],
+     "path": "src/authority/local_open.rs",
+     "purpose": "A raw open's own machine profile, from the host's root secret (FIX 4730)",
+     "surface": {
+      "enum": 1,
+      "fn": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -2941,7 +2954,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 11,
       "struct": 3
@@ -3045,14 +3058,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 26,
-      "re-export": 42
+      "re-export": 43
      }
     },
     {
@@ -3129,7 +3142,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -3384,7 +3397,7 @@
      "path": "src/authority/slip_vault/connect_lifecycle.rs",
      "purpose": "Owner-bound doors over the existing federation lifecycle fold",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -18453,7 +18466,7 @@
      "path": "src/deletion/receipt_completion.rs",
      "purpose": "The linked REDACTION_AUDIT completion row (OF-470, ARCH-0038 step 10)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -18473,7 +18486,7 @@
      "path": "src/deletion/sweep_queue.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 1
      }
     },
@@ -32456,6 +32469,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecordEraseSweep",
+      "RecordEraseSweepRequest"
+     ],
+     "path": "src/memory/erase_sweep.rs",
+     "purpose": "Owner-bound historical erasure timing from the immutable redaction receipt",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -32767,7 +32794,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 18,
+      "mod": 19,
       "re-export": 47
      }
     },
@@ -48514,6 +48541,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/client/residence/bundle/publication.rs",
+     "purpose": "The owner's ask to publish the vault's sealed bundle (WILL L04 row 03), run by the install his counted…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/client/residence/bundle/sweep.rs",
      "purpose": "Erase's sweep of every pad object the home keeps (FIX 922): each world whose keys were destroyed here leaves…",
      "surface": {
@@ -49476,10 +49513,20 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 12,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/bundle/publication.rs",
+     "purpose": "The home's admission of the install the owner asked to publish the vault's sealed bundle here (WILL L04 row…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -49732,7 +49779,7 @@
      "purpose": "Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope…",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 14,
       "struct": 2
@@ -49772,6 +49819,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/selector/guest_document.rs",
+     "purpose": "The shared guest-document export door: owner sharing and recipient fetching",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/selector/held_retire.rs",
      "purpose": "Retirement of the facet stamps federation admission holds ahead of their rows (Astra-b F2 on #1432): by age…",
      "surface": {
@@ -49796,7 +49853,7 @@
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
       "crate-vis": 13,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -51632,7 +51689,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 60,
+      "re-export": 61,
       "struct": 36
      }
     },
@@ -52069,7 +52126,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 858
+      "fn": 862
      }
     },
     {
@@ -52097,6 +52154,22 @@
      "surface": {
       "fn": 12,
       "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GuestDocumentContext",
+      "GuestDocumentEnvelope",
+      "GuestDocumentShareRequest"
+     ],
+     "path": "src/task_verb/sdk_guest_document.rs",
+     "purpose": "Typed guest document sharing over live Connect grants (ARCH-0043)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -56785,6 +56858,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/bundle/publication.rs",
+     "purpose": "Sealed bundle publication on the owner's ask (WILL L04 row 03): he asks on any surface he is authenticated…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -58101,7 +58185,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58878,7 +58962,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 195,
+     "files": 196,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59361,7 +59445,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 182,
+     "files": 185,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59389,7 +59473,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 176,
+     "files": 177,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59543,7 +59627,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59559,7 +59643,7 @@
    },
    "over_bar": 198,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3633,
+   "source_files": 3640,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59814,7 +59898,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 6,
       "enum": 6,
       "fn": 14,
@@ -65744,6 +65828,7 @@
      "path": "src/lib/entity.rs",
      "purpose": "Free fns plus vault lifecycle, health, and entity entry points",
      "surface": {
+      "crate-vis": 1,
       "fn": 13
      }
     },
@@ -65761,10 +65846,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/lib/host_root.rs",
+     "purpose": "`oneiron_vault_open_with_host_root`: the raw open that profiles this install from the vault's host root…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/lib/mod.rs",
      "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -65822,7 +65917,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65831,7 +65926,7 @@
    },
    "over_bar": 0,
    "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
-   "source_files": 9,
+   "source_files": 10,
    "test_files": 1
   },
   "oneiron-guest": {
@@ -66337,7 +66432,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeviceKeystore",
@@ -68066,7 +68161,7 @@
      "purpose": "VaultBridge root and ActorScopedVault handle plus the facade() accessor",
      "surface": {
       "crate-vis": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -68092,7 +68187,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 827
+      "fn": 831
      }
     },
     {
@@ -68287,6 +68382,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HostRootOpenOptions"
+     ],
+     "path": "src/lib/host_root.rs",
+     "purpose": "The host root secret the raw openers take (FIX 4730): `NapiVault` and `VaultBridge` opens that profile this…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lib/mod.rs",
      "purpose": "—",
@@ -68304,7 +68412,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
-      "fn": 28,
+      "fn": 29,
       "struct": 1
      }
     },
@@ -68344,7 +68452,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade"
     },
     "lib": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68360,7 +68468,7 @@
    },
    "over_bar": 2,
    "purpose": "—",
-   "source_files": 20,
+   "source_files": 21,
    "test_files": 1
   },
   "oneiron-organ-host": {
@@ -69141,7 +69249,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 828
+      "fn": 832
      }
     },
     {
@@ -72571,6 +72679,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/guest_document_doors.rs",
+     "purpose": "Guest document envelopes under the owner's or the recipient's own proof",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/guest_doors.rs",
      "purpose": "The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke`",
      "surface": {
@@ -72594,7 +72712,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 139
+      "crate-vis": 140
      }
     },
     {
@@ -72924,7 +73042,7 @@
      "path": "src/api/facade/shared_member_doors.rs",
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -80454,7 +80572,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 403,
+     "files": 404,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80883,7 +81001,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 749,
+   "source_files": 750,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82037,6 +82155,7 @@
       "FatalLlmError",
       "FederationDirectionScope",
       "FederationGrantRole",
+      "FederationGrantScope",
       "FederationPactScope",
       "FederationPactStatus",
       "FeedbackCategory",
@@ -82154,11 +82273,16 @@
       "GraphNode",
       "GuestCopyState",
       "GuestDeletionRequestStatus",
+      "GuestDocumentContext",
+      "GuestDocumentEnvelope",
+      "GuestDocumentShareRequest",
       "GuestPactStanding",
       "GuestRevokeCourtesyTargetView",
       "GuestRevokeDisclosure",
       "GuestRevokeRequest",
       "GuestRevokeResponse",
+      "GuestShareEnvelope",
+      "GuestShareEnvelopeBody",
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
@@ -82942,6 +83066,8 @@
       "RecordEraseOutcome",
       "RecordErasePreview",
       "RecordEraseRequest",
+      "RecordEraseSweep",
+      "RecordEraseSweepRequest",
       "RecordLinks",
       "RecordLinksRequest",
       "RecordPosition",
@@ -83915,8 +84041,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 695,
-      "struct": 2139
+      "enum": 696,
+      "struct": 2146
      }
     },
     {

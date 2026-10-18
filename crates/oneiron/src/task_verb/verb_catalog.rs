@@ -261,6 +261,9 @@ pub enum AgentVerb {
     VaultTrustedContactsConcernAuthorize,
     VaultTrustedContactsConcernPropose,
     VaultTrustedContactsConcernDeliver,
+    VaultGuestsShare,
+    VaultGuestsExportEnvelope,
+    VaultGuestsReshare,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
     VaultSupportGrantsMint,
@@ -281,6 +284,7 @@ pub enum AgentVerb {
     SelfOffRecordExecute,
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
+    VaultRecordsEraseSweep,
     VaultResearchCreateChild,
     VaultResearchArchive,
     VaultResearchArchiveInstall,
@@ -1116,6 +1120,9 @@ impl AgentVerb {
         Self::VaultTrustedContactsConcernAuthorize,
         Self::VaultTrustedContactsConcernPropose,
         Self::VaultTrustedContactsConcernDeliver,
+        Self::VaultGuestsShare,
+        Self::VaultGuestsExportEnvelope,
+        Self::VaultGuestsReshare,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
         Self::VaultSupportGrantsMint,
@@ -1136,6 +1143,7 @@ impl AgentVerb {
         Self::SelfOffRecordExecute,
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
+        Self::VaultRecordsEraseSweep,
         Self::VaultResearchCreateChild,
         Self::VaultResearchArchive,
         Self::VaultResearchArchiveInstall,
@@ -1978,6 +1986,9 @@ impl AgentVerb {
             }
             Self::VaultTrustedContactsConcernPropose => "vault.trusted_contacts.concern.propose",
             Self::VaultTrustedContactsConcernDeliver => "vault.trusted_contacts.concern.deliver",
+            Self::VaultGuestsShare => "vault.guests.share",
+            Self::VaultGuestsExportEnvelope => "vault.guests.export_envelope",
+            Self::VaultGuestsReshare => "vault.guests.reshare",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultSupportGrantsMint => "vault.support_grants.mint",
@@ -1998,6 +2009,7 @@ impl AgentVerb {
             Self::SelfOffRecordExecute => "self.off_record.execute",
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
+            Self::VaultRecordsEraseSweep => "vault.records.erase_sweep",
             Self::VaultResearchCreateChild => "vault.research.create_child",
             Self::VaultResearchArchive => "vault.research.archive",
             Self::VaultResearchArchiveInstall => "vault.research.archive.install",
@@ -2850,6 +2862,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultTrustedContactsConcernPropose
                 | Self::VaultTrustedContactsConcernDeliver
+                | Self::VaultGuestsShare
+                | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
@@ -2870,6 +2885,7 @@ impl AgentVerb {
                 | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultRecordsEraseSweep
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -3732,6 +3748,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultTrustedContactsConcernPropose
                 | Self::VaultTrustedContactsConcernDeliver
+                | Self::VaultGuestsShare
+                | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
@@ -3752,6 +3771,7 @@ impl AgentVerb {
                 | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultRecordsEraseSweep
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -4691,6 +4711,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultTrustedContactsConcernPropose
                 | Self::VaultTrustedContactsConcernDeliver
+                | Self::VaultGuestsShare
+                | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
@@ -4711,6 +4734,7 @@ impl AgentVerb {
                 | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultRecordsEraseSweep
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -6066,6 +6090,9 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultTrustedContactsConcernPropose => &["spec"],
             Self::VaultTrustedContactsConcernDeliver => &["spec"],
+            Self::VaultGuestsShare => &["spec"],
+            Self::VaultGuestsExportEnvelope => &["spec"],
+            Self::VaultGuestsReshare => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultSupportGrantsMint => &["spec"],
@@ -6086,6 +6113,7 @@ impl AgentVerb {
             Self::SelfOffRecordExecute => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
+            Self::VaultRecordsEraseSweep => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
             Self::VaultResearchArchiveInstall => &["spec"],
@@ -6922,6 +6950,9 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultTrustedContactsConcernPropose => &["spec"],
             Self::VaultTrustedContactsConcernDeliver => &["spec"],
+            Self::VaultGuestsShare => &["spec"],
+            Self::VaultGuestsExportEnvelope => &["spec"],
+            Self::VaultGuestsReshare => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultSupportGrantsMint => &["spec"],
@@ -6942,6 +6973,7 @@ impl AgentVerb {
             Self::SelfOffRecordExecute => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
+            Self::VaultRecordsEraseSweep => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
             Self::VaultResearchArchiveInstall => &["spec"],
@@ -8277,9 +8309,18 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernDeliver => {
                 "The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice."
             }
+            Self::VaultGuestsShare => {
+                "The owner shares a locally authored named-world document through its live guest grant as a filtered signed envelope bound to the pact epoch."
+            }
+            Self::VaultGuestsExportEnvelope => {
+                "The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket."
+            }
+            Self::VaultGuestsReshare => {
+                "The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused."
+            }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
-                "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+                "The owner mints an Ask or active Connect guest capability slip bound to its live grant and the public key generated by the guest on their own device."
             }
             Self::VaultSupportGrantsMint => {
                 "The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."
@@ -8334,6 +8375,9 @@ impl AgentVerb {
             }
             Self::VaultRecordsEraseConfirm => {
                 "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."
+            }
+            Self::VaultRecordsEraseSweep => {
+                "Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep."
             }
             Self::VaultResearchCreateChild => {
                 "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."

@@ -120,6 +120,9 @@ impl Vault {
             OwnerWorkBody::Root { change } => {
                 self.root_work_in_txn(txn, &fold, &request, change, secret)?
             }
+            OwnerWorkBody::PublishBundle { home } => {
+                self.publish_bundle_work_in_txn(txn, &fold, &request, home, secret.machine)?
+            }
         };
         let Some(outcome) = outcome else {
             return Ok(Ran::Pending);
