@@ -1399,6 +1399,9 @@ impl OfferLadder {
         let (ladder, run) = (Arc::clone(self), run.clone());
         let selector = selector.map(str::to_owned);
         Ok(LlmStream::new(Driven::new(move |events| async move {
+            // The run is live until the stream ends or is dropped: the host
+            // stays awake for it, as for a generated call (FIX 1092).
+            let _awake = oneiron_vault_contract::host_adapters::run_awake();
             let opening = Opening {
                 start,
                 first,

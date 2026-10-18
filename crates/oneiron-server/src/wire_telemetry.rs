@@ -168,6 +168,9 @@ impl LimitRow {
         Self::Engine(EngineLimit::PackScriptOutputBytes),
         Self::Engine(EngineLimit::PackScriptOutputRows),
         Self::Engine(EngineLimit::JudgeRubricBytes),
+        Self::Engine(EngineLimit::MaintenanceRowItems),
+        Self::Engine(EngineLimit::MaintenanceTextBytes),
+        Self::Engine(EngineLimit::MaintenanceScanRows),
         Self::Engine(EngineLimit::JudgeInstructionsBytes),
         Self::Engine(EngineLimit::JudgeReplayTextBytes),
         Self::Engine(EngineLimit::ContributionJudgeTaskBytes),
@@ -654,15 +657,39 @@ pub(crate) async fn observe_http(
         server.vault().as_ref(),
     )
     .ok();
-    let actor = auth.as_ref().map_or("unauthenticated", |a| {
-        a.principal_ref().unwrap_or(a.principal())
-    });
+    let actor = auth
+        .as_ref()
+        .map_or("unauthenticated", |a| match a.principal_ref() {
+            Some(principal) => principal,
+            // An owner-grade credential with no person behind it (the
+            // shared secret) speaks for the vault's owner, so its traffic
+            // counts as the owner's own (FIX 1087).
+            None if a.is_owner_grade() => embedded_owner().unwrap_or(a.principal()),
+            None => a.principal(),
+        });
     start_window_receipts(&server);
     let _ = server
         .wire_telemetry
         .record(&verb, actor, oneiron_vault_contract::now_ts());
     next.run(request).await
 }
+
+/// The vault owner's actor id, as `Vault::ensure_embedded_owner_actor` makes
+/// it: the wire actor an owner-grade credential with no person counts under.
+fn embedded_owner() -> Option<&'static str> {
+    static OWNER: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    OWNER
+        .get_or_init(|| {
+            oneiron::EntityId::derive(
+                oneiron_contracts::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR,
+                &[],
+            )
+            .ok()
+            .map(|owner| owner.to_hex())
+        })
+        .as_deref()
+}
+
 #[cfg(test)]
 mod tests;
 
