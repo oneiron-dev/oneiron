@@ -2354,6 +2354,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "execute_code",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::foreign_code::ForeignCodeRunRequest,
+                >(),
+            ),
+            (
                 "vault.code.model_heal_count",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_run_doors::CodeRunModelHealCountRequest,
@@ -4768,6 +4774,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.proposal_review",
     "vault.code.proposal_settle",
     "vault.code.proposal_settlement",
+    "execute_code",
     "vault.code.model_heal_count",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
@@ -5738,6 +5745,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.proposal_settlement" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeProposalSettlementView,
+        >(),
+        "execute_code" => crate::code_run::vault_read::request_schema::<
+            crate::memory::foreign_code::ForeignCodeRunResult,
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
@@ -9382,6 +9392,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.oplog" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "execute_code" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13454,6 +13471,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.oplog" => {
             let _input: crate::memory::code_doors::CodeRepoRequest = decode(value.clone())?;
         }
+        "execute_code" => {
+            let _input: crate::memory::foreign_code::ForeignCodeRunRequest = decode(value.clone())?;
+        }
         "vault.code.model_heal_count" => {
             let _input: crate::memory::code_run_doors::CodeRunModelHealCountRequest =
                 decode(value.clone())?;
@@ -15686,6 +15706,7 @@ pub fn invoke(
             encode(vault_code_proposal_settlement(memory, decode(value)?)?)
         }
         "vault.code.oplog" => encode(vault_code_oplog(memory, decode(value)?)?),
+        "execute_code" => encode(execute_code(memory, decode(value)?)?),
         "vault.code.model_heal_count" => {
             encode(vault_code_model_heal_count(memory, decode(value)?)?)
         }
@@ -20108,6 +20129,12 @@ pub fn vault_code_oplog(
     input: crate::memory::code_doors::CodeRepoRequest,
 ) -> MemoryResult<crate::memory::code_doors::CodeMutationLog> {
     memory.code_mutation_log_as(&memory.embedded_owner("vault.code.oplog")?, input)
+}
+pub fn execute_code(
+    memory: &Memory<'_>,
+    input: crate::memory::foreign_code::ForeignCodeRunRequest,
+) -> MemoryResult<crate::memory::foreign_code::ForeignCodeRunResult> {
+    crate::task_verb::sdk::host_only(memory, "execute_code", &input)
 }
 pub fn vault_code_model_heal_count(
     memory: &Memory<'_>,

@@ -2156,6 +2156,11 @@ export_facade! {
     let output = client.vault_code_oplog(&input)?;
     crate::codec::lift_record("vault.code.oplog", &output)
 };
+"execute_code" => fn execute_code(&self, input: ForeignCodeRunRequest) -> ForeignCodeRunResult = |client| {
+    let input: oneiron::memory::foreign_code::ForeignCodeRunRequest = crate::codec::lower_record("execute_code", input)?;
+    let output = client.execute_code(&input)?;
+    crate::codec::lift_record("execute_code", &output)
+};
 "vault.code.model_heal_count" => fn vault_code_model_heal_count(&self, input: CodeRunModelHealCountRequest) -> CodeRunModelHealCountView = |client| {
     let input: oneiron::memory::code_run_doors::CodeRunModelHealCountRequest = crate::codec::lower_record("vault.code.model_heal_count", input)?;
     let output = client.vault_code_model_heal_count(&input)?;

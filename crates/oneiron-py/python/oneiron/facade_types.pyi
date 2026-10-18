@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 799 facade rows, 2785 declarations.
-Inputs: 747 of 799 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 719 of 799 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 800 facade rows, 2796 declarations.
+Inputs: 748 of 800 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 719 of 800 fully typed, 81 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -7873,6 +7873,87 @@ class CodeMutationEntry(TypedDict):
 class CodeMutationLog(TypedDict):
     repo: EntityId
     entries: list[CodeMutationEntry]
+class ForeignCodeRunRequest(TypedDict):
+    source: str
+    reads: NotRequired[list[str]]
+ForeignCodeTier = Literal["foreign"]
+class ForeignCodeRead(TypedDict):
+    reference: str
+    path: str
+class ForeignCodeOutput(TypedDict):
+    path: str
+    bytes: list[int]
+ForeignCodeSource = Literal["generated"]
+ForeignCodeApproval = Literal["proposed"]
+class CodeFileEdit(TypedDict):
+    path: str
+    start: int
+    end: int
+    expected: str
+    replacement: str
+    new_path: NotRequired[str | None]
+class ClaimInput(TypedDict):
+    id: NotRequired[str | None]
+    predicate: str
+    subject_ref: str
+    value: Any
+    confidence: float
+    source: str
+    world_ref: NotRequired[str | None]
+    relationship_ref: NotRequired[str | None]
+    scope: NotRequired[Any | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    occurred_at: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    salience: NotRequired[float | None]
+class ForeignCodeEffectFileWrite(TypedDict):
+    kind: Literal["file_write"]
+    path: str
+    bytes: list[int]
+class ForeignCodeEffectFileEdit(TypedDict):
+    kind: Literal["file_edit"]
+    path: str
+    base_content_hash: str
+    edit: CodeFileEdit
+class ForeignCodeEffectFileDelete(TypedDict):
+    kind: Literal["file_delete"]
+    path: str
+ForeignCodeEffectFileRename = TypedDict("ForeignCodeEffectFileRename", {"kind": Literal["file_rename"], "from": str, "to": str})
+class ForeignCodeEffectDirectoryOpaque(TypedDict):
+    kind: Literal["directory_opaque"]
+    path: str
+class ForeignCodeEffectClaimCandidate(TypedDict):
+    kind: Literal["claim_candidate"]
+    claim: ClaimInput
+ForeignCodeEffect = ForeignCodeEffectFileWrite | ForeignCodeEffectFileEdit | ForeignCodeEffectFileDelete | ForeignCodeEffectFileRename | ForeignCodeEffectDirectoryOpaque | ForeignCodeEffectClaimCandidate
+class ForeignCodeProposal(TypedDict):
+    proposal_ref: str
+    receipt_ref: str
+    actor_ref: str
+    source: ForeignCodeSource
+    approval: ForeignCodeApproval
+    effect: ForeignCodeEffect
+class ForeignCodeIsolation(TypedDict):
+    backend: str
+    runtime: str
+    image: str
+    argv_digest: str
+    network: str
+    generation: str
+    fence_proven: bool
+class ForeignCodeRunResult(TypedDict):
+    run_id: str
+    actor_ref: str
+    tier: ForeignCodeTier
+    linked_imports: list[str]
+    reads: list[ForeignCodeRead]
+    done: bool
+    observation: str
+    outputs: list[ForeignCodeOutput]
+    proposals: list[ForeignCodeProposal]
+    isolation: ForeignCodeIsolation
+    receipt_ref: str
 class CodeRunModelHealCountRequest(TypedDict):
     model_id: str
 class CodeRunModelHealCountView(TypedDict):
@@ -11144,21 +11225,6 @@ class CommitOutcomeRefused(TypedDict):
     refusal: RecordRefusal
     receipt_ref: NotRequired[str | None]
 CommitOutcome = CommitOutcomeLanded | CommitOutcomeRefused
-class ClaimInput(TypedDict):
-    id: NotRequired[str | None]
-    predicate: str
-    subject_ref: str
-    value: Any
-    confidence: float
-    source: str
-    world_ref: NotRequired[str | None]
-    relationship_ref: NotRequired[str | None]
-    scope: NotRequired[Any | None]
-    valid_from: NotRequired[int | None]
-    valid_to: NotRequired[int | None]
-    occurred_at: NotRequired[int | None]
-    learned_at: NotRequired[int | None]
-    salience: NotRequired[float | None]
 class ClaimRefRequest(TypedDict):
     claim_ref: str
 class ForgetPredicateRequest(TypedDict):

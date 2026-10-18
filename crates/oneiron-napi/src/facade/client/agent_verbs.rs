@@ -3767,6 +3767,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn execute_code(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("execute_code", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_model_heal_count(
         &self,
         input: serde_json::Value,
