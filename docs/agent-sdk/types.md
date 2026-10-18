@@ -826,6 +826,10 @@ class Oneiron:
     def reveal(self) -> "Oneiron._RevealVerbs": ...
     @property
     def host(self) -> "Oneiron._HostVerbs": ...
+    def mount(self, spec: Facade.GraphFsMountRequest) -> Facade.GraphFsMounted:
+        """Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash."""
+    @property
+    def graph_fs(self) -> "Oneiron._GraphFsVerbs": ...
     def execute_code(self, spec: Facade.ForeignCodeRunRequest) -> Facade.ForeignCodeRunResult:
         """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
@@ -3398,6 +3402,25 @@ class Oneiron:
     class _HostBudgetVerbs:
         def hit(self, spec: Facade.HostBudgetHitRequest) -> Facade.HostBudgetHitResult:
             """Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."""
+    class _GraphFsVerbs:
+        def readdir(self, spec: Facade.GraphFsPathRequest) -> Facade.GraphFsDirectoryView:
+            """List one directory at the mounted reference under the caller read gate, with a sealed continuation."""
+        def read_file(self, spec: Facade.GraphFsPathRequest) -> Facade.GraphFsOutput:
+            """Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation."""
+        def read_link(self, spec: Facade.GraphFsLinkRequest) -> Facade.GraphFsLinkView:
+            """Resolve a visible graph link at the mounted reference without following a host filesystem link."""
+        def ls(self, spec: Facade.GraphFsLsRequest) -> Facade.GraphFsOutput:
+            """List names at the mounted reference, using the live temporal index when requested."""
+        def find(self, spec: Facade.GraphFsFindRequest) -> Facade.GraphFsOutput:
+            """Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index."""
+        def grep(self, spec: Facade.GraphFsGrepRequest) -> Facade.GraphFsOutput:
+            """Search visible mounted file bytes, using the live claim text index for supported recursive patterns."""
+        def cat(self, spec: Facade.GraphFsPathRequest) -> Facade.GraphFsOutput:
+            """Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference."""
+        def head(self, spec: Facade.GraphFsHeadRequest) -> Facade.GraphFsOutput:
+            """Read the first requested lines at the mounted reference with bounded output and a sealed continuation."""
+        def wc(self, spec: Facade.GraphFsLinkRequest) -> Facade.GraphFsOutput:
+            """Count lines, words and bytes of a visible file at the mounted reference."""
     class _ConnectorVerbs:
         def list(self, spec: Facade.ConnectorListRequest) -> list[Facade.ConnectorEntry]:
             """Every live catalogued connector whose name or summary matches the query."""

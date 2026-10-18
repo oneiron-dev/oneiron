@@ -4250,6 +4250,66 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn mount(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("mount", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_readdir(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.readdir", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_read_file(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.read_file", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_read_link(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.read_link", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_ls(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.ls", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_find(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.find", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_grep(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.grep", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_cat(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.cat", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_head(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.head", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn graph_fs_wc(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("graph_fs.wc", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_diff(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {

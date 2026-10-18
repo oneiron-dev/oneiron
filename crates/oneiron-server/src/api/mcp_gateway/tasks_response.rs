@@ -1346,6 +1346,16 @@ fn mcp_agent_verb_input(
         "vault.artifacts.threads.list" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.threads.assign" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.threads.state" => a.spec.clone().ok_or_else(invalid),
+        "mount" => a.spec.clone().ok_or_else(invalid),
+        "graph_fs.readdir" => a.spec.clone().ok_or_else(invalid),
+        "graph_fs.read_file" => a.spec.clone().ok_or_else(invalid),
+        "graph_fs.read_link" => a.spec.clone().ok_or_else(invalid),
+        "graph_fs.ls" => a.spec.clone().ok_or_else(invalid),
+        "graph_fs.find" => a.spec.clone().ok_or_else(invalid),
+        "graph_fs.grep" => a.spec.clone().ok_or_else(invalid),
+        "graph_fs.cat" => a.spec.clone().ok_or_else(invalid),
+        "graph_fs.head" => a.spec.clone().ok_or_else(invalid),
+        "graph_fs.wc" => a.spec.clone().ok_or_else(invalid),
         "vault.code.diff" => a.spec.clone().ok_or_else(invalid),
         "vault.code.blame" => a.spec.clone().ok_or_else(invalid),
         "vault.code.proposal_view" => a.spec.clone().ok_or_else(invalid),
@@ -3425,6 +3435,36 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.threads.state" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "mount" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "graph_fs.readdir" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "graph_fs.read_file" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "graph_fs.read_link" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "graph_fs.ls" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "graph_fs.find" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "graph_fs.grep" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "graph_fs.cat" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "graph_fs.head" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "graph_fs.wc" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.diff" => {
@@ -13364,6 +13404,86 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_artifacts_threads_state(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "mount" => {
+            let input: oneiron::memory::graph_fs_doors::GraphFsMountRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::mount(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "graph_fs.readdir" => {
+            let input: oneiron::memory::graph_fs_doors::GraphFsPathRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::graph_fs_readdir(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "graph_fs.read_file" => {
+            let input: oneiron::memory::graph_fs_doors::GraphFsPathRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::graph_fs_read_file(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "graph_fs.read_link" => {
+            let input: oneiron::memory::graph_fs_doors::GraphFsLinkRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::graph_fs_read_link(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "graph_fs.ls" => {
+            let input: oneiron::memory::graph_fs_doors::GraphFsLsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::graph_fs_ls(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "graph_fs.find" => {
+            let input: oneiron::memory::graph_fs_doors::GraphFsFindRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::graph_fs_find(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "graph_fs.grep" => {
+            let input: oneiron::memory::graph_fs_doors::GraphFsGrepRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::graph_fs_grep(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "graph_fs.cat" => {
+            let input: oneiron::memory::graph_fs_doors::GraphFsPathRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::graph_fs_cat(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "graph_fs.head" => {
+            let input: oneiron::memory::graph_fs_doors::GraphFsHeadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::graph_fs_head(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "graph_fs.wc" => {
+            let input: oneiron::memory::graph_fs_doors::GraphFsLinkRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::graph_fs_wc(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

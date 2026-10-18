@@ -8,6 +8,8 @@ use crate::config::ServeArgs;
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod hook_args;
+mod graph_fs_args;
+pub use graph_fs_args::GraphFsCommand;
 mod learning_setting_args;
 mod owner_args;
 mod recovery_kit_args;
@@ -682,6 +684,9 @@ pub struct ApiArgs {
 /// catalog: anything not shaped below is still one `raw METHOD PATH` away.
 #[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
 pub enum ApiCommand {
+    /// Typed actor-scoped mount and file-face reads over the facade.
+    #[command(subcommand)]
+    GraphFs(GraphFsCommand),
     /// GET the vault capability discovery document.
     Discover,
     /// GET the BM25 text-search route.

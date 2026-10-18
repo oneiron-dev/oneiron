@@ -34,6 +34,7 @@ impl GraphFsResolver<'_, '_> {
         let normalized = normalize_path(path)?;
         if let Some(literal) = literal_grep_pattern(pattern)
             && recursive
+            && self.snapshot.is_none()
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
         {
             let page = self.grep_claims_pushdown(literal, &normalized, cursor)?;
@@ -75,7 +76,7 @@ impl GraphFsResolver<'_, '_> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
         let normalized = normalize_path(path)?;
-        if sort_by_time && matches!(normalized.as_str(), "/claims" | "/claims/by-id") {
+        if sort_by_time && self.snapshot.is_none() && matches!(normalized.as_str(), "/claims" | "/claims/by-id") {
             let (bytes, next_cursor, total) = self.ls_claims_by_time_pushdown(cursor)?;
             return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Ls,
@@ -134,6 +135,22 @@ impl GraphFsResolver<'_, '_> {
         let started_at = self.scoped_read.vault().now_recorded_at();
         let normalized = normalize_path(path)?;
         if let Some(newer_than) = newer_than {
+            if self.snapshot.is_some() {
+                let walk = if self.snapshot_newer_than(newer_than)? {
+                    Some(self.find_walk(&normalized, cursor)?)
+                } else {
+                    None
+                };
+                let (bytes, next_cursor, total, receipt) = walk.map_or_else(
+                    || (Vec::new(), None, 0, None),
+                    |walk| (walk.bytes, walk.next_cursor, walk.total, walk.receipt),
+                );
+                return self.finish_coreutils_command(
+                    GraphFsCoreutilsVerb::Find, started, started_at,
+                    GraphFsCoreutilsDecision::Walk, "snapshot import transaction time",
+                    bytes, next_cursor, Vec::new(), total, receipt,
+                );
+            }
             let (bytes, next_cursor, total) =
                 self.find_newer_pushdown(&normalized, newer_than, cursor)?;
             return self.finish_coreutils_command(
@@ -441,6 +458,9 @@ impl GraphFsResolver<'_, '_> {
 
     pub(super) fn coreutils_path_visible(&self, path: &str) -> Result<bool> {
         let components = path_components(path)?;
+        if self.snapshot.is_some() {
+            return self.snapshot_visible(path);
+        }
         match components.as_slice() {
             ["claims", "by-id"] | ["claims", "by-time"] | ["claims", "by-time", _] => Ok(true),
             ["claims", "by-time", _, claim] => self

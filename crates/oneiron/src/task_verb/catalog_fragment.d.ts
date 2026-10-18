@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 963 code-mode rows (939 host rows, 24 run rows), 3226 declarations.
-// Replies: 858 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 973 code-mode rows (949 host rows, 24 run rows), 3242 declarations.
+// Replies: 868 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1826,6 +1826,22 @@ declare namespace Sdk {
   type AnnotationThreadRequest = { artifact_ref: string; thread_ref: string };
   type AnnotationAssignRequest = { artifact_ref: string; thread_ref: string; assignee_ref?: string | null };
   type AnnotationStateRequest = { artifact_ref: string; thread_ref: string; state: AnnotationThreadState };
+  type GraphFsReference = { kind: "live_head" } | { kind: "fork_hash"; repo: EntityId; hash: string } | { kind: "repo_snapshot"; snapshot: EntityId };
+  type GraphFsMountRequest = { ref: GraphFsReference; page_byte_cap?: number | null; max_entries?: number | null };
+  type GraphFsMounted = { mount: GraphFsMountRequest; root: string; projection: string };
+  type GraphFsPathRequest = { mount: GraphFsMountRequest; path: string; cursor?: string | null };
+  type GraphFsKind = "directory" | "file" | "symlink" | "cursor";
+  type GraphFsEntryView = { name: string; kind: GraphFsKind; target?: string | null; cursor?: string | null; byte_len?: number | null };
+  type GraphFsDirectoryView = { mount: GraphFsMountRequest; path: string; entries: GraphFsEntryView[]; next_cursor?: string | null };
+  type GraphFsEncoding = "utf8" | "base64";
+  type GraphFsPlan = "pushdown" | "walk";
+  type GraphFsOutput = { mount: GraphFsMountRequest; path: string; output: string; encoding: GraphFsEncoding; next_cursor?: string | null; plan: GraphFsPlan };
+  type GraphFsLinkRequest = { mount: GraphFsMountRequest; path: string };
+  type GraphFsLinkView = { mount: GraphFsMountRequest; path: string; target?: string | null };
+  type GraphFsLsRequest = { mount: GraphFsMountRequest; path: string; cursor?: string | null; by_time?: boolean };
+  type GraphFsFindRequest = { mount: GraphFsMountRequest; path: string; cursor?: string | null; newer_than?: number | null };
+  type GraphFsGrepRequest = { mount: GraphFsMountRequest; path: string; pattern: string; recursive?: boolean; cursor?: string | null };
+  type GraphFsHeadRequest = { mount: GraphFsMountRequest; path: string; lines?: number | null; cursor?: string | null };
   type CodeStateRequest = { repo: string; path: string; revision_ref?: string | null };
   type CodeDiffRequest = { before: CodeStateRequest; after: CodeStateRequest };
   type CodeStateView = { document_ref: string; repo: string; path: string; revision_ref?: string | null; text_hash: string };
@@ -3374,6 +3390,26 @@ declare const feedback: {
 };
 /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
 declare function fetch(input: Sdk.WebFetchRequest): Promise<Sdk.FetchResult | StoredResult>;
+declare const graph_fs: {
+  /** Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference. */
+  cat(input: Sdk.GraphFsPathRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index. */
+  find(input: Sdk.GraphFsFindRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** Search visible mounted file bytes, using the live claim text index for supported recursive patterns. */
+  grep(input: Sdk.GraphFsGrepRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** Read the first requested lines at the mounted reference with bounded output and a sealed continuation. */
+  head(input: Sdk.GraphFsHeadRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** List names at the mounted reference, using the live temporal index when requested. */
+  ls(input: Sdk.GraphFsLsRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation. */
+  read_file(input: Sdk.GraphFsPathRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+  /** Resolve a visible graph link at the mounted reference without following a host filesystem link. */
+  read_link(input: Sdk.GraphFsLinkRequest): Promise<Sdk.GraphFsLinkView | StoredResult>;
+  /** List one directory at the mounted reference under the caller read gate, with a sealed continuation. */
+  readdir(input: Sdk.GraphFsPathRequest): Promise<Sdk.GraphFsDirectoryView | StoredResult>;
+  /** Count lines, words and bytes of a visible file at the mounted reference. */
+  wc(input: Sdk.GraphFsLinkRequest): Promise<Sdk.GraphFsOutput | StoredResult>;
+};
 declare const host: {
   budget: {
     /** Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work. */
@@ -3384,6 +3420,8 @@ declare const host: {
   /** Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes. */
   wake(input: Sdk.HostWakeRequest): Promise<Sdk.HostWakeResult | StoredResult>;
 };
+/** Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash. */
+declare function mount(input: Sdk.GraphFsMountRequest): Promise<Sdk.GraphFsMounted | StoredResult>;
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
