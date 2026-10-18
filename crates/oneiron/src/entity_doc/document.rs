@@ -14,7 +14,7 @@ pub(super) const BODY: &str = "body";
 const BIRTH: &str = "entity_doc_birth";
 
 /// Immutable provenance copied from the original record at document birth.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Birth {
     /// Entity owning the text.

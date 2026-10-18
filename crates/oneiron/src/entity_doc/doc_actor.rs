@@ -15,6 +15,16 @@ pub enum DocActor {
     Erased,
 }
 
+impl schemars::JsonSchema for DocActor {
+    fn schema_name() -> String {
+        "DocActor".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 impl DocActor {
     /// Whether this is `actor`.
     #[must_use]

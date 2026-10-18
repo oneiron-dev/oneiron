@@ -13,7 +13,7 @@ use loro::{ContainerTrait, UpdateOptions};
 use serde::{Deserialize, Serialize};
 
 /// An engine-created half-open Unicode span, bound to its origin document.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextAnchor {
     pub(super) entity: String,

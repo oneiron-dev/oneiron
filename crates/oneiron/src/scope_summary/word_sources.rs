@@ -88,7 +88,14 @@ pub(crate) fn word_sources_in(
         _ => return Ok(WordSources::Own),
     };
     Ok(match sources {
-        Ok(Some(sources)) if !sources.is_empty() => WordSources::From(sources),
+        Ok(Some(mut sources)) if !sources.is_empty() => {
+            if header.entity_type == ENTITY_TYPE_SUMMARY {
+                sources.extend(crate::ports::dependency_sources_in(&vault.store, txn, id)?);
+                sources.sort_unstable();
+                sources.dedup();
+            }
+            WordSources::From(sources)
+        }
         Ok(None) => WordSources::Own,
         Ok(Some(_))
         | Err(

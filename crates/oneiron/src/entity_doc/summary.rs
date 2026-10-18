@@ -157,6 +157,7 @@ impl Vault {
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, summary, actor)?;
+            self.authorize_shared_content_write_in_txn(txn, *summary, &actor)?;
             let (mut head, doc) = summary_doc(self, txn, summary)?;
             if doc.frontier() != frontier {
                 return Err(Error::ConcurrentWrite(
@@ -173,4 +174,108 @@ impl Vault {
             storage::persist(self, txn, summary, &mut head, &doc, Some(&before))
         })
     }
+}
+
+/// One coherent SUMMARY editor projection inside the reader's admitted snapshot.
+pub(crate) fn summary_read_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    spans: &[crate::scope_summary::SummarySpan],
+) -> Result<crate::scope_summary::SummaryReadView> {
+    let (head, doc) = summary_doc(vault, txn, entity)?;
+    let row = vault.store.port_entity_record(txn, entity)?.ok_or(Error::EntityNotFound)?;
+    let logical = super::resolve_record_body(&vault.store, txn, entity, &row.body)?;
+    let body = crate::scope_summary::decode_scope_summary_body(&logical)?;
+    let anchors = spans.iter()
+        .map(|span| super::verbs::make_anchor(&doc, *entity, span.start, span.end))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(crate::scope_summary::SummaryReadView {
+        summary_ref: entity.to_hex(),
+        document: head.document,
+        frontier: doc.frontier(),
+        text: doc.text(),
+        metadata: summary_meta_in_txn(vault, txn, entity)?,
+        covers: body.covers.iter().map(EntityId::to_hex).collect(),
+        read_refs: crate::ports::dependency_sources_in(&vault.store, txn, entity)?
+            .iter().map(EntityId::to_hex).collect(),
+        anchors,
+        birth: doc.birth().clone(),
+    })
+}
+
+/// Opens one SUMMARY change through the common fork engine. Its keep fence,
+/// source admission, provenance and erasure dependencies co-commit with it.
+pub(crate) fn open_summary_proposal(
+    memory: &crate::memory::Memory<'_>,
+    request: &super::ForkRequest,
+    keep: Option<&str>,
+    read_refs: &[String],
+    authorization: &DocAuthorization<'_>,
+) -> crate::memory::MemoryResult<super::ProposalBundle> {
+    use super::forks::{ENTITY_DOC_FORK, ENTITY_DOC_PROPOSAL_BUNDLE, ENTITY_DOC_RECEIPT};
+    use super::side_keys::HexPair;
+    use crate::side_table::HexId;
+
+    let vault = memory.vault();
+    let reader = memory.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+    let sources = read_refs.iter()
+        .map(|reference| crate::memory::resolve_entity_ref(vault, reference))
+        .collect::<crate::memory::MemoryResult<Vec<_>>>()?;
+    if sources.contains(&request.entity) {
+        return Err(crate::memory::MemoryError::bad_request("a SUMMARY cannot be its own generation source"));
+    }
+    let proposal = vault.new_entity_id()?;
+    let mut registry = vault.entity_docs.lock()
+        .map_err(|_| super::invalid("document registry poisoned"))?;
+    let bundle = vault.try_with_write_txn_grouped(|txn| {
+        vault.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
+        let mut admitted = sources.clone();
+        admitted.push(request.entity);
+        if reader.get_entities_parts_in_txn(txn, &admitted)?.iter().any(Option::is_none) {
+            return Err(crate::memory::MemoryError::new(
+                crate::memory::MEMORY_CODE_NOT_FOUND,
+                "SUMMARY generation input is absent or not readable",
+                &[],
+            ));
+        }
+        let (_, live) = summary_doc(vault, txn, &request.entity)?;
+        if let Some(keep) = keep {
+            let base = live.fork(&request.base)?;
+            let base_keep = base.metadata()?.get("keep")
+                .and_then(rmpv::Value::as_str).map(str::to_owned);
+            if summary_meta_in_txn(vault, txn, &request.entity)?.keep != keep
+                || base_keep.as_deref() != Some(keep)
+            {
+                return Err(Error::ConcurrentWrite("summary keep memo changed").into());
+            }
+        }
+        let mut bundle = super::forks::open_proposal_in_txn(
+            vault, txn, &proposal, std::slice::from_ref(request), authorization,
+            vault.now_recorded_at(),
+        )?;
+        let refs: Vec<String> = sources.iter().map(EntityId::to_hex).collect();
+        for record in &mut bundle.forks {
+            record.read_refs.clone_from(&refs);
+            record.keep = keep.map(str::to_owned);
+            ENTITY_DOC_FORK.put(&vault.store, txn, &record.fork, record)?;
+        }
+        ENTITY_DOC_PROPOSAL_BUNDLE.put(&vault.store, txn, &proposal.to_hex(), &bundle)?;
+        for mut receipt in super::forks::receipts(&vault.store, txn, &request.entity)? {
+            if receipt.proposal == proposal.to_hex() {
+                receipt.read_refs.clone_from(&refs);
+                let key = HexPair(HexId(request.entity), HexId(EntityId::from_hex(&receipt.receipt)?));
+                ENTITY_DOC_RECEIPT.put(&vault.store, txn, &key, &receipt)?;
+            }
+        }
+        // Pending output is still retained text. Its sources must reach the
+        // entity's complete fork set when one of them is erased.
+        for source in &sources {
+            crate::ports::record_derived_edge_in_txn(&vault.store, txn, &request.entity, source)?;
+        }
+        Ok::<_, crate::memory::MemoryError>(bundle)
+    })?;
+    registry.clear();
+    memory.produced_from(sources);
+    Ok(bundle)
 }
