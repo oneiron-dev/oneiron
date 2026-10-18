@@ -73,6 +73,8 @@ pub enum ErrorKind {
     InvalidKey,
     InvalidFederationGrantBody,
     InvalidAuthorityLogBody,
+    /// An authority door refused a well-formed request and named its rule.
+    AuthorityRefused,
     InvalidAccessGrantBody,
     InvalidOutboundGrantBody,
     InvalidConnectorKeyBody,

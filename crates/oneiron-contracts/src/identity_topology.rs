@@ -217,4 +217,23 @@ pub enum IdentityTopologyRejection {
         /// Which rule the row broke.
         reason: &'static str,
     },
+    /// The deciding surface showed a revision of the decided-on event that
+    /// is no longer its current one (mesh PR2-topology `seen`): another
+    /// deciding row named the event since. A conflict, never a silent
+    /// overwrite. Nothing was written.
+    SealRevisionStale {
+        /// The event the decision rules on; `None` for an event this write
+        /// mints, whose revision is zero.
+        event: Option<EntityId>,
+        /// The event's current revision, which the surface shows again.
+        current: [u8; 32],
+    },
+    /// The deciding authority a topology seal would record does not stand in
+    /// the writing transaction: this install cannot carry the owner's act,
+    /// or the agent's Grant does not name `topology_seal`. Nothing was
+    /// written.
+    SealAuthorityRefused {
+        /// Which rule refused.
+        reason: &'static str,
+    },
 }

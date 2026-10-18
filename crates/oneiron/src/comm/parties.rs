@@ -17,8 +17,9 @@ use crate::batch::{BatchOp, apply_ops};
 use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::identity_topology::{
-    EntityLifecycleState, IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite,
-    IdentityTopologyOp, MergeOp, SurvivorshipPlan, entity_lifecycle_state_for_store_in_txn,
+    EngineCause, EntityLifecycleState, IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite,
+    IdentityTopologyOp, MergeOp, SurvivorshipPlan, TopologySeal,
+    entity_lifecycle_state_for_store_in_txn,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::side_table::{self, Raw, SideTable};
@@ -401,7 +402,9 @@ pub(super) fn reconcile_comm_party_twins(vault: &Vault, now: u64) -> CommResult<
         // The door takes its own write transaction, so it runs outside the
         // PERSON scan's read transaction.
         let (survivor, sources) = twins.split_first().ok_or(CommError::InvalidRecord)?;
-        let outcome = vault.apply_identity_topology_op(
+        // Deterministic engine repair, never an inferred human act: an engine
+        // seal under its own cause (mesh PR2-topology).
+        let outcome = vault.apply_identity_topology_op_as(
             &IdentityTopologyOp::Merge(MergeOp {
                 sources: sources.to_vec(),
                 survivor: *survivor,
@@ -412,6 +415,7 @@ pub(super) fn reconcile_comm_party_twins(vault: &Vault, now: u64) -> CommResult<
                 survivorship_plan: SurvivorshipPlan::ReadThrough,
             }),
             &IdentityOpWrite::auto(ClaimSource::Inferred),
+            &TopologySeal::engine(EngineCause::CommPartyKeyTwin),
             now,
         )?;
         if matches!(outcome, IdentityOpOutcome::Applied { .. }) {

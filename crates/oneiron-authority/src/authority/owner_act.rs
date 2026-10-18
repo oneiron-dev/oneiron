@@ -219,6 +219,21 @@ pub fn act_revision(
     *hasher.finalize().as_bytes()
 }
 
+/// The record's canonical value, for a signed record family outside the
+/// authority log that carries an owner act under its own install signature:
+/// the identity-topology admission seal (mesh PR2a). The same map an op
+/// carries under [`OP_KEY_ACT`]; one codec, no second dialect.
+#[must_use]
+pub fn owner_act_to_value(act: &OwnerAct) -> Value {
+    owner_act_value(act)
+}
+
+/// The [`owner_act_to_value`] inverse, fail-closed on any malformed field. The
+/// carrying record's canonical re-encode pins the key order.
+pub fn owner_act_from_value(value: &Value) -> Result<OwnerAct> {
+    decode_owner_act(value)
+}
+
 /// The record's value, the map an op carries under [`OP_KEY_ACT`].
 pub(super) fn owner_act_value(act: &OwnerAct) -> Value {
     let id = |id: &EntityId| Value::from(id.to_hex());

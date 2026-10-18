@@ -69,10 +69,12 @@
 //! lifecycle read and the redirect projection route through it. D11's
 //! "edges are canonical" holds unchanged for every edge-ful op.
 
+mod act_admission;
 mod admission_disposition;
 mod attribution;
 mod distinct_claim;
 mod event_body_codec;
+mod integrity_refusal;
 mod ledger_fold;
 mod lifecycle_state;
 mod op_apply;
@@ -88,6 +90,10 @@ mod topology_queries;
 mod transition_table;
 mod wire_keys;
 
+pub use act_admission::{
+    EngineCause, SEAL_NO_STANDING, SealAuthority, SealStanding, TOPOLOGY_SEAL_REVISION_CONTEXT,
+    TopologySeal, TopologySealBy,
+};
 pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict};
 pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
 #[cfg(all(test, feature = "sync"))]

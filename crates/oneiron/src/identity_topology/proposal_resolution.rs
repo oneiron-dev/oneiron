@@ -13,6 +13,7 @@ use crate::registry::entity_type_registry_entry;
 use crate::vault::Vault;
 
 use super::MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES;
+use super::act_admission::{EngineCause, ResolvedSeal, TopologySeal, resolve_seal_in_txn};
 use super::event_body_codec::{decode_action, decode_str_field, encode_action_entries};
 use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
 use super::op_apply::{IdentityOpOutcome, IdentityOpWrite};
@@ -255,6 +256,8 @@ impl Vault {
     /// the SAME transaction as the destructive mutation. The cancellation is
     /// its own ledger action and receipt, never a human rejection or a ramp
     /// observation. A deleted author who is not a participant leaves the park.
+    /// Each cancellation is an engine seal under
+    /// [`EngineCause::ParticipantDeleted`]: replay acquires no login or Grant.
     pub(crate) fn moot_identity_proposals_for_participant_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -264,6 +267,7 @@ impl Vault {
             &self.fold_effective_identity_topology_events_in_txn(&*wtxn)?,
         );
         let events = self.identity_topology_events_in_txn(&*wtxn)?;
+        let mut seal: Option<ResolvedSeal> = None;
         for event in events {
             if event.approval != ClaimApprovalStatus::Proposed
                 || fold.resolved_proposals.contains_key(&event.event_id)
@@ -282,10 +286,15 @@ impl Vault {
                 continue;
             }
             let write = IdentityOpWrite::auto(crate::claim::ClaimSource::Inferred);
+            let cancel = match seal.take() {
+                Some(seal) => seal,
+                None => ResolvedSeal::engine_in_txn(self, wtxn, EngineCause::ParticipantDeleted)?,
+            };
             self.write_identity_event_in_txn(
                 wtxn,
                 self.store.clock.entity_id()?,
                 &write,
+                &cancel,
                 self.store.clock.now_recorded_at(),
                 StoredIdentityOpAction::ProposalCancellation {
                     proposal: event.event_id,
@@ -295,6 +304,7 @@ impl Vault {
                 Vec::new(),
                 Vec::new(),
             )?;
+            seal = Some(cancel);
         }
         Ok(())
     }
@@ -326,6 +336,10 @@ impl Vault {
     ///
     /// Returns the recorded outcome and the resolution event's id, which is
     /// also the receipt handle.
+    ///
+    /// This door names no deciding authority: its seals are engine seals
+    /// under [`EngineCause::Unattributed`]. A ruling by the owner or an agent
+    /// within its Grant goes through [`Vault::resolve_identity_proposal_as`].
     pub fn resolve_identity_proposal(
         &self,
         proposal: &EntityId,
@@ -333,20 +347,45 @@ impl Vault {
         write: &IdentityOpWrite,
         now: u64,
     ) -> Result<(ProposalOutcome, EntityId)> {
+        self.resolve_identity_proposal_as(
+            proposal,
+            ruling,
+            write,
+            &TopologySeal::engine(EngineCause::Unattributed),
+            now,
+        )
+    }
+
+    /// [`Vault::resolve_identity_proposal`] under the seal context `seal`
+    /// (mesh PR2-topology): the ruler's actual authority seals both the
+    /// approved op's event and the resolution's own, each its own fresh
+    /// target. `seal`'s `seen` is the proposal's revision
+    /// ([`Vault::identity_topology_seal_revision`]); a stale one is a typed
+    /// conflict. The authority is validated in the writing transaction before
+    /// any local effect.
+    pub fn resolve_identity_proposal_as(
+        &self,
+        proposal: &EntityId,
+        ruling: ProposalRuling<'_>,
+        write: &IdentityOpWrite,
+        seal: &TopologySeal,
+        now: u64,
+    ) -> Result<(ProposalOutcome, EntityId)> {
         let mut wtxn = self.store.env.write_txn()?;
         let resolved =
-            self.resolve_identity_proposal_in_txn(&mut wtxn, proposal, ruling, write, now)?;
+            self.resolve_identity_proposal_in_txn(&mut wtxn, proposal, ruling, write, seal, now)?;
         wtxn.commit()?;
         Ok(resolved)
     }
 
-    /// Transaction-composable [`Vault::resolve_identity_proposal`].
+    /// Transaction-composable [`Vault::resolve_identity_proposal_as`].
     fn resolve_identity_proposal_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         proposal: &EntityId,
         ruling: ProposalRuling<'_>,
         write: &IdentityOpWrite,
+        seal: &TopologySeal,
         now: u64,
     ) -> Result<(ProposalOutcome, EntityId)> {
         if !write.is_effective() {
@@ -354,6 +393,7 @@ impl Vault {
                 IdentityTopologyRejection::ProposalRulingNotEffective,
             )));
         }
+        let seal = resolve_seal_in_txn(self, wtxn, seal, Some(*proposal))?;
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
         let record = self
@@ -395,7 +435,7 @@ impl Vault {
                     wtxn,
                     &proposed_op,
                     proposer_evidence,
-                    write,
+                    (write, &seal),
                     now,
                 )?;
                 (ProposalOutcome::ApprovedUntouched, None)
@@ -405,7 +445,7 @@ impl Vault {
                     wtxn,
                     &amended_op,
                     proposer_evidence,
-                    write,
+                    (write, &seal),
                     now,
                 )?;
                 (ProposalOutcome::ApprovedAmended, Some(body))
@@ -429,6 +469,7 @@ impl Vault {
             wtxn,
             self.store.clock.entity_id()?,
             write,
+            &seal,
             now,
             StoredIdentityOpAction::ProposalResolution {
                 proposal: *proposal,
@@ -466,13 +507,13 @@ impl Vault {
     /// stored-action codec reconstructs an op without it
     /// (`to_fold_action` carries no envelope data), and an approved ruling
     /// must not silently sever the decision from the refs and rationale
-    /// that motivated it.
+    /// that motivated it. The ruler's validated seal context seals it.
     fn apply_resolved_identity_op_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         op: &IdentityTopologyOp,
         proposer_evidence: Option<&IdentityOpEvidence>,
-        write: &IdentityOpWrite,
+        (write, seal): (&IdentityOpWrite, &ResolvedSeal),
         now: u64,
     ) -> Result<()> {
         let applied_write = IdentityOpWrite {
@@ -494,7 +535,7 @@ impl Vault {
             }
             _ => op.clone(),
         };
-        self.apply_identity_topology_op_in_txn(wtxn, &op, &applied_write, now)?;
+        self.apply_identity_topology_op_resolved_in_txn(wtxn, &op, &applied_write, seal, now)?;
         Ok(())
     }
 

@@ -10,7 +10,9 @@ use crate::batch::{BatchOp, apply_ops};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT};
+use crate::registry::{
+    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+};
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -302,10 +304,13 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
         return Ok(());
     }
     // An authority write can enrol or remove a machine, which decides again
-    // whose seals count (H161), whichever door wrote it.
+    // whose seals count (H161), whichever door wrote it; a Grant row a
+    // decision seal names decides it again too (mesh PR2-topology).
     let mut authority_written = false;
     for id in materialized {
-        if store.port_entity_type_indexed(wtxn, ENTITY_TYPE_AUTHORITY_LOG, id)? {
+        if store.port_entity_type_indexed(wtxn, ENTITY_TYPE_AUTHORITY_LOG, id)?
+            || store.port_entity_type_indexed(wtxn, ENTITY_TYPE_FEDERATION_GRANT, id)?
+        {
             authority_written = true;
             break;
         }

@@ -8,12 +8,16 @@
 //! proof and spent its nonce; it adds its install key's signature over the
 //! forwarded request and that proof ([`forwarded_request_transcript`]). The
 //! home verifies both halves ([`Vault::verify_forwarded_caller`]): the
-//! signing machine is an `Owned` machine of a live owner whose own-device
-//! grant stands and names the device's selector, and the caller's slip is
-//! logged, live and unrevoked, its holder proof inside the freshness
-//! window. The home does not spend the nonce again. It then reads under the
-//! caller's own read key, and the device's selector stays the second
-//! ceiling every hit must pass.
+//! signing machine is any live machine the owner linked, in any role (the
+//! one carrier rule, [`super::owner_act_signer_admits`]; mesh
+//! PR2-forwarding), of a live owner whose own-device grant stands and names
+//! the device's selector, and the caller's slip is logged, live and
+//! unrevoked, its holder proof inside the freshness window. The owner's yes
+//! when he linked the machine is the yes; forwarding lends no scope. The home
+//! does not spend the nonce again. It then reads under the caller's own read
+//! key, and the device's selector stays the second ceiling every hit must
+//! pass. Each refusal names its branch (mesh PR2-reasons) and never echoes a
+//! token or key.
 
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -24,6 +28,21 @@ use crate::error::Result;
 use crate::{EntityId, Vault};
 
 const FORWARDED_REQUEST_DOMAIN: &[u8] = b"oneiron/forwarded-request/v1\0";
+
+/// Integrity and key possession: the forwarding machine's proof is not a
+/// live linked machine's signature over this exact request, on the
+/// connection that proved it.
+const FORWARDING_PROOF_INVALID: &str = "forwarding machine proof is invalid for this request";
+/// Authority: the selector's own-device Grant does not stand for a live owner
+/// who is the forwarding machine's.
+const NO_FORWARDING_GRANT: &str =
+    "no live owner-authorized forwarding Grant covers this executor and request";
+/// Possession and integrity: the caller's slip or holder proof is not logged,
+/// live, fresh and reusable.
+const CALLER_NOT_LIVE: &str =
+    "caller credential or holder proof is not live and valid for this request";
+/// Authority: the caller's own scope admits no read.
+const CALLER_SCOPE: &str = "caller scope does not admit this read";
 
 /// A caller's own holder proof, as its device forwards it: the slip token it
 /// presented and the fields of the `x-oneiron-binding` header it signed,
@@ -107,7 +126,7 @@ impl VerifiedForwardedCaller {
         &self.read_key
     }
 
-    /// The `Owned` machine that forwarded the request.
+    /// The linked machine that forwarded the request.
     #[must_use]
     pub const fn machine(&self) -> EntityId {
         self.machine
@@ -199,15 +218,15 @@ impl Vault {
     }
 
     /// The home half: verifies a request `device` forwarded for a caller,
-    /// in one snapshot. The machine proof must verify under the accepted
-    /// profile of an `Owned` machine (the connection's own, when it proved
-    /// one) whose owner is a live vault owner, is the device selector's
-    /// member, and holds `device.grant` as a standing own-device grant. The
-    /// caller's slip must be logged, live and unrevoked, its references
-    /// standing, reusable, and its holder proof inside the freshness window;
-    /// its nonce is not spent again here. Any refusal is the one
-    /// invalid-authority error: the reader omits the home's hits, never
-    /// widens to the device's authority.
+    /// in one snapshot. The machine proof must verify under a live profile of
+    /// a machine the one carrier rule admits, in any role (the connection's
+    /// own, when it proved one), whose owner is a live vault owner, is the
+    /// device selector's member, and holds `device.grant` as a standing
+    /// own-device grant. The caller's slip must be logged, live and
+    /// unrevoked, its references standing, reusable, and its holder proof
+    /// inside the freshness window; its nonce is not spent again here. Each
+    /// refusal names its branch (a typed `AuthorityRefused`); the reader
+    /// omits the home's hits, never widens to the device's authority.
     pub fn verify_forwarded_caller(
         &self,
         caller: &ForwardedCallerProof,
@@ -230,59 +249,81 @@ impl Vault {
     ) -> Result<VerifiedForwardedCaller> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let now = self.instant_in_txn(txn)?.secs();
-        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        // The device: an Owned machine signed this exact request and proof.
+        let proof_invalid = || authority_refused(FORWARDING_PROOF_INVALID);
+        let vault_id = fold.vault_id.ok_or_else(proof_invalid)?;
+        // The device: a live machine the owner linked, in any role, signed
+        // this exact request and proof (mesh PR2-forwarding).
         let machine_id = EntityId::from_hex(&machine.machine)
             .ok()
             .filter(|id| id.to_hex() == machine.machine)
-            .ok_or_else(invalid_authority)?;
+            .ok_or_else(proof_invalid)?;
         if let PeerMachine::Proven {
             machine: proved, ..
         } = device.connection
             && proved != machine_id
         {
-            return Err(invalid_authority());
+            return Err(proof_invalid());
         }
-        let profile = super::slip_renewal::accepted_machine_profile(&fold, machine_id)
-            .ok_or_else(invalid_authority)?;
-        let signature = signature_hex(&machine.signature).ok_or_else(invalid_authority)?;
-        let key =
-            VerifyingKey::from_bytes(&profile.machine_key).map_err(|_| invalid_authority())?;
+        let signature = signature_hex(&machine.signature).ok_or_else(proof_invalid)?;
         let transcript = forwarded_request_transcript(&vault_id, machine_id, request, caller);
-        key.verify_strict(&transcript, &Signature::from_bytes(&signature))
-            .map_err(|_| invalid_authority())?;
+        // The live profile whose install key verified the request; the one
+        // carrier rule then judges that key: any role, no chain removed, never
+        // a roster or root key (FIX 2222).
+        let folded = fold.machine(machine_id);
+        let profile = folded
+            .into_iter()
+            .flat_map(FoldedMachine::chains)
+            .filter(|(_, chain)| chain.is_live())
+            .map(|(_, chain)| &chain.profile)
+            .find(|profile| {
+                VerifyingKey::from_bytes(&profile.machine_key).is_ok_and(|key| {
+                    key.verify_strict(&transcript, &Signature::from_bytes(&signature))
+                        .is_ok()
+                })
+            })
+            .ok_or_else(proof_invalid)?;
+        if !owner_act_signer_admits(folded, &fold.roster, &profile.machine_key) {
+            return Err(proof_invalid());
+        }
         let owner = profile.owner;
-        if !matches!(profile.role, MachineRole::Owned(_))
-            || device.member_ref != owner.to_hex()
+        // Its permission stays the owner-issued own-device Grant the selector
+        // names: the owner's yes when he linked the machine is the yes.
+        if device.member_ref != owner.to_hex()
             || !crate::consent::person_is_live_in_txn(self, txn, &owner)?
             || !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &owner)?
             || !self.own_device_grant_stands_in_txn(txn, device.grant, device.member_ref, now)?
         {
-            return Err(invalid_authority());
+            return Err(authority_refused(NO_FORWARDING_GRANT));
         }
         // The caller: its own logged slip and holder proof, fresh, its nonce
         // already spent on the device that admitted it.
-        let slip = CapabilitySlip::from_token(&caller.token)?;
+        let caller_invalid = || authority_refused(CALLER_NOT_LIVE);
+        let slip = CapabilitySlip::from_token(&caller.token)
+            .map_err(authority_refusal_as(CALLER_NOT_LIVE))?;
         let challenge = super::slip_replay::request_challenge(
             caller.timestamp,
             caller.nonce.as_bytes(),
             super::slip_replay::request_now_in_txn(self, txn)?,
-        )?;
-        let holder_signature = signature_hex(&caller.signature).ok_or_else(invalid_authority)?;
+        )
+        .map_err(authority_refusal_as(CALLER_NOT_LIVE))?;
+        let holder_signature = signature_hex(&caller.signature).ok_or_else(caller_invalid)?;
         let signer = &fold
             .slips
             .mints
             .get(&slip.claims.slip_id)
-            .ok_or_else(invalid_authority)?
+            .ok_or_else(caller_invalid)?
             .signer;
-        let verified = slip.verify(signer, &fold, now, &challenge, &holder_signature)?;
-        self.require_live_slip_refs_in_txn(txn, verified.claims(), now)?;
+        let verified = slip
+            .verify(signer, &fold, now, &challenge, &holder_signature)
+            .map_err(authority_refusal_as(CALLER_NOT_LIVE))?;
+        self.require_live_slip_refs_in_txn(txn, verified.claims(), now)
+            .map_err(authority_refusal_as(CALLER_NOT_LIVE))?;
         if verified.claims().single_use || !self.capability_slip_is_live_in_txn(txn, &verified)? {
-            return Err(invalid_authority());
+            return Err(caller_invalid());
         }
         let read_key = self
             .credential_read_key_in(txn, &verified)?
-            .ok_or_else(invalid_authority)?;
+            .ok_or_else(|| authority_refused(CALLER_SCOPE))?;
         Ok(VerifiedForwardedCaller {
             caller: verified,
             read_key,

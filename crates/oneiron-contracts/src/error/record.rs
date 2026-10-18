@@ -140,6 +140,13 @@ pub enum RecordError {
     InvalidFederationGrantBody(&'static str),
     #[error("invalid authority log body: {0}")]
     InvalidAuthorityLogBody(&'static str),
+    /// An authority door refused a well-formed request, and names which of
+    /// its rules refused (mesh PR2-reasons): a forwarded caller's branch, a
+    /// renewal's, an agent's Grant that does not name the act, or a carrier
+    /// the one carrier rule does not admit. The reason is content-free: it
+    /// never echoes a token, key or hidden id. Nothing was written.
+    #[error("{0}")]
+    AuthorityRefused(&'static str),
     /// A pairing link's scope the vault refuses: a facet limit on the vault
     /// owner, or a write facet outside the link's facets.
     #[error("invalid pairing scope: {0}")]
@@ -349,6 +356,7 @@ impl RecordError {
             Self::CounterpartyContactAlreadyExists => ErrorKind::CounterpartyContactAlreadyExists,
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
             Self::InvalidAuthorityLogBody(_) => ErrorKind::InvalidAuthorityLogBody,
+            Self::AuthorityRefused(_) => ErrorKind::AuthorityRefused,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
             Self::InvalidOutboundGrantBody(_) => ErrorKind::InvalidOutboundGrantBody,
             Self::InvalidConnectorKeyBody(_) => ErrorKind::InvalidConnectorKeyBody,

@@ -10,6 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::vault::Vault;
 
+use super::act_admission::{EngineCause, ResolvedSeal, TopologySeal, resolve_seal_in_txn};
 use super::ledger_fold::fold_identity_topology_log;
 use super::lifecycle_state::EntityLifecycleState;
 use super::op_apply::{IdentityOpOutcome, IdentityOpWrite, facet_fork_id, facet_fork_writer};
@@ -31,29 +32,57 @@ impl Vault {
     /// [`IdentityTopologyRejection::NotUndoable`]. The consent axis applies
     /// like the apply door: `Proposed` parks the counter-event with the
     /// shell edges untouched; `Rejected` is the consent no-op.
+    ///
+    /// This door names no deciding authority: its seal is an engine seal
+    /// under [`EngineCause::Unattributed`]. A decision goes through
+    /// [`Vault::undo_identity_topology_event_as`].
     pub fn undo_identity_topology_event(
         &self,
         event: &EntityId,
         write: &IdentityOpWrite,
         now: u64,
     ) -> Result<IdentityOpOutcome> {
+        self.undo_identity_topology_event_as(
+            event,
+            write,
+            &TopologySeal::engine(EngineCause::Unattributed),
+            now,
+        )
+    }
+
+    /// [`Vault::undo_identity_topology_event`] under the seal context `seal`
+    /// (mesh PR2-topology): the counter-event's seal records who decided the
+    /// undo, never the reverted event's author. `seal`'s `seen` is the
+    /// reverted event's revision ([`Vault::identity_topology_seal_revision`]);
+    /// a stale one is a typed conflict. The authority is validated in the
+    /// writing transaction before any local effect.
+    pub fn undo_identity_topology_event_as(
+        &self,
+        event: &EntityId,
+        write: &IdentityOpWrite,
+        seal: &TopologySeal,
+        now: u64,
+    ) -> Result<IdentityOpOutcome> {
         let mut wtxn = self.store.env.write_txn()?;
-        let outcome = self.undo_identity_topology_event_in_txn(&mut wtxn, event, write, now)?;
+        let outcome =
+            self.undo_identity_topology_event_in_txn(&mut wtxn, event, write, seal, now)?;
         wtxn.commit()?;
         Ok(outcome)
     }
 
-    /// Transaction-composable [`Vault::undo_identity_topology_event`].
+    /// Transaction-composable [`Vault::undo_identity_topology_event_as`].
     fn undo_identity_topology_event_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         event: &EntityId,
         write: &IdentityOpWrite,
+        seal: &TopologySeal,
         now: u64,
     ) -> Result<IdentityOpOutcome> {
         if write.approval == ClaimApprovalStatus::Rejected {
             return Ok(IdentityOpOutcome::Noop);
         }
+        let seal = resolve_seal_in_txn(self, wtxn, seal, Some(*event))?;
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
         let record = self
@@ -86,7 +115,7 @@ impl Vault {
                         IdentityTopologyRejection::NotUndoable { event: *event },
                     )));
                 }
-                return self.undo_facet_event_in_txn(wtxn, event, &record, write, now);
+                return self.undo_facet_event_in_txn(wtxn, event, &record, write, &seal, now);
             }
             // An assert_distinct event is not undoable: its retraction door
             // already exists. The assertion lives in a public CLAIM whose own
@@ -146,6 +175,7 @@ impl Vault {
             wtxn,
             self.store.clock.entity_id()?,
             write,
+            &seal,
             now,
             StoredIdentityOpAction::Undo { target: *event },
             None,
@@ -176,6 +206,7 @@ impl Vault {
         event: &EntityId,
         record: &StoredIdentityOpEvent,
         write: &IdentityOpWrite,
+        seal: &ResolvedSeal,
         now: u64,
     ) -> Result<IdentityOpOutcome> {
         let not_current = || {
@@ -299,6 +330,7 @@ impl Vault {
             wtxn,
             self.store.clock.entity_id()?,
             write,
+            seal,
             now,
             StoredIdentityOpAction::Undo { target: *event },
             None,
