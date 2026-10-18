@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 512 facade rows, 1895 declarations.
-Inputs: 462 of 512 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 456 of 512 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 513 facade rows, 1897 declarations.
+Inputs: 463 of 513 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 457 of 513 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -5282,6 +5282,11 @@ class CodeMutationEntry(TypedDict):
 class CodeMutationLog(TypedDict):
     repo: EntityId
     entries: list[CodeMutationEntry]
+class CodeRunModelHealCountRequest(TypedDict):
+    model_id: str
+class CodeRunModelHealCountView(TypedDict):
+    model_id: str
+    healed_turns: int
 class CodeTreeRequest(TypedDict):
     revision_ref: NotRequired[str | None]
     repo: NotRequired[str | None]

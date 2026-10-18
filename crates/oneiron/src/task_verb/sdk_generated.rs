@@ -1411,6 +1411,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.model_heal_count",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunModelHealCountRequest,
+                >(),
+            ),
+            (
                 "vault.code.repo_diff",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_document::CodeRepoDiffRequest,
@@ -3028,6 +3034,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.threads.list",
     "vault.artifacts.threads.assign",
     "vault.artifacts.threads.state",
+    "vault.code.model_heal_count",
     "vault.code.export",
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
@@ -3355,6 +3362,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.artifacts.threads.state" => crate::code_run::vault_read::request_schema::<
             crate::anchored_annotation::AnnotationThreadView,
+        >(),
+        "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_run_doors::CodeRunModelHealCountView,
         >(),
         "vault.code.export" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CodeExportResult,
@@ -5472,6 +5482,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.oplog" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.model_heal_count" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8126,6 +8143,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.oplog" => {
             let _input: crate::memory::code_doors::CodeRepoRequest = decode(value.clone())?;
         }
+        "vault.code.model_heal_count" => {
+            let _input: crate::memory::code_run_doors::CodeRunModelHealCountRequest =
+                decode(value.clone())?;
+        }
         "vault.code.repo_diff" => {
             let _input: crate::code_document::CodeRepoDiffRequest = decode(value.clone())?;
         }
@@ -9534,6 +9555,9 @@ pub fn invoke(
         "vault.code.symbols.release" => encode(vault_code_symbols_release(memory, decode(value)?)?),
         "vault.code.proposal_submit" => encode(vault_code_proposal_submit(memory, decode(value)?)?),
         "vault.code.oplog" => encode(vault_code_oplog(memory, decode(value)?)?),
+        "vault.code.model_heal_count" => {
+            encode(vault_code_model_heal_count(memory, decode(value)?)?)
+        }
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
         "vault.code.origin.authority.get" => {
@@ -12291,6 +12315,15 @@ pub fn vault_code_oplog(
     input: crate::memory::code_doors::CodeRepoRequest,
 ) -> MemoryResult<crate::memory::code_doors::CodeMutationLog> {
     memory.code_mutation_log_as(&memory.embedded_owner("vault.code.oplog")?, input)
+}
+pub fn vault_code_model_heal_count(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunModelHealCountRequest,
+) -> MemoryResult<crate::memory::code_run_doors::CodeRunModelHealCountView> {
+    memory.code_run_model_heal_count_as(
+        &memory.embedded_owner("vault.code.model_heal_count")?,
+        input,
+    )
 }
 pub fn vault_code_repo_diff(
     memory: &Memory<'_>,

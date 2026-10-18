@@ -1111,6 +1111,7 @@ fn mcp_agent_verb_input(
         "vault.code.symbols.release" => a.spec.clone().ok_or_else(invalid),
         "vault.code.proposal_submit" => a.spec.clone().ok_or_else(invalid),
         "vault.code.oplog" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.model_heal_count" => a.spec.clone().ok_or_else(invalid),
         "vault.code.repo_diff" => a.spec.clone().ok_or_else(invalid),
         "vault.code.export" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.authority.get" => a.spec.clone().ok_or_else(invalid),
@@ -2313,6 +2314,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.oplog" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.model_heal_count" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.repo_diff" => {
@@ -7492,6 +7496,19 @@ async fn execute_agent_verb_row(
                     .flatten(),
             );
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.model_heal_count" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.model_heal_count", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::code_run_doors::CodeRunModelHealCountRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_code_model_heal_count(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

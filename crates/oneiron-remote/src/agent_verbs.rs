@@ -847,6 +847,9 @@ impl OneironClient {
                 "vault.code.oplog" => remote_agent_verb_output::<
                     oneiron::memory::code_doors::CodeMutationLog,
                 >(client, verb, &input),
+                "vault.code.model_heal_count" => remote_agent_verb_output::<
+                    oneiron::memory::code_run_doors::CodeRunModelHealCountView,
+                >(client, verb, &input),
                 "vault.code.repo_diff" => remote_agent_verb_output::<
                     Option<oneiron::code_document::CodeRepoDiffView>,
                 >(client, verb, &input),
@@ -4878,6 +4881,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.oplog", value)
+    }
+    pub fn vault_code_model_heal_count(
+        &self,
+        input: &oneiron::memory::code_run_doors::CodeRunModelHealCountRequest,
+    ) -> Result<oneiron::memory::code_run_doors::CodeRunModelHealCountView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.model_heal_count", value)
     }
     /// Every file changed between two trees of a repository, unit by unit, with the operations that wrote each.
     pub fn vault_code_repo_diff(
