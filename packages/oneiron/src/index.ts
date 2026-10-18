@@ -359,6 +359,12 @@ export class Oneiron {
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     retrieval: {
+      aging: {
+        /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */
+        get: (input: Facade.EmptyRequest = {}): Facade.ClaimAgingProfilesView => this.#call(() => this.#client.vaultRetrievalAgingGet(input) as Facade.ClaimAgingProfilesView),
+        /** The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies. */
+        configure: (input: Facade.ClaimAgingProfilesConfigureRequest): Facade.ClaimAgingProfilesReceipt => this.#call(() => this.#client.vaultRetrievalAgingConfigure(input) as Facade.ClaimAgingProfilesReceipt),
+      },
       weights: {
         /** The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash. */
         get: (input: Facade.EmptyRequest = {}): Facade.RetrievalWeightsView => this.#call(() => this.#client.vaultRetrievalWeightsGet(input) as Facade.RetrievalWeightsView),
@@ -412,6 +418,8 @@ export class Oneiron {
       scoped: (input: Facade.ScopedExportRequest): Facade.ScopedExport => this.#call(() => this.#client.vaultExportScoped(input) as Facade.ScopedExport),
     }),
     scope: {
+      /** Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt. */
+      position: (input: Facade.RecordPositionRequest): Facade.ScopedReadResult<Facade.RecordPosition | null> => this.#call(() => this.#client.vaultScopePosition(input) as Facade.ScopedReadResult<Facade.RecordPosition | null>),
       /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
       ceiling: (input: Facade.EmptyRequest = {}): Facade.CredentialCeiling => this.#call(() => this.#client.vaultScopeCeiling(input) as Facade.CredentialCeiling),
     },
@@ -445,6 +453,14 @@ export class Oneiron {
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
     campaign: {
+      /** Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing. */
+      enroll: (input: Facade.CampaignEnrollRequest): Facade.CampaignEnrollmentReceipt => this.#call(() => this.#client.vaultCampaignEnroll(input) as Facade.CampaignEnrollmentReceipt),
+      stage: {
+        /** Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing. */
+        evidence: (input: Facade.CampaignStageEvidenceRequest): Facade.CampaignStageEvidenceReceipt => this.#call(() => this.#client.vaultCampaignStageEvidence(input) as Facade.CampaignStageEvidenceReceipt),
+      },
+      /** Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction. */
+      unsubscribe: (input: Facade.CampaignUnsubscribeRequest): Facade.CampaignUnsubscribeReceipt => this.#call(() => this.#client.vaultCampaignUnsubscribe(input) as Facade.CampaignUnsubscribeReceipt),
       program: {
         /** Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns. */
         create: (input: Facade.CreateCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramCreate(input) as Facade.CampaignProgramRecord),
@@ -578,6 +594,18 @@ export class Oneiron {
       permissions: {
         /** The owner answers one imported skill permission ask at its exact hub source. */
         approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),
+      },
+      optimize: {
+        /** The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued. */
+        start: (input: Facade.SkillOptimizeStartRequest): Facade.SkillOptimizeStartReceipt => this.#call(() => this.#client.vaultSkillsOptimizeStart(input) as Facade.SkillOptimizeStartReceipt),
+        /** Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal. */
+        result: (input: Facade.SkillOptimizeResultRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeResult(input) as Facade.SkillOptimizeResultView),
+      },
+      governance: {
+        /** Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it. */
+        get: (input: Facade.HubSkillRequest): Facade.SkillGovernanceView => this.#call(() => this.#client.vaultSkillsGovernanceGet(input) as Facade.SkillGovernanceView),
+        /** The owner marks or clears one skill governance tier; the mark changes no instruction content or version. */
+        set: (input: Facade.SkillGovernanceSetRequest): Facade.SkillGovernanceView => this.#call(() => this.#client.vaultSkillsGovernanceSet(input) as Facade.SkillGovernanceView),
       },
       /** Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner. */
       pack_receipt: (input: Facade.SkillPackReceiptRequest): Facade.SkillPackReceipt => this.#call(() => this.#client.vaultSkillsPackReceipt(input) as Facade.SkillPackReceipt),
@@ -1221,6 +1249,22 @@ export class Oneiron {
       checkout: {
         /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
         bind: (input: Facade.CheckoutDoorBindRequest): Facade.CheckoutDoorBinding => this.#call(() => this.#client.vaultCodeCheckoutBind(input) as Facade.CheckoutDoorBinding),
+        /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */
+        claim: (input: Facade.CheckoutClaimInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutClaim(input) as Facade.CheckoutLeaseView),
+        /** Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it. */
+        get: (input: Facade.CheckoutGetInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutGet(input) as Facade.CheckoutLeaseView),
+        /** Renew the caller's still-live checkout under its exact holder and epoch fence. */
+        renew: (input: Facade.CheckoutRenewInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutRenew(input) as Facade.CheckoutLeaseView),
+        /** Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch. */
+        reclaim: (input: Facade.CheckoutReclaimInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutReclaim(input) as Facade.CheckoutLeaseView),
+        /** Explicitly take over a checkout as its task owner, including effect work, at the named epoch. */
+        takeover: (input: Facade.CheckoutTakeoverInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutTakeover(input) as Facade.CheckoutLeaseView),
+        /** Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head. */
+        publish: (input: Facade.CheckoutPublishInput): Facade.CheckoutPublished => this.#call(() => this.#client.vaultCodeCheckoutPublish(input) as Facade.CheckoutPublished),
+        /** Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt. */
+        settle: (input: Facade.CheckoutSettleInput): Facade.CheckoutSettled => this.#call(() => this.#client.vaultCodeCheckoutSettle(input) as Facade.CheckoutSettled),
+        /** Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees. */
+        teardown: (input: Facade.CheckoutTeardownInput): Facade.CheckoutTornDown => this.#call(() => this.#client.vaultCodeCheckoutTeardown(input) as Facade.CheckoutTornDown),
       },
       snapshots: {
         /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */
@@ -1324,6 +1368,10 @@ export class Oneiron {
         /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
         get: (input: Facade.RunBranchesRequest): Facade.RunBranchesView => this.#call(() => this.#client.vaultRunsBranchesGet(input) as Facade.RunBranchesView),
       },
+      /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
+      step: (input: Facade.SettledStepRequest): Facade.SettledStepView | null => this.#call(() => this.#client.vaultRunsStep(input) as Facade.SettledStepView | null),
+      /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
+      checkpoint: (input: Facade.CheckpointReadRequest): Facade.CheckpointView | null => this.#call(() => this.#client.vaultRunsCheckpoint(input) as Facade.CheckpointView | null),
     },
     consults: {
       /** The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies. */
@@ -1681,6 +1729,12 @@ export class Oneiron {
       },
     },
     notes: {
+      /** A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority. */
+      bless_brief_kind: (input: Facade.EmptyRequest = {}): Facade.BriefKindStamp => this.#call(() => this.#client.vaultNotesBlessBriefKind(input) as Facade.BriefKindStamp),
+      /** Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction. */
+      author_brief: (input: Facade.AuthorBriefRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesAuthorBrief(input) as Facade.EntityRefReceipt),
+      /** Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle. */
+      follow_citation: (input: Facade.BriefCitationFollowRequest): Facade.ScopedReadResult<Facade.SharedBriefCitation | null> => this.#call(() => this.#client.vaultNotesFollowCitation(input) as Facade.ScopedReadResult<Facade.SharedBriefCitation | null>),
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */
       create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),
       /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */
@@ -1993,6 +2047,28 @@ export class Oneiron {
     outbound: {
       /** Schedules one send through a granted outbound connector, gated and held for delivery. */
       schedule: (input: Facade.OutboundScheduleRequest): Facade.OutboundIntentReceipt => this.#call(() => this.#client.connectorOutboundSchedule(input) as Facade.OutboundIntentReceipt),
+    },
+  }
+  readonly calendar = {
+    /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */
+    invite: (input: Facade.CalendarInviteSurfaceInput): Facade.OutboundIntentReceipt => this.#call(() => this.#client.calendarInvite(input) as Facade.OutboundIntentReceipt),
+    connector: {
+      /** Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence. */
+      configure: (input: Facade.CalendarConnectorConfigureRequest): Facade.CalendarConnectorRegistration => this.#call(() => this.#client.calendarConnectorConfigure(input) as Facade.CalendarConnectorRegistration),
+      /** Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof. */
+      get: (input: Facade.CalendarConnectorRequest): Facade.CalendarConnectorRegistration | null => this.#call(() => this.#client.calendarConnectorGet(input) as Facade.CalendarConnectorRegistration | null),
+      /** Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof. */
+      pull: (input: Facade.CalendarConnectorRequest): Facade.CalendarSyncOutcome => this.#call(() => this.#client.calendarConnectorPull(input) as Facade.CalendarSyncOutcome),
+      /** Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite. */
+      write: (input: Facade.CalendarConnectorWriteRequest): Facade.RemoteWriteReceipt => this.#call(() => this.#client.calendarConnectorWrite(input) as Facade.RemoteWriteReceipt),
+      /** Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence. */
+      kill: (input: Facade.CalendarConnectorKillRequest): Facade.CalendarConnectorRegistration => this.#call(() => this.#client.calendarConnectorKill(input) as Facade.CalendarConnectorRegistration),
+    },
+    imip: {
+      /** Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity. */
+      configure: (input: Facade.CalendarImipTransportConfig): Facade.CalendarImipTransportConfig => this.#call(() => this.#client.calendarImipConfigure(input) as Facade.CalendarImipTransportConfig),
+      /** Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value. */
+      get: (input: Facade.EmptyRequest = {}): Facade.CalendarImipTransportConfig | null => this.#call(() => this.#client.calendarImipGet(input) as Facade.CalendarImipTransportConfig | null),
     },
   }
 

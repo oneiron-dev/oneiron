@@ -6,8 +6,9 @@
 //! - The base section is base reality as the owner's machines hold it: the signed
 //!   authority history, then every base window and every window of a world read
 //!   everywhere, each the whole history-free snapshot the export door cuts for a
-//!   machine that may read no private world. It carries no world key pad row:
-//!   pads ride only the pad object, so erase's rewrite reaches every kept bundle.
+//!   machine that may read no private world. It carries no world key pad row
+//!   and no key wrap: pads ride only the pad object, so erase's rewrite reaches
+//!   every kept bundle, and wraps only their world's authority capsule.
 //! - A world section is every window of one carried world, each the whole mirror
 //!   this machine keeps for it. A holder that is a machine of the owner's also
 //!   gets the worlds whose sealed copies go to "My machines"
@@ -41,7 +42,7 @@ use crate::error::{Error, Result, SyncError};
 use crate::ports::TombstoneStoreRead;
 use crate::sync::loro_support::{import_doc, map_delete, map_for_each_value_bytes};
 use crate::sync::schema::create_window_doc;
-use crate::sync::types::WindowKey;
+use crate::sync::types::{WindowKey, authority_wrap_world};
 use crate::sync::window::{
     ReplacementByteBound, apply_pending_window_updates, export_history_free_window_snapshot,
     export_window_replacement, load_window_from_state, reverse_rematerialize,
@@ -355,12 +356,11 @@ impl WindowManager {
     /// each of `windows` that is a base window or a window of a world read
     /// everywhere; and the worlds the bundle carries for `holder`
     /// ([`Vault::sealed_bundle_worlds`]), read after the history. A world's side
-    /// branch (its key wraps) rides only with a world read everywhere or one
-    /// the bundle carries for `holder` (FIX 922 item 11): nothing outside the
-    /// world names it. Its settings edits are main-log metadata (the Engine
-    /// call "OwnerAct world metadata to every linked machine"), so the base
-    /// always carries them, and the world's reader capsule seals its wraps
-    /// alone (FIX 4211, FIX 4271).
+    /// branch (its key wraps) never rides the base (FIX 3871): only the reader
+    /// capsule of a private world the bundle carries for `holder` seals it
+    /// (FIX 4211, FIX 4271), and nothing outside the world names it. Its
+    /// settings edits are main-log metadata (the Engine call "OwnerAct world
+    /// metadata to every linked machine"), so the base always carries them.
     fn sealed_bundle_base(
         &self,
         windows: &[WindowKey],
@@ -385,11 +385,11 @@ impl WindowManager {
             let mut authority = Vec::with_capacity(history.len());
             for bytes in history {
                 let op = decode_authority_log_entry_body(&bytes)?.op;
-                if let Some(world) = side_world(&op).filter(|world| !everywhere(*world)) {
-                    if !eligible.contains(&world) {
-                        continue;
+                if let Some(world) = side_world(&op) {
+                    if !everywhere(world) && eligible.contains(&world) {
+                        sides.entry(world).or_default().push(bytes);
                     }
-                    sides.entry(world).or_default().push(bytes.clone());
+                    continue;
                 }
                 authority.push(bytes);
             }
@@ -410,10 +410,10 @@ impl WindowManager {
     }
 
     /// `key`'s whole state as the export door cuts it for a machine that may
-    /// read no private world, less its world key pad rows: the history-free
-    /// replacement of a copy of the window (the live one, else its durable
-    /// state) holding every row of the window here. `None` for a window that
-    /// ships nothing.
+    /// read no private world, less its world key pad and key wrap rows: the
+    /// history-free replacement of a copy of the window (the live one, else its
+    /// durable state) holding every row of the window here. `None` for a window
+    /// that ships nothing.
     fn base_window_snapshot(&self, key: &WindowKey) -> Result<Option<Vec<u8>>> {
         let vault = self.vault();
         // A copy under a fresh peer: nothing done to it reaches the window.
@@ -433,7 +433,7 @@ impl WindowManager {
         let Some(snapshot) = export_window_replacement(vault, key, &doc, None)? else {
             return Ok(None);
         };
-        without_pad_rows(snapshot).map(Some)
+        without_key_rows(snapshot).map(Some)
     }
 }
 
@@ -503,23 +503,26 @@ fn refuse_machine_of_the_vault(vault: &Vault, vault_id: &[u8; 32]) -> Result<()>
     Ok(())
 }
 
-/// `snapshot` with no world key pad row: pads ride only the pad object. A
-/// snapshot that held one is cut again, history-free at its newest operation, so
-/// the pad's bytes are not in it.
-fn without_pad_rows(snapshot: Vec<u8>) -> Result<Vec<u8>> {
+/// `snapshot` with no world key pad row and no key wrap entry: pads ride only
+/// the pad object, wraps only their world's authority capsule, and a world's
+/// settings entries stay. A snapshot that held one is cut again, history-free
+/// at its newest operation, so its bytes are not in it.
+fn without_key_rows(snapshot: Vec<u8>) -> Result<Vec<u8>> {
     let doc = LoroDoc::new();
     import_doc(&doc, &snapshot)?;
     let entities = doc.get_map("entities");
-    let mut pads = Vec::new();
+    let mut keys = Vec::new();
     map_for_each_value_bytes(&entities, |key, raw| {
-        if raw.is_some_and(|raw| pad_body_world(raw).is_some()) {
-            pads.push(key.to_owned());
+        if raw
+            .is_some_and(|raw| pad_body_world(raw).is_some() || authority_wrap_world(raw).is_some())
+        {
+            keys.push(key.to_owned());
         }
     });
-    if pads.is_empty() {
+    if keys.is_empty() {
         return Ok(snapshot);
     }
-    for key in &pads {
+    for key in &keys {
         map_delete(&entities, key)?;
     }
     crate::sync::row_birth::drop_orphan_births(&doc)?;

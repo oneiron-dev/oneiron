@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use super::ledger::{PolicyChangedEvent, put_event_in_txn};
 use crate::authority::{
     ActSurface, EffectiveRead, EffectiveWorldPrivacy, KeyWork, OwnerWorkBody, PolicyRevision,
-    WorldEditAuthor, WorldPrivacy,
+    WorldEditAuthor, WorldKeyMode, WorldPrivacy,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -337,7 +337,9 @@ impl Vault {
                 receipt.surface,
                 world,
                 seen.0,
-                OwnerWorkBody::WorldKey,
+                OwnerWorkBody::WorldKey {
+                    mode: WorldKeyMode::Ensure,
+                },
             )?);
         }
         RECEIPTS.put(&self.store, txn, &receipt.revision, &receipt)?;
@@ -357,6 +359,17 @@ impl Vault {
             }
         }
         Ok(None)
+    }
+
+    /// Stores `receipt` again once a door that does more in the same commit
+    /// settled its key work itself (the world-key re-assert door, which
+    /// records its own owner work): the commit's snapshot.
+    pub(crate) fn put_world_privacy_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        receipt: &WorldPrivacyReceipt,
+    ) -> Result<()> {
+        RECEIPTS.put(&self.store, txn, &receipt.revision, receipt)
     }
 
     /// Every world-settings change made on this machine, in revision order,

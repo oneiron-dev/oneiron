@@ -10,10 +10,10 @@
 //! access timestamp and no bump counter, and a frozen clock replays
 //! bit-identically.
 //!
-//! Class policy is pinned engine-level, not manifest data or per-predicate
-//! configuration: the aging class comes from the predicate root
-//! ([`predicate_root`], "drop the leaf" — DESIGN-PIN A0) and each class
-//! carries exactly one half-life. Confidence is deliberately NOT an input:
+//! The aging class comes from the predicate root ([`predicate_root`],
+//! "drop the leaf" — DESIGN-PIN A0). Each class has one default profile;
+//! retrieval may supply the owner's class-level policy data, never
+//! per-predicate configuration. Confidence is deliberately NOT an input:
 //! it records how sure the system was that a claim is true, not how easy
 //! that claim should be to surface later.
 
@@ -67,7 +67,9 @@ impl ClaimAgingClass {
 }
 
 /// Decay policy of one aging class.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct AccessFactorPolicy {
     /// Half-life of the exponential factor, in seconds.
     pub half_life_secs: f64,
@@ -149,6 +151,25 @@ pub fn claim_access_factor(
     now: u64,
     override_factor: Option<f32>,
 ) -> Result<ClaimRetrievability> {
+    claim_access_factor_with_policy(
+        body,
+        learned_at,
+        now,
+        override_factor,
+        claim_aging_class(&body.predicate).policy(),
+    )
+}
+
+/// The same lifecycle, validity and override guards under an effective class
+/// profile. Profile configuration changes availability, never stored truth.
+pub fn claim_access_factor_with_policy(
+    body: &ClaimBody,
+    learned_at: u64,
+    now: u64,
+    override_factor: Option<f32>,
+    policy: AccessFactorPolicy,
+) -> Result<ClaimRetrievability> {
+    super::aging_profiles::validate_access_factor_policy(policy)?;
     if let Some(factor) = override_factor
         && !access_factor_override_valid(factor)
     {
@@ -166,7 +187,8 @@ pub fn claim_access_factor(
     let access_factor = if closed {
         0.0
     } else {
-        override_factor.unwrap_or_else(|| decayed_access_factor(aging_class, learned_at, now))
+        override_factor
+            .unwrap_or_else(|| decayed_access_factor_with_policy(policy, learned_at, now))
             * standalone_weight(&body.predicate)
     };
 
@@ -188,7 +210,10 @@ fn standalone_weight(predicate: &str) -> f32 {
 }
 
 fn decayed_access_factor(aging_class: ClaimAgingClass, learned_at: u64, now: u64) -> f32 {
-    let policy = aging_class.policy();
+    decayed_access_factor_with_policy(aging_class.policy(), learned_at, now)
+}
+
+fn decayed_access_factor_with_policy(policy: AccessFactorPolicy, learned_at: u64, now: u64) -> f32 {
     let age_secs = now.saturating_sub(learned_at) as f64;
     let decayed = 2.0_f64.powf(-age_secs / policy.half_life_secs) as f32;
     decayed.max(policy.floor)

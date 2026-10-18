@@ -8534,6 +8534,7 @@ dependencies = [
  "oneiron-remote",
  "oneiron-spawn",
  "oneiron-vault-contract",
+ "quick-xml 0.42.0",
  "rand_core 0.6.4",
  "rayon",
  "reqwest 0.12.28",

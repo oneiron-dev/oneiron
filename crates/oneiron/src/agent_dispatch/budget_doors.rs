@@ -84,7 +84,7 @@ pub struct BudgetLandRequest {
 
 /// Durable budget facts for the same work, without claiming a process-local
 /// token guard is a monetary lease. An unmetered attempt has no lease.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentBudgetView {
     pub attempt: String,
     pub lease: Option<SpendLeaseView>,
