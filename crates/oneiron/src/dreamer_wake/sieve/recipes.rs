@@ -299,7 +299,7 @@ fn rung_evidence_in_txn(
         ids.extend(vault.lookup_identity_key_in_txn(txn, kind, quote)?);
     }
     if let super::SpanOrigin::SavedTag { envelope, index } = span.origin {
-        if let Some(tags) = crate::tagging::tag_set_in_txn(&vault.store, txn, &span.turn)?
+        if let Some(tags) = crate::tagging::readable_view_in_txn(&vault.store, txn, &span.turn)?
             && super::read::envelope_digest(&tags.envelope) == envelope
             && let Some(mention) = tags.mentions.get(index as usize)
         {

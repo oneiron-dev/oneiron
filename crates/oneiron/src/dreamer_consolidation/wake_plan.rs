@@ -76,6 +76,36 @@ pub(crate) enum AttemptPreparation {
         reason: &'static str,
         scope_error: bool,
     },
+    /// A source the attempt reads is away from this replica, not refused (a
+    /// window demoted back to thin, OF-534): a planned TURN whose tagged
+    /// MESSAGE is away, or a member TURN of a held round (FIX 3592). The
+    /// attempt is deferred, queued, and runs whole once a promotion brings
+    /// the row back; it is never failed, parked or applied for it.
+    ResidencyDeferred,
+}
+
+/// How long an attempt [`AttemptPreparation::ResidencyDeferred`] defers waits
+/// before a wake prepares it again, in store-clock seconds.
+pub(crate) const RESIDENCY_RETRY_SECS: u64 = 900;
+
+/// Whether every source in `missing` is a member TURN of the held projection
+/// round an attempt carries that this replica does not hold (FIX 3592).
+/// `round` is the attempt's kind and dedupe key.
+fn held_round_away_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    round: Option<&(String, String)>,
+    missing: &[EntityId],
+) -> Result<bool> {
+    let Some((kind, dedupe_key)) = round else {
+        return Ok(false);
+    };
+    crate::dreamer_wake::held_round_members_away_in_txn(
+        &vault.store,
+        txn,
+        (kind.as_str(), dedupe_key.as_str()),
+        missing,
+    )
 }
 
 /// The most queued TURNs one wake prepares: one Meso round's worth. A pass
@@ -151,6 +181,8 @@ impl PreparedWake {
         let mut attempts = BTreeSet::new();
         let mut retries = Vec::new();
         let mut preparations = BTreeMap::new();
+        // Each attempt's projection round, by its kind and dedupe key.
+        let mut rounds = BTreeMap::new();
         for attempt in records {
             if attempt.kind != scope.attempt_kind()
                 || attempt.state.is_terminal()
@@ -161,6 +193,9 @@ impl PreparedWake {
                 continue;
             }
             attempts.insert(*attempt.id.as_bytes());
+            if let Some(dedupe_key) = &attempt.dedupe_key {
+                rounds.insert(*attempt.id.as_bytes(), (attempt.kind.clone(), dedupe_key.clone()));
+            }
             // A malformed queued row is not a source grant. Its own executor
             // still refuses it, without failing unrelated wake work here.
             let Ok(payload) =
@@ -359,15 +394,24 @@ impl PreparedWake {
                     _ => None,
                 })
                 .ok_or_else(|| invalid_consolidation("prepared retry budget missing"))?;
-            if !original
+            let missing: Vec<EntityId> = original
                 .iter()
-                .all(|id| turns.iter().any(|(_, _, got, _)| got == id))
-            {
+                .filter(|id| !turns.iter().any(|(_, _, got, _)| got == *id))
+                .copied()
+                .collect();
+            if !missing.is_empty() {
+                // A held round's member away from this replica waits for
+                // its promotion; any other change of membership refuses.
+                let away = held_round_away_in(vault, &txn, rounds.get(&attempt), &missing)?;
                 preparations.insert(
                     attempt,
-                    AttemptPreparation::Refused {
-                        reason: "selection retry membership changed",
-                        scope_error: false,
+                    if away {
+                        AttemptPreparation::ResidencyDeferred
+                    } else {
+                        AttemptPreparation::Refused {
+                            reason: "selection retry membership changed",
+                            scope_error: false,
+                        }
                     },
                 );
                 continue;
@@ -459,21 +503,44 @@ impl PreparedWake {
                     }
                 }
             }
-            if !std::iter::once(&plan.partition.conversation_ref)
+            let missing: Vec<EntityId> = std::iter::once(&plan.partition.conversation_ref)
                 .chain(plan.turn_ids.iter())
-                .all(|id| sources.contains_key(id))
-            {
+                .filter(|id| !sources.contains_key(*id))
+                .copied()
+                .collect();
+            // FIX 3592: a held round stays whole, so a member TURN of it
+            // that this replica does not hold waits for its promotion. The
+            // whole-TURN refusal of any other round stays.
+            let away = !missing.is_empty()
+                && held_round_away_in(
+                    vault,
+                    &txn,
+                    rounds.get(plan.attempt_id.as_bytes()),
+                    &missing,
+                )?;
+            if !missing.is_empty() && !away {
                 *outcome = AttemptPreparation::Refused {
                     reason: "prepared source not readable",
                     scope_error: false,
                 };
                 continue;
             }
-            if let Some(&reason) = plan.turn_ids.iter().find_map(|id| refused_texts.get(id)) {
+            // A refusal outranks a wait: only a turn whose tagged MESSAGE is
+            // away (OF-534) defers the attempt.
+            if let Some(&reason) = plan
+                .turn_ids
+                .iter()
+                .filter_map(|id| refused_texts.get(id))
+                .find(|reason| !super::turn_text::residency_deferred(reason))
+            {
                 *outcome = AttemptPreparation::Refused {
                     reason,
                     scope_error: false,
                 };
+                continue;
+            }
+            if away || plan.turn_ids.iter().any(|id| refused_texts.contains_key(id)) {
+                *outcome = AttemptPreparation::ResidencyDeferred;
                 continue;
             }
             let (neighbourhood, rows) =

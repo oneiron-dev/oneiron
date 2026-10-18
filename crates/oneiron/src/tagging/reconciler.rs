@@ -14,6 +14,7 @@ use super::marker::{
 };
 use super::output::check_output;
 use super::save::{self, Answer};
+use super::tags::tagged_messages_absent_in_txn;
 use super::trace::{
     HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace, attempt_hex,
 };
@@ -32,6 +33,9 @@ const DEFAULT_LEASE_OWNER: &str = "oneironer-tagging";
 const DEFAULT_BATCH_SIZE: usize = 16;
 /// Failure reason of a marker whose payload this build cannot read.
 const UNREADABLE_MARKER: &str = "unreadable_tagging_marker";
+/// Retry reason of a marker whose turn's tagged MESSAGE is away from this
+/// replica (OF-534).
+const MESSAGES_ABSENT: &str = "messages_absent";
 
 /// Retry backoff for a failed attempt, in store-clock seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,15 +74,16 @@ pub struct TaggingPass {
 }
 
 impl TaggingPass {
-    /// The earliest store-clock second a marker this pass failed is retried
-    /// at: when the worker next has a retry to claim, read from the pass
-    /// itself rather than from the queue.
+    /// The earliest store-clock second a marker this pass failed or
+    /// deferred is retried at: when the worker next has a retry to claim,
+    /// read from the pass itself rather than from the queue.
     #[must_use]
     pub fn earliest_retry_at(&self) -> Option<u64> {
         self.traces
             .iter()
             .filter_map(|trace| match trace.outcome {
-                TaggingOutcome::Failed { retry_at, .. } => Some(retry_at),
+                TaggingOutcome::Failed { retry_at, .. }
+                | TaggingOutcome::Deferred { retry_at } => Some(retry_at),
                 _ => None,
             })
             .min()
@@ -587,12 +592,22 @@ impl TaggingReconciler {
             })?;
             return Ok(trace);
         }
+        // A MESSAGE the turn's saved tags were read from is away from this
+        // replica (OF-534): the turn reads only partly here, so neither a
+        // fragment's answer nor an empty turn's skip may replace its set.
         let read = {
             let txn = self.vault.store.env.read_txn()?;
-            turn_input_in_txn(&self.vault, &txn, &payload.turn)?
+            if tagged_messages_absent_in_txn(&self.vault.store, &txn, &payload.turn)? {
+                None
+            } else {
+                Some(turn_input_in_txn(&self.vault, &txn, &payload.turn)?)
+            }
         };
         #[cfg(test)]
         run_after_turn_read_hook();
+        let Some(read) = read else {
+            return self.defer(record, prior_retries, trace);
+        };
         let (input, hash, text_hash) = match read {
             TurnInput::Gone => {
                 return self.skip(record, &payload.turn, SkipReason::TurnGone, trace);
@@ -636,9 +651,16 @@ impl TaggingReconciler {
         // land in that same write, so a turn's marker settles exactly when
         // its tags are saved.
         let made_by = self.encoder.model_id().as_str().to_owned();
+        let mut away = false;
         let settled =
             self.vault
                 .try_with_write_txn_grouped(|txn| -> Result<Option<TaggingTrace>> {
+                    // Inference ran outside this writer: a MESSAGE the saved
+                    // set was read from may have left this replica since.
+                    if tagged_messages_absent_in_txn(&self.vault.store, txn, &payload.turn)? {
+                        away = true;
+                        return Ok(None);
+                    }
                     let current = matches!(
                         turn_text_in_txn(&self.vault, txn, &payload.turn)?,
                         TurnInput::Ready { text_hash: ref now, .. } if *now == text_hash
@@ -684,8 +706,28 @@ impl TaggingReconciler {
         if let Some(settled) = settled {
             return Ok(settled);
         }
+        if away {
+            return self.defer(record, prior_retries, trace);
+        }
         self.retry_traced(record, 0, "superseded", trace, |retry_at| {
             TaggingOutcome::Superseded { retry_at }
+        })
+    }
+
+    /// Waits out a turn whose tagged MESSAGE is away from this replica
+    /// (OF-534): the marker is retried on the failure backoff, the turn's
+    /// saved set and every row of it untouched, until a promotion brings the
+    /// row back and a try reads the whole text. Never a skip: an empty
+    /// turn's skip would delete the set.
+    fn defer(
+        &self,
+        record: &AttemptRecord,
+        prior_retries: u32,
+        trace: TaggingTrace,
+    ) -> Result<TaggingTrace> {
+        let delay = self.backoff.delay_secs(prior_retries);
+        self.retry_traced(record, delay, MESSAGES_ABSENT, trace, |retry_at| {
+            TaggingOutcome::Deferred { retry_at }
         })
     }
 
@@ -696,7 +738,9 @@ impl TaggingReconciler {
     /// The skip stands only for the turn it read: a witness that added text
     /// since then was absorbed by this leased marker, so the settling
     /// transaction reads the turn again and, if it now has text, the marker
-    /// is retried at once on it.
+    /// is retried at once on it. So is one whose tagged MESSAGE left this
+    /// replica since (OF-534): its next try waits for the row, and the set
+    /// stays.
     fn skip(
         &self,
         record: &AttemptRecord,
@@ -708,6 +752,9 @@ impl TaggingReconciler {
         let settled = self
             .vault
             .try_with_write_txn_grouped(|txn| -> Result<bool> {
+                if tagged_messages_absent_in_txn(&self.vault.store, txn, turn)? {
+                    return Ok(false);
+                }
                 let read = turn_text_in_txn(&self.vault, txn, turn)?;
                 if matches!(read, TurnInput::Ready { .. }) {
                     return Ok(false);
