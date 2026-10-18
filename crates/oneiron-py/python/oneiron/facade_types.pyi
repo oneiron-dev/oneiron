@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 504 facade rows, 1884 declarations.
-Inputs: 454 of 504 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 448 of 504 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 518 facade rows, 1912 declarations.
+Inputs: 468 of 518 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 462 of 518 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -1089,6 +1089,7 @@ class TaskCreateRequest(TypedDict):
     intent_key: NotRequired[str | None]
     brief: NotRequired[QueueTaskBrief | None]
     ttl: NotRequired[TaskTtl | None]
+    parent_ref: NotRequired[str | None]
 class TaskCreateReceipt(TypedDict):
     task_ref: NotRequired[EntityId | None]
     proposal_ref: NotRequired[EntityId | None]
@@ -3435,6 +3436,42 @@ class TrustedContactAuthorization(TypedDict):
     yes: bool
     outcome: TrustedContactAuthorizationOutcome
     system_notices: list[GateSystemNoticeRecord]
+class TrustedContactConcernRequest(TypedDict):
+    content_ref: str
+TrustedContactConcernFact = Literal["fact_of_concern"]
+class TrustedContactConcernProposal(TypedDict):
+    action: str
+    fact: NotRequired[TrustedContactConcernFact | None]
+    gate_receipt_ref: NotRequired[str | None]
+    open_asks: list[TrustedContactAsk]
+    system_notices: list[GateSystemNoticeRecord]
+class TrustedContactDeliverRequest(TypedDict):
+    ...
+class TrustedContactNoticeAuthorizationAsk(TypedDict):
+    origin: Literal["ask"]
+    ask_ref: str
+class TrustedContactNoticeAuthorizationPolicy(TypedDict):
+    origin: Literal["policy"]
+    row_ref: str
+    tier: TrustedContactTier
+TrustedContactNoticeAuthorization = TrustedContactNoticeAuthorizationAsk | TrustedContactNoticeAuthorizationPolicy
+class TrustedContactDeliveryReceipt(TypedDict):
+    fire_ref: str
+    person_ref: str
+    contact_ref: str
+    version: int
+    channel: str
+    verb: str
+    authorization: TrustedContactNoticeAuthorization
+    fact: TrustedContactConcernFact
+    outcome: str
+    gate_decision_id: NotRequired[str | None]
+    gate_outcome: str
+    gate_reason_codes: list[str]
+    receipt_id: str
+    occurred_at: int
+    provider_ref: NotRequired[str | None]
+    delivery_may_have_occurred: bool
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]
@@ -3469,6 +3506,48 @@ class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
+SupportHolderClass = Literal["human", "agent"]
+class SupportGrantMintRequest(TypedDict):
+    holder: EntityId
+    holder_class: SupportHolderClass
+    holder_key: str
+    scope: Scope
+    records: NotRequired[list[EntityId]]
+    ttl_secs: NotRequired[int | None]
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+SupportGrantStatus = Literal["active", "expired", "revoked", "ended"]
+class SupportGrantView(TypedDict):
+    grant_ref: str
+    holder: EntityId
+    holder_class: str
+    scope: Scope
+    records: NotRequired[list[str]]
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+    approved_by: str
+    approved_at: int
+    wall_expires_at: int
+    status: SupportGrantStatus
+    revoke_command: str
+class SupportGrantMintAnswer(TypedDict):
+    slip: str
+    grant: SupportGrantView
+    decision_ref: str
+class SupportGrantListRequest(TypedDict):
+    include_inactive: NotRequired[bool]
+    limit: NotRequired[int | None]
+class SupportGrantList(TypedDict):
+    grants: list[SupportGrantView]
+class SupportGrantRevokeRequest(TypedDict):
+    grant_ref: str
+class SupportGrantRevokeAnswer(TypedDict):
+    grant_ref: str
+    holder: EntityId
+    changed: bool
+    revoked_at: NotRequired[int | None]
+    decision_ref: NotRequired[str | None]
+    delivered_recallable: bool
 ResidenceModeName = Literal["opened", "all"]
 class ResidenceModeRequest(TypedDict):
     machine: EntityId
@@ -5282,6 +5361,11 @@ class CodeMutationEntry(TypedDict):
 class CodeMutationLog(TypedDict):
     repo: EntityId
     entries: list[CodeMutationEntry]
+class CodeRunModelHealCountRequest(TypedDict):
+    model_id: str
+class CodeRunModelHealCountView(TypedDict):
+    model_id: str
+    healed_turns: int
 class CodeTreeRequest(TypedDict):
     revision_ref: NotRequired[str | None]
     repo: NotRequired[str | None]
@@ -9296,6 +9380,80 @@ class NoteHistoryView(TypedDict):
     operations: list[NoteAuthorship]
     shallow_since: list[int]
     complete: bool
+class NoteEditReplaceSpan(TypedDict):
+    kind: Literal["replace_span"]
+    start: NoteAnchor
+    end: NoteAnchor
+    text: str
+class NoteEditInsertAfter(TypedDict):
+    kind: Literal["insert_after"]
+    anchor: NoteAnchor
+    text: str
+class NoteEditAppendToSection(TypedDict):
+    kind: Literal["append_to_section"]
+    end: NoteAnchor
+    text: str
+class NoteEditWholeText(TypedDict):
+    kind: Literal["whole_text"]
+    text: str
+    timeout_ms: int
+    base: NotRequired[NoteVersion | None]
+class NoteEditRewrite(TypedDict):
+    kind: Literal["rewrite"]
+    text: str
+NoteEdit = NoteEditReplaceSpan | NoteEditInsertAfter | NoteEditAppendToSection | NoteEditWholeText | NoteEditRewrite
+class NoteForkRequest(TypedDict):
+    note_ref: str
+    base: NoteVersion
+    edit: NoteEdit
+    reason: NotRequired[str | None]
+class NoteForkRecordView(TypedDict):
+    note_ref: str
+    fork_ref: str
+    parent: str
+    frontier: list[int]
+    actor: NotRequired[str | None]
+    rewrite: bool
+    proposal_ref: NotRequired[str | None]
+    decided: bool
+class NoteForkView(TypedDict):
+    record: NoteForkRecordView
+    markdown: NotRequired[str | None]
+class NoteForkReadRequest(TypedDict):
+    note_ref: str
+    fork_ref: str
+    reason: NotRequired[str | None]
+class NoteProposalForkRef(TypedDict):
+    note_ref: str
+    fork_ref: str
+class NoteProposalOpenRequest(TypedDict):
+    forks: list[NoteProposalForkRef]
+    explainer: str
+    reason: NotRequired[str | None]
+NoteVerdict = Literal["Merge", "Switch", "Reject"]
+class NoteLandingView(TypedDict):
+    receipt: str
+    note_ref: str
+    fork_ref: str
+    previous_head: str
+    head: str
+    verdict: NoteVerdict
+    actor: NotRequired[str | None]
+    at: int
+class NoteProposalView(TypedDict):
+    proposal_ref: str
+    waiting: list[NoteForkView]
+    landed: list[NoteLandingView]
+    explainer: str
+class NoteProposalRequest(TypedDict):
+    proposal_ref: str
+    reason: NotRequired[str | None]
+class NoteVersionTree(TypedDict):
+    version: NoteVersion
+    birth_author: str
+    born_at: int
+    forks: list[NoteForkRecordView]
+    receipts: list[NoteLandingView]
 class NoteHistoryPurgeRequest(TypedDict):
     note_ref: str
 class NoteHistoryPurgeReceipt(TypedDict):
@@ -9324,28 +9482,6 @@ class NoteEditorCloseRequest(TypedDict):
     binding: str
 class NoteEditorClosed(TypedDict):
     closed: bool
-class NoteEditReplaceSpan(TypedDict):
-    kind: Literal["replace_span"]
-    start: NoteAnchor
-    end: NoteAnchor
-    text: str
-class NoteEditInsertAfter(TypedDict):
-    kind: Literal["insert_after"]
-    anchor: NoteAnchor
-    text: str
-class NoteEditAppendToSection(TypedDict):
-    kind: Literal["append_to_section"]
-    end: NoteAnchor
-    text: str
-class NoteEditWholeText(TypedDict):
-    kind: Literal["whole_text"]
-    text: str
-    timeout_ms: int
-    base: NotRequired[NoteVersion | None]
-class NoteEditRewrite(TypedDict):
-    kind: Literal["rewrite"]
-    text: str
-NoteEdit = NoteEditReplaceSpan | NoteEditInsertAfter | NoteEditAppendToSection | NoteEditWholeText | NoteEditRewrite
 class EditNoteRequest(TypedDict):
     note_ref: str
     edit: NoteEdit

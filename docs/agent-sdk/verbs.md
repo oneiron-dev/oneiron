@@ -158,8 +158,13 @@ both bindings and their export-census tests in one change.
 - `vault.trusted_contacts.tier.set`
 - `vault.trusted_contacts.concern.asks`
 - `vault.trusted_contacts.concern.authorize`
+- `vault.trusted_contacts.concern.propose`
+- `vault.trusted_contacts.concern.deliver`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
+- `vault.support_grants.mint`
+- `vault.support_grants.list`
+- `vault.support_grants.revoke`
 - `vault.residence.mode`
 - `vault.residence.open`
 - `vault.residence.index`
@@ -268,6 +273,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.symbols.release`
 - `vault.code.proposal_submit`
 - `vault.code.oplog`
+- `vault.code.model_heal_count`
 - `vault.code.repo_diff`
 - `vault.code.export`
 - `vault.code.origin.authority.get`
@@ -487,6 +493,14 @@ both bindings and their export-census tests in one change.
 - `vault.notes.from_entity`
 - `vault.notes.read`
 - `vault.notes.history`
+- `vault.notes.fork`
+- `vault.notes.forks.read`
+- `vault.notes.proposals.open`
+- `vault.notes.proposals.read`
+- `vault.notes.proposals.merge`
+- `vault.notes.proposals.switch`
+- `vault.notes.proposals.reject`
+- `vault.notes.version_tree`
 - `vault.notes.history_purge`
 - `vault.notes.history_purge_execute`
 - `vault.notes.history_purge_receipts`

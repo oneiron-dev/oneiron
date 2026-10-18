@@ -446,6 +446,9 @@
         "/spec/notes",
         "/spec/instructions"
       ],
+      "refs": [
+        "/parent_ref"
+      ],
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
       "call": "memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?",
@@ -457,7 +460,8 @@
         "assignee": "assignee",
         "intent_key": "intent_key",
         "brief": "brief",
-        "ttl": "ttl"
+        "ttl": "ttl",
+        "parent_ref": "parent_ref"
       },
       "mcp_required_fields": [
         "spec"
@@ -2510,6 +2514,38 @@
       "openapi": true
     },
     {
+      "name": "vault.trusted_contacts.concern.propose",
+      "description": "The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices.",
+      "input": "crate::task_verb::sdk::TrustedContactConcernRequest",
+      "output": "crate::task_verb::sdk::TrustedContactConcernProposal",
+      "call": "crate::task_verb::sdk::propose_trusted_contact_concern(memory, &memory.embedded_owner(\"vault.trusted_contacts.concern.propose\")?, input, &crate::policy_model::PolicyModelConfig::default())?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.concern.deliver",
+      "description": "The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice.",
+      "input": "crate::task_verb::sdk::TrustedContactDeliverRequest",
+      "output": "Option<crate::task_verb::sdk::TrustedContactDeliveryReceipt>",
+      "call": "crate::task_verb::sdk::deliver_trusted_contact_notice(memory, input, &mut crate::outbound::ServedChannelSink::new(memory.vault())?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.guests.revoke",
       "input": "crate::task_verb::sdk::GuestRevokeRequest",
       "output": "crate::receipt::GuestRevokeResponse",
@@ -2535,6 +2571,51 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "vault.support_grants.mint",
+      "description": "The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds.",
+      "input": "crate::task_verb::sdk::SupportGrantMintRequest",
+      "output": "crate::task_verb::sdk::SupportGrantMintAnswer",
+      "call": "crate::task_verb::sdk::mint_support_grant_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.support_grants.list",
+      "description": "The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command.",
+      "input": "crate::task_verb::sdk::SupportGrantListRequest",
+      "output": "crate::task_verb::sdk::SupportGrantList",
+      "call": "crate::task_verb::sdk::list_support_grants_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.support_grants.revoke",
+      "description": "The owner revokes one support grant; what support already read is not recalled.",
+      "input": "crate::task_verb::sdk::SupportGrantRevokeRequest",
+      "output": "crate::task_verb::sdk::SupportGrantRevokeAnswer",
+      "call": "crate::task_verb::sdk::revoke_support_grant_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.residence.mode",
@@ -4128,6 +4209,20 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true
+    },
+    {
+      "name": "vault.code.model_heal_count",
+      "description": "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy.",
+      "input": "crate::memory::code_run_doors::CodeRunModelHealCountRequest",
+      "output": "crate::memory::code_run_doors::CodeRunModelHealCountView",
+      "call": "memory.code_run_model_heal_count_as(&memory.embedded_owner(\"vault.code.model_heal_count\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "openapi": true
     },
     {
       "name": "vault.code.repo_diff",
@@ -8747,6 +8842,165 @@
       "input": "crate::note::NoteAccessRequest",
       "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>",
       "call": "memory.note_history(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.fork",
+      "description": "Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head.",
+      "input": "crate::note::NoteForkRequest",
+      "output": "crate::note::NoteForkView",
+      "call": "memory.fork_note(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true,
+      "refs": [
+        "/note_ref"
+      ],
+      "prose_links": [
+        "/edit/text"
+      ]
+    },
+    {
+      "name": "vault.notes.forks.read",
+      "description": "Reads a NOTE fork and its retained pending text through the same scoped, reason-logged read as the live NOTE.",
+      "input": "crate::note::NoteForkReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteForkView>>",
+      "call": "memory.read_note_fork(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.proposals.open",
+      "description": "Opens one explicit set of NOTE forks with its shared explainer; the engine routes each member under the caller's own existing grants.",
+      "input": "crate::note::NoteProposalOpenRequest",
+      "output": "crate::note::NoteProposalView",
+      "call": "memory.open_note_proposal(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true,
+      "refs": [
+        "/forks/*/note_ref"
+      ],
+      "prose_links": [
+        "/explainer"
+      ]
+    },
+    {
+      "name": "vault.notes.proposals.read",
+      "description": "Reads an entire NOTE proposal set, its pending fork text, explainer and head-move receipts only when every member is readable.",
+      "input": "crate::note::NoteProposalRequest",
+      "output": "crate::note::NoteProposalView",
+      "call": "memory.read_note_proposal(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.proposals.merge",
+      "description": "Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts.",
+      "input": "crate::note::NoteProposalRequest",
+      "output": "crate::note::NoteProposalView",
+      "call": "memory.settle_note_proposal(&input, crate::note::NoteVerdict::Merge)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.proposals.switch",
+      "description": "Accepts the complete NOTE proposal set by explicit switch under the caller's existing NOTE grants, recording every head move.",
+      "input": "crate::note::NoteProposalRequest",
+      "output": "crate::note::NoteProposalView",
+      "call": "memory.settle_note_proposal(&input, crate::note::NoteVerdict::Switch)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.proposals.reject",
+      "description": "Rejects the complete NOTE proposal set under the caller's existing NOTE grants, dropping pending text without changing live heads.",
+      "input": "crate::note::NoteProposalRequest",
+      "output": "crate::note::NoteProposalView",
+      "call": "memory.settle_note_proposal(&input, crate::note::NoteVerdict::Reject)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.version_tree",
+      "description": "Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts.",
+      "input": "crate::note::NoteAccessRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteVersionTree>>",
+      "call": "memory.note_version_tree(&input)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true
