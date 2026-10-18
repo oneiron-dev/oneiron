@@ -12,11 +12,12 @@ use crate::dispatch_byoa::{
     ByoaEgressPort, ByoaError, ByoaResult, DispatchByoa, DreamerProviderAdapter,
     DreamerProviderInput,
 };
+use crate::limit_ask::EngineLimit;
 use crate::self_heal::healer_host::HealerRegistration;
 use crate::{EntityId, Error, Result};
 
 use super::super::invariant_canonical::canonical_invariant_value;
-use super::super::{DiagnosticEvent, MAX_EVIDENCE_REFS, validate_ref};
+use super::super::{DiagnosticEvent, validate_ref};
 use super::{RepairActor, RepairBundle, RepairOperation, RepairProposal};
 
 /// A review target, never a repository handle or migration executor.
@@ -136,7 +137,8 @@ impl HealerRegistration<'_> {
     ///
     /// The adapter must produce a CLI connector with the supplied task as its
     /// final argv member, as the standard named adapters do. Existing argv
-    /// byte limits apply; callers select the diagnostics for each job.
+    /// byte limits apply; callers select the diagnostics for each job, and
+    /// their count is measured against `limits.repair_diagnostic_refs`.
     pub fn dispatch_dev_runner<B, E>(
         &self,
         dispatcher: &mut ByoaDispatcher<'_, B, E>,
@@ -154,6 +156,10 @@ impl HealerRegistration<'_> {
         crate::claim::validate_predicate(&request.target_predicate, true)?;
         request.target.validate()?;
         let failure_corpus = self.dev_runner_corpus(&request.diagnostic_refs)?;
+        let _ = dispatcher.vault().measure_limit(
+            EngineLimit::RepairDiagnosticRefs,
+            failure_corpus.value.len() as u64,
+        );
         let mut input = request.provider_input;
         let task = DevRunnerTask {
             instructions: input.task,
@@ -265,10 +271,7 @@ impl HealerRegistration<'_> {
         diagnostic_refs: &[EntityId],
     ) -> Result<ScopedReadResult<Vec<DevRunnerFailure>>> {
         let requested: BTreeSet<_> = diagnostic_refs.iter().copied().collect();
-        if requested.is_empty()
-            || requested.len() != diagnostic_refs.len()
-            || requested.len() > MAX_EVIDENCE_REFS
-        {
+        if requested.is_empty() || requested.len() != diagnostic_refs.len() {
             return Err(Error::InvalidConfig(
                 "invalid dev runner diagnostic refs".into(),
             ));

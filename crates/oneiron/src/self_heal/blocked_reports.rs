@@ -15,6 +15,8 @@ use super::{
 use crate::code_run::blocked::BlockedCategory;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::failure_ladder::{BlockedReportRef, ingest_report_blocked};
+use crate::limit_ask::EngineLimit;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -27,9 +29,6 @@ const SETTLED: SideTable<EntityId, IssueSettled, Named> =
 /// Every report a durable run filed, and when, kept after the Coach settles
 /// it. Key: [`by_run_key`].
 const BY_RUN: SideTable<[u8; 32], u64, Raw> = SideTable::new(&side_table::COACH_BLOCKED_RUN);
-
-/// Most reports one failure carries: the healer case's own bound.
-const MAX_RUN_REPORTS: usize = 128;
 
 /// The run's id, then the receipt's.
 fn by_run_key(run: EntityId, receipt: EntityId) -> [u8; 32] {
@@ -64,7 +63,8 @@ pub(crate) struct IssueSettled {
 impl Vault {
     /// Files one witnessed report for the Coach and wakes its Issues job.
     /// Idempotent per receipt: a step re-run that witnesses the same report
-    /// again files nothing new.
+    /// again files nothing new. The stored detail is measured against
+    /// `limits.blocked_detail_bytes` and kept whole.
     pub(crate) fn file_blocked_report(
         &self,
         receipt: EntityId,
@@ -86,6 +86,10 @@ impl Vault {
                 receipt_ref: receipt.to_hex(),
             },
         )?;
+        let _ = self.measure_limit(
+            EngineLimit::BlockedDetailBytes,
+            entry.receipt.untrusted_detail.len() as u64,
+        );
         let category = entry.receipt.category;
         let event = DiagnosticEvent {
             detector_id: format!("self_report.blocked.{}", category.as_str()),
@@ -139,10 +143,10 @@ impl Vault {
         Ok(())
     }
 
-    /// The blocked reports a durable run filed, oldest receipt first, at most
-    /// 128 (a healer case's bound). A pumped agent's run id is its attempt's
-    /// id, so these are a failing attempt's own reports for the failure
-    /// ladder, which re-verifies each receipt and drops what no longer reads.
+    /// The blocked reports a durable run filed, oldest receipt first, every
+    /// one. A pumped agent's run id is its attempt's id, so these are a
+    /// failing attempt's own reports for the failure ladder, which re-verifies
+    /// each receipt and drops what no longer reads.
     ///
     /// # Errors
     ///
@@ -159,22 +163,29 @@ impl Vault {
 }
 
 /// The receipts of the blocked reports the durable run `run` filed, oldest
-/// first, at most 128.
+/// first, every one: past its threshold row the read raises one check and
+/// reads on.
 pub(crate) fn receipts_of_run_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     run: EntityId,
 ) -> Result<Vec<EntityId>> {
-    BY_RUN
-        .iter_from(&vault.store, txn, run.as_bytes())?
-        .take(MAX_RUN_REPORTS)
-        .map(|row| {
-            let (key, _) = row?;
-            let mut receipt = [0; 16];
-            receipt.copy_from_slice(&key[16..]);
-            EntityId::from_bytes(receipt)
-        })
-        .collect()
+    let mut count = ScanCount::start(
+        &vault.store,
+        txn,
+        EngineScan::BlockedRunReports,
+        run.as_bytes(),
+    )?;
+    let mut receipts = Vec::new();
+    for row in BY_RUN.iter_from(&vault.store, txn, run.as_bytes())? {
+        count.row();
+        let (key, _) = row?;
+        let mut receipt = [0; 16];
+        receipt.copy_from_slice(&key[16..]);
+        receipts.push(EntityId::from_bytes(receipt)?);
+    }
+    count.finish(vault);
+    Ok(receipts)
 }
 
 /// Whether the durable run `run` filed the report `receipt`. The record

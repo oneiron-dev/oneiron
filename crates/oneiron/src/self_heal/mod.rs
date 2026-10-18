@@ -105,7 +105,7 @@ pub use self::event::{
 // they had as private items of the flat module.
 use self::detector_runner::validate_working_set;
 use self::diagnostic_codec::{validate_ref, validate_token};
-use self::event::{MAX_EVENTS_PER_RUN, MAX_EVIDENCE_REFS, invalid_diagnostic};
+use self::event::invalid_diagnostic;
 
 #[cfg(test)]
 mod healer_host_tests;

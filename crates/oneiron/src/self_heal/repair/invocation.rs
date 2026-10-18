@@ -2,14 +2,16 @@
 
 use std::collections::BTreeSet;
 
+use crate::Vault;
 use crate::claim::ClaimSource;
 use crate::error::{Error, Result};
 use crate::gate::{
     PolicyApprovalCeiling, PolicyManifestResolution, evaluate_repair_consent, repair_criticality,
 };
+use crate::limit_ask::EngineLimit;
 use crate::write_envelope::WriteActor;
 
-use super::super::{MAX_EVENTS_PER_RUN, validate_ref, validate_token, validate_working_set};
+use super::super::{validate_ref, validate_token, validate_working_set};
 use super::{
     DiagnosticEvent, DiagnosticWorkingSet, Healer, RepairActor, RepairBundle, ReviewedRepair,
     validate_repair_proposal,
@@ -114,12 +116,15 @@ impl HealerInvocationStamp {
 /// Runs one registered healer and returns only reviewed proposals.
 ///
 /// The caller supplies a CURRENT manifest resolution and a bounded diagnostic
-/// working set. This function does no reads or writes outside those values.
+/// working set. This function does no reads or writes outside those values;
+/// `vault` only measures the bundle and its widest proposal's refs against
+/// their `[limits]` rows, and every proposal is reviewed either way.
 /// Invalid output rejects the whole bundle, never silently drops a poisoned
 /// member. Diagnostic refs remain disclosure: resolving them is not authority.
 /// There is no scheduler or execution path in this layer.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn run_healer_proposals(
+    vault: &Vault,
     policy: &PolicyManifestResolution,
     registration: &RegisteredHealer<'_>,
     run_ref: &str,
@@ -130,9 +135,6 @@ pub(crate) fn run_healer_proposals(
     validate_working_set(working_set)?;
     let invocation = HealerInvocationStamp::mint(registration, run_ref, session_tag)?;
     let mut proposals = registration.healer.propose(working_set, diagnostics);
-    if proposals.len() > MAX_EVENTS_PER_RUN {
-        return Err(Error::InvariantViolation("repair proposal ceiling"));
-    }
     let mut ids = BTreeSet::new();
     for proposal in &mut proposals {
         proposal.session_tag = invocation.session_tag().to_owned();
@@ -140,6 +142,10 @@ pub(crate) fn run_healer_proposals(
         if !ids.insert(proposal.proposal_id) {
             return Err(Error::InvariantViolation("duplicate repair proposal id"));
         }
+    }
+    let _ = vault.measure_limit(EngineLimit::HealerProposals, proposals.len() as u64);
+    if let Some(widest) = proposals.iter().map(|p| p.diagnostic_refs.len()).max() {
+        let _ = vault.measure_limit(EngineLimit::RepairDiagnosticRefs, widest as u64);
     }
     let proposals = proposals
         .into_iter()

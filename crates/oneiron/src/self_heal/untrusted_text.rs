@@ -5,7 +5,7 @@
 //! `untrusted_detail` key is always nil. A diagnostic stored before the owner
 //! ruling of 2026-10-14 may hold a leaf; decode checks it here and drops it.
 
-use super::event::{MAX_UNTRUSTED_DETAIL_LEN, invalid_diagnostic};
+use super::event::invalid_diagnostic;
 use crate::error::Result;
 
 // ── untrusted detail ────────────────────────────────────────────────────────
@@ -132,12 +132,10 @@ fn escape_end(bytes: &[u8], start: usize) -> Option<usize> {
 /// stored leaf is TERMINAL: readers get it back escaped and never unescaped,
 /// and a stored leaf is re-checked with [`validate_untrusted_detail`] instead
 /// of being escaped again.
+///
+/// A detail of any length is kept whole; filing a report measures the stored
+/// leaf against `limits.blocked_detail_bytes`.
 pub(crate) fn canonical_untrusted_detail(raw: &str) -> Result<String> {
-    // Escaping never shrinks the UTF-8 byte length. Bound raw input before
-    // allocating or scanning it, and retain the post-escape expansion bound.
-    if raw.len() > MAX_UNTRUSTED_DETAIL_LEN {
-        return Err(invalid_diagnostic("untrusted_detail is too long"));
-    }
     let canonical = escape_untrusted_detail(raw);
     validate_untrusted_detail(&canonical)?;
     Ok(canonical)
@@ -146,9 +144,6 @@ pub(crate) fn canonical_untrusted_detail(raw: &str) -> Result<String> {
 pub(crate) fn validate_untrusted_detail(text: &str) -> Result<()> {
     if text.is_empty() {
         return Err(invalid_diagnostic("untrusted_detail must not be empty"));
-    }
-    if text.len() > MAX_UNTRUSTED_DETAIL_LEN {
-        return Err(invalid_diagnostic("untrusted_detail is too long"));
     }
     if text.chars().any(is_forbidden_text_scalar) {
         return Err(invalid_diagnostic("untrusted_detail hides control data"));
