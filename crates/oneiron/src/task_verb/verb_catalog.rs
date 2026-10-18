@@ -126,6 +126,11 @@ pub enum AgentVerb {
     VaultAuthorityAudit,
     VaultAuthorityHistoryExport,
     VaultAuthorityHistoryImport,
+    VaultSlimPolicy,
+    VaultSlimState,
+    VaultSlimResumeStep,
+    VaultSlimDropHeavy,
+    VaultSlimResume,
     VaultMeshPathReceipts,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
@@ -732,6 +737,11 @@ impl AgentVerb {
         Self::VaultAuthorityAudit,
         Self::VaultAuthorityHistoryExport,
         Self::VaultAuthorityHistoryImport,
+        Self::VaultSlimPolicy,
+        Self::VaultSlimState,
+        Self::VaultSlimResumeStep,
+        Self::VaultSlimDropHeavy,
+        Self::VaultSlimResume,
         Self::VaultMeshPathReceipts,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
@@ -1341,6 +1351,11 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => "vault.authority.audit",
             Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
             Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
+            Self::VaultSlimPolicy => "vault.slim.policy",
+            Self::VaultSlimState => "vault.slim.state",
+            Self::VaultSlimResumeStep => "vault.slim.resume_step",
+            Self::VaultSlimDropHeavy => "vault.slim.drop_heavy",
+            Self::VaultSlimResume => "vault.slim.resume",
             Self::VaultMeshPathReceipts => "vault.mesh.path_receipts",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
@@ -1956,6 +1971,11 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimPolicy
+                | Self::VaultSlimState
+                | Self::VaultSlimResumeStep
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -2569,6 +2589,11 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimPolicy
+                | Self::VaultSlimState
+                | Self::VaultSlimResumeStep
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -3235,6 +3260,11 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimPolicy
+                | Self::VaultSlimState
+                | Self::VaultSlimResumeStep
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -3766,6 +3796,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -4221,6 +4253,11 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultSlimPolicy => &["spec"],
+            Self::VaultSlimState => &["spec"],
+            Self::VaultSlimResumeStep => &["spec"],
+            Self::VaultSlimDropHeavy => &["spec"],
+            Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -4828,6 +4865,11 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultSlimPolicy => &["spec"],
+            Self::VaultSlimState => &["spec"],
+            Self::VaultSlimResumeStep => &["spec"],
+            Self::VaultSlimDropHeavy => &["spec"],
+            Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -5669,6 +5711,21 @@ impl AgentVerb {
             }
             Self::VaultAuthorityHistoryImport => {
                 "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
+            }
+            Self::VaultSlimPolicy => {
+                "Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."
+            }
+            Self::VaultSlimState => {
+                "Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."
+            }
+            Self::VaultSlimResumeStep => {
+                "Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it."
+            }
+            Self::VaultSlimDropHeavy => {
+                "Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required."
+            }
+            Self::VaultSlimResume => {
+                "Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued."
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
