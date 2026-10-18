@@ -258,7 +258,7 @@ pub(super) fn push_claim_candidate_with_lexical_hints(
         ops.push(BatchOp::ClaimCandidate {
             id: hint_id,
             candidate: Box::new(hint_candidate),
-            envelope: envelope.clone(),
+            envelope: envelope.for_lexical_hint(),
             occurred,
             learned_at,
             internal_lexical_query_hint: true,

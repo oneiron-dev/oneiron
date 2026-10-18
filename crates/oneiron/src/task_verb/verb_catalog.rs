@@ -137,6 +137,24 @@ pub enum AgentVerb {
     VaultSharedPolicyPropose,
     VaultSharedPolicyAnswer,
     VaultSharedPolicyChange,
+    VaultFederationConnectIdentity,
+    VaultFederationConnectGrantsMint,
+    VaultFederationConnectOffer,
+    VaultFederationConnectAccept,
+    VaultFederationConnectNarrow,
+    VaultFederationConnectRescopeOffer,
+    VaultFederationConnectRescopeAccept,
+    VaultFederationConnectDisconnect,
+    VaultFederationConnectExport,
+    VaultFederationConnectRejoin,
+    VaultTrustedContactsName,
+    VaultTrustedContactsList,
+    VaultTrustedContactsConsent,
+    VaultTrustedContactsRevoke,
+    VaultTrustedContactsDialSet,
+    VaultTrustedContactsTierSet,
+    VaultTrustedContactsConcernAsks,
+    VaultTrustedContactsConcernAuthorize,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
     VaultResidenceMode,
@@ -242,6 +260,11 @@ pub enum AgentVerb {
     VaultCodeDiff,
     VaultCodeBlame,
     VaultCodeProposalView,
+    VaultCodeSymbolsDeclare,
+    VaultCodeSymbolsRenew,
+    VaultCodeSymbolsRelease,
+    VaultCodeProposalSubmit,
+    VaultCodeOplog,
     VaultCodeRepoDiff,
     VaultCodeExport,
     VaultCodeOriginAuthorityGet,
@@ -412,6 +435,7 @@ pub enum AgentVerb {
     VaultGet,
     VaultRefsResolve,
     VaultRefsLinks,
+    VaultSearchHybrid,
     VaultSearchBm25,
     VaultNeighbors,
     VaultStructuralPut,
@@ -453,6 +477,8 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultMemorySignalExtraction,
+    VaultMemorySignalExtractionResult,
     VaultClaimsSeed,
     VaultChannelIdentitiesProvision,
     VaultChannelIdentitiesBind,
@@ -488,6 +514,7 @@ pub enum AgentVerb {
     SelfRunAttach,
     SelfFoldsDescribe,
     SelfHistory,
+    VaultClaimsSupersede,
     SelfFold,
     SelfCompact,
     SelfUnfold,
@@ -633,6 +660,24 @@ impl AgentVerb {
         Self::VaultSharedPolicyPropose,
         Self::VaultSharedPolicyAnswer,
         Self::VaultSharedPolicyChange,
+        Self::VaultFederationConnectIdentity,
+        Self::VaultFederationConnectGrantsMint,
+        Self::VaultFederationConnectOffer,
+        Self::VaultFederationConnectAccept,
+        Self::VaultFederationConnectNarrow,
+        Self::VaultFederationConnectRescopeOffer,
+        Self::VaultFederationConnectRescopeAccept,
+        Self::VaultFederationConnectDisconnect,
+        Self::VaultFederationConnectExport,
+        Self::VaultFederationConnectRejoin,
+        Self::VaultTrustedContactsName,
+        Self::VaultTrustedContactsList,
+        Self::VaultTrustedContactsConsent,
+        Self::VaultTrustedContactsRevoke,
+        Self::VaultTrustedContactsDialSet,
+        Self::VaultTrustedContactsTierSet,
+        Self::VaultTrustedContactsConcernAsks,
+        Self::VaultTrustedContactsConcernAuthorize,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
         Self::VaultResidenceMode,
@@ -738,6 +783,11 @@ impl AgentVerb {
         Self::VaultCodeDiff,
         Self::VaultCodeBlame,
         Self::VaultCodeProposalView,
+        Self::VaultCodeSymbolsDeclare,
+        Self::VaultCodeSymbolsRenew,
+        Self::VaultCodeSymbolsRelease,
+        Self::VaultCodeProposalSubmit,
+        Self::VaultCodeOplog,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
         Self::VaultCodeOriginAuthorityGet,
@@ -908,6 +958,7 @@ impl AgentVerb {
         Self::VaultGet,
         Self::VaultRefsResolve,
         Self::VaultRefsLinks,
+        Self::VaultSearchHybrid,
         Self::VaultSearchBm25,
         Self::VaultNeighbors,
         Self::VaultStructuralPut,
@@ -949,6 +1000,8 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultMemorySignalExtraction,
+        Self::VaultMemorySignalExtractionResult,
         Self::VaultClaimsSeed,
         Self::VaultChannelIdentitiesProvision,
         Self::VaultChannelIdentitiesBind,
@@ -984,6 +1037,7 @@ impl AgentVerb {
         Self::SelfRunAttach,
         Self::SelfFoldsDescribe,
         Self::SelfHistory,
+        Self::VaultClaimsSupersede,
         Self::SelfFold,
         Self::SelfCompact,
         Self::SelfUnfold,
@@ -1132,6 +1186,26 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => "vault.shared.policy.propose",
             Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
             Self::VaultSharedPolicyChange => "vault.shared.policy.change",
+            Self::VaultFederationConnectIdentity => "vault.federation.connect.identity",
+            Self::VaultFederationConnectGrantsMint => "vault.federation.connect.grants.mint",
+            Self::VaultFederationConnectOffer => "vault.federation.connect.offer",
+            Self::VaultFederationConnectAccept => "vault.federation.connect.accept",
+            Self::VaultFederationConnectNarrow => "vault.federation.connect.narrow",
+            Self::VaultFederationConnectRescopeOffer => "vault.federation.connect.rescope.offer",
+            Self::VaultFederationConnectRescopeAccept => "vault.federation.connect.rescope.accept",
+            Self::VaultFederationConnectDisconnect => "vault.federation.connect.disconnect",
+            Self::VaultFederationConnectExport => "vault.federation.connect.export",
+            Self::VaultFederationConnectRejoin => "vault.federation.connect.rejoin",
+            Self::VaultTrustedContactsName => "vault.trusted_contacts.name",
+            Self::VaultTrustedContactsList => "vault.trusted_contacts.list",
+            Self::VaultTrustedContactsConsent => "vault.trusted_contacts.consent",
+            Self::VaultTrustedContactsRevoke => "vault.trusted_contacts.revoke",
+            Self::VaultTrustedContactsDialSet => "vault.trusted_contacts.dial.set",
+            Self::VaultTrustedContactsTierSet => "vault.trusted_contacts.tier.set",
+            Self::VaultTrustedContactsConcernAsks => "vault.trusted_contacts.concern.asks",
+            Self::VaultTrustedContactsConcernAuthorize => {
+                "vault.trusted_contacts.concern.authorize"
+            }
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultResidenceMode => "vault.residence.mode",
@@ -1241,6 +1315,11 @@ impl AgentVerb {
             Self::VaultCodeDiff => "vault.code.diff",
             Self::VaultCodeBlame => "vault.code.blame",
             Self::VaultCodeProposalView => "vault.code.proposal_view",
+            Self::VaultCodeSymbolsDeclare => "vault.code.symbols.declare",
+            Self::VaultCodeSymbolsRenew => "vault.code.symbols.renew",
+            Self::VaultCodeSymbolsRelease => "vault.code.symbols.release",
+            Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
+            Self::VaultCodeOplog => "vault.code.oplog",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
@@ -1411,6 +1490,7 @@ impl AgentVerb {
             Self::VaultGet => "vault.get",
             Self::VaultRefsResolve => "vault.refs.resolve",
             Self::VaultRefsLinks => "vault.refs.links",
+            Self::VaultSearchHybrid => "vault.search.hybrid",
             Self::VaultSearchBm25 => "vault.search.bm25",
             Self::VaultNeighbors => "vault.neighbors",
             Self::VaultStructuralPut => "vault.structural.put",
@@ -1452,6 +1532,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultMemorySignalExtraction => "vault.memory.signal_extraction",
+            Self::VaultMemorySignalExtractionResult => "vault.memory.signal_extraction.result",
             Self::VaultClaimsSeed => "vault.claims.seed",
             Self::VaultChannelIdentitiesProvision => "vault.channel_identities.provision",
             Self::VaultChannelIdentitiesBind => "vault.channel_identities.bind",
@@ -1491,6 +1573,7 @@ impl AgentVerb {
             Self::SelfRunAttach => "self.run.attach",
             Self::SelfFoldsDescribe => "self.folds.describe",
             Self::SelfHistory => "self.history",
+            Self::VaultClaimsSupersede => "vault.claims.supersede",
             Self::SelfFold => "self.fold",
             Self::SelfCompact => "self.compact",
             Self::SelfUnfold => "self.unfold",
@@ -1635,6 +1718,24 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
+                | Self::VaultTrustedContactsName
+                | Self::VaultTrustedContactsList
+                | Self::VaultTrustedContactsConsent
+                | Self::VaultTrustedContactsRevoke
+                | Self::VaultTrustedContactsDialSet
+                | Self::VaultTrustedContactsTierSet
+                | Self::VaultTrustedContactsConcernAsks
+                | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -1740,6 +1841,11 @@ impl AgentVerb {
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeOplog
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -1870,6 +1976,7 @@ impl AgentVerb {
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchHybrid
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -1911,6 +2018,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultMemorySignalExtraction
+                | Self::VaultMemorySignalExtractionResult
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -1946,6 +2055,7 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -2138,6 +2248,24 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
+                | Self::VaultTrustedContactsName
+                | Self::VaultTrustedContactsList
+                | Self::VaultTrustedContactsConsent
+                | Self::VaultTrustedContactsRevoke
+                | Self::VaultTrustedContactsDialSet
+                | Self::VaultTrustedContactsTierSet
+                | Self::VaultTrustedContactsConcernAsks
+                | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2243,6 +2371,11 @@ impl AgentVerb {
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeOplog
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -2373,6 +2506,7 @@ impl AgentVerb {
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchHybrid
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -2414,6 +2548,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultMemorySignalExtraction
+                | Self::VaultMemorySignalExtractionResult
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -2449,6 +2585,7 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -2490,6 +2627,8 @@ impl AgentVerb {
                 | Self::VaultSharedStarted
                 | Self::VaultSharedMatured
                 | Self::VaultSharedEraseAsks
+                | Self::VaultTrustedContactsList
+                | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
@@ -2549,6 +2688,7 @@ impl AgentVerb {
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchHybrid
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultClaimsSeed
@@ -2682,6 +2822,24 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
+                | Self::VaultTrustedContactsName
+                | Self::VaultTrustedContactsList
+                | Self::VaultTrustedContactsConsent
+                | Self::VaultTrustedContactsRevoke
+                | Self::VaultTrustedContactsDialSet
+                | Self::VaultTrustedContactsTierSet
+                | Self::VaultTrustedContactsConcernAsks
+                | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2787,6 +2945,11 @@ impl AgentVerb {
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeOplog
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -2985,6 +3148,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultMemorySignalExtraction
+                | Self::VaultMemorySignalExtractionResult
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
                 | Self::VaultChannelIdentitiesFulfill
@@ -3015,6 +3180,7 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -3107,6 +3273,20 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectRejoin
+                | Self::VaultTrustedContactsName
+                | Self::VaultTrustedContactsConsent
+                | Self::VaultTrustedContactsRevoke
+                | Self::VaultTrustedContactsDialSet
+                | Self::VaultTrustedContactsTierSet
+                | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -3178,6 +3358,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsThreadsComment
                 | Self::VaultArtifactsThreadsAssign
                 | Self::VaultArtifactsThreadsState
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
@@ -3296,6 +3480,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
+                | Self::VaultMemorySignalExtraction
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -3314,6 +3499,7 @@ impl AgentVerb {
                 | Self::VaultNotesSetOverrides
                 | Self::VaultTasksLinearMappingEdit
                 | Self::SelfRunAttach
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -3488,6 +3674,24 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultFederationConnectIdentity => &[],
+            Self::VaultFederationConnectGrantsMint => &["spec"],
+            Self::VaultFederationConnectOffer => &["spec"],
+            Self::VaultFederationConnectAccept => &["spec"],
+            Self::VaultFederationConnectNarrow => &["spec"],
+            Self::VaultFederationConnectRescopeOffer => &["spec"],
+            Self::VaultFederationConnectRescopeAccept => &["spec"],
+            Self::VaultFederationConnectDisconnect => &["spec"],
+            Self::VaultFederationConnectExport => &["spec"],
+            Self::VaultFederationConnectRejoin => &["spec"],
+            Self::VaultTrustedContactsName => &["spec"],
+            Self::VaultTrustedContactsList => &["spec"],
+            Self::VaultTrustedContactsConsent => &["spec"],
+            Self::VaultTrustedContactsRevoke => &["spec"],
+            Self::VaultTrustedContactsDialSet => &["spec"],
+            Self::VaultTrustedContactsTierSet => &["spec"],
+            Self::VaultTrustedContactsConcernAsks => &["spec"],
+            Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -3593,6 +3797,11 @@ impl AgentVerb {
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
+            Self::VaultCodeSymbolsDeclare => &["spec"],
+            Self::VaultCodeSymbolsRenew => &["spec"],
+            Self::VaultCodeSymbolsRelease => &["spec"],
+            Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -3763,6 +3972,7 @@ impl AgentVerb {
             Self::VaultGet => &["spec"],
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
+            Self::VaultSearchHybrid => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -3804,6 +4014,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultMemorySignalExtraction => &["spec"],
+            Self::VaultMemorySignalExtractionResult => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
             Self::VaultChannelIdentitiesProvision => &["spec"],
             Self::VaultChannelIdentitiesBind => &["spec"],
@@ -3839,6 +4051,7 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
             Self::SelfUnfold => &["spec"],
@@ -3985,6 +4198,24 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultFederationConnectIdentity => &[],
+            Self::VaultFederationConnectGrantsMint => &["spec"],
+            Self::VaultFederationConnectOffer => &["spec"],
+            Self::VaultFederationConnectAccept => &["spec"],
+            Self::VaultFederationConnectNarrow => &["spec"],
+            Self::VaultFederationConnectRescopeOffer => &["spec"],
+            Self::VaultFederationConnectRescopeAccept => &["spec"],
+            Self::VaultFederationConnectDisconnect => &["spec"],
+            Self::VaultFederationConnectExport => &["spec"],
+            Self::VaultFederationConnectRejoin => &["spec"],
+            Self::VaultTrustedContactsName => &["spec"],
+            Self::VaultTrustedContactsList => &["spec"],
+            Self::VaultTrustedContactsConsent => &["spec"],
+            Self::VaultTrustedContactsRevoke => &["spec"],
+            Self::VaultTrustedContactsDialSet => &["spec"],
+            Self::VaultTrustedContactsTierSet => &["spec"],
+            Self::VaultTrustedContactsConcernAsks => &["spec"],
+            Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -4090,6 +4321,11 @@ impl AgentVerb {
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
+            Self::VaultCodeSymbolsDeclare => &["spec"],
+            Self::VaultCodeSymbolsRenew => &["spec"],
+            Self::VaultCodeSymbolsRelease => &["spec"],
+            Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -4260,6 +4496,7 @@ impl AgentVerb {
             Self::VaultGet => &["spec"],
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
+            Self::VaultSearchHybrid => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -4301,6 +4538,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultMemorySignalExtraction => &["spec"],
+            Self::VaultMemorySignalExtractionResult => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
             Self::VaultChannelIdentitiesProvision => &["spec"],
             Self::VaultChannelIdentitiesBind => &["spec"],
@@ -4336,6 +4575,7 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
             Self::SelfUnfold => &["spec"],
@@ -4733,6 +4973,60 @@ impl AgentVerb {
             Self::VaultSharedPolicyChange => {
                 "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."
             }
+            Self::VaultFederationConnectIdentity => {
+                "The owner reads this vault identity and the host key used for reciprocal Connect consent."
+            }
+            Self::VaultFederationConnectGrantsMint => {
+                "The owner mints an inert Connect guest grant inside the named local-world ceiling."
+            }
+            Self::VaultFederationConnectOffer => {
+                "The owner asks the host to sign one disclosed Connect half without activating it."
+            }
+            Self::VaultFederationConnectAccept => {
+                "The owner accepts the peer host signed Connect half and receives the matching host counter-half."
+            }
+            Self::VaultFederationConnectNarrow => {
+                "The owner narrows the current outbound scope without breaking the reciprocal relationship."
+            }
+            Self::VaultFederationConnectRescopeOffer => {
+                "The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal."
+            }
+            Self::VaultFederationConnectRescopeAccept => {
+                "The owner accepts the peer host signed re-scope and receives the matching signed counter-half."
+            }
+            Self::VaultFederationConnectDisconnect => {
+                "The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy."
+            }
+            Self::VaultFederationConnectExport => {
+                "The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch."
+            }
+            Self::VaultFederationConnectRejoin => {
+                "The owner admits a peer host signed update through guest admission into the retained foreign-world vault."
+            }
+            Self::VaultTrustedContactsName => {
+                "The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."
+            }
+            Self::VaultTrustedContactsList => {
+                "A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential."
+            }
+            Self::VaultTrustedContactsConsent => {
+                "The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this."
+            }
+            Self::VaultTrustedContactsRevoke => {
+                "Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close."
+            }
+            Self::VaultTrustedContactsDialSet => {
+                "The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands."
+            }
+            Self::VaultTrustedContactsTierSet => {
+                "The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern."
+            }
+            Self::VaultTrustedContactsConcernAsks => {
+                "The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled."
+            }
+            Self::VaultTrustedContactsConcernAuthorize => {
+                "The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."
+            }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
@@ -5031,6 +5325,21 @@ impl AgentVerb {
             }
             Self::VaultCodeProposalView => {
                 "One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied."
+            }
+            Self::VaultCodeSymbolsDeclare => {
+                "Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing."
+            }
+            Self::VaultCodeSymbolsRenew => {
+                "Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."
+            }
+            Self::VaultCodeSymbolsRelease => {
+                "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."
+            }
+            Self::VaultCodeProposalSubmit => {
+                "Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."
+            }
+            Self::VaultCodeOplog => {
+                "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
             }
             Self::VaultCodeRepoDiff => {
                 "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it."
@@ -5482,6 +5791,9 @@ impl AgentVerb {
             Self::VaultRefsLinks => {
                 "A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."
             }
+            Self::VaultSearchHybrid => {
+                "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."
+            }
             Self::VaultSearchBm25 => {
                 "BM25 text search over the engine index; surfaceable claims only."
             }
@@ -5601,6 +5913,12 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
             }
+            Self::VaultMemorySignalExtraction => {
+                "Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates."
+            }
+            Self::VaultMemorySignalExtractionResult => {
+                "Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them."
+            }
             Self::VaultClaimsSeed => {
                 "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."
             }
@@ -5705,6 +6023,9 @@ impl AgentVerb {
             }
             Self::SelfHistory => {
                 "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."
+            }
+            Self::VaultClaimsSupersede => {
+                "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."
             }
             Self::SelfFold => {
                 "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."

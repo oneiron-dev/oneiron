@@ -678,6 +678,108 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.federation.connect.identity",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.federation.connect.grants.mint",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::MintConnectGrant,
+                >(),
+            ),
+            (
+                "vault.federation.connect.offer",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::OfferConnect>(
+                ),
+            ),
+            (
+                "vault.federation.connect.accept",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AcceptConnect>(
+                ),
+            ),
+            (
+                "vault.federation.connect.narrow",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::NarrowConnect>(
+                ),
+            ),
+            (
+                "vault.federation.connect.rescope.offer",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RescopeConnect>(
+                ),
+            ),
+            (
+                "vault.federation.connect.rescope.accept",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AcceptRescopeConnect,
+                >(),
+            ),
+            (
+                "vault.federation.connect.disconnect",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectPactRequest,
+                >(),
+            ),
+            (
+                "vault.federation.connect.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectExportRequest,
+                >(),
+            ),
+            (
+                "vault.federation.connect.rejoin",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectDelivery>(
+                ),
+            ),
+            (
+                "vault.trusted_contacts.name",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactNameRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactsRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.consent",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactConsentRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactRevokeRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.dial.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactDialRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.tier.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactTierRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.concern.asks",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactAsksRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.concern.authorize",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactAuthorizeRequest,
+                >(),
+            ),
+            (
                 "vault.guests.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestRevokeRequest,
@@ -1270,6 +1372,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.proposal_view",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_document::CodeProposalViewRequest,
+                >(),
+            ),
+            (
+                "vault.code.symbols.declare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeSymbolsDeclareRequest,
+                >(),
+            ),
+            (
+                "vault.code.symbols.renew",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeSymbolsTaskRequest,
+                >(),
+            ),
+            (
+                "vault.code.symbols.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeSymbolsTaskRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_submit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalSubmitRequest,
+                >(),
+            ),
+            (
+                "vault.code.oplog",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeRepoRequest,
                 >(),
             ),
             (
@@ -2097,6 +2229,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::lens::RecordLinksRequest>(),
             ),
             (
+                "vault.search.hybrid",
+                crate::code_run::vault_read::request_schema::<crate::memory::HybridSearchRequest>(),
+            ),
+            (
                 "vault.search.bm25",
                 crate::code_run::vault_read::request_schema::<QueryBm25Request>(),
             ),
@@ -2319,6 +2455,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConsolidationStatusRequest>(),
             ),
             (
+                "vault.memory.signal_extraction",
+                crate::code_run::vault_read::request_schema::<crate::memory::SignalExtractionRequest>(
+                ),
+            ),
+            (
+                "vault.memory.signal_extraction.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::SignalExtractionResultRequest,
+                >(),
+            ),
+            (
                 "vault.claims.seed",
                 crate::code_run::vault_read::request_schema::<crate::memory::ScopedCommitRequest>(),
             ),
@@ -2503,6 +2650,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.claims.supersede",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>,
+                >(),
+            ),
+            (
                 "self.fold",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_run::fold_api::FoldMarkRequest,
@@ -2551,11 +2704,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.claims.put",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryClaimInput>(),
-            ),
-            (
-                "vault.claims.supersede",
-                crate::code_run::vault_read::request_schema::<crate::code_run::MemorySupersedeInput>(
-                ),
             ),
             (
                 "vault.edges.put",
@@ -2646,6 +2794,24 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",
     "vault.shared.policy.change",
+    "vault.federation.connect.identity",
+    "vault.federation.connect.grants.mint",
+    "vault.federation.connect.offer",
+    "vault.federation.connect.accept",
+    "vault.federation.connect.narrow",
+    "vault.federation.connect.rescope.offer",
+    "vault.federation.connect.rescope.accept",
+    "vault.federation.connect.disconnect",
+    "vault.federation.connect.export",
+    "vault.federation.connect.rejoin",
+    "vault.trusted_contacts.name",
+    "vault.trusted_contacts.list",
+    "vault.trusted_contacts.consent",
+    "vault.trusted_contacts.revoke",
+    "vault.trusted_contacts.dial.set",
+    "vault.trusted_contacts.tier.set",
+    "vault.trusted_contacts.concern.asks",
+    "vault.trusted_contacts.concern.authorize",
     "vault.off_record.start",
     "vault.off_record.status",
     "vault.off_record.witness",
@@ -2700,6 +2866,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.read",
     "vault.calendar.search",
     "vault.calendar.freebusy",
+    "vault.search.hybrid",
+    "vault.memory.signal_extraction",
+    "vault.memory.signal_extraction.result",
     "vault.channel_identities.provision",
     "vault.channel_identities.bind",
     "vault.channel_identities.fulfill",
@@ -2838,6 +3007,62 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.shared.policy.change" => crate::code_run::vault_read::request_schema::<
             crate::federation::SharedActPolicyChange,
         >(),
+        "vault.federation.connect.identity" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectIdentity>()
+        }
+        "vault.federation.connect.grants.mint" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectGrant>()
+        }
+        "vault.federation.connect.offer" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::Offer>()
+        }
+        "vault.federation.connect.accept" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectAccepted>()
+        }
+        "vault.federation.connect.narrow" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectPactReceipt,
+        >(),
+        "vault.federation.connect.rescope.offer" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RescopeOffer>()
+        }
+        "vault.federation.connect.rescope.accept" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectRescoped>()
+        }
+        "vault.federation.connect.disconnect" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectDisconnected,
+        >(),
+        "vault.federation.connect.export" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectDelivery>()
+        }
+        "vault.federation.connect.rejoin" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectRejoined>()
+        }
+        "vault.trusted_contacts.name" => crate::code_run::vault_read::request_schema::<
+            crate::counterparty_contact::TrustedContact,
+        >(),
+        "vault.trusted_contacts.list" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::counterparty_contact::TrustedContact>,
+        >(),
+        "vault.trusted_contacts.consent" => crate::code_run::vault_read::request_schema::<
+            crate::counterparty_contact::TrustedContact,
+        >(),
+        "vault.trusted_contacts.revoke" => crate::code_run::vault_read::request_schema::<
+            crate::counterparty_contact::TrustedContact,
+        >(),
+        "vault.trusted_contacts.dial.set" => crate::code_run::vault_read::request_schema::<
+            crate::counterparty_contact::TrustedContact,
+        >(),
+        "vault.trusted_contacts.tier.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::TrustedContactTierSet,
+        >(),
+        "vault.trusted_contacts.concern.asks" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::counterparty_contact::TrustedContactAsk>,
+        >(),
+        "vault.trusted_contacts.concern.authorize" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::TrustedContactAuthorization,
+            >()
+        }
         "vault.off_record.start" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordSessionView,
         >(),
@@ -2999,6 +3224,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.calendar.freebusy" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>,
+        >(),
+        "vault.search.hybrid" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>,
+        >(),
+        "vault.memory.signal_extraction" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::SignalExtractionTicket>()
+        }
+        "vault.memory.signal_extraction.result" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::SignalExtractionResult>,
         >(),
         "vault.channel_identities.provision" => crate::code_run::vault_read::request_schema::<
             crate::memory::channel_doors::ChannelIdentityLifecycleReceipt,
@@ -4096,6 +4330,126 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.federation.connect.identity" => &[],
+        "vault.federation.connect.grants.mint" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.offer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.accept" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.narrow" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.rescope.offer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.rescope.accept" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.disconnect" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.rejoin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.name" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.consent" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.dial.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.tier.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.concern.authorize" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.guests.revoke" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4777,6 +5131,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.proposal_view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.symbols.declare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.symbols.renew" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.symbols.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_submit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.oplog" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5725,6 +6114,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.search.hybrid" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.search.bm25" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6012,6 +6408,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.memory.signal_extraction" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.memory.signal_extraction.result" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.seed" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6251,6 +6661,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.supersede" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -6753,6 +7170,62 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::SharedActPolicyChangeRequest =
                 decode(value.clone())?;
         }
+        "vault.federation.connect.identity" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.federation.connect.grants.mint" => {
+            let _input: crate::task_verb::sdk::MintConnectGrant = decode(value.clone())?;
+        }
+        "vault.federation.connect.offer" => {
+            let _input: crate::task_verb::sdk::OfferConnect = decode(value.clone())?;
+        }
+        "vault.federation.connect.accept" => {
+            let _input: crate::task_verb::sdk::AcceptConnect = decode(value.clone())?;
+        }
+        "vault.federation.connect.narrow" => {
+            let _input: crate::task_verb::sdk::NarrowConnect = decode(value.clone())?;
+        }
+        "vault.federation.connect.rescope.offer" => {
+            let _input: crate::task_verb::sdk::RescopeConnect = decode(value.clone())?;
+        }
+        "vault.federation.connect.rescope.accept" => {
+            let _input: crate::task_verb::sdk::AcceptRescopeConnect = decode(value.clone())?;
+        }
+        "vault.federation.connect.disconnect" => {
+            let _input: crate::task_verb::sdk::ConnectPactRequest = decode(value.clone())?;
+        }
+        "vault.federation.connect.export" => {
+            let _input: crate::task_verb::sdk::ConnectExportRequest = decode(value.clone())?;
+        }
+        "vault.federation.connect.rejoin" => {
+            let _input: crate::task_verb::sdk::ConnectDelivery = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.name" => {
+            let _input: crate::task_verb::sdk::TrustedContactNameRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.list" => {
+            let _input: crate::task_verb::sdk::TrustedContactsRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.consent" => {
+            let _input: crate::task_verb::sdk::TrustedContactConsentRequest =
+                decode(value.clone())?;
+        }
+        "vault.trusted_contacts.revoke" => {
+            let _input: crate::task_verb::sdk::TrustedContactRevokeRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.dial.set" => {
+            let _input: crate::task_verb::sdk::TrustedContactDialRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.tier.set" => {
+            let _input: crate::task_verb::sdk::TrustedContactTierRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            let _input: crate::task_verb::sdk::TrustedContactAsksRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.concern.authorize" => {
+            let _input: crate::task_verb::sdk::TrustedContactAuthorizeRequest =
+                decode(value.clone())?;
+        }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
@@ -7087,6 +7560,23 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.proposal_view" => {
             let _input: crate::code_document::CodeProposalViewRequest = decode(value.clone())?;
+        }
+        "vault.code.symbols.declare" => {
+            let _input: crate::memory::code_doors::CodeSymbolsDeclareRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.symbols.renew" => {
+            let _input: crate::memory::code_doors::CodeSymbolsTaskRequest = decode(value.clone())?;
+        }
+        "vault.code.symbols.release" => {
+            let _input: crate::memory::code_doors::CodeSymbolsTaskRequest = decode(value.clone())?;
+        }
+        "vault.code.proposal_submit" => {
+            let _input: crate::memory::code_doors::CodeProposalSubmitRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.oplog" => {
+            let _input: crate::memory::code_doors::CodeRepoRequest = decode(value.clone())?;
         }
         "vault.code.repo_diff" => {
             let _input: crate::code_document::CodeRepoDiffRequest = decode(value.clone())?;
@@ -7622,6 +8112,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.refs.links" => {
             let _input: crate::lens::RecordLinksRequest = decode(value.clone())?;
         }
+        "vault.search.hybrid" => {
+            let input: crate::memory::HybridSearchRequest = decode(value.clone())?;
+            input.validate()?;
+        }
         "vault.search.bm25" => {
             let input: QueryBm25Request = decode(value.clone())?;
             crate::memory::caps::check_query(&input.query)?;
@@ -7755,6 +8249,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.status" => {
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
         }
+        "vault.memory.signal_extraction" => {
+            let _input: crate::memory::SignalExtractionRequest = decode(value.clone())?;
+        }
+        "vault.memory.signal_extraction.result" => {
+            let _input: crate::memory::SignalExtractionResultRequest = decode(value.clone())?;
+        }
         "vault.claims.seed" => {
             let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
@@ -7875,6 +8375,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.history" => {
             let _input: crate::code_run::fold_api::FoldHistoryRequest = decode(value.clone())?;
+        }
+        "vault.claims.supersede" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::code_run::MemorySupersedeInput,
+            > = decode(value.clone())?;
         }
         "self.fold" => {
             let _input: crate::code_run::fold_api::FoldMarkRequest = decode(value.clone())?;
@@ -8109,6 +8614,62 @@ pub fn invoke(
         }
         "vault.shared.policy.answer" => encode(vault_shared_policy_answer(memory, decode(value)?)?),
         "vault.shared.policy.change" => encode(vault_shared_policy_change(memory, decode(value)?)?),
+        "vault.federation.connect.identity" => {
+            encode(vault_federation_connect_identity(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.grants.mint" => encode(vault_federation_connect_grants_mint(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.federation.connect.offer" => {
+            encode(vault_federation_connect_offer(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.accept" => {
+            encode(vault_federation_connect_accept(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.narrow" => {
+            encode(vault_federation_connect_narrow(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.rescope.offer" => encode(vault_federation_connect_rescope_offer(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.federation.connect.rescope.accept" => encode(
+            vault_federation_connect_rescope_accept(memory, decode(value)?)?,
+        ),
+        "vault.federation.connect.disconnect" => {
+            encode(vault_federation_connect_disconnect(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.export" => {
+            encode(vault_federation_connect_export(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.rejoin" => {
+            encode(vault_federation_connect_rejoin(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.name" => {
+            encode(vault_trusted_contacts_name(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.list" => {
+            encode(vault_trusted_contacts_list(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.consent" => {
+            encode(vault_trusted_contacts_consent(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.revoke" => {
+            encode(vault_trusted_contacts_revoke(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.dial.set" => {
+            encode(vault_trusted_contacts_dial_set(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.tier.set" => {
+            encode(vault_trusted_contacts_tier_set(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            encode(vault_trusted_contacts_concern_asks(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.concern.authorize" => encode(
+            vault_trusted_contacts_concern_authorize(memory, decode(value)?)?,
+        ),
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
         "vault.residence.mode" => encode(vault_residence_mode(memory, decode(value)?)?),
@@ -8307,6 +8868,11 @@ pub fn invoke(
         "vault.code.diff" => encode(vault_code_diff(memory, decode(value)?)?),
         "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
+        "vault.code.symbols.declare" => encode(vault_code_symbols_declare(memory, decode(value)?)?),
+        "vault.code.symbols.renew" => encode(vault_code_symbols_renew(memory, decode(value)?)?),
+        "vault.code.symbols.release" => encode(vault_code_symbols_release(memory, decode(value)?)?),
+        "vault.code.proposal_submit" => encode(vault_code_proposal_submit(memory, decode(value)?)?),
+        "vault.code.oplog" => encode(vault_code_oplog(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
         "vault.code.origin.authority.get" => {
@@ -8489,6 +9055,7 @@ pub fn invoke(
         "vault.get" => encode(vault_get(memory, decode(value)?)?),
         "vault.refs.resolve" => encode(vault_refs_resolve(memory, decode(value)?)?),
         "vault.refs.links" => encode(vault_refs_links(memory, decode(value)?)?),
+        "vault.search.hybrid" => encode(vault_search_hybrid(memory, decode(value)?)?),
         "vault.search.bm25" => encode(vault_search_bm25(memory, decode(value)?)?),
         "vault.neighbors" => encode(vault_neighbors(memory, decode(value)?)?),
         "vault.structural.put" => encode(vault_structural_put(memory, decode(value)?)?),
@@ -8573,6 +9140,13 @@ pub fn invoke(
             encode(vault_consolidation_enqueue(memory, decode(value)?)?)
         }
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
+        "vault.memory.signal_extraction" => {
+            encode(vault_memory_signal_extraction(memory, decode(value)?)?)
+        }
+        "vault.memory.signal_extraction.result" => encode(vault_memory_signal_extraction_result(
+            memory,
+            decode(value)?,
+        )?),
         "vault.claims.seed" => encode(vault_claims_seed(memory, decode(value)?)?),
         "vault.channel_identities.provision" => {
             encode(vault_channel_identities_provision(memory, decode(value)?)?)
@@ -8649,6 +9223,7 @@ pub fn invoke(
         "self.run.attach" => encode(self_run_attach(memory, decode(value)?)?),
         "self.folds.describe" => encode(self_folds_describe(memory, decode(value)?)?),
         "self.history" => encode(self_history(memory, decode(value)?)?),
+        "vault.claims.supersede" => encode(vault_claims_supersede(memory, decode(value)?)?),
         "self.fold" => encode(self_fold(memory, decode(value)?)?),
         "self.compact" => encode(self_compact(memory, decode(value)?)?),
         "self.unfold" => encode(self_unfold(memory, decode(value)?)?),
@@ -9966,6 +10541,155 @@ pub fn vault_shared_policy_change(
         input,
     )
 }
+pub fn vault_federation_connect_identity(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectIdentity> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.identity", &input)
+}
+pub fn vault_federation_connect_grants_mint(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MintConnectGrant,
+) -> MemoryResult<crate::task_verb::sdk::ConnectGrant> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.grants.mint", &input)
+}
+pub fn vault_federation_connect_offer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OfferConnect,
+) -> MemoryResult<crate::task_verb::sdk::Offer> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.offer", &input)
+}
+pub fn vault_federation_connect_accept(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AcceptConnect,
+) -> MemoryResult<crate::task_verb::sdk::ConnectAccepted> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.accept", &input)
+}
+pub fn vault_federation_connect_narrow(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NarrowConnect,
+) -> MemoryResult<crate::task_verb::sdk::ConnectPactReceipt> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.narrow", &input)
+}
+pub fn vault_federation_connect_rescope_offer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RescopeConnect,
+) -> MemoryResult<crate::task_verb::sdk::RescopeOffer> {
+    crate::task_verb::sdk::connect_host_only(
+        memory,
+        "vault.federation.connect.rescope.offer",
+        &input,
+    )
+}
+pub fn vault_federation_connect_rescope_accept(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AcceptRescopeConnect,
+) -> MemoryResult<crate::task_verb::sdk::ConnectRescoped> {
+    crate::task_verb::sdk::connect_host_only(
+        memory,
+        "vault.federation.connect.rescope.accept",
+        &input,
+    )
+}
+pub fn vault_federation_connect_disconnect(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectPactRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectDisconnected> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.disconnect", &input)
+}
+pub fn vault_federation_connect_export(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectExportRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectDelivery> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.export", &input)
+}
+pub fn vault_federation_connect_rejoin(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectDelivery,
+) -> MemoryResult<crate::task_verb::sdk::ConnectRejoined> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.rejoin", &input)
+}
+pub fn vault_trusted_contacts_name(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactNameRequest,
+) -> MemoryResult<crate::counterparty_contact::TrustedContact> {
+    crate::task_verb::sdk::name_trusted_contact(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.name")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_list(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactsRequest,
+) -> MemoryResult<Vec<crate::counterparty_contact::TrustedContact>> {
+    crate::task_verb::sdk::read_trusted_contacts(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.list")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_consent(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactConsentRequest,
+) -> MemoryResult<crate::counterparty_contact::TrustedContact> {
+    crate::task_verb::sdk::consent_trusted_contact(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.consent")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactRevokeRequest,
+) -> MemoryResult<crate::counterparty_contact::TrustedContact> {
+    crate::task_verb::sdk::revoke_trusted_contact(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.revoke")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_dial_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactDialRequest,
+) -> MemoryResult<crate::counterparty_contact::TrustedContact> {
+    crate::task_verb::sdk::set_trusted_contact_dial(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.dial.set")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_tier_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactTierRequest,
+) -> MemoryResult<crate::task_verb::sdk::TrustedContactTierSet> {
+    crate::task_verb::sdk::set_trusted_contact_tier(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.tier.set")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_concern_asks(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactAsksRequest,
+) -> MemoryResult<Vec<crate::counterparty_contact::TrustedContactAsk>> {
+    crate::task_verb::sdk::read_trusted_contact_asks(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.concern.asks")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_concern_authorize(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactAuthorizeRequest,
+) -> MemoryResult<crate::task_verb::sdk::TrustedContactAuthorization> {
+    crate::task_verb::sdk::authorize_trusted_contact_ask(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.concern.authorize")?,
+        input,
+        &crate::policy_model::PolicyModelConfig::default(),
+    )
+}
 pub fn vault_guests_revoke(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::GuestRevokeRequest,
@@ -10803,6 +11527,36 @@ pub fn vault_code_proposal_view(
     input: crate::code_document::CodeProposalViewRequest,
 ) -> MemoryResult<Option<crate::code_document::CodeProposalView>> {
     memory.code_proposal_view(&input)
+}
+pub fn vault_code_symbols_declare(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeSymbolsDeclareRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeSymbolsDeclared> {
+    memory.code_symbols_declare_as(&memory.embedded_owner("vault.code.symbols.declare")?, input)
+}
+pub fn vault_code_symbols_renew(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeSymbolsTaskRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeSymbolLeaseView> {
+    memory.code_symbols_renew_as(&memory.embedded_owner("vault.code.symbols.renew")?, input)
+}
+pub fn vault_code_symbols_release(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeSymbolsTaskRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeSymbolsReleased> {
+    memory.code_symbols_release_as(&memory.embedded_owner("vault.code.symbols.release")?, input)
+}
+pub fn vault_code_proposal_submit(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalSubmitRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
+    memory.code_proposal_submit_as(&memory.embedded_owner("vault.code.proposal_submit")?, input)
+}
+pub fn vault_code_oplog(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeRepoRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeMutationLog> {
+    memory.code_mutation_log_as(&memory.embedded_owner("vault.code.oplog")?, input)
 }
 pub fn vault_code_repo_diff(
     memory: &Memory<'_>,
@@ -12044,6 +12798,13 @@ pub fn vault_refs_links(
 ) -> MemoryResult<crate::lens::RecordLinks> {
     memory.record_links(&input)
 }
+pub fn vault_search_hybrid(
+    memory: &Memory<'_>,
+    input: crate::memory::HybridSearchRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>> {
+    input.validate()?;
+    memory.query_hybrid(&input)
+}
 pub fn vault_search_bm25(
     memory: &Memory<'_>,
     input: QueryBm25Request,
@@ -12479,6 +13240,24 @@ pub fn vault_consolidation_status(
 ) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
     memory_requests::dreamer_attempt_status(memory, input)
 }
+pub fn vault_memory_signal_extraction(
+    memory: &Memory<'_>,
+    input: crate::memory::SignalExtractionRequest,
+) -> MemoryResult<crate::memory::SignalExtractionTicket> {
+    memory.signal_extraction_as_owner(
+        &memory.embedded_owner("vault.memory.signal_extraction")?,
+        &input,
+    )
+}
+pub fn vault_memory_signal_extraction_result(
+    memory: &Memory<'_>,
+    input: crate::memory::SignalExtractionResultRequest,
+) -> MemoryResult<Option<crate::memory::SignalExtractionResult>> {
+    memory.signal_extraction_result_as_owner(
+        &memory.embedded_owner("vault.memory.signal_extraction.result")?,
+        &input,
+    )
+}
 pub fn vault_claims_seed(
     memory: &Memory<'_>,
     input: crate::memory::ScopedCommitRequest,
@@ -12789,6 +13568,12 @@ pub fn self_history(
     input: crate::code_run::fold_api::FoldHistoryRequest,
 ) -> MemoryResult<crate::engine_executor::history::FoldHistory> {
     crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn vault_claims_supersede(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>,
+) -> MemoryResult<crate::code_run::MemoryWriteOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.claims.supersede", &input)
 }
 pub fn self_fold(
     memory: &Memory<'_>,

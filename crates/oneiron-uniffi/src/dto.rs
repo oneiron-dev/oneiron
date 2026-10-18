@@ -684,6 +684,15 @@ pub struct MemoryProvenance {
     pub evidence_turn_ids: Vec<String>,
 }
 
+/// A retained foreign world's immutable stale stamp.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MemoryStaleStamp {
+    pub stale_since: Option<u64>,
+    pub age_secs: Option<u64>,
+    pub reason: String,
+    pub pact_epoch: u64,
+}
+
 /// One memory pack item.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MemoryItem {
@@ -703,6 +712,7 @@ pub struct MemoryItem {
     pub hedge_bucket: String,
     /// Provenance.
     pub provenance: MemoryProvenance,
+    pub stale: Option<MemoryStaleStamp>,
     /// World ref, when world-scoped.
     pub world: Option<String>,
     /// Facet ref, when faceted.

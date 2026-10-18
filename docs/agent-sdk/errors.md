@@ -21,6 +21,7 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `WRONG_ROOT` | The verb was named under the wrong root and nothing ran; the SDK never corrects and runs it. Issue a fresh call to the `replacement` the error carries. |
 | `PENDING_ASK` | A verb hook asked before the verb ran: the verb waits on that open ask and was not refused. The error's `hook` names the invocation and the ask; a retry with the same invocation answers the same ask, never a second one. Each handle's `retry(pending, verb, input)` resends the call under it (UniFFI: the failure's `pending` payload); `oneiron mcp` resends an identical repeated tool call under the pending call's invocation. |
 | `INVENTED_REFERENCE` | Name only records this writer can read, by the ref the engine issued. The write was refused and receipted. |
+| `HOST_ACTION_REQUIRES_SUPPORT_GRANT` | A hosted operator's root acts as nobody inside a customer's vault. Ask the customer for a support grant; the operator's admin commands need none. |
 
 Remote server-specific codes and HTTP schemas are also indexed by
 [the engine API reference](../../oneiron.skills.md).

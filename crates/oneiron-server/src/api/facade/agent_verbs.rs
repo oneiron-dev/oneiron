@@ -135,6 +135,33 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.policy.propose", post(facade_route))
         .route("/vault.shared.policy.answer", post(facade_route))
         .route("/vault.shared.policy.change", post(facade_route))
+        .route("/vault.federation.connect.identity", post(facade_route))
+        .route("/vault.federation.connect.grants.mint", post(facade_route))
+        .route("/vault.federation.connect.offer", post(facade_route))
+        .route("/vault.federation.connect.accept", post(facade_route))
+        .route("/vault.federation.connect.narrow", post(facade_route))
+        .route(
+            "/vault.federation.connect.rescope.offer",
+            post(facade_route),
+        )
+        .route(
+            "/vault.federation.connect.rescope.accept",
+            post(facade_route),
+        )
+        .route("/vault.federation.connect.disconnect", post(facade_route))
+        .route("/vault.federation.connect.export", post(facade_route))
+        .route("/vault.federation.connect.rejoin", post(facade_route))
+        .route("/vault.trusted_contacts.name", post(facade_route))
+        .route("/vault.trusted_contacts.list", post(facade_route))
+        .route("/vault.trusted_contacts.consent", post(facade_route))
+        .route("/vault.trusted_contacts.revoke", post(facade_route))
+        .route("/vault.trusted_contacts.dial.set", post(facade_route))
+        .route("/vault.trusted_contacts.tier.set", post(facade_route))
+        .route("/vault.trusted_contacts.concern.asks", post(facade_route))
+        .route(
+            "/vault.trusted_contacts.concern.authorize",
+            post(facade_route),
+        )
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
         .route("/vault.residence.mode", post(facade_route))
@@ -246,6 +273,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.diff", post(facade_route))
         .route("/vault.code.blame", post(facade_route))
         .route("/vault.code.proposal_view", post(facade_route))
+        .route("/vault.code.symbols.declare", post(facade_route))
+        .route("/vault.code.symbols.renew", post(facade_route))
+        .route("/vault.code.symbols.release", post(facade_route))
+        .route("/vault.code.proposal_submit", post(facade_route))
+        .route("/vault.code.oplog", post(facade_route))
         .route("/vault.code.repo_diff", post(facade_route))
         .route("/vault.code.export", post(facade_route))
         .route("/vault.code.origin.authority.get", post(facade_route))
@@ -376,6 +408,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.get", post(facade_route))
         .route("/vault.refs.resolve", post(facade_route))
         .route("/vault.refs.links", post(facade_route))
+        .route("/vault.search.hybrid", post(facade_route))
         .route("/vault.search.bm25", post(facade_route))
         .route("/vault.neighbors", post(facade_route))
         .route("/vault.structural.put", post(facade_route))
@@ -417,6 +450,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.artifacts.read", post(facade_route))
         .route("/vault.consolidation.enqueue", post(facade_route))
         .route("/vault.consolidation.status", post(facade_route))
+        .route("/vault.memory.signal_extraction", post(facade_route))
+        .route("/vault.memory.signal_extraction.result", post(facade_route))
         .route("/vault.claims.seed", post(facade_route))
         .route("/vault.channel_identities.provision", post(facade_route))
         .route("/vault.channel_identities.bind", post(facade_route))
@@ -467,6 +502,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.run.attach", post(facade_route))
         .route("/self.folds.describe", post(facade_route))
         .route("/self.history", post(facade_route))
+        .route("/vault.claims.supersede", post(facade_route))
         .route("/self.fold", post(facade_route))
         .route("/self.compact", post(facade_route))
         .route("/self.unfold", post(facade_route))

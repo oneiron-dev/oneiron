@@ -35,7 +35,7 @@ const MAX_TARGET_BYTES: usize = 512;
 const MAX_ROW_REF_BYTES: usize = 256;
 
 /// Whether the engine asks the person before it reaches their contact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustedContactDial {
     /// Ask first on either tier.
@@ -47,14 +47,14 @@ pub enum TrustedContactDial {
 
 /// How grave a `RouteToHelp` is. The tier belongs to this feature, not to the
 /// gate: the owner names a row imminent, and every other row is a concern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustedContactTier {
     Concern,
     Imminent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustedContactParty {
     Person,
@@ -64,7 +64,7 @@ pub enum TrustedContactParty {
 /// Where the notice goes, on the existing outbound rails: `sender` is the
 /// actor whose channel identity speaks, `channel` and `verb` a registered
 /// outbound capability, and `target` the contact's address on it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrustedContactReach {
     pub sender: EntityId,
     pub channel: String,
@@ -73,13 +73,13 @@ pub struct TrustedContactReach {
 }
 
 /// The contact's consent, given with their word that they are an adult.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrustedContactAcceptance {
     pub at: u64,
     pub adult: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrustedContactRevocation {
     pub at: u64,
     pub by: TrustedContactParty,
@@ -87,7 +87,7 @@ pub struct TrustedContactRevocation {
 
 /// One person's trusted contact. Naming it is the person's consent; the
 /// contact's is [`Self::accepted`], given to exactly this [`Self::version`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrustedContact {
     pub person: EntityId,
     pub contact: EntityId,
@@ -111,7 +111,7 @@ impl TrustedContact {
 
 /// "May I reach your trusted contact?", raised by a `RouteToHelp` the
 /// person's dial or the row's tier says to ask about first.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrustedContactAsk {
     pub ask: EntityId,
     pub person: EntityId,
@@ -146,7 +146,7 @@ pub enum TrustedContactAskOutcome {
     Superseded,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrustedContactAnswer {
     pub yes: bool,
     pub at: u64,

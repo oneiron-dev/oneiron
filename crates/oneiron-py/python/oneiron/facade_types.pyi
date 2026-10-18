@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 450 facade rows, 1729 declarations.
-Inputs: 401 of 450 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 398 of 450 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 477 facade rows, 1807 declarations.
+Inputs: 428 of 477 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 424 of 477 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 86; unread shapes: 0.
 """
 
@@ -1502,6 +1502,11 @@ class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
     evidence_turn_ids: list[str]
+class MemoryStaleStamp(TypedDict):
+    stale_since: NotRequired[int | None]
+    age_secs: NotRequired[int | None]
+    reason: str
+    pact_epoch: int
 class CitedMessage(TypedDict):
     short_id: str
     value_text: str
@@ -1515,6 +1520,7 @@ class MemoryItem(TypedDict):
     confidence: float
     hedge_bucket: str
     provenance: MemoryProvenance
+    stale: NotRequired[MemoryStaleStamp | None]
     world: NotRequired[str | None]
     facet: NotRequired[str | None]
     project_ref: NotRequired[str | None]
@@ -3236,12 +3242,189 @@ class SharedActPolicyAnswerRequest(TypedDict):
     approve: bool
 class SharedActPolicyChangeRequest(TypedDict):
     change_id: str
+class ConnectIdentity(TypedDict):
+    vault: str
+    host_key: str
+class MintConnectGrant(TypedDict):
+    peer_vault: str
+    authority_scope: Scope
+    expires_at: NotRequired[int | None]
+class ConnectGrant(TypedDict):
+    grant: str
+    guest_actor: str
+    resolved_scope: Scope
+    expires_at: NotRequired[int | None]
+TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
+class SelectorRangeFamily(TypedDict):
+    Family: TypeByteFamily
+SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
+class FederationDirectionScope(TypedDict):
+    worlds: ScopeAxis[ScopeId]
+    facets: ScopeAxis[ScopeId]
+    bands: ScopeAxis[SelectorRange]
+class OfferConnect(TypedDict):
+    peer_vault: str
+    grant: str
+    outbound: FederationDirectionScope
+    inbound: FederationDirectionScope
+class FederationPactScope(TypedDict):
+    lo_to_hi: FederationDirectionScope
+    hi_to_lo: FederationDirectionScope
+Offer = TypedDict("Offer", {"pact": str, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+class AcceptConnect(TypedDict):
+    offer: Offer
+    grant: str
+class ConnectAccepted(TypedDict):
+    pact: str
+    status: str
+    peer_key: str
+    counter: Offer
+class NarrowConnect(TypedDict):
+    pact: str
+    epoch: int
+    outbound: FederationDirectionScope
+FederationPactStatus = Literal["Active", "Suspended", "Promoted", "Disconnected", "Dissolved"]
+class ConnectPactReceipt(TypedDict):
+    pact: str
+    status: FederationPactStatus
+    epoch: int
+    scope: FederationPactScope
+    effective_scope: FederationDirectionScope
+class RescopeConnect(TypedDict):
+    pact: str
+    epoch: int
+    outbound: FederationDirectionScope
+    inbound: FederationDirectionScope
+RescopeOffer = TypedDict("RescopeOffer", {"pact": str, "epoch": int, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+class AcceptRescopeConnect(TypedDict):
+    offer: RescopeOffer
+class ConnectRescoped(TypedDict):
+    receipt: ConnectPactReceipt
+    counter: RescopeOffer
+class ConnectPactRequest(TypedDict):
+    pact: str
+GuestCopyState = Literal["unknown"]
+class ConnectDisconnected(TypedDict):
+    receipt: ConnectPactReceipt
+    outbound_access: bool
+    inbound_access: bool
+    sync_stopped: bool
+    copied_bytes_recallable: bool
+    recipient_copy_state: GuestCopyState
+class ConnectExportRequest(TypedDict):
+    pact: str
+    window_key: str
+    world_ref: EntityId
+    facets: NotRequired[list[EntityId]]
+    bands: NotRequired[list[SelectorRange]]
+class ConnectWindow(TypedDict):
+    pact: str
+    epoch: int
+    source_vault: str
+    recipient_vault: str
+    world_ref: EntityId
+    facets: list[EntityId]
+    bands: list[SelectorRange]
+    window_key: str
+    update: list[int]
+class ConnectDelivery(TypedDict):
+    body: ConnectWindow
+    signature: str
+ConnectRejoinStatus = Literal["imported", "deferred"]
+class ConnectRejoined(TypedDict):
+    pact: str
+    epoch: int
+    world_ref: EntityId
+    status: ConnectRejoinStatus
+    request: NotRequired[str | None]
+class TrustedContactReach(TypedDict):
+    sender: EntityId
+    channel: str
+    verb: str
+    target: str
+TrustedContactDial = Literal["ask_first", "just_call"]
+class TrustedContactNameRequest(TypedDict):
+    contact_ref: str
+    reach: TrustedContactReach
+    dial: TrustedContactDial
+class TrustedContactAcceptance(TypedDict):
+    at: int
+    adult: bool
+TrustedContactParty = Literal["person", "contact"]
+class TrustedContactRevocation(TypedDict):
+    at: int
+    by: TrustedContactParty
+class TrustedContact(TypedDict):
+    person: EntityId
+    contact: EntityId
+    reach: TrustedContactReach
+    dial: TrustedContactDial
+    version: int
+    named_at: int
+    accepted: NotRequired[TrustedContactAcceptance | None]
+    revoked: NotRequired[TrustedContactRevocation | None]
+class TrustedContactsRequest(TypedDict):
+    ...
+class TrustedContactConsentRequest(TypedDict):
+    person_ref: str
+    version: int
+    adult: bool
+class TrustedContactRevokeRequest(TypedDict):
+    person_ref: str
+    contact_ref: str
+class TrustedContactDialRequest(TypedDict):
+    contact_ref: str
+    dial: TrustedContactDial
+TrustedContactTier = Literal["concern", "imminent"]
+class TrustedContactTierRequest(TypedDict):
+    row_ref: str
+    tier: TrustedContactTier
+class TrustedContactTierSet(TypedDict):
+    row_ref: str
+    tier: TrustedContactTier
+class TrustedContactAsksRequest(TypedDict):
+    ...
+class TrustedContactAnswer(TypedDict):
+    yes: bool
+    at: int
+    notified: bool
+class TrustedContactAsk(TypedDict):
+    ask: EntityId
+    person: EntityId
+    contact: EntityId
+    version: int
+    tier: TrustedContactTier
+    asked_at: int
+    answer: NotRequired[TrustedContactAnswer | None]
+    superseded: NotRequired[int | None]
+class TrustedContactAuthorizeRequest(TypedDict):
+    ask_ref: str
+    yes: bool
+TrustedContactAuthorizationOutcome = Literal["staged", "declined", "superseded"]
+class GateSystemNoticeAction(TypedDict):
+    label: str
+    target: str
+class GateSystemNoticeRecord(TypedDict):
+    notice_type: str
+    channel: str
+    voice: str
+    audience: str
+    body: str
+    row_ref: NotRequired[str | None]
+    setting_change_offer: NotRequired[GateSystemNoticeAction | None]
+    policy_plane: NotRequired[str | None]
+    policy_version: NotRequired[str | None]
+    docs_url: NotRequired[str | None]
+class TrustedContactAuthorization(TypedDict):
+    ask_ref: str
+    yes: bool
+    outcome: TrustedContactAuthorizationOutcome
+    system_notices: list[GateSystemNoticeRecord]
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]
 GuestPactStanding = Literal["unpacted", "active", "suspended", "promoted", "disconnected", "dissolved"]
 NotRecallable = bool
-GuestCopyState = Literal["unknown"]
 GuestDeletionRequestStatus = Literal["not_requested", "queued", "sent"]
 class GuestRevokeDisclosure(TypedDict):
     copied_bytes_recallable: NotRecallable
@@ -4991,6 +5174,76 @@ class CodeProposalView(TypedDict):
     changes: list[CodeChangeView]
     landed: NotRequired[CodeOperationView | None]
     rendered: str
+class CodeSymbolsDeclareRequest(TypedDict):
+    repo: EntityId
+    task: EntityId
+    symbols: list[EntityId]
+    ttl_seconds: int
+class CodeSymbolLeaseView(TypedDict):
+    task: EntityId
+    holder: EntityId
+    symbols: list[EntityId]
+    expires_at: int
+    held: bool
+class CodeSymbolsDeclared(TypedDict):
+    declaration: CodeSymbolLeaseView
+    blockers: list[EntityId]
+class CodeSymbolsTaskRequest(TypedDict):
+    task: EntityId
+class CodeSymbolsReleased(TypedDict):
+    task: EntityId
+    released: bool
+class CodeOpProvenance(TypedDict):
+    turn: NotRequired[EntityId | None]
+    activity: NotRequired[EntityId | None]
+    intent: NotRequired[EntityId | None]
+    substrate_ref: NotRequired[EntityId | None]
+    reasoning_effort: NotRequired[str | None]
+class CriticLens(TypedDict):
+    id: str
+    prompt_contract: str
+    output_schema: str
+    hard_check: bool
+    domain: str
+class LensCatalog(TypedDict):
+    schema_version: int
+    lenses: list[CriticLens]
+class CodeProposalSubmitRequest(TypedDict):
+    repo: EntityId
+    session: EntityId
+    provenance_claim: EntityId
+    path: str
+    content: list[int]
+    message: str
+    op_provenance: CodeOpProvenance
+    catalog: LensCatalog
+class CodeProposalSubmitted(TypedDict):
+    proposal: EntityId
+    repo: EntityId
+    actor: EntityId
+    session: EntityId
+    provenance_claim: EntityId
+    base: str
+    status: RepoProposalStatus
+class CodeRepoRequest(TypedDict):
+    repo: EntityId
+CodeMutationState = Literal["prepared", "applied", "failed"]
+class CodeMutationEntry(TypedDict):
+    repo_ref: str
+    seq: int
+    operation_kind: str
+    operation_subject: NotRequired[str | None]
+    actor: NotRequired[EntityId | None]
+    session: NotRequired[EntityId | None]
+    started_at_ms: int
+    finished_at_ms: NotRequired[int | None]
+    pre_action_fork_hash: str
+    expected_post_action_fork_hash: NotRequired[str | None]
+    status: CodeMutationState
+    failure: NotRequired[str | None]
+class CodeMutationLog(TypedDict):
+    repo: EntityId
+    entries: list[CodeMutationEntry]
 class CodeTreeRequest(TypedDict):
     revision_ref: NotRequired[str | None]
     repo: NotRequired[str | None]
@@ -7139,6 +7392,34 @@ class RecordLinks(TypedDict):
     texts: list[LinkedText]
     narrowing: NotRequired[ScopedReadReceipt | None]
     next_after: NotRequired[str | None]
+class HybridPprQuery(TypedDict):
+    seeds: list[str]
+    depth: int
+class HybridTemporalQuery(TypedDict):
+    start: int
+    end: int
+class RetrievalBlendWeights(TypedDict):
+    recency: float
+    salience: float
+    confidence: float
+    gravity: float
+class HybridRankReplay(TypedDict):
+    now: int
+    blend_weights: RetrievalBlendWeights
+class HybridSearchRequest(TypedDict):
+    query: NotRequired[str | None]
+    query_vector: NotRequired[list[float] | None]
+    phonetic_codes: NotRequired[list[str]]
+    ppr: NotRequired[HybridPprQuery | None]
+    temporal: NotRequired[HybridTemporalQuery | None]
+    replay: NotRequired[HybridRankReplay | None]
+    limit: int
+class HybridSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+    access_factor: NotRequired[float | None]
+    components: list[RetrievalScoreComponent]
 class QueryBm25Request(TypedDict):
     query: str
     limit: int
@@ -8308,6 +8589,34 @@ class DreamerAttemptView(TypedDict):
     last_error: NotRequired[str | None]
     created_at: int
     updated_at: int
+class SignalExtractionRequest(TypedDict):
+    turn_refs: list[str]
+class SignalExtractionTicket(TypedDict):
+    job_refs: list[str]
+class SignalExtractionResultRequest(TypedDict):
+    job_ref: str
+class SignalExtractionMessage(TypedDict):
+    message_ref: str
+    byte_range: tuple[int, int]
+    revision: str
+class SignalExtractionSource(TypedDict):
+    source_ref: str
+    claim_ref: NotRequired[str | None]
+    byte_range: NotRequired[tuple[int, int] | None]
+    content_hash: str
+    messages: list[SignalExtractionMessage]
+class ProspectiveQueryHint(TypedDict):
+    hint_ref: str
+    target_ref: str
+    query: str
+    source: str
+class SignalExtractionClaim(TypedDict):
+    claim: ClaimView
+    sources: list[SignalExtractionSource]
+    prospective_queries: list[ProspectiveQueryHint]
+class SignalExtractionResult(TypedDict):
+    job: DreamerAttemptView
+    claims: list[SignalExtractionClaim]
 SelfHeldShape = Literal["dedicated_address", "dedicated_handle", "shared_presence"]
 class ChannelIdentityBindingActor(TypedDict):
     kind: Literal["actor"]
@@ -8787,6 +9096,15 @@ class FoldHistory(TypedDict):
     epochs: list[FoldHistoryEpoch]
     steps: list[FoldHistoryStep]
     next: NotRequired[int | None]
+class LiveRunRequest(TypedDict, Generic[T]):
+    live_run: str
+    spec: T
+class MemorySupersedeInput(TypedDict):
+    newId: str
+    oldId: str
+    now: int
+class MemoryWriteOutput(TypedDict):
+    id: EntityId
 FoldMarkRequest = TypedDict("FoldMarkRequest", {"live_run": str, "from": int, "through": int, "note": NotRequired[str | None]})
 FoldMarked = TypedDict("FoldMarked", {"fold": str, "from": int, "through": int, "pending": bool})
 class FoldCompactRequest(TypedDict):
@@ -8798,9 +9116,6 @@ class FoldCompactAsked(TypedDict):
 FoldUnfolded = TypedDict("FoldUnfolded", {"fold": str, "from": int, "through": int, "unfolded_after_step": int})
 class FoldRunRequest(TypedDict):
     live_run: str
-class LiveRunRequest(TypedDict, Generic[T]):
-    live_run: str
-    spec: T
 SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
 class SpawnKnobSeed(TypedDict, Generic[T]):
     mode: Literal["seed"]
