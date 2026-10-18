@@ -723,6 +723,8 @@ class Oneiron:
             """The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."""
         def replay(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticReplay:
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
+        @property
+        def policy(self) -> "Oneiron._VaultRetrievalPolicyVerbs": ...
     class _VaultRetrievalAgingVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ClaimAgingProfilesView:
             """The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."""
@@ -738,6 +740,19 @@ class Oneiron:
             """The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."""
         def end(self, spec: Facade.RetrievalEndOutcome) -> list[Facade.RetrievalRunEvidence]:
             """The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward."""
+    class _VaultRetrievalPolicyVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.RetrievalPolicyView:
+            """The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins."""
+        def pin(self, spec: Facade.RetrievalPolicyPinRequest) -> Facade.RetrievalPolicyView:
+            """The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder."""
+        def train(self, spec: Facade.RetrievalPolicyTrainRequest) -> Facade.RetrievalPolicyCandidate:
+            """The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it."""
+        def evaluate(self, spec: Facade.RetrievalPolicyEvaluateRequest) -> Facade.RetrievalPolicyEvaluation:
+            """The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on."""
+        def admit(self, spec: Facade.RetrievalPolicyAdmitRequest) -> Facade.RetrievalPolicyAdmitReceipt:
+            """The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission."""
+        def update(self, spec: Facade.RetrievalPolicyTrainRequest) -> Facade.RetrievalPolicyUpdateReceipt:
+            """The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."""
     class _VaultAffectVerbs:
         @property
         def annotations(self) -> "Oneiron._VaultAffectAnnotationsVerbs": ...

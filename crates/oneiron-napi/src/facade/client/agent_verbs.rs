@@ -625,6 +625,60 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_retrieval_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_policy_pin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.pin", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_policy_train(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.train", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_policy_evaluate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.evaluate", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_policy_admit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.admit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_policy_update(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.update", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_export(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.export", input)

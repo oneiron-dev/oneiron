@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 728 facade rows, 2599 declarations.
-Inputs: 676 of 728 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 653 of 728 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 734 facade rows, 2618 declarations.
+Inputs: 682 of 734 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 659 of 734 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -2164,6 +2164,96 @@ class RetrievalReplayRun(TypedDict):
 class RetrievalDiagnosticReplay(TypedDict):
     contract_version: str
     runs: list[RetrievalReplayRun]
+class RetrievalBlendWeights(TypedDict):
+    recency: float
+    salience: float
+    confidence: float
+    gravity: float
+class RetrievalBlendWeightDataWindow(TypedDict):
+    run_count: int
+    outcome_count: int
+    candidate_count: int
+    started_at_min: NotRequired[int | None]
+    started_at_max: NotRequired[int | None]
+    outcome_updated_at_min: NotRequired[int | None]
+    outcome_updated_at_max: NotRequired[int | None]
+class RetrievalBlendWeightTableEntry(TypedDict):
+    version: int
+    weights: RetrievalBlendWeights
+    tuned_at: int
+    provenance: dict[str, str]
+    data_window: RetrievalBlendWeightDataWindow
+RetrievalBlendSignal = Literal["recency", "salience", "confidence", "gravity"]
+RetrievalWeightOrigin = Literal["bootstrap", "learned", "owner_pin"]
+class RetrievalWeightRow(TypedDict):
+    signal: RetrievalBlendSignal
+    weight: float
+    origin: RetrievalWeightOrigin
+    pinned: bool
+class RetrievalPolicyPin(TypedDict):
+    signal: RetrievalBlendSignal
+    value: float
+ModelSlot = Literal["llm", "embedder", "oneironer"]
+ModelLocality = Literal["on_device", "own_server", "third_party"]
+class RetrievalRoutingPin(TypedDict):
+    slot: ModelSlot
+    locality: ModelLocality
+class RetrievalPolicyView(TypedDict):
+    policy_version: int
+    active: RetrievalBlendWeightTableEntry
+    rows: list[RetrievalWeightRow]
+    pins: list[RetrievalPolicyPin]
+    posterior_tuned_at: int
+    posterior_labeled_runs: int
+    posterior_observations: int
+    routing_manifest_digest: NotRequired[str | None]
+    routing: list[RetrievalRoutingPin]
+class RetrievalPolicyPinRequest(TypedDict):
+    signal: RetrievalBlendSignal
+    value: NotRequired[float | None]
+class RetrievalPolicyTrainRequest(TypedDict):
+    max_runs: NotRequired[int | None]
+    learning_rate: NotRequired[float | None]
+    min_reward_count: NotRequired[int | None]
+RetrievalPolicyVerdict = Literal["not_worse", "regression", "insufficient"]
+class RetrievalPolicyHeldOut(TypedDict):
+    candidate_score: float
+    active_score: float
+    reward_count: int
+    verdict: RetrievalPolicyVerdict
+class RetrievalPolicyCandidate(TypedDict):
+    weights: RetrievalBlendWeights
+    rows: list[RetrievalWeightRow]
+    data_window: RetrievalBlendWeightDataWindow
+    manifest_digest: str
+    held_out: RetrievalPolicyHeldOut
+    training_reward_count: int
+    ungated_outcomes_skipped: int
+    algorithm: str
+class RetrievalPolicyEvaluateRequest(TypedDict):
+    weights: RetrievalBlendWeights
+    config: NotRequired[RetrievalPolicyTrainRequest]
+class RetrievalPolicyEvaluation(TypedDict):
+    candidate_weights: RetrievalBlendWeights
+    active_weights: RetrievalBlendWeights
+    rows: list[RetrievalWeightRow]
+    manifest_digest: str
+    held_out: RetrievalPolicyHeldOut
+    pins_respected: bool
+    ungated_outcomes_skipped: int
+class RetrievalPolicyAdmitRequest(TypedDict):
+    weights: RetrievalBlendWeights
+    manifest_digest: str
+    config: NotRequired[RetrievalPolicyTrainRequest]
+class RetrievalPolicyAdmitReceipt(TypedDict):
+    evaluation: RetrievalPolicyEvaluation
+    view: RetrievalPolicyView
+RetrievalPolicyDisposition = Literal["applied", "offered"]
+class RetrievalPolicyUpdateReceipt(TypedDict):
+    disposition: RetrievalPolicyDisposition
+    reason: NotRequired[str | None]
+    candidate: RetrievalPolicyCandidate
+    view: RetrievalPolicyView
 class ExportOptions(TypedDict):
     format: NotRequired[str | None]
     include_secrets: NotRequired[bool | None]
@@ -6279,7 +6369,6 @@ class PolicyManifestReceipt(TypedDict):
     read_frontier_hash: str
 class PolicyManifestPropose(TypedDict):
     manifest: PolicyManifest
-ModelSlot = Literal["llm", "embedder", "oneironer"]
 ConfidenceBand = Literal["low", "medium", "high", "certain"]
 VerdictMode = Literal["shadow", "enforce"]
 class VerdictBinding(TypedDict):
@@ -9646,7 +9735,6 @@ class ResponseFormatJson(TypedDict):
     format: Literal["json"]
     schema: Any
 ResponseFormat = ResponseFormatText | ResponseFormatJson
-ModelLocality = Literal["on_device", "own_server", "third_party"]
 CallEnvelope = TypedDict("CallEnvelope", {"scope": NotRequired[ScopeScope], "purpose": CallPurpose, "class": CallClass, "tier": TierPrecedence, "response_format": ResponseFormat, "locality": ModelLocality, "seat_effort": NotRequired[ReasoningEffort | None]})
 LlmMessageRole = Literal["system", "user", "assistant", "tool"]
 class ImageContentBase64(TypedDict):
@@ -10927,11 +11015,6 @@ class HybridPprQuery(TypedDict):
 class HybridTemporalQuery(TypedDict):
     start: int
     end: int
-class RetrievalBlendWeights(TypedDict):
-    recency: float
-    salience: float
-    confidence: float
-    gravity: float
 class HybridRankReplay(TypedDict):
     now: int
     blend_weights: RetrievalBlendWeights
