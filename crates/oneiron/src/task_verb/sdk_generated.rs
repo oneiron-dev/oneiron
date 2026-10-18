@@ -1977,6 +1977,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.conflict_record",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeConflictRecordRequest,
+                >(),
+            ),
+            (
+                "vault.code.conflict_view",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeConflictViewRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_resolve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalResolveRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalReviewRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalSettleRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_settlement",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalSettlementRequest,
+                >(),
+            ),
+            (
                 "vault.code.oplog",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_doors::CodeRepoRequest,
@@ -3960,6 +3996,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.worlds.privacy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_model::WorldPrivacySetInput,
+                >(),
+            ),
+            (
                 "vault.search",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
             ),
@@ -4198,6 +4240,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.threads.list",
     "vault.artifacts.threads.assign",
     "vault.artifacts.threads.state",
+    "vault.code.proposal_submit",
+    "vault.code.conflict_record",
+    "vault.code.conflict_view",
+    "vault.code.proposal_resolve",
+    "vault.code.proposal_review",
+    "vault.code.proposal_settle",
+    "vault.code.proposal_settlement",
     "vault.code.model_heal_count",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
@@ -4942,6 +4991,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.artifacts.threads.state" => crate::code_run::vault_read::request_schema::<
             crate::anchored_annotation::AnnotationThreadView,
+        >(),
+        "vault.code.proposal_submit" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSubmitted,
+        >(),
+        "vault.code.conflict_record" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeConflictView,
+        >(),
+        "vault.code.conflict_view" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeConflictHistory,
+        >(),
+        "vault.code.proposal_resolve" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSubmitted,
+        >(),
+        "vault.code.proposal_review" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSettlementView,
+        >(),
+        "vault.code.proposal_settle" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSettlementView,
+        >(),
+        "vault.code.proposal_settlement" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSettlementView,
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
@@ -8048,6 +8118,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.proposal_submit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.conflict_record" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.conflict_view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_settlement" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11726,6 +11838,29 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::code_doors::CodeProposalSubmitRequest =
                 decode(value.clone())?;
         }
+        "vault.code.conflict_record" => {
+            let _input: crate::memory::code_doors::CodeConflictRecordRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.conflict_view" => {
+            let _input: crate::memory::code_doors::CodeConflictViewRequest = decode(value.clone())?;
+        }
+        "vault.code.proposal_resolve" => {
+            let _input: crate::memory::code_doors::CodeProposalResolveRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.proposal_review" => {
+            let _input: crate::memory::code_doors::CodeProposalReviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.proposal_settle" => {
+            let _input: crate::memory::code_doors::CodeProposalSettleRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.proposal_settlement" => {
+            let _input: crate::memory::code_doors::CodeProposalSettlementRequest =
+                decode(value.clone())?;
+        }
         "vault.code.oplog" => {
             let _input: crate::memory::code_doors::CodeRepoRequest = decode(value.clone())?;
         }
@@ -13742,6 +13877,16 @@ pub fn invoke(
         "vault.code.symbols.renew" => encode(vault_code_symbols_renew(memory, decode(value)?)?),
         "vault.code.symbols.release" => encode(vault_code_symbols_release(memory, decode(value)?)?),
         "vault.code.proposal_submit" => encode(vault_code_proposal_submit(memory, decode(value)?)?),
+        "vault.code.conflict_record" => encode(vault_code_conflict_record(memory, decode(value)?)?),
+        "vault.code.conflict_view" => encode(vault_code_conflict_view(memory, decode(value)?)?),
+        "vault.code.proposal_resolve" => {
+            encode(vault_code_proposal_resolve(memory, decode(value)?)?)
+        }
+        "vault.code.proposal_review" => encode(vault_code_proposal_review(memory, decode(value)?)?),
+        "vault.code.proposal_settle" => encode(vault_code_proposal_settle(memory, decode(value)?)?),
+        "vault.code.proposal_settlement" => {
+            encode(vault_code_proposal_settlement(memory, decode(value)?)?)
+        }
         "vault.code.oplog" => encode(vault_code_oplog(memory, decode(value)?)?),
         "vault.code.model_heal_count" => {
             encode(vault_code_model_heal_count(memory, decode(value)?)?)
@@ -17552,6 +17697,48 @@ pub fn vault_code_proposal_submit(
     input: crate::memory::code_doors::CodeProposalSubmitRequest,
 ) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
     memory.code_proposal_submit_as(&memory.embedded_owner("vault.code.proposal_submit")?, input)
+}
+pub fn vault_code_conflict_record(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeConflictRecordRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeConflictView> {
+    memory.code_conflict_record_as(&memory.embedded_owner("vault.code.conflict_record")?, input)
+}
+pub fn vault_code_conflict_view(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeConflictViewRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeConflictHistory> {
+    memory.code_conflict_history_as(&memory.embedded_owner("vault.code.conflict_view")?, input)
+}
+pub fn vault_code_proposal_resolve(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalResolveRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
+    memory.code_proposal_resolve_as(
+        &memory.embedded_owner("vault.code.proposal_resolve")?,
+        input,
+    )
+}
+pub fn vault_code_proposal_review(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalReviewRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSettlementView> {
+    memory.code_proposal_review_as(&memory.embedded_owner("vault.code.proposal_review")?, input)
+}
+pub fn vault_code_proposal_settle(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalSettleRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSettlementView> {
+    memory.code_proposal_settle_as(&memory.embedded_owner("vault.code.proposal_settle")?, input)
+}
+pub fn vault_code_proposal_settlement(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalSettlementRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSettlementView> {
+    memory.code_proposal_settlement_as(
+        &memory.embedded_owner("vault.code.proposal_settlement")?,
+        input,
+    )
 }
 pub fn vault_code_oplog(
     memory: &Memory<'_>,

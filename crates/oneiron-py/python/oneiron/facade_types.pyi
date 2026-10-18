@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 710 facade rows, 2558 declarations.
-Inputs: 658 of 710 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 635 of 710 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 716 facade rows, 2570 declarations.
+Inputs: 664 of 716 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 641 of 716 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -230,7 +230,7 @@ IdentityActNow = IdentityActNowSettled | IdentityActNowUnknown | IdentityActNowD
 class InboxListRequest(TypedDict):
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
-NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask"]
+NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed"]
 class NotificationSource(TypedDict):
     producer: str
     event: str
@@ -7008,7 +7008,7 @@ class CodeBlameView(TypedDict):
     units: list[CodeUnitBlameView]
 class CodeProposalViewRequest(TypedDict):
     proposal_ref: str
-RepoProposalStatus = Literal["Proposed", "Approved", "Applied", "Failed"]
+RepoProposalStatus = Literal["Proposed", "Approved", "Applied", "Failed", "Rejected"]
 class CodeProposedStamp(TypedDict):
     actor_ref: NotRequired[str | None]
     session_ref: NotRequired[str | None]
@@ -7079,6 +7079,87 @@ class CodeProposalSubmitted(TypedDict):
     provenance_claim: EntityId
     base: str
     status: RepoProposalStatus
+class CodeConflictRecordRequest(TypedDict):
+    repo: EntityId
+    branch_subject: EntityId
+    branch: str
+    left_proposal: EntityId
+    right_proposal: EntityId
+class CodeConflictView(TypedDict):
+    open: bool
+    conflict: EntityId
+    branch_subject: EntityId
+    repo_ref: str
+    branch: str
+    base_tree: str
+    left_tree: str
+    right_tree: str
+    paths: list[str]
+    proposals: list[EntityId]
+    task: EntityId
+class CodeConflictViewRequest(TypedDict):
+    branch_subject: EntityId
+class CodeConflictResolutionView(TypedDict):
+    resolution: EntityId
+    conflict: EntityId
+    task: EntityId
+    resolved_tree: str
+    paths: list[str]
+class CodeConflictHistory(TypedDict):
+    conflicts: list[CodeConflictView]
+    resolved: list[CodeConflictResolutionView]
+class CodeProposalResolveRequest(TypedDict):
+    change: CodeProposalSubmitRequest
+    branch_subject: EntityId
+    conflict: EntityId
+    branch: str
+LearningPredicate = Literal["reliability", "edit_cost", "retest_noise", "setting"]
+class LearningCell(TypedDict):
+    predicate: LearningPredicate
+    subject: EntityId
+    executor: NotRequired[str | None]
+    type_ref: NotRequired[CellTypeRef | None]
+    axis: NotRequired[str | None]
+    consent_scope: NotRequired[str | None]
+    setting_key: NotRequired[str | None]
+CritiqueVerdict = Literal["accept", "revise", "discard"]
+CritiqueSeverity = Literal["info", "low", "medium", "high", "blocking"]
+class CodeProposalReviewRequest(TypedDict):
+    proposal: EntityId
+    artifact_id: str
+    run_id: str
+    attempt: EntityId
+    lens_id: str
+    domain: str
+    model_id: str
+    model_revision: NotRequired[str | None]
+    calibration: LearningCell
+    verdict: CritiqueVerdict
+    severity: CritiqueSeverity
+    hard_check_passed: NotRequired[bool | None]
+    evidence: list[EntityId]
+    suggested_edit: NotRequired[str | None]
+RepoProposalDecision = Literal["approve", "reject"]
+class RepoProposalSettlement(TypedDict):
+    receipt: EntityId
+    actor: EntityId
+    decision: RepoProposalDecision
+    settled_at: int
+class CodeProposalSettlementView(TypedDict):
+    proposal: EntityId
+    status: RepoProposalStatus
+    reviews: int
+    settlement: NotRequired[RepoProposalSettlement | None]
+    conflict: NotRequired[EntityId | None]
+    task: NotRequired[EntityId | None]
+    parents: list[EntityId]
+    mutation_seq: NotRequired[int | None]
+    resolution: NotRequired[EntityId | None]
+class CodeProposalSettleRequest(TypedDict):
+    proposal: EntityId
+    decision: RepoProposalDecision
+class CodeProposalSettlementRequest(TypedDict):
+    proposal: EntityId
 class CodeRepoRequest(TypedDict):
     repo: EntityId
 CodeMutationState = Literal["prepared", "applied", "failed"]
@@ -8231,12 +8312,10 @@ class CriticReviewSubmit(TypedDict):
     auto_resolve_threshold: float
     catalog: Any
     critics: list[CriticBinding]
-CritiqueVerdict = Literal["accept", "revise", "discard"]
 class CritiqueTriageScores(TypedDict):
     accept: float
     revise: float
     discard: float
-CritiqueSeverity = Literal["info", "low", "medium", "high", "blocking"]
 class MergedFinding(TypedDict):
     key: str
     verdict: CritiqueVerdict
@@ -8259,15 +8338,6 @@ class CritiqueProvenance(TypedDict):
     critic_class: int
     model_id: str
     model_revision: NotRequired[str | None]
-LearningPredicate = Literal["reliability", "edit_cost", "retest_noise", "setting"]
-class LearningCell(TypedDict):
-    predicate: LearningPredicate
-    subject: EntityId
-    executor: NotRequired[str | None]
-    type_ref: NotRequired[CellTypeRef | None]
-    axis: NotRequired[str | None]
-    consent_scope: NotRequired[str | None]
-    setting_key: NotRequired[str | None]
 class CriticPrediction(TypedDict):
     what: str
     by_when: int
@@ -8731,7 +8801,7 @@ class TaskAskReceipt(TypedDict):
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
