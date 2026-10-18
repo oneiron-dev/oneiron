@@ -43,19 +43,32 @@ pub(crate) fn promotion_evidence_source_in_txn(
             if start == end {
                 return Err(invalid("evidence span is empty"));
             }
-            doc.text().chars().skip(start).take(end - start).collect::<String>()
+            doc.text()
+                .chars()
+                .skip(start)
+                .take(end - start)
+                .collect::<String>()
         }
         None => doc.text(),
     };
-    if evidence.quote_sha256.is_some_and(|expected| <[u8; 32]>::from(Sha256::digest(quote.as_bytes())) != expected) {
+    if evidence
+        .quote_sha256
+        .is_some_and(|expected| <[u8; 32]>::from(Sha256::digest(quote.as_bytes())) != expected)
+    {
         return Err(invalid("evidence quote SHA-256 differs"));
     }
     if evidence.kind != EvidenceKind::Message {
         return Ok(entity);
     }
-    let parents = vault.store.port_edge_peers(
-        txn, &entity, crate::ports::EdgeDirection::Out, crate::edge::EdgeKind::ChildOf,
-    )?.collect::<Result<Vec<_>>>()?;
+    let parents = vault
+        .store
+        .port_edge_peers(
+            txn,
+            &entity,
+            crate::ports::EdgeDirection::Out,
+            crate::edge::EdgeKind::ChildOf,
+        )?
+        .collect::<Result<Vec<_>>>()?;
     let [turn] = parents.as_slice() else {
         return Err(invalid("message evidence needs exactly one parent TURN"));
     };

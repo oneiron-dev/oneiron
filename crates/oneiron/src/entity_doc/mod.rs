@@ -17,7 +17,9 @@ mod metadata;
 pub mod office;
 mod pins;
 mod promotion_evidence;
-pub(crate) use promotion_evidence::{promotion_evidence_source_in_txn, retain_promotion_evidence_in_txn};
+pub(crate) use promotion_evidence::{
+    promotion_evidence_source_in_txn, retain_promotion_evidence_in_txn,
+};
 mod recovery;
 mod registry;
 mod summary;

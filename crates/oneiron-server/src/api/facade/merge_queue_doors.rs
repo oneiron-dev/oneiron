@@ -34,7 +34,8 @@ async fn as_owner<T: Send + 'static>(
 ) -> Listed<T> {
     let admitted = || {
         let owner = owner_proof(server, auth, verb)?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok::<_, MemoryError>((owner, caller))
     };
     let (owner, caller) = match admitted() {
