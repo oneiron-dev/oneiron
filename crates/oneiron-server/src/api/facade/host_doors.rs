@@ -97,6 +97,7 @@ pub(crate) use super::skill_doors::*;
 pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
+pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::persona_doors::*;
@@ -167,6 +168,7 @@ pub(crate) use super::affect_doors::*;
 pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
+pub(crate) use super::eval_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
@@ -190,6 +192,7 @@ pub(crate) use super::hook_regen_doors::*;
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
+pub(crate) use super::lens_selection_doors::*;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
 pub(crate) use crate::api::context_board::{vault_explain_gate, vault_explain_memory};
 
@@ -1373,6 +1376,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.research.create_child"
         | "vault.evals.inventory"
         | "vault.evals.cohorts.setup"
+        | "vault.evals.author_now"
+        | "vault.evals.authoring.result"
+        | "vault.evals.families"
+        | "vault.evals.families.assign"
+        | "vault.evals.cases"
+        | "vault.evals.cases.record"
+        | "vault.evals.cohorts"
+        | "vault.evals.cohorts.open"
+        | "vault.evals.exposure"
+        | "vault.evals.sufficiency"
+        | "vault.evals.labels.blocked"
+        | "vault.evals.labels.pick"
         | "vault.coach.training_offers"
         | "vault.coach.training_offers.get"
         | "vault.coach.training_offers.trigger"
@@ -1504,6 +1519,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "self.off_record.execute" => {
             super::off_record_doors::off_record_admits(server, auth, verb)
         }
+        "execute_code" => super::foreign_code_doors::foreign_code_admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" => artifact_asker(server, auth).map(drop),

@@ -9,6 +9,10 @@
 //! model turn on the generative role's live route, metered on the house chat
 //! turn's line, with no tool, so nothing it asks for ever runs. The reply must
 //! stop naturally and match a schema built for the plan's width.
+//!
+//! A leased agent's planned team runs the same request, schema and decode
+//! on its own seat and line instead (DOOR-111 S4c-4,
+//! `resident_pump::pattern_launch`); only this runner is the house's.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -17,7 +21,7 @@ use oneiron::agent_dispatch::{CareLevel, CostEnvelope, SpawnNeed, TeamPlan};
 use oneiron::llm::{
     BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_BUDGET_RESERVE_UNITS, FinishReason, LlmCapability, LlmError, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ReasoningEffort,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
     ResponseFormat, TierPrecedence, validate_json_schema,
 };
 use oneiron::skill::{LoadedSkillPack, SkillRole};
@@ -29,7 +33,7 @@ use serde_json::Value;
 use super::SyncServer;
 use crate::ai_host::{AiHandle, CHAT_ROLE};
 use crate::config::models::role_key;
-use crate::models::{RoleRefusal, Seat};
+use crate::models::RoleRefusal;
 
 /// The call's purpose and tier label, and its run's prefix.
 const LAUNCH_PURPOSE: &str = "team.pattern_launch";
@@ -98,7 +102,15 @@ impl PatternLaunchRunner for HostPatternLaunchRunner {
         let members = launch_members(skill, plan)?;
         let seat = self.ai.chat_seat().ok_or_else(no_seat)?;
         let schema = launch_spec_schema(members);
-        let request = launch_request(seat, skill, asked, prompt, plan, &schema)?;
+        let request = launch_request(
+            &seat.model,
+            seat.locality,
+            skill,
+            asked,
+            prompt,
+            plan,
+            &schema,
+        )?;
         let run_id = format!(
             "{LAUNCH_PURPOSE}:{}:{}",
             skill.entity.to_hex(),
@@ -167,7 +179,7 @@ impl HostPatternLaunchRunner {
 
 /// How many members the start briefs: the plan's width less the leader,
 /// once the pack handed in is the workflow revision the plan froze.
-fn launch_members(skill: &LoadedSkillPack, plan: &TeamPlan) -> Result<u32> {
+pub(in crate::server) fn launch_members(skill: &LoadedSkillPack, plan: &TeamPlan) -> Result<u32> {
     let pattern = plan
         .pattern_skill
         .as_ref()
@@ -201,7 +213,7 @@ fn skill_text(skill: &LoadedSkillPack) -> Result<&str> {
 
 /// The reply's schema for `members` members: the leader's briefing, exactly
 /// that many member briefings, and the axis; nothing else.
-fn launch_spec_schema(members: u32) -> Value {
+pub(in crate::server) fn launch_spec_schema(members: u32) -> Value {
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
@@ -242,11 +254,12 @@ struct LaunchSkill<'a> {
     version: &'a str,
 }
 
-/// The one request: the pack's SKILL.md as the system text, the host's frame
-/// and the reply's schema after it, and the task data as the user turn. It
-/// offers no tool and caps nothing.
-fn launch_request(
-    seat: &Seat,
+/// The one request, on `model` at `locality`: the pack's SKILL.md as the
+/// system text, the host's frame and the reply's schema after it, and the
+/// task data as the user turn. It offers no tool and caps nothing.
+pub(in crate::server) fn launch_request(
+    model: &ModelId,
+    locality: ModelLocality,
     skill: &LoadedSkillPack,
     asked: &SpawnNeed,
     prompt: &str,
@@ -281,7 +294,7 @@ fn launch_request(
         name: LAUNCH_PURPOSE.to_owned(),
     };
     Ok(LlmRequest {
-        model: seat.model.clone(),
+        model: model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
             scope: Default::default(),
@@ -291,7 +304,7 @@ fn launch_request(
             response_format: ResponseFormat::Json {
                 schema: schema.clone(),
             },
-            locality: seat.locality,
+            locality,
         },
         messages: vec![
             LlmMessage {
@@ -325,7 +338,10 @@ struct LaunchStart {
 /// The start a reply writes: a natural stop with no tool call, then one
 /// JSON object that matches the width's schema, decoded with nothing beyond
 /// its three keys.
-fn decode_launch_spec(response: &LlmResponse, schema: &Value) -> Result<PatternLaunchSpec> {
+pub(in crate::server) fn decode_launch_spec(
+    response: &LlmResponse,
+    schema: &Value,
+) -> Result<PatternLaunchSpec> {
     if response.finish_reason == FinishReason::ToolCalls
         || response
             .message
@@ -393,6 +409,6 @@ fn off_schema(detail: impl std::fmt::Display) -> Error {
 }
 
 /// Why a pattern run wrote no start, and what the owner can do next.
-fn stop(reason: impl Into<String>) -> Error {
+pub(in crate::server) fn stop(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())
 }

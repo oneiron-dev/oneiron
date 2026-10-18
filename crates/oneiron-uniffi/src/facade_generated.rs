@@ -1366,6 +1366,66 @@ export_facade! {
     let output = client.vault_evals_cohorts_setup(&input)?;
     crate::codec::lift_record("vault.evals.cohorts.setup", &output)
 };
+"vault.evals.author_now" => fn vault_evals_author_now(&self) -> EvalAuthoringRef = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalAuthorNowRequest = crate::codec::lower_empty("vault.evals.author_now")?;
+    let output = client.vault_evals_author_now(&input)?;
+    crate::codec::lift_record("vault.evals.author_now", &output)
+};
+"vault.evals.authoring.result" => fn vault_evals_authoring_result(&self, input: EvalAuthoringRef) -> Option<EvalAuthoringResult> = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalAuthoringRef = crate::codec::lower_record("vault.evals.authoring.result", input)?;
+    let output = client.vault_evals_authoring_result(&input)?;
+    crate::codec::lift_record("vault.evals.authoring.result", &output)
+};
+"vault.evals.families" => fn vault_evals_families(&self, input: EvalSeatRequest) -> Vec<EvalFamilyView> = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalSeatRequest = crate::codec::lower_record("vault.evals.families", input)?;
+    let output = client.vault_evals_families(&input)?;
+    crate::codec::lift_record("vault.evals.families", &output)
+};
+"vault.evals.families.assign" => fn vault_evals_families_assign(&self, input: EvalFamilyAssignRequest) -> SourceFamily = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalFamilyAssignRequest = crate::codec::lower_record("vault.evals.families.assign", input)?;
+    let output = client.vault_evals_families_assign(&input)?;
+    crate::codec::lift_record("vault.evals.families.assign", &output)
+};
+"vault.evals.cases" => fn vault_evals_cases(&self, input: EvalCasesRequest) -> Vec<EvalCase> = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalCasesRequest = crate::codec::lower_record("vault.evals.cases", input)?;
+    let output = client.vault_evals_cases(&input)?;
+    crate::codec::lift_record("vault.evals.cases", &output)
+};
+"vault.evals.cases.record" => fn vault_evals_cases_record(&self, input: EvalCaseDraft) -> EvalCase = |client| {
+    let input: oneiron::skill_optimize::EvalCaseDraft = crate::codec::lower_record("vault.evals.cases.record", input)?;
+    let output = client.vault_evals_cases_record(&input)?;
+    crate::codec::lift_record("vault.evals.cases.record", &output)
+};
+"vault.evals.cohorts" => fn vault_evals_cohorts(&self, input: EvalSeatRequest) -> Vec<EvalCohortView> = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalSeatRequest = crate::codec::lower_record("vault.evals.cohorts", input)?;
+    let output = client.vault_evals_cohorts(&input)?;
+    crate::codec::lift_record("vault.evals.cohorts", &output)
+};
+"vault.evals.cohorts.open" => fn vault_evals_cohorts_open(&self, input: EvalCohortOpenRequest) -> EvalRelease = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalCohortOpenRequest = crate::codec::lower_record("vault.evals.cohorts.open", input)?;
+    let output = client.vault_evals_cohorts_open(&input)?;
+    crate::codec::lift_record("vault.evals.cohorts.open", &output)
+};
+"vault.evals.exposure" => fn vault_evals_exposure(&self, input: EvalCohortRef) -> EvalExposureLedger = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalCohortRef = crate::codec::lower_record("vault.evals.exposure", input)?;
+    let output = client.vault_evals_exposure(&input)?;
+    crate::codec::lift_record("vault.evals.exposure", &output)
+};
+"vault.evals.sufficiency" => fn vault_evals_sufficiency(&self, input: SufficiencyInput) -> SufficiencyCard = |client| {
+    let input: oneiron::skill_optimize::SufficiencyInput = crate::codec::lower_record("vault.evals.sufficiency", input)?;
+    let output = client.vault_evals_sufficiency(&input)?;
+    crate::codec::lift_record("vault.evals.sufficiency", &output)
+};
+"vault.evals.labels.blocked" => fn vault_evals_labels_blocked(&self, input: EvalBlockedLabelsRequest) -> Vec<EvalLabelAsk> = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalBlockedLabelsRequest = crate::codec::lower_record("vault.evals.labels.blocked", input)?;
+    let output = client.vault_evals_labels_blocked(&input)?;
+    crate::codec::lift_record("vault.evals.labels.blocked", &output)
+};
+"vault.evals.labels.pick" => fn vault_evals_labels_pick(&self, input: EvalLabelPickRequest) -> EvalCase = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalLabelPickRequest = crate::codec::lower_record("vault.evals.labels.pick", input)?;
+    let output = client.vault_evals_labels_pick(&input)?;
+    crate::codec::lift_record("vault.evals.labels.pick", &output)
+};
 "vault.coach.training_offers" => fn vault_coach_training_offers(&self, input: OfferListRequest) -> Vec<OfferView> = |client| {
     let input: oneiron::skill_optimize::offer_doors::OfferListRequest = crate::codec::lower_record("vault.coach.training_offers", input)?;
     let output = client.vault_coach_training_offers(&input)?;
@@ -1891,6 +1951,21 @@ export_facade! {
     let output = client.vault_lenses_list(&input)?;
     crate::codec::lift_record("vault.lenses.list", &output)
 };
+"vault.lenses.select" => fn vault_lenses_select(&self, input: LensSelectRequest) -> LensSelection = |client| {
+    let input: oneiron::lens::LensSelectRequest = crate::codec::lower_record("vault.lenses.select", input)?;
+    let output = client.vault_lenses_select(&input)?;
+    crate::codec::lift_record("vault.lenses.select", &output)
+};
+"vault.lenses.resolve" => fn vault_lenses_resolve(&self, input: LensSelectionResolveRequest) -> LensSelectionResolved = |client| {
+    let input: oneiron::lens::LensSelectionResolveRequest = crate::codec::lower_record("vault.lenses.resolve", input)?;
+    let output = client.vault_lenses_resolve(&input)?;
+    crate::codec::lift_record("vault.lenses.resolve", &output)
+};
+"vault.lenses.result_set.action" => fn vault_lenses_result_set_action(&self, input: LensResultSetActionRequest) -> LensResultSetActionResult = |client| {
+    let input: oneiron::lens::LensResultSetActionRequest = crate::codec::lower_record("vault.lenses.result_set.action", input)?;
+    let output = client.vault_lenses_result_set_action(&input)?;
+    crate::codec::lift_record("vault.lenses.result_set.action", &output)
+};
 "vault.lenses.default" => fn vault_lenses_default(&self, input: LensDefaultRequest) -> ScopedReadResultLensFrameCard = |client| {
     let input: oneiron::lens::LensDefaultRequest = crate::codec::lower_record("vault.lenses.default", input)?;
     let output = client.vault_lenses_default(&input)?;
@@ -2155,6 +2230,11 @@ export_facade! {
     let input: oneiron::memory::code_doors::CodeRepoRequest = crate::codec::lower_record("vault.code.oplog", input)?;
     let output = client.vault_code_oplog(&input)?;
     crate::codec::lift_record("vault.code.oplog", &output)
+};
+"execute_code" => fn execute_code(&self, input: ForeignCodeRunRequest) -> ForeignCodeRunResult = |client| {
+    let input: oneiron::memory::foreign_code::ForeignCodeRunRequest = crate::codec::lower_record("execute_code", input)?;
+    let output = client.execute_code(&input)?;
+    crate::codec::lift_record("execute_code", &output)
 };
 "vault.code.model_heal_count" => fn vault_code_model_heal_count(&self, input: CodeRunModelHealCountRequest) -> CodeRunModelHealCountView = |client| {
     let input: oneiron::memory::code_run_doors::CodeRunModelHealCountRequest = crate::codec::lower_record("vault.code.model_heal_count", input)?;
