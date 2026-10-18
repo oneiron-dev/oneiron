@@ -17082,7 +17082,7 @@
      "path": "src/credential_door/checkout_ticket.rs",
      "purpose": "Checkout redemption rights",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -17152,7 +17152,7 @@
      "path": "src/credential_door/mod.rs",
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -31086,7 +31086,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 3,
+      "mod": 4,
       "re-export": 40
      }
     },
@@ -31108,6 +31108,49 @@
      "purpose": "Agent-facing NOTE verbs; actor identity is bound to the memory facade",
      "surface": {
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/mod.rs",
+     "purpose": "Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/operations.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckoutDoorBindRequest",
+      "CheckoutDoorBinding",
+      "CodeExportRequest",
+      "CodeExportResult",
+      "OriginAuthoritySetRequest",
+      "OriginAuthorityView",
+      "OriginPublicationState",
+      "OriginPublicationView",
+      "OriginPublicationsRequest",
+      "OriginPublicationsView",
+      "OriginRepoRequest"
+     ],
+     "path": "src/memory/origin_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "struct": 10
      }
     },
     {
@@ -49070,7 +49113,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "fn": 450
+      "fn": 455
      }
     },
     {
@@ -55159,7 +55202,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 144,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55840,7 +55883,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3400,
+   "source_files": 3403,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64235,7 +64278,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 400
+      "fn": 405
      }
     },
     {
@@ -65283,7 +65326,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 401
+      "fn": 406
      }
     },
     {
@@ -68376,7 +68419,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 80
+      "crate-vis": 81
      }
     },
     {
@@ -68417,6 +68460,16 @@
      "purpose": "Host-held NOTE editor bindings beside the ordinary scoped NOTE reads",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/origin_doors.rs",
+     "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -75661,7 +75714,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 335,
+     "files": 336,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76076,7 +76129,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 657,
+   "source_files": 658,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76484,6 +76537,8 @@
       "ChartSeries",
       "ChartSource",
       "ChatProjection",
+      "CheckoutDoorBindRequest",
+      "CheckoutDoorBinding",
       "ClaimApprovalStatus",
       "ClaimChangeVerdict",
       "ClaimLineAtom",
@@ -76502,6 +76557,8 @@
       "CodeChangeView",
       "CodeDiffRequest",
       "CodeDiffView",
+      "CodeExportRequest",
+      "CodeExportResult",
       "CodeFileChange",
       "CodeFileDiffView",
       "CodeOperationView",
@@ -77107,6 +77164,15 @@
       "OpenSpendLeaseRequest",
       "OracleReceipt",
       "OrganWaitView",
+      "OriginAuthority",
+      "OriginAuthoritySetRequest",
+      "OriginAuthorityView",
+      "OriginPublicationState",
+      "OriginPublicationView",
+      "OriginPublicationsRequest",
+      "OriginPublicationsView",
+      "OriginRepoRequest",
+      "OriginResidence",
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
@@ -77751,8 +77817,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 419,
-      "struct": 1059
+      "enum": 421,
+      "struct": 1070
      }
     },
     {
