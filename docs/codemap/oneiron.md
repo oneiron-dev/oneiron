@@ -1152,7 +1152,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/tests/owner_tier.rs` | test | m | — | — | A native host's proof shows a live person, not whose vault this is, so an owner door asks for both (F18 tier… |
 | `src/consent/tests/shared_brief.rs` | test | s | — | — | — |
 | `src/consent/tests/stale_proofs.rs` | test | s | — | — | An owner proof acts only while it still holds, checked in the transaction that writes the act… |
-| `src/consent/widen.rs` | src | m | 1 struct · 1 enum · 9 fn · 6 crate-vis | WidenKind, WidenProposal | Propose-only authority widening |
+| `src/consent/widen.rs` | src | m | 1 struct · 1 enum · 11 fn · 1 const · 6 crate-vis | WidenKind, WidenProposal | Propose-only authority widening |
 | `src/consent_graduation/doors.rs` | src | m | 11 fn · 1 crate-vis | — | Public Vault doors plus the shared accept-offer txn helper used by ED-05 |
 | `src/consent_graduation/fold.rs` | src | m | 14 crate-vis | — | Txn-level counters projection, incremental maintenance, and CID-7 rebuild fold |
 | `src/consent_graduation/mod.rs` | src | s | 3 re-export · 3 crate-vis | — | DEC-0006 consent-graduation ramp (ARCH-0055 r7 / ONE-1748, MS-06): the per-scope outcome statistics that… |
