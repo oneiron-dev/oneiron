@@ -196,6 +196,29 @@ impl RowBirth {
         birth
     }
 
+    /// This birth with each input and prompt ref, and the ref its trigger
+    /// names, renamed by `rename`: a copy that lands a ref's row under
+    /// another id names it by that id (FIX 3890). The trigger keeps its kind.
+    /// Who made the row, by which process and when, the input hash and the
+    /// refs it already withholds stay as they are.
+    #[must_use]
+    pub fn renamed_refs(&self, rename: impl Fn(EntityId) -> EntityId) -> Self {
+        let mut birth = self.clone();
+        for input in &mut birth.made_by.inputs {
+            input.row = rename(input.row);
+        }
+        if let Some(
+            MadeByTrigger::Task(row)
+            | MadeByTrigger::Ask(row)
+            | MadeByTrigger::Run(row)
+            | MadeByTrigger::Skill(row),
+        ) = birth.made_by.trigger.as_mut()
+        {
+            *row = rename(*row);
+        }
+        birth
+    }
+
     /// The birth of a row `actor` wrote through `door` at `at`, made from
     /// `inputs`, whose bytes as the door read them are `read`. It names no
     /// prompt or trigger: a door that has them builds its own envelope.

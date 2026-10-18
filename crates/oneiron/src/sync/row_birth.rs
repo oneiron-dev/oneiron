@@ -146,7 +146,9 @@ fn copy_masked_births(src: &LoroDoc, dst: &LoroDoc, key: &WithheldKey) -> Result
 /// into its foreign WORLD window keeps its refs to the rows the same update
 /// brought into its own window. A row `renamed` names, by the id it lands
 /// under, takes the birth `src` carries under the sender's id, so a guest's
-/// WORLD keeps its envelope under its foreign id.
+/// WORLD keeps its envelope under its foreign id. A ref to such a row the
+/// delivery carries names its id here before masking, so it ships rather
+/// than reads as withheld (FIX 3890); any other ref masks as before.
 pub(in crate::sync) fn copy_births_carried_to_other_vault(
     src: &LoroDoc,
     dst: &LoroDoc,
@@ -159,6 +161,12 @@ pub(in crate::sync) fn copy_births_carried_to_other_vault(
         .keys()
         .filter_map(|key| owner(&key))
         .collect();
+    // The id each carried renamed row lands under, by the sender's.
+    let forward: std::collections::BTreeMap<EntityId, EntityId> = renamed
+        .iter()
+        .filter(|(landed, _)| carried.contains(*landed))
+        .map(|(landed, sent)| (*sent, *landed))
+        .collect();
     let from = births(src);
     let to = births(dst);
     for id in &here {
@@ -166,7 +174,9 @@ pub(in crate::sync) fn copy_births_carried_to_other_vault(
         let Some(birth) = map_get_bytes(&from, &sent).and_then(|bytes| decode(&bytes)) else {
             continue;
         };
-        let masked = birth.masked(|row| carried.contains(row), key);
+        let masked = birth
+            .renamed_refs(|row| forward.get(&row).copied().unwrap_or(row))
+            .masked(|row| carried.contains(row), key);
         map_insert_bytes(&to, &id.to_hex(), &encode(&masked)?)?;
     }
     Ok(())

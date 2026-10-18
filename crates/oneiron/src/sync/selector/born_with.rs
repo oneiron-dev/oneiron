@@ -11,6 +11,8 @@
 //! admitted and keeps them out of the admitted bytes; the import then keeps
 //! each beside its landed row, where [`Vault::born_with_text`] reads it.
 
+use std::collections::BTreeMap;
+
 use loro::LoroDoc;
 
 use crate::Vault;
@@ -88,15 +90,22 @@ pub(super) fn carry_born_with(
     Ok(())
 }
 
-/// The text `remote` carries for each row `admitted` holds. An entry that
-/// does not decode, holds nothing, or names a row admission dropped stays
-/// behind.
-pub(super) fn admitted_born_with(remote: &LoroDoc, admitted: &LoroDoc) -> Vec<CarriedText> {
+/// The text `remote` carries for each row `admitted` holds. A row
+/// admission lands under another id than the sender's, by the id it lands
+/// under in `renamed` (a guest's WORLD, FIX 3657), takes the text the sender
+/// keyed by its own id, kept under the id here (FIX 3889). An entry that does
+/// not decode, holds nothing, or names a row admission dropped stays behind.
+pub(super) fn admitted_born_with(
+    remote: &LoroDoc,
+    admitted: &LoroDoc,
+    renamed: &BTreeMap<EntityId, EntityId>,
+) -> Vec<CarriedText> {
     let map = remote.get_map(ROW_BORN_WITH_MAP);
     carried_rows(admitted)
         .into_iter()
         .filter_map(|(id, kind)| {
-            let text = map_get_bytes(&map, &id.to_hex()).and_then(|bytes| decode(&bytes))?;
+            let sent = renamed.get(&id).unwrap_or(&id);
+            let text = map_get_bytes(&map, &sent.to_hex()).and_then(|bytes| decode(&bytes))?;
             (!text.is_empty()).then_some((id, kind, text))
         })
         .collect()
