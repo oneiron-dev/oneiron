@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 831 facade rows, 2877 declarations.
-Inputs: 779 of 831 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 748 of 831 fully typed, 83 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 833 facade rows, 2881 declarations.
+Inputs: 781 of 833 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 750 of 833 fully typed, 83 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 100; unread shapes: 0.
 """
 
@@ -3934,9 +3934,23 @@ class PackHookBinding(TypedDict):
     selector: HookSelector
     enabled: bool
     author: HookAuthor
+class HookGrant(TypedDict):
+    reader: str
+    reader_class: HookActorClass
+    predicates: NotRequired[list[str]]
+    worlds: NotRequired[list[str]]
 class HubHookBindingRow(TypedDict):
     id: EntityId
     binding: PackHookBinding
+    grant: HookGrant
+class HookGrantSetRequest(TypedDict):
+    binding: EntityId
+    grant: HookGrant
+class HookGrantView(TypedDict):
+    binding: EntityId
+    grant: HookGrant
+class HookGrantRequest(TypedDict):
+    binding: EntityId
 class HubHookQualifyRequest(TypedDict):
     source: EntityId
 FactSource = Literal["claim_changelog", "settlement"]

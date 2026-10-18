@@ -4195,6 +4195,54 @@ async fn vault_packs_hooks_list(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_packs_hooks_grant_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.packs.hooks.grant.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.packs.hooks.grant.set", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.packs.hooks.grant.set", value).await?;
+    let (output, listed) = super::host_doors::vault_packs_hooks_grant_set(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_packs_hooks_grant_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.packs.hooks.grant.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.packs.hooks.grant.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.packs.hooks.grant.get", value).await?;
+    let (output, listed) = super::host_doors::vault_packs_hooks_grant_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_packs_hooks_qualify(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -19859,6 +19907,8 @@ pub(crate) async fn call_verb(
         "vault.skills.governance.set" => vault_skills_governance_set(server, call, input).await,
         "vault.packs.hooks.bind" => vault_packs_hooks_bind(server, call, input).await,
         "vault.packs.hooks.list" => vault_packs_hooks_list(server, call, input).await,
+        "vault.packs.hooks.grant.set" => vault_packs_hooks_grant_set(server, call, input).await,
+        "vault.packs.hooks.grant.get" => vault_packs_hooks_grant_get(server, call, input).await,
         "vault.packs.hooks.qualify" => vault_packs_hooks_qualify(server, call, input).await,
         "vault.packs.put" => vault_packs_put(server, call, input).await,
         "vault.packs.connector.prepare" => vault_packs_connector_prepare(server, call, input).await,

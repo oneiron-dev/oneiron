@@ -1006,9 +1006,16 @@ class Oneiron:
         def bind(self, spec: Facade.HubHookBindRequest) -> list[Facade.EntityId]:
             """The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."""
         def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.HubHookBindingRow]:
-            """Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants."""
+            """Reads live pack hook bindings and their effective read grants as the owner, excluding revoked foreign publisher grants."""
+        @property
+        def grant(self) -> "Oneiron._VaultPacksHooksGrantVerbs": ...
         def qualify(self, spec: Facade.HubHookQualifyRequest) -> Facade.HubHookQualificationReceipt:
             """The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."""
+    class _VaultPacksHooksGrantVerbs:
+        def set(self, spec: Facade.HookGrantSetRequest) -> Facade.HookGrantView:
+            """The owner sets or changes a live hook binding's read grant; outcomes still run as the hook's author. Returns the assigned grant."""
+        def get(self, spec: Facade.HookGrantRequest) -> Facade.HookGrantView:
+            """Reads a live hook binding's effective read grant as the owner: its manual assignment, or the author's ceiling when none was set."""
     class _VaultPacksConnectorVerbs:
         def prepare(self, spec: Facade.ConnectorPackPrepareRequest) -> Facade.ConnectorPackView:
             """Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate."""

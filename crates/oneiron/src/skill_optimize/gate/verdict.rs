@@ -218,7 +218,9 @@ pub enum TradeoffRung {
 
 /// The decision on a mixed (non-floor) goal vector: approve the candidate or
 /// keep the incumbent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeoffChoice {
     Approve,
