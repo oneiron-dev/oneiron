@@ -7,7 +7,7 @@ use super::{BatchBuilder, CommitCheck};
 
 use crate::store::Rows;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use heed::RwTxn;
 
@@ -50,6 +50,16 @@ impl BatchBuilder<'_> {
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
     /// for such a put; otherwise as [`Self::commit`].
     pub fn commit_below_owner(self) -> Result<()> {
+        self.commit_below_owner_with_guard(|_| Ok(()))
+    }
+
+    /// [`Self::commit_below_owner`] once `guard` passes, run first in the
+    /// same writer snapshot: a bound caller's raw write proves its actor
+    /// there (OF-063, FIX 3387).
+    pub(crate) fn commit_below_owner_with_guard(
+        self,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         let vault = self.vault;
         let agent_puts: Vec<(crate::entity_id::EntityId, Vec<u8>)> = self
             .ops
@@ -67,6 +77,7 @@ impl BatchBuilder<'_> {
             })
             .collect();
         self.commit_with_target_guard(move |txn| {
+            guard(txn)?;
             for (id, body) in &agent_puts {
                 if crate::agent_def::agent_definition_put_widens_in_txn(
                     &vault.store,
@@ -210,12 +221,15 @@ impl BatchBuilder<'_> {
                 after_apply,
             );
             match applied {
-                Ok((changes_claims, tasks, approved_vad_ids)) => Rows::Commit(Committed {
-                    changes_claims,
-                    tasks,
-                    staged_gate_decisions,
-                    approved_vad_ids,
-                }),
+                Ok((changes_claims, tasks, approved_vad_ids, pad_windows)) => {
+                    Rows::Commit(Committed {
+                        changes_claims,
+                        tasks,
+                        staged_gate_decisions,
+                        approved_vad_ids,
+                        pad_windows,
+                    })
+                }
                 Err(err) => Rows::Discard(Err(Refused::from(err))),
             }
         });
@@ -224,6 +238,7 @@ impl BatchBuilder<'_> {
             tasks,
             staged_gate_decisions,
             approved_vad_ids,
+            pad_windows,
         } = match committed {
             Ok(committed) => committed,
             Err(refused) => {
@@ -240,6 +255,9 @@ impl BatchBuilder<'_> {
         vault.store.notify_attempt_observers();
         #[cfg(feature = "sync")]
         vault.note_committed_rows(rows);
+        // A WORLD delete in this batch staged its pads' tombstones; they
+        // publish now, not at each window's next load (FIX 3334).
+        vault.publish_pad_tombstones_after_commit(&pad_windows);
         stale_sweep.finish()?;
         while vault.collect_lfs_garbage(32)? != 0 {}
         // A delete in this batch released the result bodies it owned.
@@ -271,7 +289,8 @@ struct AdmittedBatch<'a> {
 
 /// Phase 2 in the writer: apply, the caller's `after_apply`, and the Dreamer
 /// approvals to consolidate after commit. Returns whether claims changed, the
-/// TASKs written, and those approvals.
+/// TASKs written, those approvals, and the windows of the pad tombstones the
+/// apply staged.
 fn apply_admitted(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
@@ -281,6 +300,7 @@ fn apply_admitted(
     bool,
     Vec<crate::entity_id::EntityId>,
     Vec<crate::entity_id::EntityId>,
+    BTreeSet<String>,
 )> {
     let rekeys = crate::channel_identity::AssignmentRekeys::begin(&vault.store);
     let pending_vad_ids =
@@ -291,6 +311,10 @@ fn apply_admitted(
     // content bytes rather than to any departing holder.
     let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&batch.ops);
     let tasks = super::super::vad_postcommit::ops_put_tasks(&batch.ops);
+    // A WORLD delete stages its pads' tombstones under this scope (FIX 3334).
+    // Only their windows are taken from it: this terminal reads the rest of
+    // its post-commit work from the ops.
+    let pad_scope = super::super::vad_postcommit::VadPostcommitScope::new(vault, wtxn);
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -301,6 +325,7 @@ fn apply_admitted(
         batch.gate_mode,
         batch.origin,
     )?;
+    let pad_windows = pad_scope.finish().pad_windows;
     after_apply(wtxn)?;
     crate::secret_custody::raise_found_key_notices_in_txn(vault, wtxn)?;
     // OF-533: a delegated TASK's terminal result reaches its parked runs here.
@@ -311,7 +336,7 @@ fn apply_admitted(
     crate::scope_summary::rederive_changed_in_txn(vault, wtxn)?;
     let approved_vad_ids = vault.resolved_dreamer_vad_approvals_in_txn(wtxn, pending_vad_ids)?;
     crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    Ok((changes_claims, tasks, approved_vad_ids))
+    Ok((changes_claims, tasks, approved_vad_ids, pad_windows))
 }
 
 /// What a committed batch still owes after its group commits.
@@ -320,6 +345,8 @@ struct Committed {
     tasks: Vec<crate::entity_id::EntityId>,
     staged_gate_decisions: Vec<crate::gate::RecordedClaimGateDecision>,
     approved_vad_ids: Vec<crate::entity_id::EntityId>,
+    /// Windows of the pad tombstones a WORLD delete staged (FIX 3334).
+    pad_windows: BTreeSet<String>,
 }
 
 /// A batch's refusal, with the gate receipts it committed when the refusal is

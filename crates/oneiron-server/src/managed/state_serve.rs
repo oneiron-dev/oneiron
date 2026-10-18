@@ -133,6 +133,9 @@ pub struct ManagedState {
     last_sync_upgrade: AtomicU64,
     alarms: Mutex<Vec<ObservedAlarm>>,
     ledger: WakeLedger,
+    /// The voice hello attestations already taken, each kept until its
+    /// `issued_at` leaves the skew window (FIX 2391).
+    voice_actions: std::sync::Mutex<std::collections::HashMap<String, UnixTs>>,
 }
 
 /// A supervisor-signed account action, not the child process's host-root slip.
@@ -186,7 +189,44 @@ impl ManagedState {
             last_sync_upgrade: AtomicU64::new(0),
             alarms: Mutex::new(Vec::new()),
             ledger,
+            voice_actions: std::sync::Mutex::default(),
         }
+    }
+
+    /// The owner a managed voice hello's supervisor attestation names
+    /// (FIX 2391): signed for this vault over the room and roster the hello
+    /// names and its `issued_at`, issued within
+    /// [`MANAGED_VOICE_MAX_SKEW_SECS`](oneiron_vault_contract::MANAGED_VOICE_MAX_SKEW_SECS)
+    /// of now, and not taken before, so a captured hello opens no second
+    /// call. The person is the call's owner only while the owner door says
+    /// so; this proves only the supervisor's word.
+    pub(crate) fn verify_voice_owner(
+        &self,
+        action: &oneiron_vault_contract::ManagedOwnerAction,
+        room: &str,
+        roster: &str,
+        issued_at: UnixTs,
+    ) -> Option<oneiron::EntityId> {
+        let skew = oneiron_vault_contract::MANAGED_VOICE_MAX_SKEW_SECS;
+        let now = now_ts();
+        if now.abs_diff(issued_at) > skew {
+            return None;
+        }
+        let body = issued_at.to_be_bytes();
+        let request = oneiron_vault_contract::ManagedOwnerRequest::voice(room, roster, &body);
+        if !self.ledger.verify_owner_action(action, &request) {
+            return None;
+        }
+        let holder = oneiron::EntityId::from_hex(&action.holder_ref).ok()?;
+        let mut taken = self
+            .voice_actions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        taken.retain(|_, until| *until >= now);
+        taken
+            .insert(action.mac.clone(), issued_at.saturating_add(skew))
+            .is_none()
+            .then_some(holder)
     }
 
     fn admit_http_mutation(self: &Arc<Self>) -> Result<HttpMutation, ManagedError> {
@@ -676,6 +716,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let mut config = managed.serve_config(args);
     // The supervisor's models table, read and checked before anything opens.
     config.models = managed.models()?;
+    // Its embedder and batch pods too (FIX 777).
+    managed.embedder(&mut config)?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     init_managed_tracing(&config.log_level);
     tracing::info!(
@@ -739,10 +781,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     spool_vault_key_escrow(&vault, &managed);
     // A sealed vault serves only once its mirror reopens it at the next start.
     vault.check_page_custody()?;
+    // The embedder slot and the pods' health poller, as plain serve builds
+    // them; the worker that fills the slot starts under the write admission.
+    let (embedder, gpu_poller) = crate::commands::build_embedder(&vault, &config).await?;
     // Managed mode reads no environment, so the destination carries no
     // bearer: our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
+        .with_embedder(embedder)
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
@@ -953,6 +999,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
+    // Pending vectors are filled while the vault admits writes (FIX 777).
+    ladder_workers.extend(sync_server.spawn_embedding_worker_admitted(admitted()));
+    ladder_workers.extend(gpu_poller);
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
     ladder_workers.push(crate::import_audience::spawn(&sync_server, admitted()));
     // Documents whose signing finished are sealed as a task (OF-415).
@@ -994,6 +1043,38 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         &config.self_heal,
         admitted(),
     ));
+    // The server's own voice loop (FIX 2391), off unless `[models.voice]`
+    // names its socket. A call opens on a hello the supervisor attests for
+    // the vault's owner, and is admitted like a served write for its whole
+    // length: a call in flight keeps a reap from finding the vault
+    // quiescent, and a frozen vault takes no call.
+    #[cfg(unix)]
+    let voice = crate::voice_host::VoiceBoot::start(
+        &sync_server,
+        config.models.as_ref().map(|models| &models.voice),
+        Some({
+            let state = Arc::clone(&state);
+            Arc::new(
+                move |action: &oneiron_vault_contract::ManagedOwnerAction,
+                      room: &str,
+                      roster: &str,
+                      issued_at: UnixTs| {
+                    state.verify_voice_owner(action, room, roster, issued_at)
+                },
+            )
+        }),
+        admitted(),
+    );
+    // The supervisor reaches the loop on the vault VM's voice port.
+    #[cfg(unix)]
+    if voice.is_some()
+        && let Some(socket) = config
+            .models
+            .as_ref()
+            .and_then(|models| models.voice.socket.clone())
+    {
+        host.bridge_voice(socket)?;
+    }
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -1023,6 +1104,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let _ = ctl_task.await;
     if let Some(task) = artifact_task {
         let _ = task.await;
+    }
+    // A call in flight ends through its usual teardown before the freeze.
+    #[cfg(unix)]
+    if let Some(voice) = voice {
+        voice.stop().await;
     }
     // Drain observation writes without thawing a previously quiescent process.
     let telemetry_drained = state.freeze();

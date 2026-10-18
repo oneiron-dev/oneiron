@@ -297,6 +297,9 @@ impl<'a> DreamerWakeDriver<'a> {
             sources_truncated: 0,
             stop: WakePassStop::QueueEmpty,
         };
+        // Set once a TASK's admission is refused: the rest of the pass admits
+        // the vault's own work and no more TASKs.
+        let mut task_admission_refused = false;
 
         loop {
             // Attempt-boundary yield (ONE-1683): one Pending poll with a
@@ -439,9 +442,14 @@ impl<'a> DreamerWakeDriver<'a> {
             };
             // Then the TASKs routed to the Dreamer: the work a person or agent
             // asked for, before the vault's own weaving.
+            // A TASK whose admission is refused (the highway refuses its
+            // Accept) rolls its admission back and stays queued; the lanes
+            // after it still admit this pass.
             let priority = match priority {
-                DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
-                    self.store.admit_next_task_realize(AdmitDreamerAttempt {
+                DreamerAdmissionOutcome::Empty
+                    if !self.consolidation_only && !task_admission_refused =>
+                {
+                    let request = AdmitDreamerAttempt {
                         lease_owner: input.lease_owner.clone(),
                         now: input.now,
                         budget_id: self.budget_id.clone(),
@@ -449,7 +457,19 @@ impl<'a> DreamerWakeDriver<'a> {
                         reserve_units: input.reserve_units,
                         started_milestone: self
                             .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                    })?
+                    };
+                    match self.store.admit_next_task_realize(request) {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            tracing::warn!(
+                                kind = ?error.kind(),
+                                %error,
+                                "a TASK realization was not admitted; this pass admits no more TASKs"
+                            );
+                            task_admission_refused = true;
+                            DreamerAdmissionOutcome::Empty
+                        }
+                    }
                 }
                 outcome => outcome,
             };
@@ -625,6 +645,18 @@ impl<'a> DreamerWakeDriver<'a> {
                 Ok(DreamerAttemptExecution::Park {
                     reason: (*reason).to_owned(),
                     cause: DreamerParkCause::Other,
+                })
+            } else if matches!(
+                prepared_wake.preparation(attempt_id),
+                Some(crate::dreamer_consolidation::AttemptPreparation::ResidencyDeferred)
+            ) {
+                // A source away from this replica (OF-534) is a wait, never
+                // a park: the attempt stays queued and runs on promotion.
+                Ok(DreamerAttemptExecution::Deferred {
+                    completed_units: 0,
+                    retry_at: input
+                        .now
+                        .saturating_add(crate::dreamer_consolidation::RESIDENCY_RETRY_SECS),
                 })
             } else {
                 let mut ctx = WakeAttemptContext {

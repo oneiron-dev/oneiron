@@ -15,12 +15,13 @@
 //! naming who may hear it, and only on a path that runs without asking.
 use super::plan::{ShapeChange, ShapePlanItem};
 use super::{ShapeRow, ShapeTarget};
-use crate::EntityId;
 use crate::connector_key::SlateDisposition;
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundSubject, GrantBound,
 };
 use crate::error::Result;
+use crate::reaction::person_name_in;
+use crate::{EntityId, Vault};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -61,7 +62,8 @@ pub enum ShapeReachVerdict {
 pub struct ShapeReachFact {
     /// The acting actor, by entity id hex.
     pub actor: String,
-    /// The actor's roster name (its agent id), when it is on the roster.
+    /// The actor's roster name (its agent id), when it is on the roster;
+    /// else its stored name, when the line was named and it has one.
     #[serde(default)]
     pub actor_name: Option<String>,
     /// The verb class the path carries: `send`, or a connector's tool.
@@ -80,6 +82,10 @@ pub struct ShapeReachFact {
     /// Who may hear `class`, as the disclosure grant names them.
     #[serde(default)]
     pub audience: Vec<String>,
+    /// `audience` as the line reads it, member by member: a stored name, or
+    /// a short id. Empty until the line is named.
+    #[serde(default)]
+    pub audience_names: Vec<String>,
     pub verdict: ShapeReachVerdict,
 }
 
@@ -102,6 +108,17 @@ impl ShapeReachFact {
             .unwrap_or_else(|| format!("actor {}", label(&self.actor)))
     }
 
+    fn audience(&self) -> String {
+        if self.audience_names.len() == self.audience.len() {
+            return self.audience_names.join(", ");
+        }
+        self.audience
+            .iter()
+            .map(|member| label(member))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     fn through(&self) -> String {
         format!("through {} {}", self.channel, self.sender)
     }
@@ -113,7 +130,7 @@ impl ShapeReachFact {
                 "{} can {} {class} to {} {}",
                 self.who(),
                 self.verb,
-                audience(&self.audience),
+                self.audience(),
                 self.through()
             ),
             (None, ShapeReachVerdict::Can) => {
@@ -142,7 +159,7 @@ impl ShapeReachFact {
                 "{} can no longer {} {class} to {} {}",
                 self.who(),
                 self.verb,
-                audience(&self.audience),
+                self.audience(),
                 self.through()
             ),
             None => format!(
@@ -164,12 +181,19 @@ fn label(reference: &str) -> String {
     }
 }
 
-fn audience(members: &[String]) -> String {
-    members
-        .iter()
-        .map(|member| label(member))
-        .collect::<Vec<_>>()
-        .join(", ")
+impl Vault {
+    /// The stored name of the entity `reference` names, when it is an
+    /// entity id and its body carries one.
+    pub(super) fn reach_name_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reference: &str,
+    ) -> Result<Option<String>> {
+        match EntityId::from_hex(reference) {
+            Ok(id) => person_name_in(self, txn, id),
+            Err(_) => Ok(None),
+        }
+    }
 }
 
 /// Every path at one snapshot.
@@ -211,6 +235,33 @@ impl ShapeReach {
             }
         }
         self.facts = kept;
+        Ok(self)
+    }
+
+    /// The facts with a name on each audience member and on each actor the
+    /// roster leaves unnamed, where `name` finds one; a line reads a short
+    /// id otherwise. Runs after [`Self::visible`], so a hidden path's names
+    /// are never read.
+    ///
+    /// # Errors
+    ///
+    /// `name`'s own.
+    pub(super) fn named(
+        mut self,
+        name: &mut dyn FnMut(&str) -> Result<Option<String>>,
+    ) -> Result<Self> {
+        for fact in &mut self.facts {
+            if fact.actor_name.is_none() {
+                fact.actor_name = name(&fact.actor)?;
+            }
+            fact.audience_names = fact
+                .audience
+                .iter()
+                .map(|member| -> Result<String> {
+                    Ok(name(member)?.unwrap_or_else(|| label(member)))
+                })
+                .collect::<Result<_>>()?;
+        }
         Ok(self)
     }
 
@@ -542,6 +593,7 @@ pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
             identity: sender.entity.to_hex(),
             class: None,
             audience: Vec::new(),
+            audience_names: Vec::new(),
             verdict: if covered {
                 ShapeReachVerdict::Can
             } else {
@@ -591,6 +643,7 @@ pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
                 identity: tool.key.to_hex(),
                 class: None,
                 audience: Vec::new(),
+                audience_names: Vec::new(),
                 verdict: if covered {
                     ShapeReachVerdict::Can
                 } else {

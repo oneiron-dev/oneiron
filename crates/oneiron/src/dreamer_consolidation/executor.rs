@@ -777,6 +777,17 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                     Some(super::AttemptPreparation::Refused { reason, .. }) => {
                         Err(invalid_consolidation(reason))
                     }
+                    // A source away from this replica (OF-534) waits, queued,
+                    // for the promotion that brings it back.
+                    Some(super::AttemptPreparation::ResidencyDeferred) => {
+                        Ok(DreamerAttemptExecution::Deferred {
+                            completed_units: 0,
+                            retry_at: ctx
+                                .now_ms
+                                .div_ceil(1_000)
+                                .saturating_add(super::RESIDENCY_RETRY_SECS),
+                        })
+                    }
                     _ => Err(invalid_consolidation(
                         "consolidation attempt was not prepared at the wake revision",
                     )),

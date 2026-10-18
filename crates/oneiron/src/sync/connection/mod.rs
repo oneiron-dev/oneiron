@@ -167,33 +167,6 @@ impl SyncConnection {
             .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
     }
 
-    /// Leaves the shared vault this lane's env holds once `notice` confirms
-    /// that `member` left it or was removed (OF-158). The lane ends for good;
-    /// once its loop has stopped and queued what it buffered, every queued
-    /// edit is discarded and the counts recorded
-    /// ([`crate::sync::shared_leave::confirm_shared_leave`]). Only a notice
-    /// confirms a leave: a refused reconnect never does.
-    pub async fn confirm_shared_leave(
-        &self,
-        vault_id: u64,
-        member: &str,
-        notice: &crate::federation::SharedActOutcome,
-    ) -> Result<crate::sync::shared_leave::SharedLeaveReceipt, crate::sync::TransportError> {
-        if crate::sync::shared_leave::left_change(notice, vault_id, member).is_none() {
-            return Err(crate::sync::TransportError::InvalidPayload(
-                "the notice is not this member's leave of this shared vault",
-            ));
-        }
-        self.stop_for_leave().await;
-        crate::sync::shared_leave::confirm_shared_leave(
-            self.manager.vault(),
-            vault_id,
-            member,
-            notice,
-        )
-        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
-    }
-
     /// Ends this lane for good before a leave discards its queue, once its
     /// loop has stopped and queued what it buffered.
     async fn stop_for_leave(&self) {
@@ -208,9 +181,12 @@ impl SyncConnection {
     /// lane's slip, revoked or not (`POST /v1/shared/left-notices`), and
     /// confirms the first one this env verifies that ends `member`'s
     /// membership in `vault_id`, the vault's deletion included
-    /// ([`crate::sync::shared_leave::VerifiedLeaveNotice`]). `None` while no
-    /// verified notice says so. A refused or failed request is an error,
-    /// never a leave.
+    /// ([`crate::sync::shared_leave::VerifiedLeaveNotice`]). The request
+    /// names the heads this env's authority fold stands at, so the home
+    /// sends beside its notices only the signed handoff past them (FIX 2053).
+    /// The lane ends for good before the leave discards its queue. `None`
+    /// while no verified notice says so. A refused or failed request is an
+    /// error, never a leave.
     pub async fn check_shared_leave(
         &self,
         vault_id: u64,
@@ -222,6 +198,9 @@ impl SyncConnection {
         #[derive(serde::Deserialize)]
         struct LeftNotices {
             notices: Vec<crate::federation::SignedSharedActOutcome>,
+            /// The signed ReRoot rows, hex, from where this env's chain
+            /// stands to the key that signed the notices.
+            handoff: Vec<String>,
         }
 
         let Some(credential) = self.config.client_config.transport_credential.as_ref() else {
@@ -244,7 +223,18 @@ impl SyncConnection {
         let headers = credential
             .left_notice_headers(crate::unix_seconds_now())
             .map_err(TransportError::InvalidPayload)?;
-        let mut request = reqwest::Client::new().post(url);
+        // Where this env's authority chain stands (FIX 2053).
+        let heads: Vec<String> = self
+            .manager
+            .vault()
+            .leave_notice_heads()
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .iter()
+            .map(|head| crate::entity_id::bytes_to_hex_lower(head))
+            .collect();
+        let mut request = reqwest::Client::new()
+            .post(url)
+            .json(&serde_json::json!({ "authority_heads": heads }));
         for (name, value) in headers {
             request = request.header(name, value);
         }
@@ -260,8 +250,26 @@ impl SyncConnection {
         let answer: LeftNotices = response.json().await.map_err(|_| {
             TransportError::InvalidPayload("the leave notice answer does not decode")
         })?;
+        let unhex = |row: &str| -> Option<Vec<u8>> {
+            if !row.len().is_multiple_of(2) || !row.is_ascii() {
+                return None;
+            }
+            row.as_bytes()
+                .chunks(2)
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+                .collect()
+        };
+        let handoff = answer
+            .handoff
+            .iter()
+            .map(|row| unhex(row))
+            .collect::<Option<Vec<_>>>()
+            .ok_or(TransportError::InvalidPayload(
+                "the leave notice handoff does not decode",
+            ))?;
         // The home signs every notice (FIX 2053). One this env does not
-        // verify against the home root it already trusts changes nothing.
+        // verify against the home root it already trusts, or that root's
+        // successor the handoff names, changes nothing.
         let mut confirmed = None;
         for signed in &answer.notices {
             if let Some(notice) = crate::sync::shared_leave::VerifiedLeaveNotice::verify(
@@ -269,6 +277,7 @@ impl SyncConnection {
                 vault_id,
                 member,
                 signed,
+                &handoff,
             )
             .map_err(|e| TransportError::Storage(e.to_string()))?
                 && notice.kind().is_some()

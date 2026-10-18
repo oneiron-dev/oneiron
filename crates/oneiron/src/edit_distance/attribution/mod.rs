@@ -92,6 +92,36 @@ pub use self::taxonomy::{
 
 pub(in crate::edit_distance) use self::evidence_judge::amendment_evidence_in_txn;
 
+/// The recorded, grounded attempt→amendment joins, judged or not: every
+/// evidence row that names the attempt its amended proposal came from, keyed
+/// by that attempt's pack receipt id, in amendment receipt-id order.
+///
+/// One snapshot of the evidence ledger. The join is the one the evidence door
+/// grounded ([`AmendmentEvidence::with_attempt`]); no judgment is read, and no
+/// join is inferred from time or text.
+///
+/// # Errors
+///
+/// [`crate::error::Error::CorruptedIndex`] on an undecodable row; storage
+/// errors.
+pub fn amendments_by_attempt(
+    vault: &crate::Vault,
+) -> crate::error::Result<std::collections::BTreeMap<String, Vec<AmendmentEvidence>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut by_attempt: std::collections::BTreeMap<String, Vec<AmendmentEvidence>> =
+        std::collections::BTreeMap::new();
+    for row in stored::EVIDENCE.iter_from(&vault.store, &rtxn, &[])? {
+        let (receipt_id, row) = row?;
+        let Some(attempt) = row.attempt else {
+            continue;
+        };
+        if let Some(evidence) = amendment_evidence_in_txn(vault, &rtxn, &receipt_id)? {
+            by_attempt.entry(attempt).or_default().push(evidence);
+        }
+    }
+    Ok(by_attempt)
+}
+
 #[cfg(test)]
 mod tests;
 

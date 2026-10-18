@@ -1809,6 +1809,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
             ),
             (
+                "vault.notes.set_overrides",
+                crate::code_run::vault_read::request_schema::<crate::note::SetNoteOverridesRequest>(
+                ),
+            ),
+            (
+                "vault.notes.defaults",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
+            ),
+            (
                 "vault.search",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
             ),
@@ -4166,6 +4175,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.set_overrides" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.defaults" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         _ => return None,
     };
     Some(
@@ -5322,6 +5345,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.lifecycle" => {
             let _input: crate::note::NoteRefRequest = decode(value.clone())?;
         }
+        "vault.notes.set_overrides" => {
+            let _input: crate::note::SetNoteOverridesRequest = decode(value.clone())?;
+        }
+        "vault.notes.defaults" => {
+            let _input: crate::note::NoteRefRequest = decode(value.clone())?;
+        }
         _ => {
             return Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")));
@@ -5842,6 +5871,8 @@ pub fn invoke(
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
         "vault.notes.seal" => encode(vault_notes_seal(memory, decode(value)?)?),
         "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
+        "vault.notes.set_overrides" => encode(vault_notes_set_overrides(memory, decode(value)?)?),
+        "vault.notes.defaults" => encode(vault_notes_defaults(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
     })
 }
@@ -8923,4 +8954,28 @@ pub fn vault_notes_lifecycle(
         &["/note_ref"],
     )?;
     memory.note_lifecycle(&input)
+}
+pub fn vault_notes_set_overrides(
+    memory: &Memory<'_>,
+    input: crate::note::SetNoteOverridesRequest,
+) -> MemoryResult<crate::note::NoteDefaultsView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.set_overrides",
+        &input,
+        &["/note_ref"],
+    )?;
+    memory.set_note_overrides(&input)
+}
+pub fn vault_notes_defaults(
+    memory: &Memory<'_>,
+    input: crate::note::NoteRefRequest,
+) -> MemoryResult<crate::note::NoteDefaultsView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.defaults",
+        &input,
+        &["/note_ref"],
+    )?;
+    memory.note_defaults(&input)
 }

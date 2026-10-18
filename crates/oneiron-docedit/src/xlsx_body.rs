@@ -19,7 +19,9 @@ use crate::ooxml::{
 };
 use crate::retained_opc::{self, Limits, Package};
 use crate::xlfn::{storage_form, ui_form};
-pub use crate::xlsx_shift::{SheetFate, XlsxAxis, XlsxAxisEdit, retarget_sheets, shift_axis};
+pub use crate::xlsx_shift::{
+    SheetFate, XlsxAxis, XlsxAxisEdit, drop_tables, retarget_sheets, shift_axis,
+};
 use crate::xlsx_shift::{drop_table_columns, shift_formula};
 use crate::xlsx_styles::write_formats;
 pub use crate::xlsx_styles::{
@@ -948,12 +950,19 @@ impl Book {
             .package
             .part(&part)?
             .ok_or(refused("a workbook part is missing"))?;
-        let (indices, value) = write_formats(
+        let (indices, value, added) = write_formats(
             &bytes,
             self.package.limits().xml,
             formats,
             self.styles.len(),
         )?;
+        // Excel applies only a style the workbook has; the nearest it does
+        // not refuse is to add one, and the receipt says so.
+        for name in added {
+            self.effects.push(format!(
+                "cell_style_added: {name}; the workbook had no such style, so it was added with the look of the cell format it was first applied to"
+            ));
+        }
         if let Some(value) = value {
             self.package.replace_xml_part(&part, value)?;
             self.styles = styles(&parse(&self.package, &part)?)?;
@@ -1376,6 +1385,16 @@ impl Book {
                 .cloned()
                 .unwrap_or(SheetFate::Keep)
         };
+        // A formula's sheet prefixes follow the layout, and its references
+        // to a deleted sheet's tables read `#REF!`.
+        let order = self.order.clone();
+        let retarget = |text: &str| -> Option<String> {
+            let moved = retarget_sheets(text, &order, &fate);
+            if gone_tables.is_empty() {
+                return moved;
+            }
+            drop_tables(moved.as_deref().unwrap_or(text), &gone_tables).or(moved)
+        };
         // A new `<sheet>` names its part with the prefix the others use.
         let rel_attr = entries.iter().find_map(|node| {
             let id = node.attr_ns(REL, "id")?;
@@ -1503,7 +1522,7 @@ impl Book {
                 }
                 kept_names += 1;
                 if !name.empty
-                    && let Some(text) = retarget_sheets(&name.text, &self.order, &fate)
+                    && let Some(text) = retarget(&name.text)
                 {
                     name_edits.push((name.content.clone(), escape_text(&text).into_bytes()));
                 }
@@ -1566,9 +1585,8 @@ impl Book {
                 })
                 .map(str::to_owned)
                 .collect();
-            let order = self.order.clone();
             for part in parts {
-                self.rewrite_formulas(&part, &|text: &str| retarget_sheets(text, &order, &fate))?;
+                self.rewrite_formulas(&part, &retarget)?;
             }
             self.move_pivot_sources(&|source: &Node| {
                 if let Some(sheet) = source.attr("sheet") {
@@ -1829,10 +1847,11 @@ impl Book {
     /// data table inputs, tables, comments and their note shapes, drawn
     /// objects and the pivot caches sourced from it move; what the edit
     /// deletes goes, and a range that loses part of itself shrinks. A table
-    /// gains or loses the columns inserted or deleted inside it. Then every
-    /// formula, chart range, hyperlink location and defined name that reaches
-    /// the sheet follows, a reference to a deleted cell reading `#REF!`.
-    /// Shared formulas must be written out first.
+    /// gains or loses the columns inserted or deleted inside it, and a
+    /// deleted column's slicers go with it. Then every formula, chart range,
+    /// hyperlink location and defined name that reaches the sheet follows, a
+    /// reference to a deleted cell reading `#REF!`. Shared formulas must be
+    /// written out first.
     fn shift(&mut self, sheet: &str, edit: &XlsxAxisEdit) -> Result<()> {
         if !edit.fits() {
             return Err(refused("rows or columns off the sheet"));
@@ -1877,8 +1896,9 @@ impl Book {
             })
             .collect();
         let mut headers = Vec::new();
+        let mut lost = Vec::new();
         for table in &tables {
-            headers.extend(self.move_table_columns(sheet, table, edit)?);
+            headers.extend(self.move_table_columns(sheet, table, edit, &mut lost)?);
         }
         for target in &parts {
             self.move_coordinates(sheet, target, edit)?;
@@ -1903,6 +1923,10 @@ impl Book {
                 _ => SourceFate::Keep,
             }
         })?;
+        if !lost.is_empty() {
+            self.drop_table_slicers(&lost)?;
+            self.note_pivot_fields(&lost)?;
+        }
         // An inserted table column's header cell holds its name, in the
         // format of the header cell to its left.
         if !headers.is_empty() {
@@ -2637,12 +2661,13 @@ impl Book {
     /// calculated and totals formulas. An edit at or past either edge only
     /// moves the table, and one that deletes all of it refuses when the range
     /// moves. The header cells the inserted columns' names go in, as cell
-    /// changes to sheet `sheet`.
+    /// changes to sheet `sheet`; the columns it deletes are added to `lost`.
     fn move_table_columns(
         &mut self,
         sheet: &str,
         part: &str,
         edit: &XlsxAxisEdit,
+        lost: &mut Vec<LostColumns>,
     ) -> Result<Vec<XlsxChange>> {
         if edit.axis != XlsxAxis::Column {
             return Ok(Vec::new());
@@ -2686,6 +2711,25 @@ impl Book {
         let count = if edit.delete {
             for column in &columns[at.clone()] {
                 edits.push((column.span.clone(), Vec::new()));
+            }
+            if let Some(id) = root.attr("id").and_then(|id| id.trim().parse::<u32>().ok()) {
+                lost.push(LostColumns {
+                    id,
+                    name: root
+                        .attr("displayName")
+                        .or_else(|| root.attr("name"))
+                        .unwrap_or_default()
+                        .to_owned(),
+                    columns: columns[at.clone()]
+                        .iter()
+                        .filter_map(|column| {
+                            Some((
+                                column.attr("id")?.trim().parse::<u32>().ok()?,
+                                column.attr("name").unwrap_or_default().to_owned(),
+                            ))
+                        })
+                        .collect(),
+                });
             }
             columns.len() - at.len()
         } else {
@@ -2736,6 +2780,256 @@ impl Book {
         let value = splice(&bytes, edits).map_err(|_| refused("a table could not be rewritten"))?;
         self.package.replace_xml_part(part, value)?;
         Ok(headers)
+    }
+
+    /// Remove the slicers of the table columns a column edit deleted, as
+    /// Excel does: each one's cache with its workbook registration and
+    /// defined name, its slicer views on whichever worksheet shows them, and
+    /// the drawn shapes that show them. The effects name each.
+    fn drop_table_slicers(&mut self, lost: &[LostColumns]) -> Result<()> {
+        let limits = self.package.limits().xml;
+        // Each bound cache: its relationship id and name, and the table and
+        // column it filtered.
+        let mut caches: Vec<(String, String, String, String)> = Vec::new();
+        for rel in self.package.relationships(&self.part)? {
+            if rel.external || !rel.kind.ends_with("/slicerCache") {
+                continue;
+            }
+            let Some(bytes) = self.package.part(&rel.target)? else {
+                continue;
+            };
+            let tree = XmlTree::parse(&bytes, limits)?;
+            let number = |node: &Node, name: &str| {
+                node.attr(name).and_then(|v| v.trim().parse::<u32>().ok())
+            };
+            // A table slicer names its table and column by id.
+            let Some(source) = tree
+                .nodes
+                .iter()
+                .find(|node| node.name == "tableSlicerCache")
+            else {
+                continue;
+            };
+            let (Some(table), Some(column)) = (number(source, "tableId"), number(source, "column"))
+            else {
+                continue;
+            };
+            let Some((table, column)) =
+                lost.iter()
+                    .filter(|lost| lost.id == table)
+                    .find_map(|lost| {
+                        let (_, name) = lost.columns.iter().find(|(id, _)| *id == column)?;
+                        Some((lost.name.clone(), name.clone()))
+                    })
+            else {
+                continue;
+            };
+            let name = tree.nodes[0].attr("name").unwrap_or_default().to_owned();
+            caches.push((rel.id, name, table, column));
+        }
+        if caches.is_empty() {
+            return Ok(());
+        }
+        let names: HashSet<String> = caches.iter().map(|(_, name, ..)| name.clone()).collect();
+        // Each removed view: its cache, sheet and name.
+        let mut views: Vec<(String, String, String)> = Vec::new();
+        // The links that go, by their source part.
+        let mut unlinks: Vec<(String, String)> = Vec::new();
+        for (sheet, part) in self.worksheets.clone() {
+            let rels = self.package.relationships(&part)?;
+            let mut shown = HashSet::new();
+            for rel in rels
+                .iter()
+                .filter(|rel| !rel.external && rel.kind.ends_with("/slicer"))
+            {
+                let Some(bytes) = self.package.part(&rel.target)? else {
+                    continue;
+                };
+                let tree = XmlTree::parse(&bytes, limits)?;
+                let slicers: Vec<&Node> = tree
+                    .children(0)
+                    .map(|(_, node)| node)
+                    .filter(|node| node.name == "slicer")
+                    .collect();
+                let bound = |node: &Node| {
+                    node.attr("cache")
+                        .is_some_and(|cache| names.contains(cache))
+                };
+                let gone: Vec<&Node> = slicers.iter().copied().filter(|node| bound(node)).collect();
+                if gone.is_empty() {
+                    continue;
+                }
+                for slicer in &gone {
+                    let name = slicer.attr("name").unwrap_or_default().to_owned();
+                    views.push((
+                        slicer.attr("cache").unwrap_or_default().to_owned(),
+                        sheet.clone(),
+                        name.clone(),
+                    ));
+                    shown.insert(name);
+                }
+                if gone.len() == slicers.len() {
+                    // The part goes, with the sheet's registration of it.
+                    let id = rel.id.clone();
+                    self.drop_nodes(&part, &|tree: &XmlTree, at: usize| {
+                        let node = &tree.nodes[at];
+                        node.name == "slicer" && node.attr_ns(REL, "id") == Some(id.as_str())
+                    })?;
+                    unlinks.push((part.clone(), rel.id.clone()));
+                } else {
+                    self.drop_nodes(&rel.target, &|tree: &XmlTree, at: usize| {
+                        tree.nodes[at].parent == Some(0) && bound(&tree.nodes[at])
+                    })?;
+                }
+            }
+            if shown.is_empty() {
+                continue;
+            }
+            for drawing in rels
+                .iter()
+                .filter(|rel| !rel.external && rel.kind.ends_with("/drawing"))
+            {
+                self.drop_nodes(&drawing.target, &|tree: &XmlTree, at: usize| {
+                    let anchor = &tree.nodes[at];
+                    anchor.parent == Some(0)
+                        && tree.nodes[at + 1..]
+                            .iter()
+                            .take_while(|node| node.span.start < anchor.span.end)
+                            .any(|node| {
+                                node.name == "slicer"
+                                    && node.attr("name").is_some_and(|name| shown.contains(name))
+                            })
+                })?;
+            }
+        }
+        let ids: HashSet<String> = caches.iter().map(|(id, ..)| id.clone()).collect();
+        let book = self.part.clone();
+        self.drop_nodes(&book, &|tree: &XmlTree, at: usize| {
+            let node = &tree.nodes[at];
+            (node.name == "slicerCache"
+                && node.attr_ns(REL, "id").is_some_and(|id| ids.contains(id)))
+                || (node.is(SML, "definedName")
+                    && node.attr("name").is_some_and(|name| names.contains(name)))
+        })?;
+        unlinks.extend(ids.into_iter().map(|id| (book.clone(), id)));
+        let before = self.package.reachable("")?;
+        for (source, id) in &unlinks {
+            self.package.unrelate(source, id)?;
+        }
+        let after = self.package.reachable("")?;
+        for part in before.difference(&after) {
+            if self.package.names().any(|name| name == part.as_str()) {
+                self.package.remove_part(part)?;
+            }
+        }
+        self.package.prune_defaults()?;
+        for (_, cache, table, column) in &caches {
+            let shown: Vec<String> = views
+                .iter()
+                .filter(|(of, ..)| of == cache)
+                .map(|(_, sheet, name)| format!("{name} on {sheet}"))
+                .collect();
+            let shown = if shown.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", shown.join(", "))
+            };
+            self.effects.push(format!(
+                "slicer_removed: {cache}{shown}; table {table} lost its column {column}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Name the pivot cache fields a deleted table column fed. As Excel's
+    /// do, they stay in the cache, with the slicers and timelines that
+    /// filter them, until it is refreshed from the narrower table.
+    fn note_pivot_fields(&mut self, lost: &[LostColumns]) -> Result<()> {
+        for cache in self.pivot_caches()? {
+            let Some(bytes) = self.package.part(&cache)? else {
+                continue;
+            };
+            let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+            let Some(table) = tree
+                .nodes
+                .iter()
+                .find(|node| node.is(SML, "worksheetSource"))
+                .and_then(|node| node.attr("name"))
+                .and_then(|name| {
+                    lost.iter()
+                        .find(|lost| lost.name.to_lowercase() == name.to_lowercase())
+                })
+            else {
+                continue;
+            };
+            for field in tree.nodes.iter().filter(|node| node.is(SML, "cacheField")) {
+                let Some(name) = field.attr("name") else {
+                    continue;
+                };
+                if table
+                    .columns
+                    .iter()
+                    .any(|(_, column)| column.to_lowercase() == name.to_lowercase())
+                {
+                    self.effects.push(format!(
+                        "pivot_field_kept: {cache}, {name}; table {} lost the column, and the cache keeps the field, with the slicers and timelines that filter it, until it is refreshed",
+                        table.name
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove from `part` each element `pick` names, with each list, `ext`
+    /// or `extLst` the removal empties. How many `pick` named.
+    fn drop_nodes(&mut self, part: &str, pick: &dyn Fn(&XmlTree, usize) -> bool) -> Result<usize> {
+        /// Containers that go with their last entry.
+        const LISTS: &[&str] = &[
+            "slicerCaches",
+            "slicerList",
+            "definedNames",
+            "ext",
+            "extLst",
+        ];
+        let Some(bytes) = self.package.part(part)? else {
+            return Ok(0);
+        };
+        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let mut removed: HashSet<usize> = (1..tree.nodes.len())
+            .filter(|at| pick(&tree, *at))
+            .collect();
+        let picked = removed.len();
+        if picked == 0 {
+            return Ok(0);
+        }
+        // Children come after their parents.
+        for index in (1..tree.nodes.len()).rev() {
+            let node = &tree.nodes[index];
+            if LISTS.contains(&node.name.as_str())
+                && !node.children.is_empty()
+                && node.children.iter().all(|child| removed.contains(child))
+            {
+                removed.insert(index);
+            }
+        }
+        let inside = |mut at: Option<usize>| {
+            while let Some(node) = at {
+                if removed.contains(&node) {
+                    return true;
+                }
+                at = tree.nodes[node].parent;
+            }
+            false
+        };
+        let edits: Vec<Splice> = removed
+            .iter()
+            .filter(|index| !inside(tree.nodes[**index].parent))
+            .map(|index| (tree.nodes[*index].span.clone(), Vec::new()))
+            .collect();
+        let value = splice(&bytes, edits).map_err(|_| refused("a part could not be rewritten"))?;
+        self.package.replace_xml_part(part, value)?;
+        Ok(picked)
     }
 
     /// Rebuild `definedNames` with the changed names replaced, added or
@@ -3273,6 +3567,15 @@ fn escape_at(text: &str) -> Option<char> {
         return None;
     }
     char::from_u32(u32::from_str_radix(&text[2..6], 16).ok()?)
+}
+
+/// A table's columns a column edit deleted.
+struct LostColumns {
+    /// The table's id, and the name formulas call it by.
+    id: u32,
+    name: String,
+    /// Each deleted column's id and name.
+    columns: Vec<(u32, String)>,
 }
 
 /// What becomes of a pivot cache's worksheet source.

@@ -39,6 +39,13 @@ const VERSION_CLAIM: SideTable<(ContentHash, EntityId), (), Raw> =
 const CLAIMED_HASH: SideTable<(EntityId, ContentHash), (), Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_CLAIMED_HASH);
 
+/// OF-222 (FIX 3681) archive seam: both claim-pair tables an archive carries beside each
+/// artifact, lent with their own key types and codec. A pair an old claim left travels too:
+/// the claim door re-projects only the claims an import holds.
+pub(crate) fn archive_version_claim_tables() -> [crate::batch::export::LentSideTable; 2] {
+    [&VERSION_CLAIM, &CLAIMED_HASH]
+}
+
 /// The value of a fence a release planted. A fence an explicit delete planted is empty, and only
 /// a release fence is ever lifted.
 const RELEASE_FENCE: &[u8] = b"blob_artifact:release";

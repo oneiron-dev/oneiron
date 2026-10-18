@@ -117,7 +117,11 @@ oneiron-server token pair \
 ```
 
 Second, you pair once with that link as `ONEIRON_LINK`, and store the
-credential it prints as `ONEIRON_KEY`:
+credential it prints as `ONEIRON_KEY`. Pairing also returns the checkpoint pin
+the link named, already checked against it and stored nowhere by the SDK. A
+machine that will run a local replica keeps that pin beside the server origin
+and the credential, and supplies it when the replica starts; a remote-only
+caller needs only the credential:
 
 <!-- snippet:quickstart/node-pair.mjs -->
 ```js
@@ -128,6 +132,9 @@ if (!link) throw new Error("Set ONEIRON_LINK to the one-line link your server's 
 const { credential } = Oneiron.pair(link)
 
 // Store this as ONEIRON_KEY. The link is now spent; the credential is not.
+// The result's `pin` is the checkpoint pin the link named (null when the vault
+// has no attested checkpoint): a machine that will run a local replica keeps
+// it beside the server origin and the credential.
 console.log(credential)
 ```
 <!-- /snippet -->
@@ -138,10 +145,13 @@ import os
 
 from oneiron import Oneiron
 
-memory, credential = Oneiron.pair(os.environ["ONEIRON_LINK"])
+paired = Oneiron.pair(os.environ["ONEIRON_LINK"])
 
 # Store this as ONEIRON_KEY. The link is now spent; the credential is not.
-print(credential)
+# paired["pin"] is the checkpoint pin the link named (None when the vault has
+# no attested checkpoint): a machine that will run a local replica keeps it
+# beside the server origin and the credential.
+print(paired["credential"])
 ```
 <!-- /snippet -->
 
@@ -240,7 +250,7 @@ you want to act as instead.
 |---|---|
 | `Oneiron.open(path?, opts?)` | an embedded handle |
 | `Oneiron.connect(url, key)` | a remote handle |
-| `Oneiron.pair(link)` | `{ memory, credential }`: a remote handle and the credential to store |
+| `Oneiron.pair(link)` | `{ memory, credential, pin }`: a remote handle, the credential to store, and the checkpoint pin the link named (`null` when the vault has none) for a local replica to adopt by |
 | `handle.asActor(actorKey)` | a new handle bound to another actor |
 | `handle.inRoomTurn(roomRef)` | a new handle whose every verb runs as a turn in that room |
 | `handle.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `null` when embedded or before any call |

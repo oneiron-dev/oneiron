@@ -1,4 +1,7 @@
 //! Deterministic paginated HTML flow; fixed PDF standard fonts and no host state.
+//! The flow pages as far as its content runs (Rule 5): no page, operation or
+//! byte count refuses it, and a table row taller than a page splits across
+//! pages.
 use super::*;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, Stream, dictionary};
@@ -37,7 +40,6 @@ pub(super) struct Flow {
     x: f64,
     line_height: f64,
     space: bool,
-    op_count: usize,
 }
 impl Flow {
     pub(super) fn new(page: TemplatePage) -> Self {
@@ -49,7 +51,6 @@ impl Flow {
             x: 0.,
             line_height: 0.,
             space: false,
-            op_count: 0,
         }
     }
     pub(super) fn width(&self) -> f64 {
@@ -58,9 +59,6 @@ impl Flow {
     pub(super) fn page_break(&mut self) -> Result<()> {
         self.flush()?;
         if self.y > self.page.margin {
-            if self.pages.len() >= 1000 {
-                return Err(ContentTemplateError::Limit);
-            }
             self.pages.push(Vec::new());
             self.y = self.page.margin;
         }
@@ -149,18 +147,11 @@ impl Flow {
             return Ok(());
         }
         if self.y + self.line_height > self.page.height - self.page.margin {
-            if self.pages.len() >= 1000 {
-                return Err(ContentTemplateError::Limit);
-            }
             self.pages.push(Vec::new());
             self.y = self.page.margin;
         }
         if self.line_height > self.page.height - 2. * self.page.margin {
             return Err(ContentTemplateError::Overflow);
-        }
-        self.op_count += self.line.len() * 5 + 2;
-        if self.op_count > 250_000 {
-            return Err(ContentTemplateError::Limit);
         }
         let align = self.line.first().map_or(0, |r| r.style.align);
         let shift = match align {
@@ -228,46 +219,85 @@ impl Flow {
         op(ops, "S", &[]);
         self.gap(6.)
     }
+    /// The page a table cell of this flow lays its content out on: as wide as
+    /// the cell, as tall as one page's content less the cell's padding, so
+    /// each page of the cell fits one page of this flow.
+    pub(super) fn cell_page(&self, width: f64) -> TemplatePage {
+        TemplatePage {
+            width,
+            height: self.page.height - 2. * self.page.margin - 6.,
+            margin: 0.,
+        }
+    }
+    /// Draws one table row of `cells`, each laid out on [`Flow::cell_page`].
+    /// A row whose cells run past one page splits across pages: each slice
+    /// carries the page of every cell that falls on it, boxed to the tallest.
     pub(super) fn table_row(&mut self, cells: Vec<Flow>) -> Result<()> {
         self.flush()?;
         if cells.is_empty() {
             return Ok(());
         }
-        let height = cells.iter().map(|c| c.y + 6.).fold(0f64, f64::max);
-        if height > self.page.height - 2. * self.page.margin {
-            return Err(ContentTemplateError::Overflow);
-        }
-        if self.y + height > self.page.height - self.page.margin {
-            self.page_break()?;
-        }
-        self.op_count += cells.iter().map(|c| c.op_count + 8).sum::<usize>();
-        if self.op_count > 250_000 {
-            return Err(ContentTemplateError::Limit);
-        }
+        let slices = cells.iter().map(|c| c.pages.len()).max().unwrap_or(1);
         let width = self.width() / cells.len() as f64;
-        let ops = self
-            .pages
-            .last_mut()
-            .ok_or(ContentTemplateError::Overflow)?;
-        for (i, cell) in cells.into_iter().enumerate() {
-            if cell.pages.len() != 1 {
+        let mut cells: Vec<_> = cells
+            .into_iter()
+            .map(|cell| {
+                let pages = cell.pages.len();
+                (cell.page.height, cell.y, pages, cell.pages.into_iter())
+            })
+            .collect();
+        for slice in 0..slices {
+            // A cell's full pages reach its page height; its last reaches
+            // where its flow ended; one already ended adds nothing.
+            let height = cells
+                .iter()
+                .map(|(full, last, pages, _)| match (slice + 1).cmp(pages) {
+                    std::cmp::Ordering::Less => *full,
+                    std::cmp::Ordering::Equal => *last,
+                    std::cmp::Ordering::Greater => 0.,
+                })
+                .fold(0f64, f64::max)
+                + 6.;
+            if height > self.page.height - 2. * self.page.margin {
                 return Err(ContentTemplateError::Overflow);
             }
-            let x = self.page.margin + i as f64 * width;
-            op(ops, "q", &[]);
-            op(ops, "cm", &[1., 0., 0., 1., x + 3., -self.y - 3.]);
-            ops.extend(cell.pages.into_iter().flatten());
-            op(ops, "Q", &[]);
-            op(ops, "g", &[0.]);
-            op(ops, "w", &[0.5]);
-            op(
-                ops,
-                "re",
-                &[x, self.page.height - self.y - height, width, height],
-            );
-            op(ops, "S", &[]);
+            if self.y + height > self.page.height - self.page.margin {
+                self.page_break()?;
+            }
+            let ops = self
+                .pages
+                .last_mut()
+                .ok_or(ContentTemplateError::Overflow)?;
+            for (i, (full, _, _, pages)) in cells.iter_mut().enumerate() {
+                let x = self.page.margin + i as f64 * width;
+                if let Some(content) = pages.next() {
+                    op(ops, "q", &[]);
+                    op(
+                        ops,
+                        "cm",
+                        &[
+                            1.,
+                            0.,
+                            0.,
+                            1.,
+                            x + 3.,
+                            self.page.height - self.y - 3. - *full,
+                        ],
+                    );
+                    ops.extend(content);
+                    op(ops, "Q", &[]);
+                }
+                op(ops, "g", &[0.]);
+                op(ops, "w", &[0.5]);
+                op(
+                    ops,
+                    "re",
+                    &[x, self.page.height - self.y - height, width, height],
+                );
+                op(ops, "S", &[]);
+            }
+            self.y += height;
         }
-        self.y += height;
         Ok(())
     }
     pub(super) fn finish(mut self) -> Result<Vec<u8>> {
@@ -289,29 +319,25 @@ impl Flow {
             fonts.set(format!("F{i}"), id);
         }
         let mut kids = Vec::new();
-        let mut total = 0;
         for ops in self.pages {
             let bytes = Content { operations: ops }
                 .encode()
                 .map_err(|_| ContentTemplateError::Overflow)?;
-            total += bytes.len();
-            if total > 16 * 1024 * 1024 {
-                return Err(ContentTemplateError::Limit);
-            }
             let content = doc.add_object(Stream::new(Dictionary::new(), bytes));
             let page=doc.add_object(dictionary!{"Type"=>"Page","Parent"=>parent,"MediaBox"=>vec![0.into(),0.into(),Object::Real(self.page.width as f32),Object::Real(self.page.height as f32)],"Resources"=>dictionary!{"Font"=>fonts.clone()},"Contents"=>content});
             kids.push(Object::Reference(page));
         }
-        doc.objects.insert(
-            parent,
-            dictionary! {"Type"=>"Pages","Count"=>kids.len() as i64,"Kids"=>kids}.into(),
-        );
+        // Past one node's kids the page tree nests (ISO 32000-1 section
+        // 7.7.3.2), as the sealed PDF's does.
+        render::page_tree(&mut doc, parent, kids)?;
         let root = doc.add_object(dictionary! {"Type"=>"Catalog","Pages"=>parent});
         doc.trailer.set("Root", root);
         let mut bytes = Vec::new();
         doc.save_to(&mut bytes)
             .map_err(|_| ContentTemplateError::Overflow)?;
-        if bytes.len() > 16 * 1024 * 1024 {
+        // lopdf's writer records each object's offset as a `u32`: past 4 GiB
+        // the offsets it wrote are wrong (the codec's bound).
+        if bytes.len() > u32::MAX as usize {
             return Err(ContentTemplateError::Limit);
         }
         Ok(bytes)

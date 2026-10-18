@@ -616,8 +616,35 @@ fn release_hold_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &[u8; 32]) 
     Ok(())
 }
 
+/// Whether `missing`, the sources an attempt of `kind` under `dedupe_key`
+/// cannot read, are all member TURNs of the round it carries that this
+/// replica does not hold, while a legal hold stands on that round (FIX
+/// 3592). Such an attempt waits for promotion instead of refusing: the
+/// absence is a demotion, never an erasure. A held participant cannot be
+/// erased, since a legal hold blocks every byte-destroying path; erasing any
+/// other member retires every round it gave words to
+/// ([`erase_turn_in_txn`]); demotion keeps a held round whole, its members
+/// and riders unchanged ([`demote_turns_in_txn`]). So a held round that
+/// still stands with a member absent here lost it to a demotion, and a
+/// promotion brings it back.
+pub(crate) fn held_round_members_away_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    (kind, dedupe_key): (&str, &str),
+    missing: &[EntityId],
+) -> Result<bool> {
+    let Some(round) = ROUND.get(store, txn, &round_id(kind, dedupe_key))? else {
+        return Ok(false);
+    };
+    for id in missing {
+        if !round.turns.contains(id) || store.port_entity_present(txn, id)? {
+            return Ok(false);
+        }
+    }
+    Ok(!missing.is_empty() && round_held_in_txn(store, txn, &round)?)
+}
+
 /// Whether a legal hold stands on a turn of `round` or on one of its riders.
-#[cfg(feature = "sync")]
 fn round_held_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
