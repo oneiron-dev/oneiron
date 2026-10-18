@@ -2070,7 +2070,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/adopted_build.rs",
@@ -19080,7 +19080,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 25,
+      "const": 26,
       "crate-vis": 8,
       "fn": 12,
       "trait": 1
@@ -19285,13 +19285,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/judge_label_rechecks.rs",
+     "purpose": "The judge labels' re-check after a rubric edit, run (ARCH-0042 \"A human edits the rubric at any time",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/mod.rs",
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 15,
+      "mod": 16,
       "re-export": 7
      }
     },
@@ -43052,20 +43062,29 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "JudgeAsk",
       "JudgeAskReason",
-      "JudgeLabel"
+      "JudgeLabel",
+      "JudgeLabelChecker",
+      "JudgeLabelFit",
+      "JudgeLabelRecheck",
+      "JudgeLabelRecheckReport",
+      "JudgeLabelRecheckRequest",
+      "JudgeLabelRegrade",
+      "JudgeRegrade",
+      "JudgeRubric"
      ],
      "path": "src/skill_optimize/labels.rs",
      "purpose": "Human-calibrated judge asks and the append-only label anchor",
      "surface": {
-      "crate-vis": 7,
-      "enum": 1,
-      "fn": 6,
-      "struct": 2
+      "crate-vis": 10,
+      "enum": 3,
+      "fn": 8,
+      "struct": 7,
+      "trait": 1
      }
     },
     {
@@ -53534,7 +53553,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54549,9 +54568,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 188,
+   "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3317,
+   "source_files": 3318,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65181,6 +65200,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/coach_host/judge_label_rechecks.rs",
+     "purpose": "The host's judge-label re-checker (ARCH-0042 judge re-pin, OF-420): after an edit of the judge's rubric, the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/coach_host/seal_checks.rs",
      "purpose": "The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession…",
      "surface": {
@@ -73793,7 +73822,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74208,7 +74237,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 628,
+   "source_files": 629,
    "test_files": 182
   },
   "oneiron-spawn": {
