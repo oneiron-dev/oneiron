@@ -128,7 +128,7 @@ impl RawValue for BankRow {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VoiceRefOrigin {
     /// Recorded from the person, under the render consent decision it cites:
@@ -398,64 +398,8 @@ impl Vault {
         valid_id(&pack.id)?;
         valid_id(&pack.voice_id)?;
         let bytes = PACKS.encode_value(pack)?;
-        let mut txn = self.store.env.write_txn()?;
-        pack.validate(limits_for(&self.store, &txn, &pack.owner)?)?;
-        if let Some(existing) = PACKS.get_bytes(&self.store, &txn, &pack.id)? {
-            if existing != bytes {
-                return Err(invalid("voice reference pack id already exists"));
-            }
-            return Ok(()); // An immutable retry; the original transaction already committed.
-        }
-        if let VoiceRefOrigin::Captured { consent_event_ref } = &pack.origin {
-            let consented =
-                read_render_consent(&self.store, &txn, &pack.voice_id)?.is_some_and(|consent| {
-                    consent.decision.event_id == *consent_event_ref
-                        && consent.decision.subject == pack.owner
-                        && consent.decision.state == VoiceConsentState::Granted
-                });
-            if !consented {
-                return Err(invalid(
-                    "captured refs need the subject's current render consent",
-                ));
-            }
-        }
-        let mut identity = match read_identity(&self.store, &txn, &pack.voice_id)? {
-            Some(identity) => identity,
-            None if pack.origin == VoiceRefOrigin::Generated => {
-                return Err(invalid("generated refs need an existing source identity"));
-            }
-            None => {
-                // Fresh at every birth, so a withdrawn and identically re-banked
-                // identity never matches a fence taken before the withdrawal.
-                INCARNATIONS.put(
-                    &self.store,
-                    &mut txn,
-                    &pack.voice_id,
-                    uuid::Uuid::new_v4().as_bytes(),
-                )?;
-                BankRow::Incarnation(pack.voice_id.clone()).index(
-                    &self.store,
-                    &mut txn,
-                    pack.owner,
-                )?;
-                VoiceIdentity {
-                    version: 1,
-                    id: pack.voice_id.clone(),
-                    owner: pack.owner,
-                    pack_ids: Vec::new(),
-                }
-            }
-        };
-        if identity.owner != pack.owner {
-            return Err(invalid("voice identity owner mismatch"));
-        }
-        identity.pack_ids.push(pack.id.clone());
-        PACKS.put(&self.store, &mut txn, &pack.id, pack)?;
-        IDENTITIES.put(&self.store, &mut txn, &pack.voice_id, &identity)?;
-        BankRow::Pack(pack.id.clone()).index(&self.store, &mut txn, pack.owner)?;
-        BankRow::Identity(pack.voice_id.clone()).index(&self.store, &mut txn, pack.owner)?;
-        txn.commit()?;
-        Ok(())
+        let txn = self.store.env.write_txn()?;
+        store_pack_in(&self.store, txn, pack, &bytes)
     }
 
     pub fn voice_identity(&self, id: &str) -> Result<Option<VoiceIdentity>> {
@@ -485,63 +429,8 @@ impl Vault {
             .voice_ref_guard
             .write()
             .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
-        let mut txn = self.store.env.write_txn()?;
-        let owner = read_identity(&self.store, &txn, &decision.voice_id)?.map(|i| i.owner);
-        if owner.is_some_and(|owner| owner != decision.subject) {
-            return Err(invalid("voice identity owner mismatch"));
-        }
-        if let Some(current) = read_render_consent(&self.store, &txn, &decision.voice_id)? {
-            if current.decision.subject != decision.subject {
-                return Err(invalid("voice identity owner mismatch"));
-            }
-            if current.decision.event_id == decision.event_id {
-                if current.decision == *decision {
-                    return Ok((current, Vec::new())); // A replay of the current decision.
-                }
-                return Err(invalid(
-                    "voice render consent event id already names another decision",
-                ));
-            }
-            if current.decision.occurred_at > decision.occurred_at {
-                return Err(invalid("a later voice render decision is recorded"));
-            }
-        }
-        let consent = VoiceRenderConsent {
-            version: 1,
-            decision: decision.clone(),
-            revision: uuid::Uuid::new_v4().into_bytes(),
-        };
-        RENDER_CONSENT.put(&self.store, &mut txn, &decision.voice_id, &consent)?;
-        BankRow::Consent(decision.voice_id.clone()).index(
-            &self.store,
-            &mut txn,
-            decision.subject,
-        )?;
-        let mut evicted = Vec::new();
-        if decision.state == VoiceConsentState::Withdrawn {
-            let mut prefix = decision.voice_id.as_bytes().to_vec();
-            prefix.push(0);
-            for key in TARGETS.scan_keys(&self.store, &txn, &prefix)? {
-                // A corrupt pointer is dropped all the same.
-                if let Ok(Some(record)) = read_row(
-                    TARGETS,
-                    &self.store,
-                    &txn,
-                    &key,
-                    "corrupt voice target clone",
-                ) {
-                    evicted.push(record);
-                }
-                TARGETS.delete(&self.store, &mut txn, &key)?;
-                OWNER_INDEX.delete(
-                    &self.store,
-                    &mut txn,
-                    &(decision.subject, TARGETS.key_bytes(&key)),
-                )?;
-            }
-        }
-        txn.commit()?;
-        Ok((consent, evicted))
+        let txn = self.store.env.write_txn()?;
+        record_render_consent_in(&self.store, txn, decision)
     }
 
     /// The voice's current render decision, granted or withdrawn.
@@ -580,51 +469,8 @@ impl Vault {
         vendor_voice_id: &str,
         cloned_at: u64,
     ) -> Result<VoiceTargetRecord> {
-        let mut txn = self.store.env.write_txn()?;
-        let selected = select_clone(
-            &self.store,
-            &txn,
-            &request.voice_id,
-            &request.target,
-            request.include_generated,
-            request.grant.locality,
-        )?;
-        if &selected != request {
-            return Err(invalid("voice clone refs or render consent changed"));
-        }
-        let record = VoiceTargetRecord {
-            voice_id: request.voice_id.clone(),
-            target: request.target.clone(),
-            vendor_voice_id: vendor_voice_id.into(),
-            source_packs: request.source_packs.clone(),
-            ref_digest: request.ref_digest,
-            cloned_at,
-            revision: uuid::Uuid::new_v4().into_bytes(),
-        };
-        let target_key = target_key(&request.voice_id, &request.target)?;
-        let owner = read_identity(&self.store, &txn, &request.voice_id)?
-            .ok_or_else(|| invalid("unknown voice identity"))?
-            .owner;
-        let limits = limits_for(&self.store, &txn, &owner)?;
-        validate_target_record(&record, &request.voice_id, &request.target, limits)?;
-        if let Some(existing) = read_row(
-            TARGETS,
-            &self.store,
-            &txn,
-            &target_key,
-            "corrupt voice target clone",
-        )? {
-            validate_target_record(&existing, &request.voice_id, &request.target, limits)?;
-            if existing.source_packs == request.source_packs
-                && existing.ref_digest == request.ref_digest
-            {
-                return Ok(existing); // A current target pointer is not replaced without new refs.
-            }
-        }
-        TARGETS.put(&self.store, &mut txn, &target_key, &record)?;
-        BankRow::Target(target_key).index(&self.store, &mut txn, owner)?;
-        txn.commit()?;
-        Ok(record)
+        let txn = self.store.env.write_txn()?;
+        record_target_clone_in(&self.store, txn, request, vendor_voice_id, cloned_at)
     }
 
     /// The target's record and the render consent that reaches it at
@@ -688,24 +534,8 @@ impl Vault {
         let identity = self
             .voice_identity(voice_id)?
             .ok_or_else(|| invalid("unknown voice identity"))?;
-        let mut txn = self.store.env.write_txn()?;
-        let evicted = read_row(
-            TARGETS,
-            &self.store,
-            &txn,
-            &key,
-            "corrupt voice target clone",
-        )
-        .ok()
-        .flatten();
-        TARGETS.delete(&self.store, &mut txn, &key)?;
-        OWNER_INDEX.delete(
-            &self.store,
-            &mut txn,
-            &(identity.owner, TARGETS.key_bytes(&key)),
-        )?;
-        txn.commit()?;
-        Ok(evicted)
+        let txn = self.store.env.write_txn()?;
+        evict_target_in(&self.store, txn, &key, identity.owner)
     }
 
     /// The selection for a target at `locality` and its fence, read from one
@@ -809,6 +639,198 @@ impl Vault {
             .ok_or_else(|| invalid("register is not banked"))?;
         Ok((clip, fence))
     }
+}
+
+/// [`Vault::store_voice_ref_pack`]'s write, in `txn`, which it commits when
+/// the pack is new; `bytes` is the pack's encoding. The owner's door reaches
+/// it too, once its proof holds in that transaction.
+fn store_pack_in(
+    store: &crate::store::Store,
+    mut txn: heed::RwTxn<'_>,
+    pack: &VoiceRefPack,
+    bytes: &[u8],
+) -> Result<()> {
+    pack.validate(limits_for(store, &txn, &pack.owner)?)?;
+    if let Some(existing) = PACKS.get_bytes(store, &txn, &pack.id)? {
+        if existing != bytes {
+            return Err(invalid("voice reference pack id already exists"));
+        }
+        return Ok(()); // An immutable retry; the original transaction already committed.
+    }
+    if let VoiceRefOrigin::Captured { consent_event_ref } = &pack.origin {
+        let consented = read_render_consent(store, &txn, &pack.voice_id)?.is_some_and(|consent| {
+            consent.decision.event_id == *consent_event_ref
+                && consent.decision.subject == pack.owner
+                && consent.decision.state == VoiceConsentState::Granted
+        });
+        if !consented {
+            return Err(invalid(
+                "captured refs need the subject's current render consent",
+            ));
+        }
+    }
+    let mut identity = match read_identity(store, &txn, &pack.voice_id)? {
+        Some(identity) => identity,
+        None if pack.origin == VoiceRefOrigin::Generated => {
+            return Err(invalid("generated refs need an existing source identity"));
+        }
+        None => {
+            // Fresh at every birth, so a withdrawn and identically re-banked
+            // identity never matches a fence taken before the withdrawal.
+            INCARNATIONS.put(
+                store,
+                &mut txn,
+                &pack.voice_id,
+                uuid::Uuid::new_v4().as_bytes(),
+            )?;
+            BankRow::Incarnation(pack.voice_id.clone()).index(store, &mut txn, pack.owner)?;
+            VoiceIdentity {
+                version: 1,
+                id: pack.voice_id.clone(),
+                owner: pack.owner,
+                pack_ids: Vec::new(),
+            }
+        }
+    };
+    if identity.owner != pack.owner {
+        return Err(invalid("voice identity owner mismatch"));
+    }
+    identity.pack_ids.push(pack.id.clone());
+    PACKS.put(store, &mut txn, &pack.id, pack)?;
+    IDENTITIES.put(store, &mut txn, &pack.voice_id, &identity)?;
+    BankRow::Pack(pack.id.clone()).index(store, &mut txn, pack.owner)?;
+    BankRow::Identity(pack.voice_id.clone()).index(store, &mut txn, pack.owner)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// [`Vault::record_voice_render_consent`]'s write of a validated `decision`,
+/// in `txn`, which it commits. Its caller holds the ref guard's write lock.
+fn record_render_consent_in(
+    store: &crate::store::Store,
+    mut txn: heed::RwTxn<'_>,
+    decision: &VoiceRenderDecision,
+) -> Result<(VoiceRenderConsent, Vec<VoiceTargetRecord>)> {
+    let owner = read_identity(store, &txn, &decision.voice_id)?.map(|i| i.owner);
+    if owner.is_some_and(|owner| owner != decision.subject) {
+        return Err(invalid("voice identity owner mismatch"));
+    }
+    if let Some(current) = read_render_consent(store, &txn, &decision.voice_id)? {
+        if current.decision.subject != decision.subject {
+            return Err(invalid("voice identity owner mismatch"));
+        }
+        if current.decision.event_id == decision.event_id {
+            if current.decision == *decision {
+                return Ok((current, Vec::new())); // A replay of the current decision.
+            }
+            return Err(invalid(
+                "voice render consent event id already names another decision",
+            ));
+        }
+        if current.decision.occurred_at > decision.occurred_at {
+            return Err(invalid("a later voice render decision is recorded"));
+        }
+    }
+    let consent = VoiceRenderConsent {
+        version: 1,
+        decision: decision.clone(),
+        revision: uuid::Uuid::new_v4().into_bytes(),
+    };
+    RENDER_CONSENT.put(store, &mut txn, &decision.voice_id, &consent)?;
+    BankRow::Consent(decision.voice_id.clone()).index(store, &mut txn, decision.subject)?;
+    let mut evicted = Vec::new();
+    if decision.state == VoiceConsentState::Withdrawn {
+        let mut prefix = decision.voice_id.as_bytes().to_vec();
+        prefix.push(0);
+        for key in TARGETS.scan_keys(store, &txn, &prefix)? {
+            // A corrupt pointer is dropped all the same.
+            if let Ok(Some(record)) =
+                read_row(TARGETS, store, &txn, &key, "corrupt voice target clone")
+            {
+                evicted.push(record);
+            }
+            TARGETS.delete(store, &mut txn, &key)?;
+            OWNER_INDEX.delete(
+                store,
+                &mut txn,
+                &(decision.subject, TARGETS.key_bytes(&key)),
+            )?;
+        }
+    }
+    txn.commit()?;
+    Ok((consent, evicted))
+}
+
+/// [`Vault::record_voice_target_clone`]'s write, in `txn`, which it commits
+/// when the record is new.
+fn record_target_clone_in(
+    store: &crate::store::Store,
+    mut txn: heed::RwTxn<'_>,
+    request: &VoiceTargetClone,
+    vendor_voice_id: &str,
+    cloned_at: u64,
+) -> Result<VoiceTargetRecord> {
+    let selected = select_clone(
+        store,
+        &txn,
+        &request.voice_id,
+        &request.target,
+        request.include_generated,
+        request.grant.locality,
+    )?;
+    if &selected != request {
+        return Err(invalid("voice clone refs or render consent changed"));
+    }
+    let record = VoiceTargetRecord {
+        voice_id: request.voice_id.clone(),
+        target: request.target.clone(),
+        vendor_voice_id: vendor_voice_id.into(),
+        source_packs: request.source_packs.clone(),
+        ref_digest: request.ref_digest,
+        cloned_at,
+        revision: uuid::Uuid::new_v4().into_bytes(),
+    };
+    let target_key = target_key(&request.voice_id, &request.target)?;
+    let owner = read_identity(store, &txn, &request.voice_id)?
+        .ok_or_else(|| invalid("unknown voice identity"))?
+        .owner;
+    let limits = limits_for(store, &txn, &owner)?;
+    validate_target_record(&record, &request.voice_id, &request.target, limits)?;
+    if let Some(existing) = read_row(
+        TARGETS,
+        store,
+        &txn,
+        &target_key,
+        "corrupt voice target clone",
+    )? {
+        validate_target_record(&existing, &request.voice_id, &request.target, limits)?;
+        if existing.source_packs == request.source_packs
+            && existing.ref_digest == request.ref_digest
+        {
+            return Ok(existing); // A current target pointer is not replaced without new refs.
+        }
+    }
+    TARGETS.put(store, &mut txn, &target_key, &record)?;
+    BankRow::Target(target_key).index(store, &mut txn, owner)?;
+    txn.commit()?;
+    Ok(record)
+}
+
+/// [`Vault::evict_voice_target`]'s write: drops `key`'s pointer and its
+/// index entry under `owner`, in `txn`, which it commits.
+fn evict_target_in(
+    store: &crate::store::Store,
+    mut txn: heed::RwTxn<'_>,
+    key: &TargetKey,
+    owner: EntityId,
+) -> Result<Option<VoiceTargetRecord>> {
+    let evicted = read_row(TARGETS, store, &txn, key, "corrupt voice target clone")
+        .ok()
+        .flatten();
+    TARGETS.delete(store, &mut txn, key)?;
+    OWNER_INDEX.delete(store, &mut txn, &(owner, TARGETS.key_bytes(key)))?;
+    txn.commit()?;
+    Ok(evicted)
 }
 
 fn fenced_clone(
@@ -1008,6 +1030,15 @@ fn read_pack(
     }
     Ok(Some(pack))
 }
+
+// The owner's own doors onto the bank (DOOR-143): each act revalidates the
+// request-bound owner proof in the transaction it writes in.
+#[path = "ref_bank/owner_acts.rs"]
+mod owner_acts;
+pub use owner_acts::{
+    VoiceBankInspection, VoiceClipSummary, VoiceIdentityView, VoicePackSummary,
+    VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetInspection,
+};
 
 #[cfg(test)]
 #[path = "ref_bank/tests.rs"]

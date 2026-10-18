@@ -8540,6 +8540,7 @@ dependencies = [
  "rmp-serde",
  "rmpv",
  "rustix",
+ "schemars 0.8.22",
  "serde",
  "serde_bytes",
  "serde_json",

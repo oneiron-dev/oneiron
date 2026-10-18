@@ -8,6 +8,10 @@
 //! clone the bank no longer holds is deleted at the vendor (ARCH-0061 §5,
 //! "A companion reference clip leaves only through consented provisioning").
 //! Audio travels as base64 on this wire.
+//!
+//! The owner's typed `vault.voices.*` doors (api/facade/voice_bank_doors.rs)
+//! run the same provisioning and vendor deletions through the helpers here,
+//! under the owner's proof, so one paid clone flow serves both.
 use std::sync::Arc;
 
 use axum::Json;
@@ -16,42 +20,37 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::task_verb::sdk::{
+    VoiceBankClipInput, VoiceBankPackReceipt, VoiceRenderConsentReceipt, VoiceTargetEvictReceipt,
+    VoiceTargetReceipt, VoiceVendorDeleteStatus, VoiceVendorEviction,
+};
 use oneiron::voice_identity::ref_bank::{
-    VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip, VoiceRenderDecision, VoiceTargetRecord,
+    VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip, VoiceRenderConsent, VoiceRenderDecision,
+    VoiceTargetRecord,
 };
 use oneiron::voice_identity::{VoiceConsentBasis, VoiceConsentState};
 use oneiron::{EntityId, ModelLocality};
 use serde::Deserialize;
-use serde_json::{Value as JsonValue, json};
 
 use super::refusal;
 use crate::auth::CoreAuth;
 use crate::models::MediaRuntime;
 use crate::server::SyncServer;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct PackBody {
+pub(crate) struct PackBody {
     pack_id: String,
     /// Whose voice it is (entity hex).
     owner: String,
     origin: VoiceRefOrigin,
-    clips: Vec<ClipBody>,
+    clips: Vec<VoiceBankClipInput>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct ClipBody {
-    register: String,
-    media_type: String,
-    /// Base64.
-    audio: String,
-    transcript: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ConsentBody {
+pub(crate) struct ConsentBody {
     event_id: String,
     /// Whose voice it is (entity hex).
     subject: String,
@@ -64,9 +63,9 @@ pub(super) struct ConsentBody {
     state: VoiceConsentState,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ProvisionBody {
+pub(crate) struct ProvisionBody {
     #[serde(default)]
     include_generated: bool,
     /// The language the clip is spoken in, for a target that asks.
@@ -114,7 +113,11 @@ pub(super) async fn bank_pack(
         clips,
     };
     match server.vault.store_voice_ref_pack(&pack) {
-        Ok(()) => Json(json!({"voice_id": pack.voice_id, "pack_id": pack.id})).into_response(),
+        Ok(()) => Json(VoiceBankPackReceipt {
+            voice_id: pack.voice_id,
+            pack_id: pack.id,
+        })
+        .into_response(),
         Err(error) => bank_refusal(error),
     }
 }
@@ -151,23 +154,34 @@ pub(super) async fn render_consent(
         Ok(recorded) => recorded,
         Err(error) => return bank_refusal(error),
     };
-    let mut dropped = Vec::with_capacity(evicted.len());
     let media = server.ai.model_runtime().media();
-    for record in &evicted {
-        dropped.push(json!({
-            "target": record.target,
-            "vendor_voice_id": record.vendor_voice_id,
-            "vendor": delete_at_vendor(media, record).await,
-        }));
+    Json(render_consent_answer(media, &consent, &evicted).await).into_response()
+}
+
+/// A recorded render decision's receipt. Each target clone a withdrawal
+/// dropped is deleted at its vendor first, best effort, and the receipt says
+/// what each vendor did. The route and the owner's
+/// `vault.voices.render_consent` door both answer it.
+pub(crate) async fn render_consent_answer(
+    media: &MediaRuntime,
+    consent: &VoiceRenderConsent,
+    evicted: &[VoiceTargetRecord],
+) -> VoiceRenderConsentReceipt {
+    let mut dropped = Vec::with_capacity(evicted.len());
+    for record in evicted {
+        dropped.push(VoiceVendorEviction {
+            target: record.target.clone(),
+            vendor_voice_id: record.vendor_voice_id.clone(),
+            vendor: delete_at_vendor(media, record).await,
+        });
     }
-    Json(json!({
-        "voice_id": consent.decision.voice_id,
-        "state": consent.decision.state,
-        "reach": consent.decision.reach,
-        "revision": hex(&consent.revision),
-        "evicted": dropped,
-    }))
-    .into_response()
+    VoiceRenderConsentReceipt {
+        voice_id: consent.decision.voice_id.clone(),
+        state: consent.decision.state,
+        reach: consent.decision.reach,
+        revision: hex(&consent.revision),
+        evicted: dropped,
+    }
 }
 
 /// Provisions `target`'s clone of the voice: the current one when it is
@@ -181,64 +195,124 @@ pub(super) async fn provision(
     if let Err(refused) = owner_only(&auth) {
         return refused;
     }
+    let provisioned = provision_clone(
+        &server,
+        None,
+        &voice_id,
+        &target,
+        body.include_generated,
+        body.language.as_deref(),
+    )
+    .await;
+    match provisioned {
+        Ok(receipt) => Json(receipt).into_response(),
+        Err(refused) => refused.response(),
+    }
+}
+
+/// Why provisioning refused, before or after its vendor call.
+pub(crate) enum VoiceBankRefusal {
+    /// No configured hosted speech provider by the target's name clones.
+    NoCloneTarget,
+    /// The target clones only with the clips' language, and none was named.
+    LanguageRequired,
+    /// The provider did not make the clone, for this reason.
+    VendorCloneFailed(String),
+    /// The bank refused, or could not be read or written.
+    Bank(oneiron::Error),
+}
+
+impl VoiceBankRefusal {
+    /// The route's refusal of it.
+    fn response(self) -> Response {
+        match self {
+            Self::NoCloneTarget => refusal(
+                StatusCode::NOT_FOUND,
+                "no_clone_target",
+                "no configured hosted speech provider by that name clones voices",
+            ),
+            Self::LanguageRequired => refusal(
+                StatusCode::BAD_REQUEST,
+                "language_required",
+                "this target clones only with the clip's language",
+            ),
+            Self::VendorCloneFailed(error) => refusal(
+                StatusCode::BAD_GATEWAY,
+                "vendor_clone_failed",
+                format!("the provider did not make the clone: {error}"),
+            ),
+            Self::Bank(error) => bank_refusal(error),
+        }
+    }
+}
+
+/// Provisions `target`'s clone of the voice: the current one when it is
+/// still current, else a new vendor voice made from the selected refs on a
+/// paid run of its own and recorded only while those refs and the render
+/// consent they left under are still current. A clone the bank does not
+/// record is deleted at the vendor. `owner` is the owner's door's proof: the
+/// voice must be that person's own, and the record is written under it,
+/// revalidated; the route passes none, past its owner-grade check.
+pub(crate) async fn provision_clone(
+    server: &SyncServer,
+    owner: Option<&AuthenticatedOwner>,
+    voice_id: &str,
+    target: &str,
+    include_generated: bool,
+    language: Option<&str>,
+) -> Result<VoiceTargetReceipt, VoiceBankRefusal> {
+    if let Some(owner) = owner {
+        server
+            .vault
+            .owned_voice_identity(owner, voice_id)
+            .map_err(VoiceBankRefusal::Bank)?;
+    }
     let media = server.ai.model_runtime().media();
-    let Some(cloner) = media.voice_cloner(&target) else {
-        return refusal(
-            StatusCode::NOT_FOUND,
-            "no_clone_target",
-            "no configured hosted speech provider by that name clones voices",
-        );
-    };
-    if cloner.needs_language() && body.language.as_deref().is_none_or(|l| l.trim().is_empty()) {
-        return refusal(
-            StatusCode::BAD_REQUEST,
-            "language_required",
-            "this target clones only with the clip's language",
-        );
+    let cloner = media
+        .voice_cloner(target)
+        .ok_or(VoiceBankRefusal::NoCloneTarget)?;
+    if cloner.needs_language() && language.is_none_or(|l| l.trim().is_empty()) {
+        return Err(VoiceBankRefusal::LanguageRequired);
     }
     let locality = cloner.locality();
     // A current clone is kept: no new vendor voice without new refs.
-    match server
+    if let Some((record, _)) = server
         .vault
-        .voice_target_clone(&voice_id, &target, body.include_generated, locality)
+        .voice_target_clone(voice_id, target, include_generated, locality)
+        .map_err(VoiceBankRefusal::Bank)?
     {
-        Ok(Some((record, _))) => return Json(record_view(&record)).into_response(),
-        Ok(None) => {}
-        Err(error) => return bank_refusal(error),
+        return Ok(target_receipt(&record));
     }
-    let clone =
-        match server
-            .vault
-            .prepare_voice_clone(&voice_id, &target, body.include_generated, locality)
-        {
-            Ok(clone) => clone,
-            Err(error) => return bank_refusal(error),
-        };
+    let clone = server
+        .vault
+        .prepare_voice_clone(voice_id, target, include_generated, locality)
+        .map_err(VoiceBankRefusal::Bank)?;
     // The vendor sees a name from the refs' digest, never the voice's id.
     let name = format!("oneiron-{}", &hex(&clone.ref_digest)[..16]);
     // Each vendor call goes out on its own permit of this run (FIX 3009).
     let created = match media.clone_run() {
         Ok(run) => cloner
-            .create(&run, &name, &clone.clips, body.language.as_deref())
+            .create(&run, &name, &clone.clips, language)
             .await
             .map(|id| (run, id)),
         Err(error) => Err(error),
     };
-    let (run, vendor_voice_id) = match created {
-        Ok(created) => created,
-        Err(error) => {
-            tracing::warn!(%target, %error, "vendor voice clone failed");
-            return refusal(
-                StatusCode::BAD_GATEWAY,
-                "vendor_clone_failed",
-                format!("the provider did not make the clone: {error}"),
-            );
+    let (run, vendor_voice_id) = created.map_err(|error| {
+        tracing::warn!(%target, %error, "vendor voice clone failed");
+        VoiceBankRefusal::VendorCloneFailed(error.to_string())
+    })?;
+    let cloned_at = now_secs();
+    let recorded = match owner {
+        Some(owner) => {
+            server
+                .vault
+                .record_voice_target_clone_as(owner, &clone, &vendor_voice_id, cloned_at)
         }
+        None => server
+            .vault
+            .record_voice_target_clone(&clone, &vendor_voice_id, cloned_at),
     };
-    match server
-        .vault
-        .record_voice_target_clone(&clone, &vendor_voice_id, now_secs())
-    {
+    match recorded {
         Ok(record) => {
             // Another provisioning recorded a current clone first: ours is spare.
             if record.vendor_voice_id != vendor_voice_id
@@ -246,7 +320,7 @@ pub(super) async fn provision(
             {
                 tracing::warn!(%target, %error, "spare vendor clone not deleted");
             }
-            Json(record_view(&record)).into_response()
+            Ok(target_receipt(&record))
         }
         Err(error) => {
             // The refs or the render consent changed while they uploaded:
@@ -254,7 +328,7 @@ pub(super) async fn provision(
             if let Err(error) = cloner.delete(&run, &vendor_voice_id).await {
                 tracing::warn!(%target, %error, "stale vendor clone not deleted");
             }
-            bank_refusal(error)
+            Err(VoiceBankRefusal::Bank(error))
         }
     }
 }
@@ -272,35 +346,50 @@ pub(super) async fn evict(
         Ok(evicted) => evicted,
         Err(error) => return bank_refusal(error),
     };
-    let vendor = match &evicted {
-        Some(record) => delete_at_vendor(server.ai.model_runtime().media(), record).await,
-        None => "absent",
+    let media = server.ai.model_runtime().media();
+    Json(evict_answer(media, voice_id, target, evicted.as_ref()).await).into_response()
+}
+
+/// An eviction's receipt: the dropped pointer's clone is deleted at its
+/// vendor first, best effort. The route and the owner's
+/// `vault.voices.targets.evict` door both answer it.
+pub(crate) async fn evict_answer(
+    media: &MediaRuntime,
+    voice_id: String,
+    target: String,
+    evicted: Option<&VoiceTargetRecord>,
+) -> VoiceTargetEvictReceipt {
+    let vendor = match evicted {
+        Some(record) => delete_at_vendor(media, record).await,
+        None => VoiceVendorDeleteStatus::Absent,
     };
-    Json(json!({
-        "voice_id": voice_id,
-        "target": target,
-        "evicted": evicted.is_some(),
-        "vendor": vendor,
-    }))
-    .into_response()
+    VoiceTargetEvictReceipt {
+        voice_id,
+        target,
+        evicted: evicted.is_some(),
+        vendor,
+    }
 }
 
 /// Deletes an evicted record's clone at its vendor, best effort, on a paid
 /// permit of a run of its own (FIX 3009): what happened, for the owner to
 /// see.
-async fn delete_at_vendor(media: &MediaRuntime, record: &VoiceTargetRecord) -> &'static str {
+async fn delete_at_vendor(
+    media: &MediaRuntime,
+    record: &VoiceTargetRecord,
+) -> VoiceVendorDeleteStatus {
     let Some(cloner) = media.voice_cloner(&record.target) else {
-        return "no_clone_wire";
+        return VoiceVendorDeleteStatus::NoCloneWire;
     };
     let deleted = match media.clone_run() {
         Ok(run) => cloner.delete(&run, &record.vendor_voice_id).await,
         Err(error) => Err(error),
     };
     match deleted {
-        Ok(()) => "deleted",
+        Ok(()) => VoiceVendorDeleteStatus::Deleted,
         Err(error) => {
             tracing::warn!(target = %record.target, %error, "vendor clone not deleted");
-            "delete_failed"
+            VoiceVendorDeleteStatus::DeleteFailed
         }
     }
 }
@@ -344,14 +433,14 @@ fn bank_refusal(error: oneiron::Error) -> Response {
     }
 }
 
-fn record_view(record: &VoiceTargetRecord) -> JsonValue {
-    json!({
-        "voice_id": record.voice_id,
-        "target": record.target,
-        "vendor_voice_id": record.vendor_voice_id,
-        "cloned_at": record.cloned_at,
-        "revision": hex(&record.revision),
-    })
+fn target_receipt(record: &VoiceTargetRecord) -> VoiceTargetReceipt {
+    VoiceTargetReceipt {
+        voice_id: record.voice_id.clone(),
+        target: record.target.clone(),
+        vendor_voice_id: record.vendor_voice_id.clone(),
+        cloned_at: record.cloned_at,
+        revision: hex(&record.revision),
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {

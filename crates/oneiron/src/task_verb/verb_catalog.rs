@@ -361,6 +361,11 @@ pub enum AgentVerb {
     AiOptions,
     AiImage,
     AiSpeech,
+    VaultVoicesPacksPut,
+    VaultVoicesRenderConsent,
+    VaultVoicesTargetsProvision,
+    VaultVoicesTargetsEvict,
+    VaultVoicesInspect,
     AiTranscribe,
     AiEmbed,
     AiVideo,
@@ -899,6 +904,11 @@ impl AgentVerb {
         Self::AiOptions,
         Self::AiImage,
         Self::AiSpeech,
+        Self::VaultVoicesPacksPut,
+        Self::VaultVoicesRenderConsent,
+        Self::VaultVoicesTargetsProvision,
+        Self::VaultVoicesTargetsEvict,
+        Self::VaultVoicesInspect,
         Self::AiTranscribe,
         Self::AiEmbed,
         Self::AiVideo,
@@ -1446,6 +1456,11 @@ impl AgentVerb {
             Self::AiOptions => "ai.options",
             Self::AiImage => "ai.image",
             Self::AiSpeech => "ai.speech",
+            Self::VaultVoicesPacksPut => "vault.voices.packs.put",
+            Self::VaultVoicesRenderConsent => "vault.voices.render_consent",
+            Self::VaultVoicesTargetsProvision => "vault.voices.targets.provision",
+            Self::VaultVoicesTargetsEvict => "vault.voices.targets.evict",
+            Self::VaultVoicesInspect => "vault.voices.inspect",
             Self::AiTranscribe => "ai.transcribe",
             Self::AiEmbed => "ai.embed",
             Self::AiVideo => "ai.video",
@@ -1987,6 +2002,11 @@ impl AgentVerb {
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
+                | Self::VaultVoicesPacksPut
+                | Self::VaultVoicesRenderConsent
+                | Self::VaultVoicesTargetsProvision
+                | Self::VaultVoicesTargetsEvict
+                | Self::VaultVoicesInspect
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -2532,6 +2552,11 @@ impl AgentVerb {
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
+                | Self::VaultVoicesPacksPut
+                | Self::VaultVoicesRenderConsent
+                | Self::VaultVoicesTargetsProvision
+                | Self::VaultVoicesTargetsEvict
+                | Self::VaultVoicesInspect
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -3122,6 +3147,11 @@ impl AgentVerb {
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
+                | Self::VaultVoicesPacksPut
+                | Self::VaultVoicesRenderConsent
+                | Self::VaultVoicesTargetsProvision
+                | Self::VaultVoicesTargetsEvict
+                | Self::VaultVoicesInspect
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -3510,6 +3540,10 @@ impl AgentVerb {
                 | Self::AiReply
                 | Self::AiImage
                 | Self::AiSpeech
+                | Self::VaultVoicesPacksPut
+                | Self::VaultVoicesRenderConsent
+                | Self::VaultVoicesTargetsProvision
+                | Self::VaultVoicesTargetsEvict
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -4000,6 +4034,11 @@ impl AgentVerb {
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
+            Self::VaultVoicesPacksPut => &["spec"],
+            Self::VaultVoicesRenderConsent => &["spec"],
+            Self::VaultVoicesTargetsProvision => &["spec"],
+            Self::VaultVoicesTargetsEvict => &["spec"],
+            Self::VaultVoicesInspect => &["spec"],
             Self::AiTranscribe => &["spec"],
             Self::AiEmbed => &["spec"],
             Self::AiVideo => &["spec"],
@@ -4539,6 +4578,11 @@ impl AgentVerb {
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
+            Self::VaultVoicesPacksPut => &["spec"],
+            Self::VaultVoicesRenderConsent => &["spec"],
+            Self::VaultVoicesTargetsProvision => &["spec"],
+            Self::VaultVoicesTargetsEvict => &["spec"],
+            Self::VaultVoicesInspect => &["spec"],
             Self::AiTranscribe => &["spec"],
             Self::AiEmbed => &["spec"],
             Self::AiVideo => &["spec"],
@@ -5745,6 +5789,21 @@ impl AgentVerb {
                 "One image out of the host's image model; reference images make it an edit."
             }
             Self::AiSpeech => "Speech audio out of text, from the host's speech model.",
+            Self::VaultVoicesPacksPut => {
+                "The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."
+            }
+            Self::VaultVoicesRenderConsent => {
+                "The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs."
+            }
+            Self::VaultVoicesTargetsProvision => {
+                "The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call."
+            }
+            Self::VaultVoicesTargetsEvict => {
+                "The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay."
+            }
+            Self::VaultVoicesInspect => {
+                "The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."
+            }
             Self::AiTranscribe => "Text out of speech audio, from the host's transcription model.",
             Self::AiEmbed => {
                 "One embedding vector per input text, from the host's embedding model."

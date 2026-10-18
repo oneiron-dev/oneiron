@@ -3321,6 +3321,44 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_voices_packs_put(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.voices.packs.put")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.voices.packs.put", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_voices_render_consent(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.voices.render_consent")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.voices.render_consent", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_voices_targets_provision(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.voices.targets.provision")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.voices.targets.provision", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_voices_targets_evict(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.voices.targets.evict")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.voices.targets.evict", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_voices_inspect(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.voices.inspect")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.voices.inspect", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_transcribe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.transcribe")?;
         let output = py

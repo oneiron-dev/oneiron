@@ -1786,6 +1786,31 @@ export_facade! {
     let output = client.ai_speech(&input)?;
     crate::codec::lift_record("ai.speech", &output)
 };
+"vault.voices.packs.put" => fn vault_voices_packs_put(&self, input: VoiceBankPackPutRequest) -> VoiceBankPackReceipt = |client| {
+    let input: oneiron::task_verb::sdk::VoiceBankPackPutRequest = crate::codec::lower_record("vault.voices.packs.put", input)?;
+    let output = client.vault_voices_packs_put(&input)?;
+    crate::codec::lift_record("vault.voices.packs.put", &output)
+};
+"vault.voices.render_consent" => fn vault_voices_render_consent(&self, input: VoiceRenderConsentRequest) -> VoiceRenderConsentReceipt = |client| {
+    let input: oneiron::task_verb::sdk::VoiceRenderConsentRequest = crate::codec::lower_record("vault.voices.render_consent", input)?;
+    let output = client.vault_voices_render_consent(&input)?;
+    crate::codec::lift_record("vault.voices.render_consent", &output)
+};
+"vault.voices.targets.provision" => fn vault_voices_targets_provision(&self, input: VoiceTargetProvisionRequest) -> VoiceTargetReceipt = |client| {
+    let input: oneiron::task_verb::sdk::VoiceTargetProvisionRequest = crate::codec::lower_record("vault.voices.targets.provision", input)?;
+    let output = client.vault_voices_targets_provision(&input)?;
+    crate::codec::lift_record("vault.voices.targets.provision", &output)
+};
+"vault.voices.targets.evict" => fn vault_voices_targets_evict(&self, input: VoiceTargetEvictRequest) -> VoiceTargetEvictReceipt = |client| {
+    let input: oneiron::task_verb::sdk::VoiceTargetEvictRequest = crate::codec::lower_record("vault.voices.targets.evict", input)?;
+    let output = client.vault_voices_targets_evict(&input)?;
+    crate::codec::lift_record("vault.voices.targets.evict", &output)
+};
+"vault.voices.inspect" => fn vault_voices_inspect(&self, input: VoiceBankInspectRequest) -> VoiceBankInspection = |client| {
+    let input: oneiron::task_verb::sdk::VoiceBankInspectRequest = crate::codec::lower_record("vault.voices.inspect", input)?;
+    let output = client.vault_voices_inspect(&input)?;
+    crate::codec::lift_record("vault.voices.inspect", &output)
+};
 "ai.transcribe" => fn ai_transcribe(&self, input: AiCallRequest) -> AiAnswer = |client| {
     let input: oneiron::task_verb::sdk::AiCallRequest = crate::codec::lower_record("ai.transcribe", input)?;
     let output = client.ai_transcribe(&input)?;
