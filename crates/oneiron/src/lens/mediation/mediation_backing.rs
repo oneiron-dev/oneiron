@@ -13,7 +13,7 @@ use crate::lens::wire_ids::{
 
 use super::{GeneratedUiValidatedAction, LensPrincipalBinding};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LensBackingTargetKind {
     Entity,
@@ -218,7 +218,7 @@ impl LensSpanCursor {
 /// The read reach a selection may carry: [`LensHandleRole`] minus
 /// [`LensHandleRole::ActionTarget`]. An action-target binding is reach for the action
 /// backchannel, so it can never be laundered into a selection handle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LensReadReach {
     ClaimSet,

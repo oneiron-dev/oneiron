@@ -15,8 +15,9 @@
 //! The app's keychain answers the secrets the config does not name. Its
 //! timer is armed for the Dreamer's next wake and wakes the engine back
 //! through [`EmbeddedHost::wake_handle`]. [`EmbeddedHost::stop_handle`] stops
-//! serving: connections drain, every socket upgraded on them ends, then every
-//! worker stops. No process signal is watched here.
+//! serving: connections drain and the mesh takes no more, every socket
+//! upgraded on either ends once the calls it admitted have, then every worker
+//! stops. No process signal is watched here.
 //!
 //! [`EmbeddedEngine`] is the whole of it for a binding: from a path and the
 //! app's host it opens the vault the way `oneiron serve` does
@@ -80,9 +81,9 @@ const RELAY_REFUSAL: &str =
 ///
 /// Ready is reported once every worker runs. When the app backgrounds it
 /// fires `host.stop_handle()` with `notify_one` and awaits this, which
-/// returns once connections have drained, every socket upgraded on them has
-/// ended and every worker has stopped. The app's timer stays armed for the
-/// next wake.
+/// returns once connections have drained, every socket upgraded on them or on
+/// the mesh has ended with the calls it admitted, and every worker has
+/// stopped. The app's timer stays armed for the next wake.
 ///
 /// Run it on a multi-thread Tokio runtime, outside a `LocalSet`, as
 /// [`crate::build_app`] says.
@@ -148,16 +149,24 @@ async fn serve_prepared<A: AppHost>(
     .await?;
     let next_wake = started.workers.ai().next_wake();
     let ai = started.workers.ai().handle();
+    let (stopping, mut stopped) = (started.stopping, started.stopped);
+    // Each socket upgraded on the app's channels or on the mesh holds a place
+    // in this drain from before its upgrade registers until it ends, which it
+    // does on the stop once the calls it admitted have finished. It is made
+    // before the router and the mesh, so every request either serves carries
+    // it.
+    let upgrades = UpgradeLifetime::new(stopped.clone());
     let mesh_server = Arc::clone(&started.server);
     let app = crate::build_app_for_position(started.server, DeploymentPosition::Embedded)
         .layer(cors_layer);
     let header_read_timeout = config.limits.connections().header_read_timeout;
     // The paired-machine mesh listener (OF-535): off unless the host names
-    // its bind address.
+    // its bind address. Its requests carry the drain as the channel's do.
+    let mesh_app = app.clone().layer(axum::Extension(upgrades.clone()));
     let mesh = crate::handler::mesh::start(
         Arc::clone(&mesh_server),
         &crate::handler::mesh::MeshConfig::from_env()?,
-        &app,
+        &mesh_app,
         config.limits.connections(),
     )
     .await?;
@@ -166,11 +175,7 @@ async fn serve_prepared<A: AppHost>(
     let device_sync =
         crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
     host.ready()?;
-    let (stopping, mut stopped) = (started.stopping, started.stopped);
-    // Each socket upgraded on the app's channels holds a place in this drain
-    // from before its upgrade registers until it ends, which it does on the
-    // stop. Each channel's HTTP connections are tasks of its set here.
-    let upgrades = UpgradeLifetime::new(stopped.clone());
+    // Each channel's HTTP connections are tasks of its set here.
     let (mut api_http, mut artifact_http) = (JoinSet::new(), JoinSet::new());
     let api = serve_channel(
         connections,
@@ -195,13 +200,22 @@ async fn serve_prepared<A: AppHost>(
         }
     };
     let stop = host.stop_handle();
+    let mut mesh_stopped = stopped.clone();
     let serving = async {
         let stop_on_app = async {
             stop.notified().await;
             tracing::info!("the app asked the engine to stop; finishing in-flight work");
             let _ = stopping.send(true);
         };
-        tokio::join!(stop_on_app, api, artifact);
+        // On the stop the mesh takes no more connections or streams, and its
+        // sync streams end as the channels' connections do, in the same grace.
+        let mesh_closing = async {
+            if let Some(mesh) = &mesh {
+                stop_turned(&mut mesh_stopped).await;
+                mesh.close_streams().await;
+            }
+        };
+        tokio::join!(stop_on_app, api, artifact, mesh_closing);
     };
     tokio::select! {
         () = serving => {}
@@ -214,12 +228,17 @@ async fn serve_prepared<A: AppHost>(
         () = forward_wakes(&mut host, next_wake, &ai) => {}
     }
     // Every connection closed, or the grace ran out and the race dropped the
-    // channels with some still open. Those are aborted and reaped here, so an
-    // upgrade one never finished releases its place in the drain. Each
-    // upgraded socket saw the stop and ends at its next await. Its drain is
-    // awaited here, outside the grace race: no worker stops under a socket.
+    // channels with some still open. Those, and the mesh's sync streams, are
+    // aborted and reaped here, so an upgrade one never finished releases its
+    // place in the drain. Each upgraded socket saw the stop: it stops reading
+    // at its next wait, closes, and ends once every call it admitted has.
+    // Its drain is awaited here, outside the grace race: no worker stops
+    // under a socket or a call one admitted.
     api_http.shutdown().await;
     artifact_http.shutdown().await;
+    if let Some(mesh) = &mesh {
+        mesh.end_streams().await;
+    }
     upgrades.drained().await;
     if let Some(device_sync) = device_sync {
         device_sync.stop().await;
@@ -256,11 +275,11 @@ fn apply_host_limits(config: &mut ServeConfig, host: HostLimits) {
         .min(host.memory_bytes / HOST_SCAN_BLOB_SHARE);
 }
 
-/// What a socket upgraded on an embedded engine's channel lives under
+/// What a socket upgraded on an embedded engine's channel or mesh lives under
 /// (OF-237): the engine's stop watch, and the drain serving awaits before any
-/// worker stops. [`serve_channel`] puts it on every request it serves; a
-/// server that is not embedded puts none, and its sockets run as they always
-/// have.
+/// worker stops. [`serve_channel`] puts it on every request it serves, and the
+/// mesh's router carries it as an extension; a server that is not embedded
+/// puts none, and its sockets run as they always have.
 #[derive(Clone)]
 struct UpgradeLifetime {
     stopped: watch::Receiver<bool>,
@@ -302,20 +321,49 @@ impl UpgradeHold {
         })
     }
 
-    /// Runs `socket`, an upgrade's whole callback, under `hold`: on the
-    /// engine's stop the callback is dropped wherever it waits, the hello and
-    /// blocked sends included, and with it the socket and every call it runs.
-    /// Without a hold `socket` runs as it is.
-    pub(crate) async fn run(hold: Option<Self>, socket: impl Future<Output = ()>) {
-        let Some(Self { mut stopped, place }) = hold else {
-            return socket.await;
+    /// Runs `socket`, an upgrade's whole callback, under `hold`, handing it
+    /// the engine's stop, which the callback answers itself: it stops reading
+    /// at its next wait, closes its transport and waits for every call it
+    /// admitted. Its place is released only once it has returned, so no call
+    /// is cut off and no worker stops under one. Without a hold the stop never
+    /// turns.
+    pub(crate) async fn run<F: Future<Output = ()>>(
+        hold: Option<Self>,
+        socket: impl FnOnce(UpgradeStop) -> F,
+    ) {
+        let (stop, place) = match hold {
+            Some(Self { stopped, place }) => (UpgradeStop(Some(stopped)), Some(place)),
+            None => (UpgradeStop(None), None),
         };
+        socket(stop).await;
+        drop(place);
+    }
+}
+
+/// An embedded engine's stop, as the socket [`UpgradeHold::run`] runs sees it
+/// (OF-237). A socket no embedded engine carried has one that never turns.
+#[derive(Clone)]
+pub(crate) struct UpgradeStop(Option<watch::Receiver<bool>>);
+
+impl UpgradeStop {
+    /// Returns once the engine stops, and at once from then on; never for a
+    /// socket outside an embedded engine.
+    pub(crate) async fn turned(&mut self) {
+        match &mut self.0 {
+            Some(stopped) => stop_turned(stopped).await,
+            None => std::future::pending().await,
+        }
+    }
+
+    /// `wait` until the engine stops: `None` when the stop came first and
+    /// `wait` was dropped where it waited. Only for a wait on the peer or on a
+    /// turn, never for a call the socket admitted.
+    pub(crate) async fn until<T>(&mut self, wait: impl Future<Output = T>) -> Option<T> {
         tokio::select! {
             biased;
-            () = stop_turned(&mut stopped) => {}
-            () = socket => {}
+            () = self.turned() => None,
+            done = wait => Some(done),
         }
-        drop(place);
     }
 }
 

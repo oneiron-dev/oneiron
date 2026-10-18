@@ -6,6 +6,8 @@ not a claim that every engine-internal method is a public SDK verb.
 Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one change.
 
+- `fetch`
+- `crawl`
 - `report`
 - `feedback.preview`
 - `feedback.send`
@@ -78,6 +80,13 @@ both bindings and their export-census tests in one change.
 - `vault.tagging.history`
 - `vault.tagging.mentions`
 - `vault.affect.claims.consolidate`
+- `vault.affect.coping.record`
+- `vault.affect.coping.update`
+- `vault.affect.coping.aggregate`
+- `vault.affect.wellness.policy.get`
+- `vault.affect.wellness.policy.configure`
+- `vault.affect.wellness.derive`
+- `vault.affect.wellness.get`
 - `vault.retrieval.recall`
 - `vault.retrieval.runs`
 - `vault.retrieval.run`
@@ -95,6 +104,8 @@ both bindings and their export-census tests in one change.
 - `vault.receipts`
 - `vault.images.view`
 - `vault.receipts.get`
+- `self.admission.status`
+- `self.admission.receipts`
 - `vault.explain.memory`
 - `vault.explain.gate`
 - `vault.kv.get`
@@ -156,6 +167,18 @@ both bindings and their export-census tests in one change.
 - `vault.skills.permissions.approve`
 - `vault.skills.optimize.start`
 - `vault.skills.optimize.result`
+- `vault.projects.goal.intake.complete`
+- `vault.projects.goal.get`
+- `vault.skills.optimize.propose`
+- `vault.skills.optimize.measure`
+- `vault.skills.optimize.score`
+- `vault.skills.optimize.admit`
+- `vault.skills.optimize.goal.get`
+- `vault.skills.optimize.goal.bind`
+- `vault.skills.optimize.preferences.get`
+- `vault.skills.optimize.preferences.set`
+- `vault.skills.optimize.tradeoff_asks`
+- `vault.skills.optimize.tradeoff_asks.pick`
 - `vault.skills.governance.get`
 - `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
@@ -268,6 +291,18 @@ both bindings and their export-census tests in one change.
 - `vault.research.archive.coverage`
 - `vault.evals.inventory`
 - `vault.evals.cohorts.setup`
+- `vault.evals.author_now`
+- `vault.evals.authoring.result`
+- `vault.evals.families`
+- `vault.evals.families.assign`
+- `vault.evals.cases`
+- `vault.evals.cases.record`
+- `vault.evals.cohorts`
+- `vault.evals.cohorts.open`
+- `vault.evals.exposure`
+- `vault.evals.sufficiency`
+- `vault.evals.labels.blocked`
+- `vault.evals.labels.pick`
 - `vault.coach.training_offers`
 - `vault.coach.training_offers.get`
 - `vault.coach.training_offers.trigger`
@@ -373,6 +408,9 @@ both bindings and their export-census tests in one change.
 - `vault.lenses.activate`
 - `vault.lenses.deactivate`
 - `vault.lenses.list`
+- `vault.lenses.select`
+- `vault.lenses.resolve`
+- `vault.lenses.result_set.action`
 - `vault.lenses.default`
 - `vault.disclosure.offer`
 - `reveal`
@@ -426,6 +464,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_settle`
 - `vault.code.proposal_settlement`
 - `vault.code.oplog`
+- `execute_code`
 - `vault.code.model_heal_count`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`
@@ -604,6 +643,10 @@ both bindings and their export-census tests in one change.
 - `vault.remember`
 - `vault.claims.retract`
 - `vault.forget`
+- `vault.booking.availability`
+- `vault.booking.book`
+- `vault.booking.reschedule`
+- `vault.booking.cancel`
 - `vault.booking.constraint_turn`
 - `vault.booking.page_token`
 - `calendar.invite`
@@ -756,3 +799,7 @@ both bindings and their export-census tests in one change.
 - `self.run.attach`
 - `self.folds.describe`
 - `self.history`
+- `vault.runs.review`
+- `vault.runs.settle`
+- `vault.runs.settlement`
+- `vault.revert_run`

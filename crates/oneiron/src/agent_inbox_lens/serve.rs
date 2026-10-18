@@ -110,17 +110,23 @@ impl From<AgentInboxLensItem> for InboxLensRow {
             },
             pile: match item.kind {
                 AgentInboxItemKind::Conversation => InboxLensPile::Conversations,
-                AgentInboxItemKind::ApprovalRequired | AgentInboxItemKind::Concern => InboxLensPile::WaitingOnYou,
+                AgentInboxItemKind::ApprovalRequired | AgentInboxItemKind::Concern => {
+                    InboxLensPile::WaitingOnYou
+                }
                 AgentInboxItemKind::CoordinationUpdate => InboxLensPile::Updates,
             },
             thread_ref: item.thread_ref,
             identity: item.identity_ref.to_hex(),
             actor: item.actor_ref.to_hex(),
             facet: item.facet_ref.map(|id| id.to_hex()),
-            participants: item.participants.into_iter().map(|p| InboxLensParticipant {
-                identity: p.identity_ref.to_hex(),
-                actor: p.actor_ref.to_hex(),
-            }).collect(),
+            participants: item
+                .participants
+                .into_iter()
+                .map(|p| InboxLensParticipant {
+                    identity: p.identity_ref.to_hex(),
+                    actor: p.actor_ref.to_hex(),
+                })
+                .collect(),
             impact: item.impact.0,
             occurred_at: item.occurred_at,
             receipt_ref: item.receipt_ref,
@@ -141,26 +147,44 @@ impl From<AgentInboxLensItem> for InboxLensRow {
 }
 
 fn entity(reference: &str) -> MemoryResult<EntityId> {
-    EntityId::from_hex(reference).map_err(|_| MemoryError::bad_request("inbox filters name 32-hex entity ids"))
+    EntityId::from_hex(reference)
+        .map_err(|_| MemoryError::bad_request("inbox filters name 32-hex entity ids"))
 }
 
-fn page(vault: &Vault, input: &InboxLensRequest, actor: Option<EntityId>) -> MemoryResult<InboxLensPage> {
+fn page(
+    vault: &Vault,
+    input: &InboxLensRequest,
+    actor: Option<EntityId>,
+) -> MemoryResult<InboxLensPage> {
     let before = match (input.before_impact, input.before_at, &input.before_id) {
         (Some(impact), Some(at), Some(id)) => Some((InboxImpact(impact), at, id.clone())),
         (None, None, None) => None,
-        _ => return Err(MemoryError::bad_request("before_impact, before_at and before_id go together")),
+        _ => {
+            return Err(MemoryError::bad_request(
+                "before_impact, before_at and before_id go together",
+            ));
+        }
     };
     let identity = input.identity.as_deref().map(entity).transpose()?;
     let limit = input.limit.unwrap_or(50).min(200);
     let items = match actor {
         Some(actor) => vault.agent_identity_inbox_slice(actor, identity, limit, before)?,
-        None => vault.agent_inbox_lens(AgentInboxLensQuery { identity_ref: identity, limit, before })?,
+        None => vault.agent_inbox_lens(AgentInboxLensQuery {
+            identity_ref: identity,
+            limit,
+            before,
+        })?,
     };
     let items: Vec<InboxLensRow> = items.into_iter().map(InboxLensRow::from).collect();
     let mut concern_groups: Vec<InboxConcernGroup> = Vec::new();
     for row in &items {
-        let Some(concern) = &row.concern else { continue };
-        match concern_groups.iter_mut().find(|group| group.agent == concern.agent) {
+        let Some(concern) = &row.concern else {
+            continue;
+        };
+        match concern_groups
+            .iter_mut()
+            .find(|group| group.agent == concern.agent)
+        {
             Some(group) => group.items.push(row.item_id.clone()),
             None => concern_groups.push(InboxConcernGroup {
                 agent: concern.agent.clone(),
@@ -168,7 +192,10 @@ fn page(vault: &Vault, input: &InboxLensRequest, actor: Option<EntityId>) -> Mem
             }),
         }
     }
-    Ok(InboxLensPage { items, concern_groups })
+    Ok(InboxLensPage {
+        items,
+        concern_groups,
+    })
 }
 
 impl Memory<'_> {
@@ -176,8 +203,16 @@ impl Memory<'_> {
     /// one of its identities. Filtering happens before page truncation.
     pub fn inbox_lens(&self, input: &InboxLensRequest) -> MemoryResult<InboxLensPage> {
         crate::memory::verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        if input.agent.as_deref().map(entity).transpose()?.is_some_and(|id| id != self.actor()) {
-            return Err(MemoryError::bad_request("an inbox reader cannot select another actor"));
+        if input
+            .agent
+            .as_deref()
+            .map(entity)
+            .transpose()?
+            .is_some_and(|id| id != self.actor())
+        {
+            return Err(MemoryError::bad_request(
+                "an inbox reader cannot select another actor",
+            ));
         }
         page(self.vault(), input, Some(self.actor()))
     }
@@ -191,16 +226,26 @@ impl Memory<'_> {
     ) -> MemoryResult<InboxLensPage> {
         self.inbox_owner(owner)?;
         if input.identity.is_some() && input.agent.is_some() {
-            return Err(MemoryError::bad_request("filter by identity or by agent, not both"));
+            return Err(MemoryError::bad_request(
+                "filter by identity or by agent, not both",
+            ));
         }
-        page(self.vault(), input, input.agent.as_deref().map(entity).transpose()?)
+        page(
+            self.vault(),
+            input,
+            input.agent.as_deref().map(entity).transpose()?,
+        )
     }
 
     fn inbox_owner(&self, owner: &AuthenticatedOwner) -> MemoryResult<()> {
-        if self.actor_class() != EdgeActorClass::Human || owner.revalidate(self.vault())? != self.actor() {
-            return Err(MemoryError::new(crate::memory::MEMORY_CODE_FORBIDDEN,
+        if self.actor_class() != EdgeActorClass::Human
+            || owner.revalidate(self.vault())? != self.actor()
+        {
+            return Err(MemoryError::new(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
                 "the owner inbox requires the owner's own credential handle",
-                &["Present the owner's own verified, unattenuated credential."]));
+                &["Present the owner's own verified, unattenuated credential."],
+            ));
         }
         Ok(())
     }
@@ -214,7 +259,8 @@ impl Memory<'_> {
     ) -> MemoryResult<Vec<crate::inbox::InboxGroup>> {
         self.inbox_owner(owner)?;
         Ok(self.vault().inbox_groups(crate::inbox::InboxQuery::at(
-            self.vault().now_recorded_at(), input.limit.unwrap_or(50).min(200),
+            self.vault().now_recorded_at(),
+            input.limit.unwrap_or(50).min(200),
         ))?)
     }
 }
@@ -225,4 +271,3 @@ pub struct InboxRunGroupsRequest {
     #[serde(default)]
     pub limit: Option<usize>,
 }
-

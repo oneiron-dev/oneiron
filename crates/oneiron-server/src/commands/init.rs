@@ -236,6 +236,19 @@ fn open_vault(answers: &InitArgs, config: &ServeConfig) -> anyhow::Result<oneiro
         }
         super::owner::ensure_page_seal_wrapped(&vault, &config.vault_path)?;
     }
+    // This install's own machine profile (FIX 4648), only on a vault the
+    // configured host root already roots: a new vault's first serving start
+    // roots it and profiles this install then. Init never mints a root.
+    if let Some(issuer) = super::owner::configured_host_issuer(config, &vault)
+        && vault
+            .authority_fold()
+            .is_ok_and(|fold| fold.vault_id.is_some())
+    {
+        if !vault.vault_pages_sealed() {
+            config.keystore.install_on(&vault, &config.vault_path);
+        }
+        vault.ensure_serving_install_profile_at_start(Some(&issuer), "init");
+    }
     Ok(vault)
 }
 
