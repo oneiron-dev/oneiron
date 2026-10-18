@@ -17,13 +17,17 @@ MANIFEST = json.loads((Path(__file__).with_name('agent-verbs.json')).read_text()
 # keeps the run's own input and binding. The name, scope and reply stay one row.
 HOST_RUN_ROWS = [row for row in MANIFEST['verbs'] if 'host' in row]
 for row in HOST_RUN_ROWS:
-    if row.get('context') != 'run' or set(row['host']) != {'input', 'description'}:
-        raise ValueError(f'{row["name"]}: a host projection names the run row public input and description')
+    host = row['host']
+    if (row.get('context') != 'run' or not {'input', 'description'} <= set(host)
+            or set(host) - {'input', 'description', 'host_door_caller', 'host_door_session'}
+            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session') if key in host)):
+        raise ValueError(f'{row["name"]}: a host projection names the run row public input and description, with optional caller and session flags')
 ROWS = [row for row in MANIFEST['verbs'] if 'call' in row] + [
     {'name': row['name'], 'input': row['host']['input'], 'output': row['output'],
      'description': row['host']['description'], 'scope': row['scope'],
      'call': f'crate::task_verb::sdk::host_only(memory, "{row["name"]}", &input)?',
-     'host_door': True, 'host_door_session': True,
+     'host_door': True, 'host_door_session': row['host'].get('host_door_session', True),
+     'host_door_caller': row['host'].get('host_door_caller', False),
      'admission': {'unrestricted_record_scope': True}, 'section': False}
     for row in HOST_RUN_ROWS
 ]

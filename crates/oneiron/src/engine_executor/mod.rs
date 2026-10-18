@@ -14,6 +14,7 @@ mod compaction;
 mod compaction_host;
 pub mod continuation;
 mod driver;
+pub mod history;
 mod host;
 mod record;
 mod repl;
