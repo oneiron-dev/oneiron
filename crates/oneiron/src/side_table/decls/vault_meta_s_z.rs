@@ -443,6 +443,9 @@ side_tables! {
     SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
     /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
     SKILL_OPTIMIZE_JUDGE_LABEL: VaultMeta b"skill_optimize:judge_label:v1:" LegacyJson;
+    /// The judge rubric the label anchor was last reconciled with: its text digest and the
+    /// `judge` revision read (MessagePack named map). Key: ().
+    SKILL_OPTIMIZE_JUDGE_RUBRIC: VaultMeta b"skill_optimize:judge_rubric:v1" Named;
     /// One Coach training offer snapshot for a seat (OF-577), written once. Key: id16 (offer).
     SKILL_OPTIMIZE_OFFER: VaultMeta b"skill_optimize:offer:v1:" Named;
     /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
