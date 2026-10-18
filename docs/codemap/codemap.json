@@ -12026,7 +12026,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -49959,6 +49959,28 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FanoutBatchInput",
+      "FanoutBatchView",
+      "FanoutChildInput",
+      "FanoutChildSlot",
+      "FanoutLeaseView",
+      "FanoutSharedAccounting",
+      "FanoutSlotAttempt",
+      "FanoutSlotState",
+      "FanoutSlotTerminal"
+     ],
+     "path": "src/task_verb/fanout_batch.rs",
+     "purpose": "Typed batched child admission and input-order observations over the wave launch gate",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -49978,7 +50000,7 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "enum": 1,
       "fn": 5,
       "struct": 1
@@ -50461,7 +50483,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 52,
+      "re-export": 53,
       "struct": 36
      }
     },
@@ -50842,7 +50864,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 668
+      "fn": 670
      }
     },
     {
@@ -51833,7 +51855,7 @@
      "path": "src/task_verb/wave_port.rs",
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -57905,7 +57927,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 166,
+     "files": 167,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58075,7 +58097,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3543,
+   "source_files": 3544,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66584,7 +66606,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 618
+      "fn": 620
      }
     },
     {
@@ -67633,7 +67655,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 619
+      "fn": 621
      }
     },
     {
@@ -70976,7 +70998,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -79943,12 +79965,21 @@
       "FamilyDecision",
       "FamilyPurpose",
       "FanoutAckRequest",
+      "FanoutBatchInput",
+      "FanoutBatchView",
       "FanoutCheckChoice",
+      "FanoutChildInput",
+      "FanoutChildSlot",
       "FanoutLaunchHold",
       "FanoutLaunchRequest",
       "FanoutLaunchRuling",
       "FanoutLaunchView",
+      "FanoutLeaseView",
       "FanoutResumeRequest",
+      "FanoutSharedAccounting",
+      "FanoutSlotAttempt",
+      "FanoutSlotState",
+      "FanoutSlotTerminal",
       "FanoutStatement",
       "FatalLlmError",
       "FederationDirectionScope",
@@ -80219,6 +80250,7 @@
       "LinearProvenanceRequest",
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
+      "LiveRunRequestFanoutBatchInput",
       "LiveRunRequestLeaderSplitInput",
       "LiveRunRequestMemorySupersedeInput",
       "LiveRunRequestSecretGrantMintRequest",
@@ -81465,8 +81497,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 586,
-      "struct": 1655
+      "enum": 587,
+      "struct": 1664
      }
     },
     {
