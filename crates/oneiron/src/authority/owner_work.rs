@@ -22,11 +22,13 @@
 //! requests its parents carry. A replaced request with no result is still
 //! its executor's to answer.
 //!
-//! The fold reads no owner or Grant liveness, for this act kind as for every
-//! other one: the writer and the executor check that the owner is live in
-//! their own transactions. Neither op rides a side branch
-//! ([`super::world_privacy::side_world`] is `None`), so every proven linked
-//! machine folds both.
+//! As for every act kind, an owner the request's parents hold removed carries
+//! no say-so ([`super::owner_act::owner_live_at`], mesh contract §4), and the
+//! writer and the executor each check the owner live in their own
+//! transactions too. An agent's act is refused by its shape: key, custody and
+//! root work is owner-only until a Grant line names it. Neither op rides a
+//! side branch ([`super::world_privacy::side_world`] is `None`), so every
+//! proven linked machine folds both.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -245,8 +247,12 @@ fn apply_request(
     let narrow_only =
         !standing.admits_owner_act_signer(request.carrier, &key, StandingView::Install);
     drop(standing);
+    // A carrier the one rule does not admit, or an owner the request's
+    // parents hold removed (mesh contract §4), records a valid request
+    // without effect.
+    let live = admitted && super::owner_act::owner_live_at(state, request.act.owner);
     let work = &mut state.owner_work;
-    if !admitted {
+    if !live {
         work.refused.insert(hash);
         return Ok(());
     }

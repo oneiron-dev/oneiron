@@ -1013,6 +1013,7 @@
      "path": "src/agent_dispatch/planner_live/intent.rs",
      "purpose": "The reserved spawn intent (DOOR-111 S2): the owner's planned spawn, durable under its intent key",
      "surface": {
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -1023,7 +1024,17 @@
      "path": "src/agent_dispatch/planner_live/root_plan.rs",
      "purpose": "The owner's root plan (DOOR-111 S3): the live planner a leased parent's spawn reads, for a spawn the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/team_launch.rs",
+     "purpose": "The owner's planned launch (DOOR-111 S4a): a planned intent's plan, launched at the root as one group",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -2613,7 +2624,8 @@
      "path": "src/authority/grant_travel_door.rs",
      "purpose": "The signed half of the owner's grant travel door (FIX 2998)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -2841,6 +2853,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_answers.rs",
+     "purpose": "The owner's machine answers as one install writes them (mesh PR1b): he enrols, re-marks and removes a…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -2874,10 +2897,30 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 11,
+      "fn": 9,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_profile/apply.rs",
+     "purpose": "The fold transitions of a machine revision: a roster revision, an owner anchor's mark, and the checks every…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_profile/merge.rs",
+     "purpose": "How a machine's chains merge across branches: a higher revision supersedes, divergent profiles at one…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -2891,10 +2934,10 @@
       "SignerClass",
       "TrustedMachine"
      ],
-     "path": "src/authority/machine_profile.rs",
+     "path": "src/authority/machine_profile/mod.rs",
      "purpose": "Folds `MachineProfile` entries into each physical machine's standing",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 15,
       "struct": 4
@@ -2904,10 +2947,21 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/machine_profile/owner_answers.rs",
+     "purpose": "The owner's machine answers (mesh PR1b): a profile revision that carries his act ([`OwnerAct`]), signed by…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/machine_standing.rs",
      "purpose": "A machine's standing as the owner-act fold reads it: each chain's revisions, the carrier rule and its…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -2991,7 +3045,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1
      }
     },
@@ -3115,7 +3169,28 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_pairing/code.rs",
+     "purpose": "A pairing code and its link: the typed code, its keyed row hash, the binding transcript the joining device…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_pairing/issue.rs",
+     "purpose": "Issuing a single-use pairing link, the owner's answer for a machine it adds included",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "PairingDescriptor",
@@ -3124,11 +3199,32 @@
       "PairingPrincipal",
       "PairingRedeemed"
      ],
-     "path": "src/authority/slip_pairing.rs",
+     "path": "src/authority/slip_pairing/mod.rs",
      "purpose": "Single-use pairing links bind a throwaway key and mint one log-backed slip",
      "surface": {
-      "fn": 16,
+      "fn": 2,
+      "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_pairing/principal.rs",
+     "purpose": "What a pairing link's principal may name: its facets and an organization's administration powers",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_pairing/redeem.rs",
+     "purpose": "Redeeming a pairing link: the slip, and the profile of a machine the link adds, in one transaction",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -11786,8 +11882,18 @@
      "path": "src/code_run/consent_wait/mod.rs",
      "purpose": "Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/consent_wait/replay.rs",
+     "purpose": "The parked run's side of a code consent wait (DOOR-079 1b)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -11815,7 +11921,7 @@
      "path": "src/code_run/consent_wait/types.rs",
      "purpose": "The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 3,
       "fn": 3,
       "struct": 3
@@ -11920,7 +12026,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -12479,7 +12585,7 @@
      "path": "src/code_run/storage/wait_delivery.rs",
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 9,
       "struct": 3
      }
@@ -22801,7 +22907,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 25
      }
     },
     {
@@ -32316,6 +32422,16 @@
      "purpose": "Scope-honesty world names come only from actor-admitted claim rows",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/speculative.rs",
+     "purpose": "Bind OF-108 to the same credential, selected worlds and policy as recall",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -45794,10 +45910,21 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 5,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/speculative/scoped.rs",
+     "purpose": "Credential-bound candidate admission, inside every speculative pass",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3
      }
     },
     {
@@ -49832,6 +49959,28 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FanoutBatchInput",
+      "FanoutBatchView",
+      "FanoutChildInput",
+      "FanoutChildSlot",
+      "FanoutLeaseView",
+      "FanoutSharedAccounting",
+      "FanoutSlotAttempt",
+      "FanoutSlotState",
+      "FanoutSlotTerminal"
+     ],
+     "path": "src/task_verb/fanout_batch.rs",
+     "purpose": "Typed batched child admission and input-order observations over the wave launch gate",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -49851,7 +50000,7 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "enum": 1,
       "fn": 5,
       "struct": 1
@@ -50226,11 +50375,16 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CancelForceReceipt",
       "CancelForceRequest",
+      "ConsultDisposition",
+      "ConsultInspection",
+      "ConsultReadRequest",
+      "ConsultSummaryView",
+      "ConsultTerminalView",
       "RunBranchView",
       "RunBranchesRequest",
       "RunBranchesView"
@@ -50238,8 +50392,9 @@
      "path": "src/task_verb/run_doors.rs",
      "purpose": "The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)…",
      "surface": {
-      "fn": 2,
-      "struct": 5
+      "enum": 2,
+      "fn": 3,
+      "struct": 8
      }
     },
     {
@@ -50328,7 +50483,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 51,
+      "re-export": 53,
       "struct": 36
      }
     },
@@ -50371,6 +50526,28 @@
      "surface": {
       "enum": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AsrCloseRequest",
+      "AsrClosed",
+      "AsrFinalDecision",
+      "AsrFinalReceipt",
+      "AsrFireDecision",
+      "AsrHypothesisReceipt",
+      "AsrHypothesisRequest",
+      "AsrOpenRequest",
+      "AsrSession"
+     ],
+     "path": "src/task_verb/sdk_asr.rs",
+     "purpose": "Host-enriched ASR observations over one owner-bound speculative recall session",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "struct": 7
      }
     },
     {
@@ -50687,7 +50864,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 663
+      "fn": 670
      }
     },
     {
@@ -51678,7 +51855,7 @@
      "path": "src/task_verb/wave_port.rs",
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -51734,7 +51911,6 @@
       "ResolvedTeam",
       "RouteObservation",
       "SkillRevisionView",
-      "SpawnPhase",
       "TaskTypeNodeSpec",
       "TaskTypeNodeView",
       "TaskTypeTreePin",
@@ -51750,7 +51926,7 @@
      "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and…",
      "surface": {
       "const": 1,
-      "enum": 4,
+      "enum": 3,
       "fn": 3,
       "struct": 23
      }
@@ -51820,9 +51996,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "PatternLaunchRunner",
+      "PatternLaunchSpec",
       "PatternSkill",
       "TeamAxis",
       "TeamPattern"
@@ -51834,7 +52012,8 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 7,
-      "struct": 1
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -51912,10 +52091,10 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "PlannedIntentPhase",
       "PlannedIntentView",
       "PlannedSpawnHost",
-      "PlannedSpawnRequest"
+      "PlannedSpawnRequest",
+      "SpawnPhase"
      ],
      "path": "src/team/spawn_intent.rs",
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
@@ -56411,7 +56590,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56460,7 +56639,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 149,
+     "files": 157,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56635,7 +56814,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 84,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57237,7 +57416,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 171,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57685,10 +57864,10 @@
      "purpose": "SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder"
     },
     "speculative": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
@@ -57748,7 +57927,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 165,
+     "files": 167,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57918,7 +58097,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3530,
+   "source_files": 3544,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58054,9 +58233,9 @@
      "path": "src/authority/grant_travel.rs",
      "purpose": "The owner's choice of the born-with text one federation grant's windows carry to another vault (OF-491, FIX…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -58088,10 +58267,10 @@
      "path": "src/authority/machine_profile.rs",
      "purpose": "The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 5,
       "enum": 3,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -58120,7 +58299,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -66427,7 +66606,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 613
+      "fn": 620
      }
     },
     {
@@ -67476,7 +67655,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 614
+      "fn": 621
      }
     },
     {
@@ -70339,7 +70518,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -70390,6 +70569,16 @@
      "purpose": "Typed publication and private preview doors under each caller's own proof",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/asr_doors.rs",
+     "purpose": "The owner's host-enriched ASR door",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -70569,7 +70758,7 @@
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -70759,7 +70948,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 117
+      "crate-vis": 118
      }
     },
     {
@@ -70809,7 +70998,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -71839,7 +72028,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -72090,6 +72279,16 @@
      "purpose": "`/v1/owner/legal-holds`: the owner's legal holds (OF-470), behind the same owner door as every other owner…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/machine_routes.rs",
+     "purpose": "`/v1/owner/machines`: the owner's answer for each of his linked machines (mesh PR1b)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -78427,7 +78626,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 377,
+     "files": 379,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78849,7 +79048,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 713,
+   "source_files": 715,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79188,6 +79387,15 @@
       "AskRole",
       "AskTo",
       "AsofScrubberAtom",
+      "AsrCloseRequest",
+      "AsrClosed",
+      "AsrFinalDecision",
+      "AsrFinalReceipt",
+      "AsrFireDecision",
+      "AsrHypothesisReceipt",
+      "AsrHypothesisRequest",
+      "AsrOpenRequest",
+      "AsrSession",
       "AssetRef",
       "AttemptCancelPressure",
       "AttemptCancelReceipt",
@@ -79492,7 +79700,12 @@
       "ConsolidationPromoteRequest",
       "ConsolidationPromotion",
       "ConsolidationRejection",
+      "ConsultDisposition",
+      "ConsultInspection",
       "ConsultPayloadRef",
+      "ConsultReadRequest",
+      "ConsultSummaryView",
+      "ConsultTerminalView",
       "ContentPart",
       "ContextDefault",
       "ContextEmitReceipt",
@@ -79752,12 +79965,21 @@
       "FamilyDecision",
       "FamilyPurpose",
       "FanoutAckRequest",
+      "FanoutBatchInput",
+      "FanoutBatchView",
       "FanoutCheckChoice",
+      "FanoutChildInput",
+      "FanoutChildSlot",
       "FanoutLaunchHold",
       "FanoutLaunchRequest",
       "FanoutLaunchRuling",
       "FanoutLaunchView",
+      "FanoutLeaseView",
       "FanoutResumeRequest",
+      "FanoutSharedAccounting",
+      "FanoutSlotAttempt",
+      "FanoutSlotState",
+      "FanoutSlotTerminal",
       "FanoutStatement",
       "FatalLlmError",
       "FederationDirectionScope",
@@ -80028,6 +80250,7 @@
       "LinearProvenanceRequest",
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
+      "LiveRunRequestFanoutBatchInput",
       "LiveRunRequestLeaderSplitInput",
       "LiveRunRequestMemorySupersedeInput",
       "LiveRunRequestSecretGrantMintRequest",
@@ -81274,8 +81497,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 582,
-      "struct": 1645
+      "enum": 587,
+      "struct": 1664
      }
     },
     {

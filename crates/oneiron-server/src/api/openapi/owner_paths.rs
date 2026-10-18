@@ -821,6 +821,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: Some("vault.legal_holds.widen"),
     },
     OwnerRoute {
+        method: "get",
+        path: "/machines/answer",
+        summary: "One machine's answer (`?machine=<id>`): its role, the carrier of the owner's standing answer, and the revision a surface presents back as seen.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/machines/answer",
+        summary: "The owner marks or re-marks one of his machines yours, work or school, or rented, from any linked surface; a stale seen is a conflict.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/machines/remove",
+        summary: "The owner removes one of his machines, terminally; a stale seen is a conflict.",
+        row: None,
+    },
+    OwnerRoute {
         method: "post",
         path: "/maintain",
         summary: "Every housekeeping sweep now, due or not, as oneiron maintain runs them on a stopped vault.",

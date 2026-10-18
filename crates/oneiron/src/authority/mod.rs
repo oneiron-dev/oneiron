@@ -74,6 +74,7 @@ mod invocation_slip;
 mod left_notices;
 mod log_budget;
 mod log_structure;
+mod machine_answers;
 mod machine_claims;
 mod machine_enroll;
 mod machine_identity;
@@ -268,7 +269,8 @@ use ancestor_index::*;
 pub(crate) use anchor_marks::anchor_mark_stands;
 use entry_transition::*;
 use machine_profile::{
-    KeyClaim, MachineChain, apply_anchor_profile, apply_machine_profile, merge_machine_maps,
+    KeyClaim, MachineChain, MarkProof, apply_anchor_profile, apply_machine_profile,
+    merge_machine_maps,
 };
 pub(crate) use machine_write::{
     evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,

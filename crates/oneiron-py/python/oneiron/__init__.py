@@ -757,6 +757,9 @@ class Oneiron:
         def runs(self) -> "Oneiron._VaultRunsVerbs":
             return Oneiron._VaultRunsVerbs(self._client)
         @property
+        def consults(self) -> "Oneiron._VaultConsultsVerbs":
+            return Oneiron._VaultConsultsVerbs(self._client)
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
         @property
@@ -882,6 +885,12 @@ class Oneiron:
     class _VaultFanoutVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def spawn(self, spec):
+            """Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_spawn(json.dumps(spec))))
+        def slots(self, spec):
+            """Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_slots(json.dumps(spec))))
         def launch(self, spec):
             """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."""
             return json.loads(_translate(lambda: self._client.vault_fanout_launch(json.dumps(spec))))
@@ -2541,6 +2550,12 @@ class Oneiron:
         def get(self, spec):
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
             return json.loads(_translate(lambda: self._client.vault_runs_branches_get(json.dumps(spec))))
+    class _VaultConsultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies."""
+            return json.loads(_translate(lambda: self._client.vault_consults_get(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3276,6 +3291,9 @@ class Oneiron:
     class _AiVoiceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def asr(self) -> "Oneiron._AiVoiceAsrVerbs":
+            return Oneiron._AiVoiceAsrVerbs(self._client)
         def start(self, spec):
             """Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."""
             return json.loads(_translate(lambda: self._client.ai_voice_start(json.dumps(spec))))
@@ -3300,6 +3318,21 @@ class Oneiron:
         def close(self, spec):
             """Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."""
             return json.loads(_translate(lambda: self._client.ai_voice_close(json.dumps(spec))))
+    class _AiVoiceAsrVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, spec):
+            """Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline."""
+            return json.loads(_translate(lambda: self._client.ai_voice_asr_open(json.dumps(spec))))
+        def hypothesis(self, spec):
+            """Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt."""
+            return json.loads(_translate(lambda: self._client.ai_voice_asr_hypothesis(json.dumps(spec))))
+        def finalize(self, spec):
+            """Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting."""
+            return json.loads(_translate(lambda: self._client.ai_voice_asr_finalize(json.dumps(spec))))
+        def close(self, spec):
+            """Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval."""
+            return json.loads(_translate(lambda: self._client.ai_voice_asr_close(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
