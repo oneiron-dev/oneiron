@@ -64,8 +64,15 @@ pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<Ver
 /// not the facade's credential-bound live-run wrapper. All other hooks and
 /// rewrite admission stay the same as [`row_pre`].
 pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    row_pre_resumable(memory, verb, args, None, None, crate::task_verb::sdk::validate_browser_input)?
-        .map_err(stopped)
+    row_pre_resumable(
+        memory,
+        verb,
+        args,
+        None,
+        None,
+        crate::task_verb::sdk::validate_browser_input,
+    )?
+    .map_err(stopped)
 }
 
 /// [`row_pre`] with the stop as it is. `resume` is how settlement runs the

@@ -82,6 +82,7 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.replay`
 - `vault.export`
 - `self.credential.attenuate`
+- `vault.scope.position`
 - `vault.scope.ceiling`
 - `vault.export.scoped`
 - `vault.receipts`
@@ -333,6 +334,9 @@ both bindings and their export-census tests in one change.
 - `vault.shares.revoke`
 - `vault.shares.view`
 - `vault.hooks.replay`
+- `vault.hooks.regen.due`
+- `vault.hooks.regen.get`
+- `vault.hooks.regen.adopt`
 - `vault.artifacts.publish_approval`
 - `vault.artifacts.publish`
 - `vault.artifacts.repoint`
@@ -362,6 +366,12 @@ both bindings and their export-census tests in one change.
 - `vault.code.symbols.renew`
 - `vault.code.symbols.release`
 - `vault.code.proposal_submit`
+- `vault.code.conflict_record`
+- `vault.code.conflict_view`
+- `vault.code.proposal_resolve`
+- `vault.code.proposal_review`
+- `vault.code.proposal_settle`
+- `vault.code.proposal_settlement`
 - `vault.code.oplog`
 - `vault.code.model_heal_count`
 - `vault.code.waits.resolve`
@@ -543,6 +553,14 @@ both bindings and their export-census tests in one change.
 - `vault.forget`
 - `vault.booking.constraint_turn`
 - `vault.booking.page_token`
+- `calendar.invite`
+- `calendar.connector.configure`
+- `calendar.connector.get`
+- `calendar.connector.pull`
+- `calendar.connector.write`
+- `calendar.connector.kill`
+- `calendar.imip.configure`
+- `calendar.imip.get`
 - `vault.calendar.create`
 - `vault.calendar.ics.import`
 - `vault.calendar.occurrences`
@@ -644,6 +662,9 @@ both bindings and their export-census tests in one change.
 - `vault.summaries.proposals.merge`
 - `vault.summaries.proposals.switch`
 - `vault.summaries.proposals.reject`
+- `vault.notes.bless_brief_kind`
+- `vault.notes.author_brief`
+- `vault.notes.follow_citation`
 - `vault.notes.create`
 - `vault.notes.author_take`
 - `vault.notes.from_entity`

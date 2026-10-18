@@ -10,17 +10,17 @@ use serde::{Deserialize, Serialize};
 const BRIEF_KIND_CONTRACT: SideTable<(), BriefKindContract, LegacyJson> =
     SideTable::new(&side_table::NOTE_BRIEF_KIND_CONTRACT);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NoteExtractionDefault {
     Disabled,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NoteContextDefault {
     RelationshipScoped,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NoteRetentionDefault {
     Durable,
@@ -69,12 +69,6 @@ impl Memory<'_> {
     /// Install the pack's pinned policy seed. Only a store-verified person can
     /// stamp it; an agent cannot bless its own namespace or change defaults.
     pub fn bless_brief_kind(&self) -> MemoryResult<BriefKindContract> {
-        if self.actor_class() != EdgeActorClass::Human {
-            return Err(MemoryError::bad_request_with(
-                "brief policy must be person-stamped",
-                &[],
-            ));
-        }
         let value = BriefKindContract {
             version: 1,
             person: self.actor(),
@@ -83,6 +77,12 @@ impl Memory<'_> {
             retention: NoteRetentionDefault::Durable,
         };
         self.with_verified_actor_write_txn(|txn| {
+            if self.actor_class() != EdgeActorClass::Human {
+                return Err(MemoryError::bad_request_with(
+                    "brief policy must be person-stamped",
+                    &[],
+                ));
+            }
             if let Some(contract) = BRIEF_KIND_CONTRACT.get(&self.vault().store, txn, &())? {
                 if contract.version != 1 {
                     return Err(invalid_contract().into());

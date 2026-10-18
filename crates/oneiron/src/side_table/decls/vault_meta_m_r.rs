@@ -242,9 +242,11 @@ side_tables! {
     /// Key: bytes (channel-identity envelope ref).
     OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE: VaultMeta b"outbound_grant:channel_identity_usage:v1:" Raw;
     /// An own actor's latest advisory rate crossing per kind. Key: id16 + kind token.
-    OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named;
+    OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named
+        => crate::own_rate::erase_check_actor_in_txn;
     /// An own actor's act count in its current window per kind. Key: id16 + kind token.
-    OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named;
+    OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named
+        => crate::own_rate::erase_window_actor_in_txn;
     /// Owner policy-row change event. Key: event id.
     OWNER_POLICY_CHANGE_EVENT: VaultMeta b"owner_policy:change:event:v1:" Raw;
     /// Pending owner policy-row change proposal. Key: proposal id.
@@ -275,6 +277,12 @@ side_tables! {
     /// Receipt of one owner change to a world's privacy settings on this machine, in revision
     /// order. Key: u64be revision.
     OWNER_POLICY_WORLD_PRIVACY_RECEIPT: VaultMeta b"owner_policy:world_privacy:receipt:v1:" Named;
+    /// An agent's world-privacy proposal or a widen ask, frozen, with its settlement (FIX 4480).
+    /// Key: request id.
+    OWNER_POLICY_WORLD_PRIVACY_REQUEST: VaultMeta b"owner_policy:world_privacy:request:v1:" Named;
+    /// The "widen needs every owner" row: the vault's setting and per-world overrides (FIX 4480).
+    /// Key: ().
+    OWNER_POLICY_WORLD_PRIVACY_UNANIMITY: VaultMeta b"owner_policy:world_privacy:unanimity:v1" Named;
     /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
@@ -413,11 +421,14 @@ side_tables! {
     /// A cross-project widen ask a project raised on another board. Key: id16 (ask id).
     PROJECT_WIDEN_ASK: VaultMeta b"project.widen_ask.v1/" Raw;
     /// Number and first threshold-crossing for one actor. Key: id16.
-    PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named;
+    PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named
+        => crate::gate::proposal_observation::erase_count_actor_in_txn;
     /// Immutable receipt for one actor and monotonically increasing submission count. Key: id16 ":" u64be.
-    PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named;
+    PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named
+        => crate::gate::proposal_observation::erase_history_actor_in_txn;
     /// Latest receipt keyed by actor id16 ":" proposal identity string.
-    PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named;
+    PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named
+        => crate::gate::proposal_observation::erase_submission_actor_in_txn;
     /// Born-from index over row births (Rule A trigger). Key: id16 (trigger ref) + id16 (born row).
     PROVENANCE_BIRTH_BY_TRIGGER: VaultMeta b"provenance:birth_by_trigger:v1:" Raw;
     /// Body descriptor: owner, occurrence, complete/incomplete state. Key: id16 (owner) + id16
