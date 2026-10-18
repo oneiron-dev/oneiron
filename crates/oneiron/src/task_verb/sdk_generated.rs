@@ -308,6 +308,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RecallRequest>(),
             ),
             (
+                "vault.retrieval.aging.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.retrieval.aging.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest,
+                >(),
+            ),
+            (
                 "vault.retrieval.weights.get",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -2003,6 +2013,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.checkout.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::CheckoutDoorBindRequest,
+                >(),
+            ),
+            (
+                "vault.code.checkout.claim",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::checkout_doors::CheckoutClaimInput,
+                >(),
+            ),
+            (
+                "vault.code.checkout.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::checkout_doors::CheckoutGetInput,
+                >(),
+            ),
+            (
+                "vault.code.checkout.renew",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::checkout_doors::CheckoutRenewInput,
+                >(),
+            ),
+            (
+                "vault.code.checkout.reclaim",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::checkout_doors::CheckoutReclaimInput,
+                >(),
+            ),
+            (
+                "vault.code.checkout.takeover",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::checkout_doors::CheckoutTakeoverInput,
+                >(),
+            ),
+            (
+                "vault.code.checkout.publish",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::checkout_doors::CheckoutPublishInput,
+                >(),
+            ),
+            (
+                "vault.code.checkout.settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::checkout_doors::CheckoutSettleInput,
+                >(),
+            ),
+            (
+                "vault.code.checkout.teardown",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::checkout_doors::CheckoutTeardownInput,
                 >(),
             ),
             (
@@ -3864,6 +3922,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.lease.top_up",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.retrieval.aging.get",
+    "vault.retrieval.aging.configure",
     "vault.retrieval.weights.get",
     "vault.retrieval.weights.configure",
     "vault.affect.annotations.put",
@@ -4029,6 +4089,14 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
     "vault.code.checkout.bind",
+    "vault.code.checkout.claim",
+    "vault.code.checkout.get",
+    "vault.code.checkout.renew",
+    "vault.code.checkout.reclaim",
+    "vault.code.checkout.takeover",
+    "vault.code.checkout.publish",
+    "vault.code.checkout.settle",
+    "vault.code.checkout.teardown",
     "vault.code.snapshots.ingest",
     "vault.code.snapshots.get",
     "vault.code.snapshots.read",
@@ -4221,6 +4289,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
+        >(),
+        "vault.retrieval.aging.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::ClaimAgingProfilesView,
+        >(),
+        "vault.retrieval.aging.configure" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::ClaimAgingProfilesReceipt,
         >(),
         "vault.retrieval.weights.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::RetrievalWeightsView,
@@ -4724,6 +4798,30 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.checkout.bind" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CheckoutDoorBinding,
+        >(),
+        "vault.code.checkout.claim" => crate::code_run::vault_read::request_schema::<
+            crate::memory::checkout_doors::CheckoutLeaseView,
+        >(),
+        "vault.code.checkout.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::checkout_doors::CheckoutLeaseView,
+        >(),
+        "vault.code.checkout.renew" => crate::code_run::vault_read::request_schema::<
+            crate::memory::checkout_doors::CheckoutLeaseView,
+        >(),
+        "vault.code.checkout.reclaim" => crate::code_run::vault_read::request_schema::<
+            crate::memory::checkout_doors::CheckoutLeaseView,
+        >(),
+        "vault.code.checkout.takeover" => crate::code_run::vault_read::request_schema::<
+            crate::memory::checkout_doors::CheckoutLeaseView,
+        >(),
+        "vault.code.checkout.publish" => crate::code_run::vault_read::request_schema::<
+            crate::memory::checkout_doors::CheckoutPublished,
+        >(),
+        "vault.code.checkout.settle" => crate::code_run::vault_read::request_schema::<
+            crate::memory::checkout_doors::CheckoutSettled,
+        >(),
+        "vault.code.checkout.teardown" => crate::code_run::vault_read::request_schema::<
+            crate::memory::checkout_doors::CheckoutTornDown,
         >(),
         "vault.code.snapshots.ingest" => crate::code_run::vault_read::request_schema::<
             crate::memory::codebase_doors::CodeSnapshotView,
@@ -5640,6 +5738,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.aging.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.aging.configure" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7758,6 +7870,62 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.checkout.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.claim" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.renew" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.reclaim" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.takeover" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.publish" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.teardown" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10196,6 +10364,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_as_of(input.as_of)?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
+        "vault.retrieval.aging.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.aging.configure" => {
+            let _input: crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest =
+                decode(value.clone())?;
+        }
         "vault.retrieval.weights.get" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -11214,6 +11389,34 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.checkout.bind" => {
             let _input: crate::memory::origin_doors::CheckoutDoorBindRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.checkout.claim" => {
+            let _input: crate::memory::checkout_doors::CheckoutClaimInput = decode(value.clone())?;
+        }
+        "vault.code.checkout.get" => {
+            let _input: crate::memory::checkout_doors::CheckoutGetInput = decode(value.clone())?;
+        }
+        "vault.code.checkout.renew" => {
+            let _input: crate::memory::checkout_doors::CheckoutRenewInput = decode(value.clone())?;
+        }
+        "vault.code.checkout.reclaim" => {
+            let _input: crate::memory::checkout_doors::CheckoutReclaimInput =
+                decode(value.clone())?;
+        }
+        "vault.code.checkout.takeover" => {
+            let _input: crate::memory::checkout_doors::CheckoutTakeoverInput =
+                decode(value.clone())?;
+        }
+        "vault.code.checkout.publish" => {
+            let _input: crate::memory::checkout_doors::CheckoutPublishInput =
+                decode(value.clone())?;
+        }
+        "vault.code.checkout.settle" => {
+            let _input: crate::memory::checkout_doors::CheckoutSettleInput = decode(value.clone())?;
+        }
+        "vault.code.checkout.teardown" => {
+            let _input: crate::memory::checkout_doors::CheckoutTeardownInput =
                 decode(value.clone())?;
         }
         "vault.code.snapshots.ingest" => {
@@ -12539,6 +12742,10 @@ pub fn invoke(
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
+        "vault.retrieval.aging.get" => encode(vault_retrieval_aging_get(memory, decode(value)?)?),
+        "vault.retrieval.aging.configure" => {
+            encode(vault_retrieval_aging_configure(memory, decode(value)?)?)
+        }
         "vault.retrieval.weights.get" => {
             encode(vault_retrieval_weights_get(memory, decode(value)?)?)
         }
@@ -13115,6 +13322,22 @@ pub fn invoke(
             encode(vault_code_origin_publications(memory, decode(value)?)?)
         }
         "vault.code.checkout.bind" => encode(vault_code_checkout_bind(memory, decode(value)?)?),
+        "vault.code.checkout.claim" => encode(vault_code_checkout_claim(memory, decode(value)?)?),
+        "vault.code.checkout.get" => encode(vault_code_checkout_get(memory, decode(value)?)?),
+        "vault.code.checkout.renew" => encode(vault_code_checkout_renew(memory, decode(value)?)?),
+        "vault.code.checkout.reclaim" => {
+            encode(vault_code_checkout_reclaim(memory, decode(value)?)?)
+        }
+        "vault.code.checkout.takeover" => {
+            encode(vault_code_checkout_takeover(memory, decode(value)?)?)
+        }
+        "vault.code.checkout.publish" => {
+            encode(vault_code_checkout_publish(memory, decode(value)?)?)
+        }
+        "vault.code.checkout.settle" => encode(vault_code_checkout_settle(memory, decode(value)?)?),
+        "vault.code.checkout.teardown" => {
+            encode(vault_code_checkout_teardown(memory, decode(value)?)?)
+        }
         "vault.code.snapshots.ingest" => {
             encode(vault_code_snapshots_ingest(memory, decode(value)?)?)
         }
@@ -14360,6 +14583,27 @@ pub fn vault_recall(
     crate::memory::caps::check_as_of(input.as_of)?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::recall_unembedded(memory, input)
+}
+pub fn vault_retrieval_aging_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_manifest_doors::ClaimAgingProfilesView> {
+    crate::policy_manifest_doors::claim_aging_profiles_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.retrieval.aging.get")?,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_retrieval_aging_configure(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest,
+) -> MemoryResult<crate::policy_manifest_doors::ClaimAgingProfilesReceipt> {
+    crate::policy_manifest_doors::configure_claim_aging_profiles_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.retrieval.aging.configure")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_retrieval_weights_get(
     memory: &Memory<'_>,
@@ -16875,6 +17119,54 @@ pub fn vault_code_checkout_bind(
     input: crate::memory::origin_doors::CheckoutDoorBindRequest,
 ) -> MemoryResult<crate::memory::origin_doors::CheckoutDoorBinding> {
     memory.checkout_door_bind_as(&memory.embedded_owner("vault.code.checkout.bind")?, input)
+}
+pub fn vault_code_checkout_claim(
+    memory: &Memory<'_>,
+    input: crate::memory::checkout_doors::CheckoutClaimInput,
+) -> MemoryResult<crate::memory::checkout_doors::CheckoutLeaseView> {
+    crate::task_verb::sdk::host_only(memory, "vault.code.checkout.claim", &input)
+}
+pub fn vault_code_checkout_get(
+    memory: &Memory<'_>,
+    input: crate::memory::checkout_doors::CheckoutGetInput,
+) -> MemoryResult<crate::memory::checkout_doors::CheckoutLeaseView> {
+    crate::task_verb::sdk::host_only(memory, "vault.code.checkout.get", &input)
+}
+pub fn vault_code_checkout_renew(
+    memory: &Memory<'_>,
+    input: crate::memory::checkout_doors::CheckoutRenewInput,
+) -> MemoryResult<crate::memory::checkout_doors::CheckoutLeaseView> {
+    crate::task_verb::sdk::host_only(memory, "vault.code.checkout.renew", &input)
+}
+pub fn vault_code_checkout_reclaim(
+    memory: &Memory<'_>,
+    input: crate::memory::checkout_doors::CheckoutReclaimInput,
+) -> MemoryResult<crate::memory::checkout_doors::CheckoutLeaseView> {
+    crate::task_verb::sdk::host_only(memory, "vault.code.checkout.reclaim", &input)
+}
+pub fn vault_code_checkout_takeover(
+    memory: &Memory<'_>,
+    input: crate::memory::checkout_doors::CheckoutTakeoverInput,
+) -> MemoryResult<crate::memory::checkout_doors::CheckoutLeaseView> {
+    crate::task_verb::sdk::host_only(memory, "vault.code.checkout.takeover", &input)
+}
+pub fn vault_code_checkout_publish(
+    memory: &Memory<'_>,
+    input: crate::memory::checkout_doors::CheckoutPublishInput,
+) -> MemoryResult<crate::memory::checkout_doors::CheckoutPublished> {
+    crate::task_verb::sdk::host_only(memory, "vault.code.checkout.publish", &input)
+}
+pub fn vault_code_checkout_settle(
+    memory: &Memory<'_>,
+    input: crate::memory::checkout_doors::CheckoutSettleInput,
+) -> MemoryResult<crate::memory::checkout_doors::CheckoutSettled> {
+    crate::task_verb::sdk::host_only(memory, "vault.code.checkout.settle", &input)
+}
+pub fn vault_code_checkout_teardown(
+    memory: &Memory<'_>,
+    input: crate::memory::checkout_doors::CheckoutTeardownInput,
+) -> MemoryResult<crate::memory::checkout_doors::CheckoutTornDown> {
+    crate::task_verb::sdk::host_only(memory, "vault.code.checkout.teardown", &input)
 }
 pub fn vault_code_snapshots_ingest(
     memory: &Memory<'_>,

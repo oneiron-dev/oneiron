@@ -62,6 +62,8 @@ impl PipelineBuilder<'_> {
                 temporal_report: None,
             });
         }
+        self.claim_aging_profiles =
+            crate::gate::policy_manifest_doors::claim_aging_profiles_for_run(self.vault)?;
         if let Some(weights) =
             crate::gate::policy_manifest_doors::retrieval_weights_for_run(self.vault)?
         {
