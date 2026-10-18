@@ -154,9 +154,40 @@ const FACADE_PREFIX: &str = "/v1/core/facade/";
 /// The owner's own nest (`/v1/owner`), any method.
 const OWNER_PREFIX: &str = "/v1/owner/";
 
+/// The app's action transport: `POST /v1/core/actions/{verb}`.
+const ACTIONS_PREFIX: &str = "/v1/core/actions/";
+
+/// A held lens card's transports: `POST /v1/core/lens-frames/{card_id}/events`
+/// and `DELETE /v1/core/lens-frames/{card_id}`.
+const LENS_FRAMES_PREFIX: &str = "/v1/core/lens-frames/";
+
 /// Whether a `ManagedOwnerAction` may name the owner for this request.
 fn owner_attestable(method: &Method, path: &str) -> bool {
-    (*method == Method::POST && path.starts_with(FACADE_PREFIX)) || path.starts_with(OWNER_PREFIX)
+    (*method == Method::POST && path.starts_with(FACADE_PREFIX))
+        || path.starts_with(OWNER_PREFIX)
+        || action_or_frame_attestable(method, path)
+}
+
+/// The owner's action and frame transports, each matched exactly (WILL-PLAN
+/// L13 row 01): `POST /v1/core/actions/{verb}`, `POST
+/// /v1/core/lens-frames/{card_id}/events` and `DELETE
+/// /v1/core/lens-frames/{card_id}`, each `{..}` one non-empty path segment.
+/// No other `/v1/core/*` route: the action list, a live run's attach and
+/// every REST route stay unattested. The assertion is verified over the
+/// method, path, placing headers and exact body as for the facade.
+fn action_or_frame_attestable(method: &Method, path: &str) -> bool {
+    let segment = |rest: &str| !rest.is_empty() && !rest.contains('/');
+    if *method == Method::POST {
+        path.strip_prefix(ACTIONS_PREFIX).is_some_and(segment)
+            || path
+                .strip_prefix(LENS_FRAMES_PREFIX)
+                .and_then(|rest| rest.strip_suffix("/events"))
+                .is_some_and(segment)
+    } else if *method == Method::DELETE {
+        path.strip_prefix(LENS_FRAMES_PREFIX).is_some_and(segment)
+    } else {
+        false
+    }
 }
 
 struct HttpMutation(Arc<ManagedState>);
