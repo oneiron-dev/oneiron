@@ -629,6 +629,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "get",
+        path: "/federation/grant-travel",
+        summary: "One federation grant's bound travel choice (`?grant=<id>`), with when it was set; travel and set are null when none is bound, so its windows send no text. An id naming no federation grant is not found.",
+        row: None,
+    },
+    OwnerRoute {
         method: "post",
         path: "/federation/grant-travel",
         summary: "Binds or clears one live grant's travel choice.",

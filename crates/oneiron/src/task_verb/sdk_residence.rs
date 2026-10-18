@@ -3,8 +3,11 @@
 //! caches, as owner-vault rows that name the machine they act on. The named
 //! machine's own `SyncConnection` applies each one; a host reaches it
 //! through the connection it registered for that machine id, and an
-//! embedded handle reaches none. The engine types have no wire form, so the
-//! inputs and answers are spelled here.
+//! embedded handle reaches none. A machine the host reaches no connection
+//! for gets the row as the owner's residence directive, and each answer
+//! then says so (`state: "queued"`, FIX 3570) instead of what the machine
+//! did. The engine types have no wire form, so the inputs and answers are
+//! spelled here.
 
 use serde::{Deserialize, Serialize};
 
@@ -83,6 +86,59 @@ pub struct ResidencePruneRequest {
     /// Opened-item caches last touched before this (recorded-clock unix
     /// seconds) are dropped.
     pub before: u64,
+}
+
+/// A residence row the host relayed as the owner's residence directive,
+/// because the named machine runs no sync connection it reaches (FIX 3570):
+/// accepted, not executed. The machine applies it once when it next syncs
+/// and records the directive's result; the same row again, while this one
+/// is pending, answers this same directive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResidenceQueued {
+    /// The queued residence directive, 32 hex.
+    pub directive: EntityId,
+    /// The machine it waits for, 32 hex.
+    pub machine: EntityId,
+}
+
+/// `vault.residence.mode`'s answer: what the switch did on the machine, or
+/// the directive queued for it. `state` says which; an applied answer
+/// carries [`ResidenceModeChanged`]'s fields beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ResidenceModeAnswer {
+    Applied(ResidenceModeChanged),
+    Queued(ResidenceQueued),
+}
+
+/// `vault.residence.open`'s answer: the item the machine opened, or the
+/// directive queued for it. `state` says which; an applied answer carries
+/// [`ResidenceOpened`]'s fields beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ResidenceOpenAnswer {
+    Applied(Box<ResidenceOpened>),
+    Queued(ResidenceQueued),
+}
+
+/// `vault.residence.index`'s answer: the machine's thin index, or the
+/// directive queued for it. `state` says which; an applied answer carries
+/// [`ResidenceIndex`]'s fields beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ResidenceIndexAnswer {
+    Applied(ResidenceIndex),
+    Queued(ResidenceQueued),
+}
+
+/// `vault.residence.prune`'s answer: what the prune dropped on the
+/// machine, or the directive queued for it. `state` says which; an applied
+/// answer carries [`ResidencePruned`]'s fields beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ResidencePruneAnswer {
+    Applied(ResidencePruned),
+    Queued(ResidenceQueued),
 }
 
 /// What switching the machine's residence mode did.
@@ -174,7 +230,7 @@ pub struct ResidenceIndexWindowView {
     pub items: Vec<ResidenceIndexEntry>,
 }
 
-/// `vault.residence.index`'s answer.
+/// The machine's thin index, window by window.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResidenceIndex {
     pub windows: Vec<ResidenceIndexWindowView>,
@@ -202,7 +258,7 @@ impl From<Vec<ResidenceIndexWindow>> for ResidenceIndex {
     }
 }
 
-/// `vault.residence.prune`'s answer.
+/// What a prune dropped on the machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResidencePruned {
     /// Opened-item caches dropped.
