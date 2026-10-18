@@ -24,8 +24,8 @@ use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{
-    WitnessMessageAuthorization, WitnessMessageEnvelope, check_witness_message_ceiling,
-    resolve_policy_manifest,
+    WitnessMessageAuthorization, WitnessMessageEnvelope, check_witness_message_ceiling_with_permit,
+    coach_offer_question_permit_in_txn, resolve_policy_manifest,
 };
 use crate::off_record::OffRecordSession;
 use crate::ports::{EntityRecord, EntityStoreRead};
@@ -857,13 +857,27 @@ impl Memory<'_> {
         let write_actor = WriteActor::new(self.actor, self.actor_class);
         let mut authorized = Vec::with_capacity(plan.messages.len());
         for planned in &plan.messages {
-            authorized.push(check_witness_message_ceiling(
+            // The Coach's own question about a pending training offer may
+            // carry its scoped reach to the System-author floor (OF-577);
+            // every other message carries none.
+            let permit = coach_offer_question_permit_in_txn(
+                self.vault,
+                wtxn,
+                write_actor,
+                plan.conversation_id,
+                plan.turn_id,
+                planned.id,
+                &planned.envelope,
+                &policy,
+            )?;
+            authorized.push(check_witness_message_ceiling_with_permit(
                 &self.vault.store,
                 wtxn,
                 write_actor,
                 &planned.envelope,
                 &planned.body,
                 &policy,
+                permit.as_ref(),
             )?);
         }
 

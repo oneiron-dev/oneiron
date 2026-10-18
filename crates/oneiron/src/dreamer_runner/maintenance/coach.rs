@@ -420,6 +420,7 @@ impl Vault {
             let owners = crate::policy_model::owners_in_txn(self, &*txn)?;
             notify_offer_in_txn(self, txn, &owners, &offer)
         })?;
+        crate::task_verb::issue_training_offer_asks(self, now);
         // The digest deadline re-reads: a pending offer arms it.
         self.store.notify_proactivity_changes();
         Ok(offer)
@@ -611,7 +612,9 @@ pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
             )?;
         }
         Ok(())
-    })
+    })?;
+    crate::task_verb::issue_training_offer_asks(vault, now);
+    Ok(())
 }
 
 /// The autoresearch tick: one selection round for each bound campaign the
