@@ -68,10 +68,10 @@ pub(super) const MAX_INVARIANT_NODES: usize = 256;
 /// Widest accepted array inside `expected` / `actual` / `delta`.
 pub(super) const MAX_INVARIANT_WIDTH: usize = 64;
 
-/// Most events one detector run may persist.
-///
-/// A detector that trips this is malfunctioning, and a malfunctioning detector
-/// must not be able to fill the vault with its own noise.
+/// The old per-run event ceiling. Detector, signed and tripwire runs now keep
+/// every event and ask past their `[limits]` rows (`limits.detector_events`
+/// and its siblings, whose default this was); the served-signal reads and the
+/// healer proposal bound still read it.
 pub(super) const MAX_EVENTS_PER_RUN: usize = 1024;
 
 /// The closed self-healing event vocabulary.
