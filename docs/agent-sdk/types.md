@@ -2311,6 +2311,8 @@ class Oneiron:
     class _VaultSearchVerbs:
         def hybrid(self, input: Facade.HybridSearchRequest) -> Facade.ScopedReadResult[list[Facade.HybridSearchHit]]:
             """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
+        def temporal(self, input: Facade.TemporalSearchRequest) -> Facade.ScopedReadResult[Facade.TemporalSearchResult]:
+            """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
         def bm25(self, input: Facade.QueryBm25Request) -> Facade.ScopedReadResult[list[Facade.LexicalHit]]:
             """BM25 text search over the engine index; surfaceable claims only."""
     class _VaultStructuralVerbs:
@@ -2429,6 +2431,8 @@ class Oneiron:
     class _VaultNotesVerbs:
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
+        def author_take(self, input: Facade.AuthorTakeRequest) -> Facade.EntityRefReceipt:
+            """Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."""
         def from_entity(self, input: Facade.CreateNoteFromEntityRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind from an existing entity."""
         def read(self, input: Facade.NoteReadRequest) -> Facade.ScopedReadResult[Facade.NoteReadView | None]:

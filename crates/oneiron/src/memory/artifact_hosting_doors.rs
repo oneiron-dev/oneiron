@@ -26,11 +26,15 @@ impl Memory<'_> {
         input: ArtifactPublishRequest,
     ) -> MemoryResult<ArtifactPublishVerbRequest> {
         self.artifact_hosting_owner(owner)?;
-        let export_owner = self.vault.resolve_export_owner(&input.artifact, input.export)?
+        let export_owner = self
+            .vault
+            .resolve_export_owner(&input.artifact, input.export)?
             .ok_or_else(|| MemoryError::not_found("artifact export is absent or withheld"))?;
         self.produced_from([export_owner]);
         if self.get_entity(&export_owner.to_hex())?.value.is_none() {
-            return Err(MemoryError::not_found("artifact export is absent or withheld"));
+            return Err(MemoryError::not_found(
+                "artifact export is absent or withheld",
+            ));
         }
         Ok(ArtifactPublishVerbRequest {
             artifact: input.artifact,
@@ -50,7 +54,10 @@ impl Memory<'_> {
     ) -> MemoryResult<ArtifactPublishApproval> {
         let request = self.artifact_publish_request_as(owner, input)?;
         Ok(ArtifactPublishApproval {
-            effect_digest: self.vault.artifact_publish_approval_digest(&request)?.to_hex(),
+            effect_digest: self
+                .vault
+                .artifact_publish_approval_digest(&request)?
+                .to_hex(),
         })
     }
 
@@ -75,13 +82,22 @@ impl Memory<'_> {
         input: ArtifactPointerRequest,
     ) -> MemoryResult<Option<ArtifactPointer>> {
         self.artifact_hosting_owner(owner)?;
-        let Some(pointer) = self.vault.artifact_pointer(&input.artifact, input.channel)? else {
+        let Some(pointer) = self
+            .vault
+            .artifact_pointer(&input.artifact, input.channel)?
+        else {
             return Ok(None);
         };
-        let export_owner = self.vault.resolve_export_owner(&pointer.artifact, pointer.export)?
+        let export_owner = self
+            .vault
+            .resolve_export_owner(&pointer.artifact, pointer.export)?
             .ok_or_else(|| MemoryError::not_found("artifact export is absent or withheld"))?;
         self.produced_from([export_owner]);
-        Ok(self.get_entity(&export_owner.to_hex())?.value.is_some().then_some(pointer))
+        Ok(self
+            .get_entity(&export_owner.to_hex())?
+            .value
+            .is_some()
+            .then_some(pointer))
     }
 
     pub fn artifact_unpublish_as(
@@ -91,7 +107,10 @@ impl Memory<'_> {
     ) -> MemoryResult<ArtifactUnpublished> {
         let visible = self.artifact_pointer_as(owner, input.clone())?.is_some();
         Ok(ArtifactUnpublished {
-            removed: visible && self.vault.unpublish_artifact_pointer(&input.artifact, input.channel)?,
+            removed: visible
+                && self
+                    .vault
+                    .unpublish_artifact_pointer(&input.artifact, input.channel)?,
         })
     }
 

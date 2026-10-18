@@ -511,6 +511,7 @@ both bindings and their export-census tests in one change.
 - `vault.refs.resolve`
 - `vault.refs.links`
 - `vault.search.hybrid`
+- `vault.search.temporal`
 - `vault.search.bm25`
 - `vault.neighbors`
 - `vault.structural.put`
@@ -590,6 +591,7 @@ both bindings and their export-census tests in one change.
 - `vault.summaries.proposals.switch`
 - `vault.summaries.proposals.reject`
 - `vault.notes.create`
+- `vault.notes.author_take`
 - `vault.notes.from_entity`
 - `vault.notes.read`
 - `vault.notes.history`

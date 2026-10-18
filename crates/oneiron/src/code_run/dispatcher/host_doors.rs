@@ -135,11 +135,17 @@ impl<'a> HostSelfDispatcher<'a> {
         let binding = self.task_host_binding()?.ok_or_else(|| {
             MemoryError::bad_request("a batch requires its caller's acquired parent lease")
         })?;
-        let _run_writes = self.agent_lease.as_ref().map(crate::skill_attribution::enter_run_writes);
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
         let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
-            return Err(MemoryError::bad_request("a batch requires canonical live-run storage"));
+            return Err(MemoryError::bad_request(
+                "a batch requires canonical live-run storage",
+            ));
         };
-        vault.memory(self.actor.entity_ref(), self.actor.actor_class())
+        vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
             .with_read_proof(proof)
             .at(locality)
             .with_task_host(binding)

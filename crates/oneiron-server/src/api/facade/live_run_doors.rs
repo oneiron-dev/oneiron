@@ -94,11 +94,13 @@ pub(crate) async fn vault_fanout_spawn(
     let locality = auth.locality();
     let proof = match auth.verified_slip() {
         Some(proof) => proof.clone(),
-        None => return super::host_doors::refused(MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "a batch requires the attached run's own verified credential",
-            &[],
-        )),
+        None => {
+            return super::host_doors::refused(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "a batch requires the attached run's own verified credential",
+                &[],
+            ));
+        }
     };
     let principal = match facade_actor(server, auth) {
         Ok((actor, _)) => actor,
@@ -111,12 +113,15 @@ pub(crate) async fn vault_fanout_spawn(
         input.live_run,
         "vault.fanout.spawn",
         move |dispatcher| {
-            let deadline = oneiron::retrieval_depth::RetrievalDeadline::after(crate::decision_host::WAVE_FANOUT_BUDGET);
+            let deadline = oneiron::retrieval_depth::RetrievalDeadline::after(
+                crate::decision_host::WAVE_FANOUT_BUDGET,
+            );
             let host = decisions_server.decision_host();
             let decisions = host.wave_fanout_decisions(principal, &deadline);
             dispatcher.spawn_fanout_from_host(input.spec, &proof, locality, Some(&decisions))
         },
-    ).await;
+    )
+    .await;
     super::host_doors::naming(answer, oneiron::task_verb::sdk::fanout_batch_rows)
 }
 

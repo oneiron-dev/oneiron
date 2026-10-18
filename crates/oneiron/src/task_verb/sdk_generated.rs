@@ -2875,6 +2875,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::HybridSearchRequest>(),
             ),
             (
+                "vault.search.temporal",
+                crate::code_run::vault_read::request_schema::<crate::memory::TemporalSearchRequest>(
+                ),
+            ),
+            (
                 "vault.search.bm25",
                 crate::code_run::vault_read::request_schema::<QueryBm25Request>(),
             ),
@@ -3766,6 +3771,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.search",
     "vault.calendar.freebusy",
     "vault.search.hybrid",
+    "vault.search.temporal",
     "vault.productivity.create",
     "vault.productivity.tree",
     "vault.consolidation.promote",
@@ -4457,6 +4463,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.search.hybrid" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>,
+        >(),
+        "vault.search.temporal" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>,
         >(),
         "vault.productivity.create" => {
             crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
@@ -8231,6 +8240,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.search.temporal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.search.bm25" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -10824,6 +10840,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: crate::memory::HybridSearchRequest = decode(value.clone())?;
             input.validate()?;
         }
+        "vault.search.temporal" => {
+            let input: crate::memory::TemporalSearchRequest = decode(value.clone())?;
+            input.validate()?;
+        }
         "vault.search.bm25" => {
             let input: QueryBm25Request = decode(value.clone())?;
             crate::memory::caps::check_query(&input.query)?;
@@ -12059,6 +12079,7 @@ pub fn invoke(
         "vault.refs.resolve" => encode(vault_refs_resolve(memory, decode(value)?)?),
         "vault.refs.links" => encode(vault_refs_links(memory, decode(value)?)?),
         "vault.search.hybrid" => encode(vault_search_hybrid(memory, decode(value)?)?),
+        "vault.search.temporal" => encode(vault_search_temporal(memory, decode(value)?)?),
         "vault.search.bm25" => encode(vault_search_bm25(memory, decode(value)?)?),
         "vault.neighbors" => encode(vault_neighbors(memory, decode(value)?)?),
         "vault.structural.put" => encode(vault_structural_put(memory, decode(value)?)?),
@@ -16799,6 +16820,13 @@ pub fn vault_search_hybrid(
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>> {
     input.validate()?;
     memory.query_hybrid(&input)
+}
+pub fn vault_search_temporal(
+    memory: &Memory<'_>,
+    input: crate::memory::TemporalSearchRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>> {
+    input.validate()?;
+    memory.query_temporal(&input)
 }
 pub fn vault_search_bm25(
     memory: &Memory<'_>,
