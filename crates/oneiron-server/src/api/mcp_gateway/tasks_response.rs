@@ -895,6 +895,7 @@ fn mcp_agent_verb_input(
         "vault.claims.upsert" => a.spec.clone().ok_or_else(invalid),
         "vault.recall" => a.spec.clone().ok_or_else(invalid),
         "vault.export" => a.spec.clone().ok_or_else(invalid),
+        "self.credential.attenuate" => a.spec.clone().ok_or_else(invalid),
         "vault.scope.ceiling" => a.spec.clone().ok_or_else(invalid),
         "vault.export.scoped" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts" => a.spec.clone().ok_or_else(invalid),
@@ -1676,6 +1677,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.export" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.credential.attenuate" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.scope.ceiling" => {
@@ -3897,6 +3901,25 @@ async fn execute_agent_verb_row(
                 memory.export_with_verified_owner(&input, proof)
             }
             .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.credential.attenuate" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.credential.attenuate", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CredentialAttenuationRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::self_credential_attenuate(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

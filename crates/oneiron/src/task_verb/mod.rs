@@ -280,6 +280,7 @@ mod sdk_connector;
 mod sdk_connector_call;
 mod sdk_connector_pack;
 mod sdk_courtesy_delete;
+mod sdk_credential;
 mod sdk_diary;
 mod sdk_disclosure;
 mod sdk_embedding_space;
