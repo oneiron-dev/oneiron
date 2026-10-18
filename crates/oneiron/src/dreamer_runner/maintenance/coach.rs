@@ -157,7 +157,6 @@ const MAINTENANCE_FACETS: [&str; 10] = [
     COACH_ROOM_UPKEEP_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
-const READ_HARDENING_RUNS: usize = 256;
 const MAX_PERSON_THRESHOLD_BATCH: usize = 1024;
 /// How long a pending tradeoff ask waits on one rung before it climbs. Canon
 /// names no window: one night apart, less an hour of wake jitter, so a
@@ -555,7 +554,7 @@ impl Vault {
 /// the same runs writes the same events again, and a miss already answered
 /// files no second reindex.
 pub(super) fn run_read_hardening(vault: &Vault, now: u64) -> Result<()> {
-    let misses = vault.run_retrieval_miss_detector(READ_HARDENING_SCOPE, READ_HARDENING_RUNS)?;
+    let misses = vault.run_retrieval_miss_detector(READ_HARDENING_SCOPE, usize::MAX)?;
     vault.propose_tier1_repairs(&misses, now)?;
     Ok(())
 }

@@ -65,10 +65,11 @@ impl ActionModePolicy {
         Ok(())
     }
 
-    /// Measures the policy against its `[limits]` rows (OF-520): its bands
-    /// and its longest mode. Past one the vault's port asks, and the policy
-    /// is kept whole.
+    /// Measures the policy against its `[limits]` rows (OF-520): its window,
+    /// its bands and its longest mode. Past one the vault's port asks, and
+    /// the policy is kept whole.
     fn measure(&self, vault: &Vault) {
+        let _ = vault.measure_limit(EngineLimit::StateWindowSeconds, self.window.window_secs);
         let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, self.rules.len() as u64);
         if let Some(longest) = self.rules.iter().map(|rule| rule.mode.len()).max() {
             let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);

@@ -17,19 +17,13 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     encode_claim_body,
 };
+use crate::limit_ask::EngineLimit;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TimeAxis, TimelineQuery};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::vault::LiveEntityRow;
 use crate::{EdgeKind, EntityId, Error, Result, TimeRange, Vault};
 
 const DAY_SECS: u64 = 86_400;
-/// The longest window a refresh reads.
-const MAX_WINDOW_SECS: u64 = 366 * DAY_SECS;
-/// Most timeline rows one refresh reads: the window's rows of every kind.
-const MAX_WINDOW_ROWS: usize = 100_000;
-/// Most VAD turns the composite reads, newest first.
-const MAX_VAD_TURNS: usize = 256;
-/// Most records one signal claim cites.
-const MAX_SIGNAL_REFS: usize = 256;
 
 /// The owner's targets for one window. They describe this person's own
 /// pace, not a clinical or population norm.
@@ -44,7 +38,6 @@ pub struct StateWindow {
 impl StateWindow {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.window_secs == 0
-            || self.window_secs > MAX_WINDOW_SECS
             || self.expected_goal_completions == 0
             || self.expected_engaged_days == 0
         {
@@ -59,7 +52,8 @@ impl Vault {
     /// the caller's write: both signal claims, their evidence and the index
     /// commit together. `None` when a source family is missing (no annotated
     /// turn the subject spoke, or no TASK it owns): absence is not a low
-    /// score, and the index it already had stays as it was.
+    /// score, and the index it already had stays as it was. A window past
+    /// `limits.state_window_seconds` asks and is read whole, every turn in it.
     pub(crate) fn refresh_state_index_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -68,6 +62,7 @@ impl Vault {
         at: u64,
     ) -> Result<Option<(EntityId, StateIndex)>> {
         window.validate()?;
+        let _ = self.measure_limit(EngineLimit::StateWindowSeconds, window.window_secs);
         let start = at.saturating_sub(window.window_secs);
         let (turns, owned, completed) = {
             let rtxn: &heed::RoTxn<'_> = txn;
@@ -77,9 +72,6 @@ impl Vault {
         };
         let mut vad_turns = Vec::new();
         for (_, turn) in &turns {
-            if vad_turns.len() == MAX_VAD_TURNS {
-                break;
-            }
             if self
                 .turn_vad_annotation_in_txn(txn, turn)?
                 .is_some_and(|annotation| annotation.annotated_at <= at)
@@ -145,6 +137,8 @@ impl Vault {
 /// The live TURNs in `[start, at]` the subject spoke in, newest first, with
 /// their occurrence time. Only a message the subject authored counts: a
 /// room's other speakers never add to this subject's engagement or affect.
+/// Every timeline row of the window is read: past its threshold row the
+/// scan raises one check and reads on.
 fn subject_turns_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -159,12 +153,11 @@ fn subject_turns_in(
         after: None,
         reverse: true,
     };
+    let window = [start.to_be_bytes(), at.to_be_bytes()].concat();
+    let mut count = ScanCount::start(&vault.store, rtxn, EngineScan::OccurredRangeRows, &window)?;
     let mut turns = Vec::new();
-    for row in vault
-        .store
-        .port_entity_timeline(rtxn, query)?
-        .take(MAX_WINDOW_ROWS)
-    {
+    for row in vault.store.port_entity_timeline(rtxn, query)? {
+        count.row();
         let row = row?;
         if !matches!(
             crate::vault::live_entity_row_in_txn(&vault.store, rtxn, &row.id)?,
@@ -179,6 +172,7 @@ fn subject_turns_in(
             turns.push((row.timestamp, row.id));
         }
     }
+    count.finish(vault);
     Ok(turns)
 }
 
@@ -253,7 +247,8 @@ struct Signal<'a> {
 }
 
 /// One measured signal as an observed claim, keyed by its own bytes: the
-/// same measurement twice is one claim.
+/// same measurement twice is one claim. It cites every record it counted;
+/// past `limits.maintenance_row_items` it asks and still cites them all.
 fn put_signal_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -262,6 +257,7 @@ fn put_signal_in_txn(
     window: TimeRange,
     valid_to: u64,
 ) -> Result<EntityId> {
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, signal.refs.len() as u64);
     let mut body = ClaimBody::new(
         signal.predicate,
         ClaimSubject::Entity(*subject),
@@ -283,7 +279,6 @@ fn put_signal_in_txn(
                 signal
                     .refs
                     .iter()
-                    .take(MAX_SIGNAL_REFS)
                     .map(|id| Value::from(id.to_hex()))
                     .collect(),
             ),

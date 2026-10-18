@@ -6,6 +6,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::batch::secret_scan;
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 #[cfg(test)]
 use crate::store::test_hooks;
@@ -460,6 +461,9 @@ impl Store {
 }
 
 /// Reads the newest published retrieval-run rows from `target`, newest first.
+/// Each ledger row it passes counts, provisional ones included: a `usize::MAX`
+/// read takes every run, and past its threshold row it raises one check and
+/// reads on.
 ///
 /// `Store` reads base rows; a `SessionStoreView` reads overlay ∪ base, so an
 /// in-room caller sees its own run rows and a base caller never does.
@@ -471,8 +475,10 @@ fn read_retrieval_runs_in_txn(
     if limit == 0 {
         return Ok(Vec::new());
     }
+    let mut count = ScanCount::start(target, rtxn, EngineScan::RetrievalRunRows, &[])?;
     let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
     for row in RETRIEVAL_RUN.iter_rev_from(target, rtxn, &[])? {
+        count.row();
         let (run_id, record) = row.map_err(|error| match error {
             Error::Store(StoreError::SideTableRow {
                 problem: SideTableRowProblem::KeyShape,
@@ -491,6 +497,7 @@ fn read_retrieval_runs_in_txn(
             break;
         }
     }
+    count.defer(target);
     Ok(records)
 }
 

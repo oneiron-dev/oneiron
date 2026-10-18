@@ -9,13 +9,10 @@ use crate::self_heal::TIER1_SWEEP_SCOPE;
 use crate::self_heal::tripwires::DreamerRunFacts;
 use crate::{Result, Vault};
 
-/// Retrieval runs one pass reads for conversation facts, newest first.
-const CONVERSATION_RUNS: usize = 1_024;
-
 /// The nightly tier-1 detection, as the Coach.
 pub(super) fn run(vault: &Vault, now: u64) -> Result<()> {
     vault.run_tier1_sweep(now)?;
-    let runs = vault.retrieval_runs(CONVERSATION_RUNS)?;
+    let runs = vault.retrieval_runs(usize::MAX)?;
     let facts: Vec<DreamerRunFacts> = runs
         .iter()
         .filter_map(DreamerRunFacts::from_retrieval_turn)
