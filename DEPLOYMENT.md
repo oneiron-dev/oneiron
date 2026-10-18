@@ -169,6 +169,8 @@ signature_decode_bytes = 1073741824 # bytes one signature image decode (POST /si
 pptx_comment_patches = 10000      # comment edits one PowerPoint comment proposal carries; past it the proposal is written whole and the row asks
 import_xlsx_live_cells = 200000   # cells one workbook import writes into a live office body; past it the workbook is imported whole and the row asks
 judge_rubric_bytes = 8192         # bytes of the judge rubric (the judge skill's text) one judgment or label re-check reads; past it the rubric is read whole and the row asks
+judge_instructions_bytes = 8192   # bytes of skill instructions one held-out replay judgment reads; past it they are read whole and the row asks
+judge_replay_text_bytes = 40000   # bytes of replay text (runs' tasks and responses) one replay judgment's state carries; past it the replays ride whole and the row asks
 esign_pdf_bytes = 268435456       # bytes of one signing item's PDF the e-sign seal holds (the original or its prepared copy); past it the row asks and the item is sealed whole
 ```
 

@@ -111,6 +111,13 @@ pub enum EngineLimit {
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
+    /// Bytes of the skill instructions one held-out replay judgment reads.
+    /// Past it the instructions are read whole.
+    JudgeInstructionsBytes,
+    /// Bytes of replay text (runs' tasks and responses) one held-out replay
+    /// judgment's state carries. Past it the replays are read whole, cut only
+    /// where the decision ladder's state bound would refuse the call.
+    JudgeReplayTextBytes,
     /// Bytes of one signing item's PDF the e-sign seal holds in memory: its
     /// original or its prepared copy, whichever is larger. Past it asks
     /// whether everything is okay, and the item is prepared and sealed whole.
@@ -119,7 +126,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 28] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -145,6 +152,8 @@ impl EngineLimit {
         Self::PptxCommentPatches,
         Self::ImportXlsxLiveCells,
         Self::JudgeRubricBytes,
+        Self::JudgeInstructionsBytes,
+        Self::JudgeReplayTextBytes,
         Self::EsignPdfBytes,
     ];
 
@@ -176,6 +185,8 @@ impl EngineLimit {
             Self::PptxCommentPatches => "limits.pptx_comment_patches",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
+            Self::JudgeInstructionsBytes => "limits.judge_instructions_bytes",
+            Self::JudgeReplayTextBytes => "limits.judge_replay_text_bytes",
             Self::EsignPdfBytes => "limits.esign_pdf_bytes",
         }
     }
@@ -211,6 +222,10 @@ impl EngineLimit {
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,
+            // The shares the judge cut to before Rule 5: 8 KiB of
+            // instructions and 40,000 bytes of replay text.
+            Self::JudgeInstructionsBytes => 8_192,
+            Self::JudgeReplayTextBytes => 40_000,
             Self::EsignPdfBytes => 256 << 20,
         }
     }
