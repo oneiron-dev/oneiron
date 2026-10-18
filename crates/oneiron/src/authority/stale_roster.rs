@@ -66,7 +66,11 @@ fn stale_roster_approval_deadlines<E: Borrow<AuthorityLogEntry>>(
                 AuthorityOp::CriticalWriteConfirm(action) => {
                     action.disposition == CriticalWriteConfirmDisposition::Clear
                 }
-                AuthorityOp::MachineProfile(profile) => profile.role != MachineRole::Removed,
+                // An owner answer rests on its carrier's act, never on a
+                // roster key, so no roster revocation expires it (C3).
+                AuthorityOp::MachineProfile(profile) => {
+                    profile.role != MachineRole::Removed && profile.act.is_none()
+                }
                 _ => false,
             };
             if !approval {
@@ -235,10 +239,13 @@ pub(super) fn apply_stale_roster_window<E: Borrow<AuthorityLogEntry>>(
 /// The valid roster marks a key P1 accepts signed, judged as the trusted chain
 /// judges them (`ClaimIndex::accepted_roster`): each heads its machine's roster
 /// chain in its own fold state, signed by a key owner-held there, and on a
-/// hosted fold that key stays outside the host's custody on the merged history.
+/// hosted fold that key stays outside the host's custody on the merged history,
+/// or an admitted owner answer, which custody never reaches
+/// ([`MarkProof::accepted`], the one predicate the resumed folds share).
 /// Owned marks and node profiles alike; an anchor's mark heads no roster chain.
 /// Only these renew a stale trusted roster revision (Sol code-R2 S2-F1,
-/// code-R3 S3-F2, code-R4 S4-F1).
+/// code-R3 S3-F2, code-R4 S4-F1); an answer's profile names its act, so it
+/// renews no roster-signed revision.
 pub(super) fn accepted_roster_marks(
     merged: &FoldState,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -259,9 +266,7 @@ pub(super) fn accepted_roster_marks(
                 .and_then(|chains| chains.get(&MachineAdmitter::Roster))
                 .is_some_and(|chain| {
                     chain.head.entry == **hash
-                        && chain.head.signer_class == SignerClass::OwnerHeld
-                        && !(merged.hosted
-                            && super::machine_profile::in_host_custody(merged, &chain.head.signer))
+                        && MarkProof::of(&chain.head).is_some_and(|proof| proof.accepted(merged))
                 })
         })
         .copied()

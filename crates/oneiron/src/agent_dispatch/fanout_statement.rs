@@ -55,6 +55,7 @@ pub enum FanoutWork {
 
 /// TASK deliveries to one recipient.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct PeerCount {
     pub peer: EntityId,
     pub count: u64,
@@ -63,6 +64,7 @@ pub struct PeerCount {
 /// How the approval ladder classified an exceptional-width check. No arm
 /// holds, refuses or narrows the work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WidthCheckClass {
     /// AUTO cleared it; `policy_ref` names the standing policy row that
@@ -77,6 +79,7 @@ pub enum WidthCheckClass {
 /// The typed "is everything okay" check a very large count raises. It is a
 /// check, never a limit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct ExceptionalWidthCheck {
     pub count: u64,
     pub threshold: u64,
@@ -85,6 +88,7 @@ pub struct ExceptionalWidthCheck {
 
 /// What a fan-out will mint and spend, stated before any of it exists.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct FanoutStatement {
     /// Local agent launches only (workflow leaves count, the wrapper does
     /// not). Consults are never agents.

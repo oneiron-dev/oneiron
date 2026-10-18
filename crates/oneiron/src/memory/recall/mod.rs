@@ -11,6 +11,7 @@ mod items;
 mod paid;
 mod presentation;
 mod scope_honesty;
+mod speculative;
 mod stale;
 pub use stale::MemoryStaleStamp;
 

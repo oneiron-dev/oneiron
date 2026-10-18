@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 670 code-mode rows (649 host rows, 21 run rows), 2392 declarations.
-// Replies: 591 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 676 code-mode rows (655 host rows, 21 run rows), 2410 declarations.
+// Replies: 597 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -228,7 +228,9 @@ declare namespace Sdk {
   type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null };
   type TaskWaveRequest = { epic_task_ref: string; planner_ref: string; objective: string; constraints?: unknown };
   type TaskWaveReceipt = { attempt_ref: string; state: string };
-  type FanoutLaunchRequest = { launch_ref: EntityId };
+  type LiveRunRequest<T> = { live_run: string; spec: T };
+  type FanoutChildInput = { agent_ref: EntityId; label: string; prompt: string };
+  type FanoutBatchInput = { intent_key: string; children: FanoutChildInput[] };
   type PeerCount = { peer: EntityId; count: number };
   type SpendBasis = "calibrated" | "prior";
   type DollarBasis = "unknown_price" | "upper_bound_rate" | "sum" | "incomplete_or_overflow";
@@ -241,12 +243,21 @@ declare namespace Sdk {
   type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number };
   type FanoutLaunchHold = { surface_ref: string; denied: boolean };
   type FanoutLaunchView = { launch_ref: EntityId; plan_digest: string; statement: FanoutStatement; held?: FanoutLaunchHold | null; check_row_ref?: string | null; choice_receipt_ref?: string | null; task_refs: EntityId[] };
-  type SelfBudgetRequest = { attempt: string; run?: string | null };
+  type FanoutSlotState = "held" | "pending" | "completed" | "error";
+  type FanoutSlotTerminal = { disposition: TaskTerminalDisposition; result_ref?: EntityId | null; finished_at: number };
+  type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
   type SpendState = "open" | "closed";
   type SpendPayer = { party: EntityId; granted_by: EntityId; at_ms: number };
   type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; payer?: SpendPayer | null };
   type SpendSignal = { signal: "wrap_up"; available_units: number; cap_units: number } | { signal: "at_cap"; cap_units: number };
   type SpendRead = { scope: SpendScopeId; unit: LeaseUnit; spent_units: number; available_units: number; cap_scope: SpendScopeId; cap_units: number; signal?: SpendSignal | null };
+  type FanoutLeaseView = { lease: SpendScope; spend: SpendRead; released_units?: number | null };
+  type FanoutSlotAttempt = { attempt_ref: string; state: AttemptState; last_error?: string | null; result_ref?: string | null; budget_hold: boolean; lease?: FanoutLeaseView | null };
+  type FanoutChildSlot = { index: number; input: FanoutChildInput; task_ref?: EntityId | null; state: FanoutSlotState; terminal?: FanoutSlotTerminal | null; attempts: FanoutSlotAttempt[] };
+  type FanoutSharedAccounting = { parent?: FanoutLeaseView | null; hard_cap?: FanoutLeaseView | null };
+  type FanoutBatchView = { launch: FanoutLaunchView; parent_task_ref: EntityId; slots: FanoutChildSlot[]; accounting: FanoutSharedAccounting };
+  type FanoutLaunchRequest = { launch_ref: EntityId };
+  type SelfBudgetRequest = { attempt: string; run?: string | null };
   type SpendLeaseView = { lease: SpendScope; spend: SpendRead };
   type AttemptLandingReserve = { limit_units?: number; reserve_units?: number; spent_units?: number; dial_generation?: number | null };
   type LandingTrigger = "cancel_request" | "budget_warning" | "lease_warning";
@@ -1252,7 +1263,6 @@ declare namespace Sdk {
   type SecretUseStatus = "answered" | "failed" | "withheld";
   type SecretUseRecord = { handle: string; generation: number; effector: string; operation: string; decision: string; used_at: number };
   type SecretUseAnswer = { status: SecretUseStatus; result?: unknown | null; failure?: string | null; receipt: SecretUseRecord };
-  type LiveRunRequest<T> = { live_run: string; spec: T };
   type SecretGrantPurpose = { kind: "operation"; name: string } | { kind: "connector"; name: string } | { kind: "host_destination"; name: string } | { kind: "local_file"; effector: string; path: string; project_id: string };
   type SecretGrantMintRequest = { handle: string; purpose: SecretGrantPurpose; ttl_secs?: number | null };
   type SecretGrantViewStatus = "active" | "expired" | "revoked" | "replaced";
@@ -1452,7 +1462,7 @@ declare namespace Sdk {
   type TaskTypeTreeRead = { project_ref?: EntityId | null; tree_version?: number | null };
   type TaskTypeTreeReadReply = { project_ref?: EntityId | null; in_force_skill_ref?: EntityId | null; tree?: TaskTypeTreeView | null };
   type PlannedSpawnRead = { spawn_ref: EntityId };
-  type SpawnPhase = "reserved" | "planned" | "launched" | "in_doubt";
+  type SpawnPhase = "planned" | "launched" | "refused";
   type CoordinationPatternView = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type SkillRevisionView = { skill_ref: EntityId; version: string };
   type ProviderPinView = { rung: DecisionRung; model: string; version: string };
@@ -1472,7 +1482,6 @@ declare namespace Sdk {
   type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
   type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
   type CancelForceRequest = { task_ref: EntityId; reason?: string | null };
-  type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
   type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned";
   type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null };
   type RunAskAnswerKind = "Word" | "Companion" | "Default" | "Unknown";
@@ -1767,6 +1776,15 @@ declare namespace Sdk {
   type AiReply = { reply: string; model: string; receipt_refs: string[]; l2_base?: AiReplyL2Base | null };
   type ContextReceiptFields = { persona_compile_stamp: string; activated_memory_ids: string[]; board_state_ref: string; substrate_ref?: string | null; model?: string | null; reasoning_effort?: string | null; prompt_input_ref?: string | null; disclosure_stamp?: string | null };
   type ContextEmitReceipt = { receipt_ref: string; occurred_at: number; actor: string; conversation_id: string; request_digest: string; result_digest: string; context: ContextReceiptFields };
+  type AsrOpenRequest = { utterance_id: string; scope?: RecallScope; fire_limit?: number | null; final_limit?: number | null; deadline_ms?: number | null };
+  type AsrSession = { handle: string; utterance_id: string; scope: RecallScope; max_fires: number; fire_limit: number; final_limit: number; limit_clamped: boolean; deadline_ms: number; narrowing: ScopedReadReceipt };
+  type AsrHypothesisRequest = { handle: string; revision: number; text: string; entity_labels: string[]; salient_terms: string[]; query_vector?: number[] | null };
+  type AsrFireDecision = "fired" | "missed_deadline" | "skipped_unchanged" | "skipped_empty_signature" | "skipped_cap_exhausted";
+  type AsrHypothesisReceipt = { receipt_ref: string; handle: string; utterance_id: string; revision: number; text: string; scope: RecallScope; decision: AsrFireDecision; fires_used: number; run_id?: string | null; partial: boolean; result_refs: string[]; narrowing: ScopedReadReceipt };
+  type AsrFinalDecision = "promoted" | "finalized";
+  type AsrFinalReceipt = { receipt_ref: string; handle: string; utterance_id: string; revision: number; text: string; scope: RecallScope; decision: AsrFinalDecision; reused_fire_receipt?: string | null; fires_used: number; run_id?: string | null; warm_appended: number; partial: boolean; result_refs: string[]; narrowing: ScopedReadReceipt };
+  type AsrCloseRequest = { handle: string };
+  type AsrClosed = { handle: string };
   type LiveVoiceStartRequest = { sample_rate: number; channels: number; room_ref?: string | null; roster_ref?: string | null };
   type LiveVoiceSession = { session_ref: string; sample_rate: number; channels: number };
   type LiveVoiceAudioRequest = { session_ref: string; utterance_id: string; pcm_base64: string; speaking: boolean; end_utterance?: boolean };
@@ -2442,6 +2460,16 @@ declare const ai: {
   voice: {
     /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed. */
     ack(input: Sdk.LiveVoiceAckRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
+    asr: {
+      /** Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval. */
+      close(input: Sdk.AsrCloseRequest): Promise<Sdk.AsrClosed | StoredResult>;
+      /** Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting. */
+      finalize(input: Sdk.AsrHypothesisRequest): Promise<Sdk.AsrFinalReceipt | StoredResult>;
+      /** Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt. */
+      hypothesis(input: Sdk.AsrHypothesisRequest): Promise<Sdk.AsrHypothesisReceipt | StoredResult>;
+      /** Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline. */
+      open(input: Sdk.AsrOpenRequest): Promise<Sdk.AsrSession | StoredResult>;
+    };
     /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path. */
     audio(input: Sdk.LiveVoiceAudioRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
     /** Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing. */
@@ -3270,6 +3298,10 @@ declare const vault: Sdk.VaultHost & {
     resume(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
     /** A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember. */
     resume_as(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
+    /** Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree. */
+    slots(input: Sdk.FanoutLaunchRequest): Promise<Sdk.FanoutBatchView | null | StoredResult>;
+    /** Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree. */
+    spawn(input: Sdk.LiveRunRequest<Sdk.FanoutBatchInput>): Promise<Sdk.FanoutBatchView | StoredResult>;
   };
   federation: {
     connect: {

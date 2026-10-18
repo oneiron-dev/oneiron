@@ -8,13 +8,11 @@
 
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
 
-use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::ports::{EntityRecord, EntityStore, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_MACHINE;
 use crate::{EntityId, TimeRange, Vault};
 
-use super::slip_vault::{next_entry, require_host};
 use super::*;
 
 const MACHINE_CONNECTION_DOMAIN: &[u8] = b"oneiron/machine-proof/v1\0";
@@ -236,27 +234,6 @@ impl Vault {
         Ok(request.expect("closure ran on Ok"))
     }
 
-    /// The owner adds a machine. `role` is the owner's answer: only
-    /// `Owned(Yours)` makes it mine; a hosted or rented node is never mine.
-    /// The MACHINE row is created when absent. Lands one `MachineProfile`
-    /// under the host root, revalidating the owner in the write transaction,
-    /// then seals the portable credentials again for the roster it changed.
-    pub fn enroll_machine(
-        &self,
-        issuer: &HostSlipIssuer,
-        owner: &AuthenticatedOwner,
-        request: &MachineEnrolmentRequest,
-        role: MachineRole,
-    ) -> Result<FoldedMachine> {
-        let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let folded = self.enroll_machine_in_txn(&mut txn, issuer, actor, request, role)?;
-        txn.commit()?;
-        #[cfg(feature = "sync")]
-        self.reseal_after_machine_admission()?;
-        Ok(folded)
-    }
-
     /// Seals the portable credentials again for the roster a committed
     /// machine admission changed (FIX 1780), outside its writer. The
     /// admission stands whatever happens here: a failure is returned as a
@@ -284,7 +261,9 @@ impl Vault {
 
     /// The host's own node: this install's machine in the roster as a
     /// `HostedNode`, signed by the host root, which may register its own node
-    /// but never vouch for a machine as the owner's. The node is never mine
+    /// but never vouch for a machine as the owner's: an explicit bootstrap
+    /// arm with no owner act (C4), after which the node carries the owner's
+    /// answers like any linked machine. The node is never mine
     /// and never a wrap recipient; its profile names the machine and its keys
     /// so a connection can prove it. No owner answered here, so the profile
     /// names the vault's owner PERSON. A restart reuses the profile only when
@@ -316,168 +295,15 @@ impl Vault {
             .first()
             .copied()
             .ok_or_else(invalid_authority)?;
-        let folded =
-            self.enroll_machine_in_txn(&mut txn, issuer, owner, &request, MachineRole::HostedNode)?;
-        txn.commit()?;
-        Ok(folded)
-    }
-
-    /// The owner changes a machine's answer or removes it, in the roster's
-    /// chain. Removal is terminal there. An anchor's chain is the anchor's.
-    /// The credentials are sealed again for the roster it changed.
-    pub fn set_machine_role(
-        &self,
-        issuer: &HostSlipIssuer,
-        owner: &AuthenticatedOwner,
-        machine: EntityId,
-        role: MachineRole,
-    ) -> Result<FoldedMachine> {
-        let mut txn = self.store.env.write_txn()?;
-        let owner_actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        require_host(&fold, issuer)?;
-        let current = fold
-            .machine(machine)
-            .and_then(|folded| folded.roster.as_ref())
-            .filter(|roster| !roster.removed)
-            .ok_or_else(invalid_authority)?;
-        let profile = MachineProfile {
-            owner: owner_actor,
-            role,
-            revision: current
-                .profile
-                .revision
-                .checked_add(1)
-                .ok_or_else(invalid_authority)?,
-            ..current.profile.clone()
-        };
-        let folded = self.append_machine_profile_in_txn(&mut txn, issuer, &fold, profile)?;
-        txn.commit()?;
-        #[cfg(feature = "sync")]
-        self.reseal_after_machine_admission()?;
-        Ok(folded)
-    }
-
-    /// Enrols in the caller's transaction; the caller has checked `owner`.
-    pub(super) fn enroll_machine_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        issuer: &HostSlipIssuer,
-        owner: EntityId,
-        request: &MachineEnrolmentRequest,
-        role: MachineRole,
-    ) -> Result<FoldedMachine> {
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        require_host(&fold, issuer)?;
-        // A machine joins the roster's chain once. A later answer changes its
-        // role through `set_machine_role`; nothing that joins replaces its key.
-        if role == MachineRole::Removed
-            || fold.vault_id != Some(request.vault_id)
-            || fold
-                .machine(request.machine)
-                .is_some_and(|folded| folded.roster.is_some())
-        {
-            return Err(invalid_authority());
-        }
-        self.ensure_machine_row_in_txn(txn, request.machine)?;
-        let profile = MachineProfile {
-            machine: request.machine,
-            owner,
-            machine_key: request.machine_key,
-            device_class: request.device_class,
-            encryption_key: request.encryption_key.clone(),
-            role,
-            revision: 1,
-            machine_proof: request.machine_proof,
-            seen_world_edits: std::collections::BTreeSet::new(),
-        };
-        self.append_machine_profile_in_txn(txn, issuer, &fold, profile)
-    }
-
-    /// Signs every live roster standing again under `next`, in the caller's
-    /// transaction. A re-root revokes every roster key, and a standing that
-    /// rests on a revoked key goes stale. An anchor's chain rests on no
-    /// roster key and is not the roster's to carry.
-    pub(super) fn carry_machine_standing_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        before: &AuthorityFold,
-        next: &HostSlipIssuer,
-    ) -> Result<usize> {
-        let mut carried = 0;
-        for machine in before
-            .machines
-            .iter()
-            .filter(|(_, folded)| folded.roster.as_ref().is_some_and(MachineRevision::is_live))
-            .map(|(machine, _)| *machine)
-        {
-            let fold = self.authority_view_readonly_in_txn(txn)?;
-            let current = fold
-                .machine(machine)
-                .and_then(|folded| folded.roster.as_ref())
-                .ok_or_else(invalid_authority)?;
-            let profile = MachineProfile {
-                revision: current
-                    .profile
-                    .revision
-                    .checked_add(1)
-                    .ok_or_else(invalid_authority)?,
-                ..current.profile.clone()
-            };
-            self.append_machine_profile_in_txn(txn, next, &fold, profile)?;
-            carried += 1;
-        }
-        Ok(carried)
-    }
-
-    fn append_machine_profile_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        issuer: &HostSlipIssuer,
-        fold: &AuthorityFold,
-        mut profile: MachineProfile,
-    ) -> Result<FoldedMachine> {
-        // A revision that takes "yours" away keeps the effect of the machine's
-        // world edits it has seen; one it never saw only counts stricter. A
-        // later revision of a machine already not the owner's took nothing
-        // away: it carries that list, and the fold reads only the first. Nor
-        // does one whose "yours" no longer stands by the roster rule.
-        let current = fold.machine(profile.machine);
-        profile.seen_world_edits = match current.and_then(|folded| folded.roster.as_ref()) {
-            Some(head) if !head.profile.says_mine() => head.profile.seen_world_edits.clone(),
-            Some(_)
-                if !current.is_some_and(|folded| {
-                    folded.roster_view().admits(&MachineAdmitter::Roster)
-                }) =>
-            {
-                std::collections::BTreeSet::new()
-            }
-            _ => super::world_privacy::live_edits_by(fold, profile.machine),
-        };
-        profile.validate()?;
-        let now = self.instant_in_txn(txn)?.secs();
-        let entry = next_entry(
+        let folded = self.enroll_bootstrap_in_txn(
+            &mut txn,
             issuer,
-            fold,
-            AuthorityOp::MachineProfile(profile.clone()),
-            now,
+            owner,
+            &request,
+            MachineRole::HostedNode,
         )?;
-        let at = TimeRange {
-            start: now,
-            end: now,
-        };
-        self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
-        // The fold is the judge: a profile it refused never reports success.
-        let removal = profile.role == MachineRole::Removed;
-        self.authority_view_readonly_in_txn(txn)?
-            .machine(profile.machine)
-            .filter(|folded| {
-                folded.roster.as_ref().is_some_and(|roster| {
-                    roster.profile == profile && (roster.is_live() || removal)
-                })
-            })
-            .cloned()
-            .ok_or_else(invalid_authority)
+        txn.commit()?;
+        Ok(folded)
     }
 
     /// A live MACHINE row, created empty when absent. Never another kind, and
