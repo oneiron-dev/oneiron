@@ -12,6 +12,12 @@
 //! vault verifies the writer and reads the role's holders again in the
 //! snapshot it writes in. Every call goes through the host's one
 //! `DecisionAsks`, so an answer wakes the ladder waiting on it.
+//!
+//! Each lists its rows (`host_door_lists`). An ask lives in the decision
+//! queue's side table, its question as the ladder that queued it framed it:
+//! it lists the principal it is for, the evidence it carries and the work it
+//! decides. A role's holders are the roster's, read to admit, and a climb
+//! lists none.
 use std::sync::Arc;
 
 use oneiron::llm::decision::{DecisionAsk, ResolvedRole};
@@ -20,7 +26,7 @@ use oneiron::receipt::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal, naming};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -28,7 +34,7 @@ use crate::server::SyncServer;
 /// holder of the role the ask is at now. An e-signature or a payment takes
 /// only a person. The same answer again returns the ask as it stands; a
 /// different one to an answered ask is refused.
-pub(crate) async fn vault_decisions_asks_answer(
+async fn vault_decisions_asks_answer_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: DecisionAskAnswerRequest,
@@ -46,11 +52,23 @@ pub(crate) async fn vault_decisions_asks_answer(
     .map_err(|_| internal(VERB))?
 }
 
+/// [`vault_decisions_asks_answer_answer`], listing the rows its ask stands on.
+pub(crate) async fn vault_decisions_asks_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: DecisionAskAnswerRequest,
+) -> Listed<DecisionAsk> {
+    naming(
+        vault_decisions_asks_answer_answer(server, auth, input).await,
+        |ask| ask_rows(ask).collect(),
+    )
+}
+
 /// `vault.decisions.asks.climb`: one open ask moved to the next role on its
 /// chain with a live holder, up to its ceiling, by a holder of the role it
 /// is at, the principal it is for, or a live owner. The role it moved to;
 /// none, and the ask stays where it is, when no such role is left.
-pub(crate) async fn vault_decisions_asks_climb(
+async fn vault_decisions_asks_climb_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: DecisionAskClimbRequest,
@@ -68,9 +86,21 @@ pub(crate) async fn vault_decisions_asks_climb(
     .map_err(|_| internal(VERB))?
 }
 
+/// [`vault_decisions_asks_climb_answer`], listing no row.
+pub(crate) async fn vault_decisions_asks_climb(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: DecisionAskClimbRequest,
+) -> Listed<Option<ResolvedRole>> {
+    naming(
+        vault_decisions_asks_climb_answer(server, auth, input).await,
+        |_| Vec::new(),
+    )
+}
+
 /// `self.decisions.asks`: the open asks at a role the caller holds now,
 /// oldest first, as `GET /v1/core/decisions/asks` lists them.
-pub(crate) async fn self_decisions_asks(
+async fn self_decisions_asks_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _input: EmptyRequest,
@@ -83,6 +113,26 @@ pub(crate) async fn self_decisions_asks(
     })
     .await
     .map_err(|_| internal(VERB))?
+}
+
+/// [`self_decisions_asks_answer`], listing the rows each ask stands on.
+pub(crate) async fn self_decisions_asks(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: EmptyRequest,
+) -> Listed<Vec<DecisionAsk>> {
+    naming(
+        self_decisions_asks_answer(server, auth, input).await,
+        |asks| asks.iter().flat_map(ask_rows).collect(),
+    )
+}
+
+/// The rows an ask stands on: the principal it is for, its evidence and
+/// the work it decides.
+fn ask_rows(ask: &DecisionAsk) -> impl Iterator<Item = EntityId> + '_ {
+    std::iter::once(ask.principal)
+        .chain(ask.evidence.iter().copied())
+        .chain(ask.correlation)
 }
 
 /// Where the owner's credential does what `verb` does for a role holder: a

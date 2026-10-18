@@ -94,7 +94,8 @@ pub(crate) use tombstone::ROW_DELETION_FENCE_BACKFILLED;
 pub(crate) use tombstone::local_hard_delete_key;
 pub(crate) use tombstone::{
     ARCHIVE_TOMBSTONE_PREFIX, LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, PendingTombstoneKey,
-    ROW_DELETION_FENCE, archive_tombstone_key, stage_engine_row_hard_erasure_in_txn,
+    ROW_DELETION_FENCE, archive_tombstone_key, stage_engine_row_hard_erasure_at_in_txn,
+    stage_engine_row_hard_erasure_in_txn,
 };
 pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
 // The replay outcome is read by sync production (`sync::quarantine`) and by
