@@ -2,9 +2,24 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::memory::WitnessReceipt;
+use crate::memory::{MessageResultAttachment, WitnessReceipt};
 use crate::off_record::ExecutorUtterance;
 use crate::{EntityId, Error, Result, Vault, WriteActor};
+
+/// A result MESSAGE's typed attachment (FIX 365), and the rows its run's
+/// answers were served from, which its hold on the body keeps.
+#[derive(Clone, Copy)]
+pub(crate) struct ResultSpeech<'a> {
+    pub(crate) attachment: &'a MessageResultAttachment,
+    pub(crate) served_rows: Option<&'a [EntityId]>,
+}
+
+impl ResultSpeech<'_> {
+    /// The MESSAGE metadata that carries the attachment.
+    pub(crate) fn metadata(&self) -> Result<serde_json::Value> {
+        self.attachment.to_metadata()
+    }
+}
 
 /// Domain tags for a canonical run's speech identities (ONE-1686).
 ///
@@ -140,6 +155,9 @@ pub(super) fn executor_speech_message_id_for_run(
 /// Propagates the witness door's refusals, including the ONE-1686 approval
 /// ceiling — preserved as the typed gate denial so the dispatcher records a
 /// `Denied` bridge row rather than an opaque failure.
+///
+/// A `result` MESSAGE carries its attachment as metadata, and its hold on
+/// the body lands in the same transaction as the MESSAGE (FIX 365).
 #[expect(
     clippy::too_many_arguments,
     reason = "every parameter is a distinct axis the witness envelope binds; folding them into a \
@@ -151,6 +169,7 @@ pub(super) fn canonical_witness_executor_turn(
     run_id: Option<EntityId>,
     kind: ExecutorUtterance,
     text: &str,
+    result: Option<ResultSpeech<'_>>,
     occurred_at: u64,
     order: u32,
     message_id: EntityId,
@@ -171,7 +190,7 @@ pub(super) fn canonical_witness_executor_turn(
                     author: crate::memory::WitnessAuthor::Companion,
                     message_type: kind.as_message_type().to_owned(),
                     content: text.to_owned(),
-                    metadata: None,
+                    metadata: result.map(|result| result.metadata()).transpose()?,
                     is_visible: kind.is_visible(),
                     order,
                 }],
@@ -179,6 +198,17 @@ pub(super) fn canonical_witness_executor_turn(
                 assertions: Default::default(),
             },
             None,
+            |wtxn| {
+                if let Some(result) = result {
+                    vault.retain_message_result_in_txn(
+                        wtxn,
+                        message_id,
+                        result.attachment,
+                        result.served_rows.map(<[EntityId]>::to_vec),
+                    )?;
+                }
+                Ok(())
+            },
         )
         .map_err(|error| {
             error

@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 309 facade rows, 1212 declarations.
+Census: 309 facade rows, 1218 declarations.
 Inputs: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 72; unread shapes: 0.
+Opaque serde_json::Value leaves: 73; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -6475,3 +6475,38 @@ class GeneratedUiActionEvent(TypedDict):
     actionId: str
     patch: NotRequired[list[GeneratedUiStatePatch]]
     occurredAt: int
+class MessageResultSource(TypedDict):
+    run_id: EntityId
+    occurrence: EntityId
+    path: str
+ResultFacet = Literal["slice", "search", "query", "chunks"]
+class MessageResultAttachment(TypedDict):
+    source: MessageResultSource
+    handle: str
+    bytes: int
+    kind: str
+    lines: int
+    complete: bool
+    preview: str
+    preview_truncated: bool
+    more: list[ResultFacet]
+class TranscriptMessage(TypedDict):
+    id: str
+    short_id: NotRequired[str | None]
+    role: str
+    message_type: NotRequired[str | None]
+    occurred: int
+    text: str
+    metadata: NotRequired[Any | None]
+    result: NotRequired[MessageResultAttachment | None]
+    incomplete: bool
+    generating: bool
+class TranscriptTurn(TypedDict):
+    id: str
+    occurred_start: int
+    occurred_end: int
+    messages: list[TranscriptMessage]
+class TranscriptPage(TypedDict):
+    conversation: str
+    turns: list[TranscriptTurn]
+    next: NotRequired[str | None]

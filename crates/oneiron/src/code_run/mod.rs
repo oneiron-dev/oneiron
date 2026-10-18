@@ -61,8 +61,9 @@ pub(crate) use self::result_read::{
     refusal as result_refusal, resolve as resolve_result, unknown_handle,
 };
 pub(crate) use self::storage::{
-    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
-    executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
+    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, ResultSpeech,
+    executor_compaction_session_id, executor_speech_message_id_in_run,
+    executor_speech_turn_id_for_run,
 };
 pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,

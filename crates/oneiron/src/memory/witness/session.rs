@@ -248,6 +248,8 @@ impl Memory<'_> {
     /// separate parameter from guest [`WitnessTurn::turn_ref`], so preserving a
     /// deterministic retry target cannot weaken the guest `Some(turn_ref)`
     /// refusal on [`crate::off_record::OffRecordSession::witness_executor_turn`].
+    /// `effect` shares the base transaction: a result MESSAGE landing in base
+    /// publishes its hold on the body there (FIX 365).
     pub(crate) fn witness_into_session_for_run(
         &self,
         session: &OffRecordSession<'_>,
@@ -255,6 +257,7 @@ impl Memory<'_> {
         summary: Option<&str>,
         host_turn_ref: Option<EntityId>,
         admit: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
@@ -279,7 +282,7 @@ impl Memory<'_> {
                 }
             },
             |_| Ok(()),
-            |_| Ok(()),
+            effect,
         )
     }
 

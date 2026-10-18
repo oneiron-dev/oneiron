@@ -95,6 +95,7 @@ impl OffRecordSession<'_> {
             container,
             kind,
             text,
+            None,
             occurred_at,
             order,
             message_id,
@@ -110,7 +111,8 @@ impl OffRecordSession<'_> {
     /// accept or reject. Both ids are derived inside the bound executor from
     /// its run identity, then carried through this distinct crate-private
     /// capability so a retry can create-or-verify one TURN and one MESSAGE
-    /// without weakening `OffRecordGuestTurnRefRejected`.
+    /// without weakening `OffRecordGuestTurnRefRejected`. A `result` MESSAGE
+    /// carries its typed attachment (FIX 365).
     #[expect(
         clippy::too_many_arguments,
         reason = "every parameter is a host-bound witness axis; the separate function is the turn-ref capability"
@@ -120,6 +122,7 @@ impl OffRecordSession<'_> {
         container: &EntityId,
         kind: ExecutorUtterance,
         text: &str,
+        result: Option<crate::code_run::ResultSpeech<'_>>,
         occurred_at: u64,
         order: u32,
         message_id: EntityId,
@@ -131,6 +134,7 @@ impl OffRecordSession<'_> {
             container,
             kind,
             text,
+            result,
             occurred_at,
             order,
             Some(message_id),
@@ -149,6 +153,7 @@ impl OffRecordSession<'_> {
         container: &EntityId,
         kind: ExecutorUtterance,
         text: &str,
+        result: Option<crate::code_run::ResultSpeech<'_>>,
         occurred_at: u64,
         order: u32,
         message_id: Option<EntityId>,
@@ -171,7 +176,7 @@ impl OffRecordSession<'_> {
                 author: crate::memory::WitnessAuthor::Companion,
                 message_type: kind.as_message_type().to_owned(),
                 content: text.to_owned(),
-                metadata: None,
+                metadata: result.map(|result| result.metadata()).transpose()?,
                 is_visible: kind.is_visible(),
                 order,
             }],
@@ -198,7 +203,22 @@ impl OffRecordSession<'_> {
                 })
         };
         memory
-            .witness_into_session_for_run(self, &turn, None, host_turn_ref, admit)
+            .witness_into_session_for_run(self, &turn, None, host_turn_ref, admit, |wtxn| {
+                // A MESSAGE in base holds its body there, in the transaction
+                // that lands it. One in the overlay holds nothing: its body
+                // is the room's, and a save carries both (FIX 365).
+                if let (Some(result), Some(message_id), RouteTarget::Base) =
+                    (result, message_id, route.target())
+                {
+                    self.vault.retain_message_result_in_txn(
+                        wtxn,
+                        message_id,
+                        result.attachment,
+                        result.served_rows.map(<[EntityId]>::to_vec),
+                    )?;
+                }
+                Ok(())
+            })
             // The door reports a code+message `MemoryError`. A CEILING refusal
             // is a policy verdict the caller must be able to route on, so it
             // travels back out as the typed gate denial it was (ONE-1686) —
