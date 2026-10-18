@@ -5,11 +5,12 @@ pub use credential_filter::{
     write_door_refuses_claim,
 };
 pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
+mod archive_index;
 mod archive_read;
 mod archive_side_tables;
 mod archive_spool;
 mod archive_types;
-pub(crate) use archive_read::{ArchiveFiles, VaultArchive, read_vault_archive};
+pub(crate) use archive_read::{ArchiveFileSource, ArchiveFiles, read_vault_archive_indexed};
 pub use archive_side_tables::{
     ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree,
     ArchiveSideValue, ArchiveSideWithheld, ArchiveSideWithheldReason,

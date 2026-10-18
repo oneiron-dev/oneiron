@@ -6,12 +6,14 @@
 //! probes, and provider configuration stay home. A space id's `@where` names an offer key,
 //! which the receiving host resolves against its own models.
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Seek};
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::WholeVaultDocument;
+use super::ArchiveRecordKind;
+use super::archive_index::{IndexedArchive, Tag};
 use crate::config::VectorEvidenceFloors;
 use crate::embed::{EmbeddingSpace, InputKind, KindSlotBindings};
 use crate::error::{Error, Result};
@@ -127,26 +129,40 @@ impl PortableSlotBindings {
             InputKind::Audio => &mut self.audio,
         }
     }
+}
 
-    /// The slots from the archive's slot rows, which name each kind exactly once.
-    pub(crate) fn from_archive_rows(rows: Vec<Value>) -> Result<Self> {
-        let mut slots = BTreeMap::new();
-        for row in rows {
-            let row: ArchiveSlotBinding =
-                serde_json::from_value(row).map_err(|_| invalid("invalid archive slot binding"))?;
-            if slots.insert(row.kind, row.space).is_some() {
-                return Err(invalid("archive slot binding appears twice"));
-            }
+/// The slot rows of an archive as they are read (FIX 3678), which name each
+/// kind exactly once.
+#[derive(Default)]
+pub(crate) struct SlotRows {
+    slots: BTreeMap<InputKind, Option<String>>,
+}
+
+impl SlotRows {
+    /// One slot row.
+    pub(crate) fn push(&mut self, row: Value) -> Result<()> {
+        let row: ArchiveSlotBinding =
+            serde_json::from_value(row).map_err(|_| invalid("invalid archive slot binding"))?;
+        if self.slots.insert(row.kind, row.space).is_some() {
+            return Err(invalid("archive slot binding appears twice"));
         }
-        if slots.len() != InputKind::ALL.len() {
+        Ok(())
+    }
+
+    /// The slots the rows bind; `None` for an archive with no slot rows.
+    pub(crate) fn finish(mut self) -> Result<Option<PortableSlotBindings>> {
+        if self.slots.is_empty() {
+            return Ok(None);
+        }
+        if self.slots.len() != InputKind::ALL.len() {
             return Err(invalid("archive slot bindings miss a kind"));
         }
-        let mut take = |kind: InputKind| slots.remove(&kind).flatten();
-        Ok(Self {
+        let mut take = |kind: InputKind| self.slots.remove(&kind).flatten();
+        Ok(Some(PortableSlotBindings {
             text: take(InputKind::Text),
             image: take(InputKind::Image),
             audio: take(InputKind::Audio),
-        })
+        }))
     }
 }
 
@@ -304,16 +320,17 @@ fn import_setup_outcome<T: PartialEq>(here: Option<T>, incoming: Option<T>) -> S
 /// that is unbound here, in the import's own write. No model runs before the commit and no
 /// provider is looked up: a space whose offer this host lacks is declared all the same, under
 /// its own id, with its vectors pending recompute.
-pub(super) fn import_embedding_setup_in_txn(
+pub(super) fn import_embedding_setup_in_txn<R: Read + Seek>(
     store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
-    document: &WholeVaultDocument,
+    archive: &IndexedArchive<'_, R>,
 ) -> Result<EmbeddingSetupImport> {
     let mut report = EmbeddingSetupImport {
-        withheld: document.manifest.embedding_setup_withheld.clone(),
+        withheld: archive.manifest.embedding_setup_withheld.clone(),
         ..EmbeddingSetupImport::default()
     };
-    for space in &document.embedding_spaces {
+    let mut spaces = archive.spool.rows(ArchiveRecordKind::EmbeddingSpace);
+    while let Some((_, space)) = spaces.next_parsed::<PortableEmbeddingSpace>(&archive.spool)? {
         let incoming = space.declaration();
         let here = crate::embed::embedding_space_in_txn(store, txn, &space.id)?;
         match import_setup_outcome(here.as_ref(), Some(&incoming)) {
@@ -326,7 +343,7 @@ pub(super) fn import_embedding_setup_in_txn(
             SetupOutcome::Skip => {}
         }
     }
-    let Some(slots) = &document.slot_bindings else {
+    let Some(slots) = &archive.slot_bindings else {
         return Ok(report);
     };
     let here = crate::embed::kind_slot_bindings_in_txn(store, txn)?;
@@ -348,32 +365,42 @@ pub(super) fn import_embedding_setup_in_txn(
     Ok(report)
 }
 
-impl WholeVaultDocument {
+impl<R: Read + Seek> IndexedArchive<'_, R> {
     /// The setup's own shape: each descriptor a valid declaration under an id carried once,
     /// each binding naming a carried space, and no space without the slots. Whether a binding
-    /// fits is the owning door's check at import, against the space as declared there.
-    pub(super) fn validate_embedding_setup(&self) -> Result<()> {
-        let mut ids = BTreeSet::new();
-        for space in &self.embedding_spaces {
+    /// fits is the owning door's check at import, against the space as declared there. The
+    /// ids carried are kept in the import's row index (FIX 3678).
+    pub(super) fn validate_embedding_setup(&mut self) -> Result<()> {
+        let mut any = false;
+        let mut spaces = self.spool.rows(ArchiveRecordKind::EmbeddingSpace);
+        while let Some((_, space)) = spaces.next_parsed::<PortableEmbeddingSpace>(&self.spool)? {
             space.declaration().validate()?;
-            if !ids.insert(space.id.as_str()) {
+            if !self.index.insert(
+                Tag::Space,
+                blake3::hash(space.id.as_bytes()).as_bytes(),
+                &[],
+            )? {
                 return Err(invalid("duplicate embedding space"));
             }
+            any = true;
         }
         let Some(slots) = &self.slot_bindings else {
-            return if ids.is_empty() {
-                Ok(())
-            } else {
+            return if any {
                 Err(invalid("embedding spaces without slot bindings"))
+            } else {
+                Ok(())
             };
         };
-        if InputKind::ALL
-            .iter()
-            .any(|kind| slots.space_for(*kind).is_some_and(|id| !ids.contains(id)))
-        {
-            return Err(invalid(
-                "slot binding names a space the archive does not carry",
-            ));
+        for kind in InputKind::ALL {
+            if let Some(id) = slots.space_for(kind)
+                && !self
+                    .index
+                    .contains(Tag::Space, blake3::hash(id.as_bytes()).as_bytes())?
+            {
+                return Err(invalid(
+                    "slot binding names a space the archive does not carry",
+                ));
+            }
         }
         Ok(())
     }

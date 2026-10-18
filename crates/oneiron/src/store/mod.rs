@@ -116,6 +116,7 @@ pub mod ports {
     };
 }
 
+mod archive_scratch;
 #[cfg(unix)]
 mod body_store;
 mod channel_identity_receipts;
@@ -149,6 +150,7 @@ pub(crate) mod test_hooks;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use archive_scratch::ScratchEnv;
 #[cfg(unix)]
 pub(crate) use body_store::{
     BodyDir, BodyFacts, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES, LINE_INDEX_SUFFIX, SunkBody,
