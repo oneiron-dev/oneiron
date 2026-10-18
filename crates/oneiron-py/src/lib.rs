@@ -2660,6 +2660,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_booking_page_token(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.booking.page_token")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.booking.page_token", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_search(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.search")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.search", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_freebusy(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.freebusy")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.freebusy", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_claims_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.claims.list")?;
         let output = py

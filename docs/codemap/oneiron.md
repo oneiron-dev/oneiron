@@ -3159,14 +3159,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/codec.rs` | src | m | 2 fn · 3 crate-vis | — | MessagePack body codec for custody records, bands, floors, and bindings |
 | `src/secret_custody/doors.rs` | src | m | 4 fn · 15 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
 | `src/secret_custody/floor.rs` | src | m | 2 fn · 8 crate-vis | — | Vault floor resolution plus the shared strict POLICY_MANIFEST walk |
-| `src/secret_custody/found_keys.rs` | src | m | 3 struct · 1 enum · 2 fn · 1 const · 1 re-export · 10 crate-vis | FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled | The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record… |
+| `src/secret_custody/found_keys.rs` | src | m | 3 struct · 1 enum · 2 fn · 1 const · 1 re-export · 11 crate-vis | FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled | The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record… |
 | `src/secret_custody/found_keys/actions.rs` | src | m | 3 fn · 1 const · 2 crate-vis | — | The owner's four answers to a found key: rotate (the rotate door settles it), delete, grant and not a secret |
 | `src/secret_custody/known_values.rs` | src | m | 1 const · 11 crate-vis | — | The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later… |
 | `src/secret_custody/masked_files.rs` | src | s | 1 enum · 3 fn · 13 crate-vis | SecretSight | Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2) |
 | `src/secret_custody/mod.rs` | src | s | 8 re-export · 18 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `src/secret_custody/owner_door.rs` | src | m | 4 struct · 1 fn | ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered | The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody |
 | `src/secret_custody/owner_door/tests.rs` | test | L | — | — | ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody… |
-| `src/secret_custody/reveal.rs` | src | L | 6 struct · 5 enum · 3 fn · 7 const · 16 crate-vis | HandleReveal, OwnerSecretReveal, RevealTarget, SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk +3 | A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection) |
+| `src/secret_custody/reveal.rs` | src | L | 6 struct · 5 enum · 3 fn · 7 const · 1 re-export · 18 crate-vis | HandleReveal, OwnerSecretReveal, RevealTarget, SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk +3 | A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection) |
+| `src/secret_custody/reveal/actor_erase.rs` | src | s | 1 enum · 1 const · 2 crate-vis | RevealAskErase | An erased actor out of the reveal rows (FIX 3520) |
 | `src/secret_custody/reveal/agent.rs` | src | s | 5 crate-vis | — | The agent's doors: `reveal`, `wait` and `describe` on a handle |
 | `src/secret_custody/reveal/file.rs` | src | s | 1 crate-vis | — | An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): "Agent with a… |
 | `src/secret_custody/reveal/owner.rs` | src | s | 3 fn | — | The owner's doors: the asks and receipts, the answer to one ask, and the owner's own read of a value |
@@ -3272,7 +3273,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/settings/model_versioning.rs` | src | m | 8 struct · 4 enum · 19 fn · 2 const | ModelStack, ModelStackDeprecation, ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId, ModelStackIdError, ModelStackModel +4 | Versioned default model stack settings |
 | `src/settings/models.rs` | src | s | 4 fn | — | The owner's model settings (OF-305): the standing quota fallbacks |
 | `src/settings/tests.rs` | test | s | — | — | — |
-| `src/share.rs` | src | L | 3 struct · 6 fn · 13 crate-vis | ResolvedShare, Share, ShareViewerScope | Revocable brief read grants |
+| `src/share.rs` | src | L | 3 struct · 6 fn · 1 re-export · 15 crate-vis | ResolvedShare, Share, ShareViewerScope | Revocable brief read grants |
+| `src/share/actor_erase.rs` | src | s | 1 enum · 1 const · 1 crate-vis | ShareAdmissionErase | An erased actor out of the share admissions (FIX 3520) |
 | `src/share/admission_refs.rs` | src | s | 1 crate-vis | — | Gate-decision references held by durable share admissions |
 | `src/share/tests.rs` | test | L | 3 crate-vis | — | — |
 | `src/share/tests/recipient_class.rs` | test | m | — | — | — |
@@ -3845,8 +3847,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/run_verb_catalog.rs` | src | s | 1 enum · 4 fn · 1 const | RunVerb | — |
 | `src/task_verb/runner_done.rs` | src | s | 2 struct · 2 fn · 1 crate-vis | RunnerDoneAnswer, RunnerDoneQuestion | A runner's "Done means met?", answered before it settles (OF-533) |
 | `src/task_verb/scheduling.rs` | src | s | 4 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
-| `src/task_verb/sdk.rs` | src | L | 36 struct · 1 enum · 12 fn · 30 re-export | BoardRefreshRequest, BoardSubscriptionRequest, CompanionSharingRequest, CompanionSharingSetRequest, DescribeRequest, EmptyRequest, InboxListRequest, InboxMarkRequest +29 | Shared typed agent-verb inputs and generated transport dispatch |
+| `src/task_verb/sdk.rs` | src | L | 36 struct · 1 enum · 12 fn · 31 re-export | BoardRefreshRequest, BoardSubscriptionRequest, CompanionSharingRequest, CompanionSharingSetRequest, DescribeRequest, EmptyRequest, InboxListRequest, InboxMarkRequest +29 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/task_verb/sdk_agents.rs` | src | s | 7 struct · 3 enum · 3 fn · 1 crate-vis | AgentCeilingInput, AgentDefinitionCreateRequest, AgentDefinitionLifecycle, AgentDefinitionRequest, AgentDefinitionSpec, AgentDefinitionUpdateRequest, AgentDefinitionView, AgentMcpInput +2 | Typed custom AGENT_DEF authoring |
+| `src/task_verb/sdk_calendar.rs` | src | s | 3 struct | BookingPageTokenRequest, BookingPageTokenResponse, CalendarFreebusyRequest | Typed booking-page discovery and calendar occupancy inputs |
 | `src/task_verb/sdk_campaign_split.rs` | src | s | 1 struct · 1 fn | CampaignSplitWire | `vault.research.evaluate_split` (FIX 655): the vault owner scores one arm of a bound claim-authoring… |
 | `src/task_verb/sdk_catalog_fragment.rs` | src | s | 1 struct · 1 fn | CatalogFragment | The code-mode catalog fragment (ONE-2510 S2): the whole verb set code mode serves, as one TypeScript… |
 | `src/task_verb/sdk_connector.rs` | src | s | 5 struct · 3 fn | ConnectorEntry, ConnectorListRequest, ConnectorNameRequest, ConnectorView, OutboundScheduleRequest | The `connector.*` rows over the foreign surface's catalog (`connector.list`, the discovery lens… |
@@ -3857,7 +3860,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_embedding_space.rs` | src | m | 12 struct · 1 enum · 13 fn | EmbeddingSpaceBindRequest, EmbeddingSpaceCandidateRequest, EmbeddingSpaceDeclareRequest, EmbeddingSpaceMoveChecked, EmbeddingSpaceMoveOutcome, EmbeddingSpaceMoveRequest, EmbeddingSpaceProbe, EmbeddingSpaceProbeDeleteRequest +5 | The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host… |
 | `src/task_verb/sdk_explain.rs` | src | s | 6 struct | ExplainGateNotice, ExplainGateReply, ExplainGateRequest, ExplainMemoryReply, ExplainMemoryRequest, ExplainScoreEvidence | The wire shapes of `vault.explain.memory` and `vault.explain.gate` (OF-278): why a memory appeared in the… |
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 420 fn · 2 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 424 fn · 2 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 27 struct · 6 enum · 25 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +25 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`… |
 | `src/task_verb/sdk_hub.rs` | src | m | 20 struct · 2 enum · 17 fn | HubConsentOutcome, HubConsentReceipt, HubHookBindRequest, HubHookBindingRow, HubHookQualificationReceipt, HubHookQualifyRequest, HubHookReplay, HubImportRequest +14 | Typed owner doors over configured hubs, foreign publishers and pinned imports |
@@ -4082,10 +4085,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/work_line.rs` | src | m | 4 struct · 1 trait · 13 fn · 2 const | LineCrossing, LinePermit, TaskWorkTurn, WaitTimedOut, WorkLine | A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work… |
 | `src/workspace_roster/codec.rs` | src | L | 45 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
 | `src/workspace_roster/intent.rs` | src | m | 5 struct · 1 enum · 5 fn · 3 crate-vis | CompanionBirthIntent, CompanionChoice, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent, WorkspaceRosterPreset | Onboarding request shapes and their structural validation |
-| `src/workspace_roster/join_consent.rs` | src | L | 6 struct · 7 enum · 7 fn · 1 re-export · 5 crate-vis | AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentSet, ConsentState, JoinDecision, JoinRefusal, JoinRequest +5 | One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a… |
+| `src/workspace_roster/join_consent.rs` | src | L | 6 struct · 7 enum · 7 fn · 1 re-export · 6 crate-vis | AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentSet, ConsentState, JoinDecision, JoinRefusal, JoinRequest +5 | One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a… |
 | `src/workspace_roster/join_door.rs` | src | m | 3 struct · 6 fn · 7 crate-vis | ConsentAnswer, JoinDecisionView, JoinOutcome | The room join and consent doors (OF-531) |
-| `src/workspace_roster/join_receipt.rs` | src | m | 3 struct · 1 enum · 5 fn · 12 crate-vis | JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer | The join receipt (OF-531): one typed record per join intent |
-| `src/workspace_roster/mod.rs` | src | s | 17 re-export · 21 crate-vis | — | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
+| `src/workspace_roster/join_receipt.rs` | src | m | 3 struct · 3 enum · 7 fn · 1 const · 16 crate-vis | JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer, RosterActor, RosterErase | The join receipt (OF-531): one typed record per join intent |
+| `src/workspace_roster/mod.rs` | src | s | 17 re-export · 23 crate-vis | — | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
 | `src/workspace_roster/project/asks.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | ProjectAsk | A project's asks queue (ARCH-0067 tasks and asks) |
 | `src/workspace_roster/project/branch.rs` | src | m | 5 crate-vis | — | The fork rule (Astra #1434 F1) |
 | `src/workspace_roster/project/capture.rs` | src | m | 15 crate-vis | — | Capture and admission of project revisions (section 2 of the PR 3 contract) |
@@ -4113,7 +4116,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/project/owner_signer.rs` | src | s | 1 struct · 2 fn · 5 crate-vis | OwnerProjectSigner | The owner-project signer (decision 3): every owner door signs the project state it writes through one… |
 | `src/workspace_roster/project/projection.rs` | src | m | 6 crate-vis | — | The write-time projector shared by local batches and sync materialization |
 | `src/workspace_roster/project/proof.rs` | src | m | 1 crate-vis | — | Live admission of a PROJECT write: direct, batch and typed doors |
-| `src/workspace_roster/project/proposal.rs` | src | m | 3 struct · 1 enum · 7 fn · 12 crate-vis | ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState, ProjectProposalRequest | The project card a conversation proposes (OF-501, ARCH-0067) |
+| `src/workspace_roster/project/proposal.rs` | src | m | 3 struct · 1 enum · 7 fn · 1 const · 14 crate-vis | ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState, ProjectProposalRequest | The project card a conversation proposes (OF-501, ARCH-0067) |
 | `src/workspace_roster/project/read/component.rs` | src | s | 2 crate-vis | — | A project's facts on its own and the component of "names as parent" it belongs to: what `joint.rs` decides… |
 | `src/workspace_roster/project/read/mod.rs` | src | m | 1 struct · 1 enum · 36 crate-vis | ProjectQuarantine, ProjectVerdict | The one read door for PROJECT rows |
 | `src/workspace_roster/project/refresh.rs` | src | m | 3 crate-vis | — | The batch-end refresh of each touched project (sections 2 and 6 of the PR 3 contract) |
@@ -4146,10 +4149,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/rooms/audience.rs` | src | m | 1 fn · 17 crate-vis | — | Private thread audiences (FIX 2951) |
 | `src/workspace_roster/rooms/audience_overlay.rs` | src | s | 1 crate-vis | — | A thread turn a session overlay stages (FIX 3122, the rest of FIX 2951) |
 | `src/workspace_roster/rooms/history.rs` | src | L | 10 fn · 13 crate-vis | — | Bounded room-local history and transactional auxiliary-row cleanup |
-| `src/workspace_roster/rooms/hosting.rs` | src | m | 5 struct · 2 enum · 3 fn · 8 crate-vis | HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding | Room hosting: the speaking duty, kept apart from the engine's upkeep |
+| `src/workspace_roster/rooms/hosting.rs` | src | m | 5 struct · 2 enum · 3 fn · 1 const · 9 crate-vis | HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding | Room hosting: the speaking duty, kept apart from the engine's upkeep |
 | `src/workspace_roster/rooms/liveness.rs` | src | m | 5 struct · 1 enum · 3 fn · 8 crate-vis | RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind | Read-time room thread liveness; the room history and TASK rows remain truth |
-| `src/workspace_roster/rooms/mod.rs` | src | m | 6 struct · 2 enum · 6 fn · 9 re-export · 27 crate-vis | RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThreadPage, RoomTrunk, RoomTrunkHeader, RoomTrunkItem, RoomTurn | Room participation and addressed turn claims |
+| `src/workspace_roster/rooms/mod.rs` | src | m | 6 struct · 2 enum · 6 fn · 9 re-export · 30 crate-vis | RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThreadPage, RoomTrunk, RoomTrunkHeader, RoomTrunkItem, RoomTurn | Room participation and addressed turn claims |
 | `src/workspace_roster/rooms/offer_activity.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | OfferVoteRequest | A room-wide offer card's time (OF-530 ruling A): it stays open while people engage with it, and ages out… |
+| `src/workspace_roster/rooms/offer_erase.rs` | src | s | 2 crate-vis | — | An erased actor out of the offer cards (FIX 3520) |
 | `src/workspace_roster/rooms/offer_liveness.rs` | src | s | 1 crate-vis | — | When an open offer card's thread has ended (OF-530, ARCH-0006a:233): a thread is live while it has an open… |
 | `src/workspace_roster/rooms/offer_reopen.rs` | src | s | 1 struct · 1 fn | OfferReopenRequest | Reopening a room-wide offer card (OF-530 ruling A): one click from the room's host, once the card has aged out |
 | `src/workspace_roster/rooms/offer_settle.rs` | src | m | 2 struct · 1 enum · 1 fn · 7 crate-vis | OfferAnswer, OfferAnswerRequest, OfferSettlement | Answering an offer card (OF-530): join or not now, from the room's host |

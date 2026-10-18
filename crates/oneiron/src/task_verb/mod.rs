@@ -81,6 +81,7 @@ mod runner_done;
 mod scheduling;
 mod subproject;
 mod symbol_lease;
+mod task_continuation;
 mod terminal_state;
 mod training_offer_ask;
 mod training_swap_ask;
@@ -163,6 +164,9 @@ pub(crate) use create_validation::{
     settled_task_result_binding, task_human_assignee, task_is_terminal,
 };
 pub(crate) use rate_limit::task_create_owner;
+pub(crate) use task_continuation::{
+    FailedTaskContinuation, TaskContinuationOutcome, continue_failed_task_in_txn,
+};
 
 /// The objectives a run realizing `task` confesses against (OF-544): its
 /// brief's done-means question, each criterion that must hold, then each
@@ -262,6 +266,7 @@ pub(crate) use symbol_lease::forget_symbols;
 mod recall_door;
 pub mod sdk;
 mod sdk_agents;
+mod sdk_calendar;
 mod sdk_workspace;
 mod sdk_campaign_split;
 mod sdk_catalog_fragment;

@@ -932,6 +932,18 @@ impl OneironClient {
                 "vault.forget" => remote_agent_verb_output::<Vec<oneiron::memory::CommitReceipt>>(
                     client, verb, &input,
                 ),
+                "vault.booking.page_token" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BookingPageTokenResponse,
+                >(client, verb, &input),
+                "vault.calendar.read" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::calendar::CalendarEventView>>,
+                >(client, verb, &input),
+                "vault.calendar.search" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Vec<oneiron::calendar::CalendarEventView>>,
+                >(client, verb, &input),
+                "vault.calendar.freebusy" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::memory::CalendarFreebusyDto>,
+                >(client, verb, &input),
                 "vault.claims.list" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>,
                 >(client, verb, &input),
@@ -4834,6 +4846,61 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.forget", value)
+    }
+    pub fn vault_booking_page_token(
+        &self,
+        input: &oneiron::task_verb::sdk::BookingPageTokenRequest,
+    ) -> Result<oneiron::task_verb::sdk::BookingPageTokenResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.booking.page_token", value)
+    }
+    pub fn vault_calendar_read(
+        &self,
+        input: &oneiron::calendar::CalendarReadRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::calendar::CalendarEventView>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.read", value)
+    }
+    pub fn vault_calendar_search(
+        &self,
+        input: &oneiron::calendar::CalendarSearchRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Vec<oneiron::calendar::CalendarEventView>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.search", value)
+    }
+    pub fn vault_calendar_freebusy(
+        &self,
+        input: &oneiron::task_verb::sdk::CalendarFreebusyRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::memory::CalendarFreebusyDto>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.freebusy", value)
     }
     pub fn vault_claims_list(
         &self,

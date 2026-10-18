@@ -6566,6 +6566,96 @@ async fn vault_forget(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_booking_page_token(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.booking.page_token")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.booking.page_token", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.booking.page_token", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_booking_page_token(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_calendar_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_calendar_search(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.search",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_calendar_freebusy(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.freebusy",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_claims_list(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -9088,6 +9178,10 @@ pub(crate) async fn call_verb(
         "vault.remember" => vault_remember(server, call, input).await,
         "vault.claims.retract" => vault_claims_retract(server, call, input).await,
         "vault.forget" => vault_forget(server, call, input).await,
+        "vault.booking.page_token" => vault_booking_page_token(server, call, input).await,
+        "vault.calendar.read" => vault_calendar_read(server, call, input).await,
+        "vault.calendar.search" => vault_calendar_search(server, call, input).await,
+        "vault.calendar.freebusy" => vault_calendar_freebusy(server, call, input).await,
         "vault.claims.list" => vault_claims_list(server, call, input).await,
         "vault.claims.history" => vault_claims_history(server, call, input).await,
         "vault.delete" => vault_delete(server, call, input).await,
