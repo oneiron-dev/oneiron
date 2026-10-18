@@ -364,12 +364,12 @@ class Oneiron:
     def close_lens_frame(self, card_id: str) -> CloseLensFrameReply:
         """Closes a lens card the connected server rendered and frees its frame."""
 # BEGIN GENERATED FACADE VERBS
+    @property
+    def vault(self) -> "Oneiron._VaultVerbs": ...
     def report(self, spec: Facade.ReportRequest) -> Facade.ReportReceipt:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
     @property
     def feedback(self) -> "Oneiron._FeedbackVerbs": ...
-    @property
-    def vault(self) -> "Oneiron._VaultVerbs": ...
     @property
     def self(self) -> "Oneiron._SelfVerbs": ...
     def cancel(self, task_ref: str) -> TaskCancelReceipt: ...
@@ -394,12 +394,9 @@ class Oneiron:
     def connector(self) -> "Oneiron._ConnectorVerbs": ...
     @property
     def calendar(self) -> "Oneiron._CalendarVerbs": ...
-    class _FeedbackVerbs:
-        def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
-            """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
-        def send(self, spec: Facade.FeedbackSendSubjectRequest) -> Facade.FeedbackSubjectSent:
-            """The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate."""
     class _VaultVerbs:
+        @property
+        def commitments(self) -> "Oneiron._VaultCommitmentsVerbs": ...
         @property
         def reports(self) -> "Oneiron._VaultReportsVerbs": ...
         @property
@@ -608,6 +605,21 @@ class Oneiron:
         def summaries(self) -> "Oneiron._VaultSummariesVerbs": ...
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
+    class _VaultCommitmentsVerbs:
+        def create(self, spec: Facade.CommitmentCreateRequest) -> Facade.CommitmentCreateReceipt:
+            """Creates an authored commitment series and its due index atomically, without approving a reminder."""
+        def get(self, spec: Facade.CommitmentRefRequest) -> Facade.CommitmentView:
+            """Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."""
+        def instances(self, spec: Facade.CommitmentRefRequest) -> list[Facade.CommitmentView]:
+            """Lists the materialized occurrences of a commitment series, including closed obligations."""
+        def proposals(self, spec: Facade.CommitmentRefRequest) -> list[Facade.CommitmentWakeProposal]:
+            """Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery."""
+        def fulfill(self, spec: Facade.CommitmentFulfillRequest) -> Facade.CommitmentView:
+            """Explicitly confirms an obligation fulfilled with witness evidence through the existing fulfillment dispatcher."""
+        def release(self, spec: Facade.CommitmentCloseRequest) -> Facade.CommitmentView:
+            """Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction."""
+        def supersede(self, spec: Facade.CommitmentCloseRequest) -> Facade.CommitmentView:
+            """Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction."""
     class _VaultReportsVerbs:
         def disclosure(self, spec: Facade.ReportDisclosureRequest) -> Facade.ReportIssue:
             """The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."""
@@ -2273,6 +2285,11 @@ class Oneiron:
             """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
         def close(self, spec: Facade.NoteEditorCloseRequest) -> Facade.NoteEditorClosed:
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
+    class _FeedbackVerbs:
+        def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
+            """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
+        def send(self, spec: Facade.FeedbackSendSubjectRequest) -> Facade.FeedbackSubjectSent:
+            """The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate."""
     class _SelfVerbs:
         @property
         def focus(self) -> "Oneiron._SelfFocusVerbs": ...

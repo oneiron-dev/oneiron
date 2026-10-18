@@ -242,15 +242,23 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
-  /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
-  report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
-  readonly feedback = {
-    /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
-    preview: (input: Facade.FeedbackPreviewRequest): Facade.FeedbackSubjectPreview => this.#call(() => this.#client.feedbackPreview(input) as Facade.FeedbackSubjectPreview),
-    /** The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate. */
-    send: (input: Facade.FeedbackSendSubjectRequest): Facade.FeedbackSubjectSent => this.#call(() => this.#client.feedbackSend(input) as Facade.FeedbackSubjectSent),
-  }
   readonly vault = {
+    commitments: {
+      /** Creates an authored commitment series and its due index atomically, without approving a reminder. */
+      create: (input: Facade.CommitmentCreateRequest): Facade.CommitmentCreateReceipt => this.#call(() => this.#client.vaultCommitmentsCreate(input) as Facade.CommitmentCreateReceipt),
+      /** Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt. */
+      get: (input: Facade.CommitmentRefRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsGet(input) as Facade.CommitmentView),
+      /** Lists the materialized occurrences of a commitment series, including closed obligations. */
+      instances: (input: Facade.CommitmentRefRequest): Facade.CommitmentView[] => this.#call(() => this.#client.vaultCommitmentsInstances(input) as Facade.CommitmentView[]),
+      /** Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery. */
+      proposals: (input: Facade.CommitmentRefRequest): Facade.CommitmentWakeProposal[] => this.#call(() => this.#client.vaultCommitmentsProposals(input) as Facade.CommitmentWakeProposal[]),
+      /** Explicitly confirms an obligation fulfilled with witness evidence through the existing fulfillment dispatcher. */
+      fulfill: (input: Facade.CommitmentFulfillRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsFulfill(input) as Facade.CommitmentView),
+      /** Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction. */
+      release: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsRelease(input) as Facade.CommitmentView),
+      /** Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction. */
+      supersede: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsSupersede(input) as Facade.CommitmentView),
+    },
     reports: {
       /** The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny. */
       disclosure: (input: Facade.ReportDisclosureRequest): Facade.ReportIssue => this.#call(() => this.#client.vaultReportsDisclosure(input) as Facade.ReportIssue),
@@ -1963,6 +1971,14 @@ export class Oneiron {
       /** One NOTE's overrides and the defaults its gates read after them. */
       defaults: (request: Facade.NoteRefRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesDefaults(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
     },
+  }
+  /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
+  report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
+  readonly feedback = {
+    /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
+    preview: (input: Facade.FeedbackPreviewRequest): Facade.FeedbackSubjectPreview => this.#call(() => this.#client.feedbackPreview(input) as Facade.FeedbackSubjectPreview),
+    /** The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate. */
+    send: (input: Facade.FeedbackSendSubjectRequest): Facade.FeedbackSubjectSent => this.#call(() => this.#client.feedbackSend(input) as Facade.FeedbackSubjectSent),
   }
   readonly self = {
     focus: {

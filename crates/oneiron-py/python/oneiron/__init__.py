@@ -279,15 +279,15 @@ class Oneiron:
         return json.loads(_translate(lambda: self._client.close_lens_frame(card_id)))
 
     # BEGIN GENERATED FACADE VERBS
+    @property
+    def vault(self) -> "Oneiron._VaultVerbs":
+        return Oneiron._VaultVerbs(self._client)
     def report(self, spec):
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
         return json.loads(_translate(lambda: self._client.report(json.dumps(spec))))
     @property
     def feedback(self) -> "Oneiron._FeedbackVerbs":
         return Oneiron._FeedbackVerbs(self._client)
-    @property
-    def vault(self) -> "Oneiron._VaultVerbs":
-        return Oneiron._VaultVerbs(self._client)
     @property
     def self(self) -> "Oneiron._SelfVerbs":
         return Oneiron._SelfVerbs(self._client)
@@ -332,18 +332,12 @@ class Oneiron:
     @property
     def calendar(self) -> "Oneiron._CalendarVerbs":
         return Oneiron._CalendarVerbs(self._client)
-    class _FeedbackVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def preview(self, spec):
-            """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
-            return json.loads(_translate(lambda: self._client.feedback_preview(json.dumps(spec))))
-        def send(self, spec):
-            """The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate."""
-            return json.loads(_translate(lambda: self._client.feedback_send(json.dumps(spec))))
     class _VaultVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def commitments(self) -> "Oneiron._VaultCommitmentsVerbs":
+            return Oneiron._VaultCommitmentsVerbs(self._client)
         @property
         def reports(self) -> "Oneiron._VaultReportsVerbs":
             return Oneiron._VaultReportsVerbs(self._client)
@@ -679,6 +673,30 @@ class Oneiron:
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
+    class _VaultCommitmentsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """Creates an authored commitment series and its due index atomically, without approving a reminder."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_create(json.dumps(spec))))
+        def get(self, spec):
+            """Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_get(json.dumps(spec))))
+        def instances(self, spec):
+            """Lists the materialized occurrences of a commitment series, including closed obligations."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_instances(json.dumps(spec))))
+        def proposals(self, spec):
+            """Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_proposals(json.dumps(spec))))
+        def fulfill(self, spec):
+            """Explicitly confirms an obligation fulfilled with witness evidence through the existing fulfillment dispatcher."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_fulfill(json.dumps(spec))))
+        def release(self, spec):
+            """Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_release(json.dumps(spec))))
+        def supersede(self, spec):
+            """Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_supersede(json.dumps(spec))))
     class _VaultReportsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3568,6 +3586,15 @@ class Oneiron:
         def close(self, spec):
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
             return json.loads(_translate(lambda: self._client.vault_notes_editor_close(json.dumps(spec))))
+    class _FeedbackVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def preview(self, spec):
+            """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
+            return json.loads(_translate(lambda: self._client.feedback_preview(json.dumps(spec))))
+        def send(self, spec):
+            """The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate."""
+            return json.loads(_translate(lambda: self._client.feedback_send(json.dumps(spec))))
     class _SelfVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

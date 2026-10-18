@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 780 facade rows, 2686 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 736.
+// UniFFI census: 787 facade rows, 2707 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 743.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -13,6 +13,377 @@
     clippy::upper_case_acronyms,
     reason = "each type mirrors one engine type, its names and its variants"
 )]
+
+/// `oneiron::memory::commitment_doors::types::CommitmentObligorKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CommitmentObligorKind {
+    #[serde(rename = "owner")]
+    Owner,
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "third_party")]
+    ThirdParty,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentObligor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CommitmentObligor {
+    #[serde(rename = "kind")]
+    pub kind: CommitmentObligorKind,
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentContent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CommitmentContent {
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(
+        rename = "payload_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub payload_ref: Option<String>,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentQuotaWindow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum CommitmentQuotaWindow {
+    #[serde(rename = "iso_week")]
+    IsoWeek {
+        #[serde(rename = "tz")]
+        tz: String,
+    },
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentSchedule`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum CommitmentSchedule {
+    #[serde(rename = "once")]
+    Once {
+        #[serde(rename = "due")]
+        due: u64,
+    },
+    #[serde(rename = "interval")]
+    Interval {
+        #[serde(rename = "period")]
+        period: u64,
+        #[serde(rename = "anchor")]
+        anchor: u64,
+    },
+    #[serde(rename = "quota")]
+    Quota {
+        #[serde(rename = "count")]
+        count: u32,
+        #[serde(rename = "window")]
+        window: CommitmentQuotaWindow,
+    },
+    #[serde(rename = "rrule")]
+    Rrule {
+        #[serde(rename = "rrule_string")]
+        rrule_string: String,
+        #[serde(rename = "tz")]
+        tz: String,
+    },
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentStrength`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CommitmentStrength {
+    #[serde(rename = "stated_intention")]
+    StatedIntention,
+    #[serde(rename = "decision")]
+    Decision,
+    #[serde(rename = "commitment")]
+    Commitment,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentBirthKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CommitmentBirthKind {
+    #[serde(rename = "run_tree_node")]
+    RunTreeNode,
+    #[serde(rename = "brief")]
+    Brief,
+    #[serde(rename = "surface_action")]
+    SurfaceAction,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentBirthProvenance`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CommitmentBirthProvenance {
+    #[serde(rename = "kind")]
+    pub kind: CommitmentBirthKind,
+    #[serde(rename = "reference")]
+    pub reference: String,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentCreateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CommitmentCreateRequest {
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "obligor")]
+    pub obligor: CommitmentObligor,
+    #[serde(rename = "beneficiary")]
+    pub beneficiary: String,
+    #[serde(rename = "content")]
+    pub content: CommitmentContent,
+    #[serde(rename = "schedule")]
+    pub schedule: CommitmentSchedule,
+    #[serde(
+        rename = "lead_seconds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lead_seconds: Option<u64>,
+    #[serde(rename = "strength")]
+    pub strength: CommitmentStrength,
+    #[serde(rename = "birth_provenance")]
+    pub birth_provenance: CommitmentBirthProvenance,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: u64,
+    #[serde(
+        rename = "learned_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_at: Option<u64>,
+    #[serde(rename = "evidence_turn_refs")]
+    pub evidence_turn_refs: Vec<String>,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CommitmentStatus {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "fulfilled")]
+    Fulfilled,
+    #[serde(rename = "released")]
+    Released,
+    #[serde(rename = "lapsed")]
+    Lapsed,
+    #[serde(rename = "superseded")]
+    Superseded,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentOccurrence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CommitmentOccurrence {
+    #[serde(rename = "due_at")]
+    pub due_at: u64,
+    #[serde(rename = "window_start")]
+    pub window_start: u64,
+    #[serde(rename = "window_end")]
+    pub window_end: u64,
+    #[serde(rename = "ordinal")]
+    pub ordinal: u32,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentFulfillmentSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum CommitmentFulfillmentSource {
+    #[serde(rename = "user_done")]
+    UserDone,
+    #[serde(rename = "brief_completion")]
+    BriefCompletion {
+        #[serde(rename = "brief_ref")]
+        brief_ref: String,
+    },
+    #[serde(rename = "checklist_tick")]
+    ChecklistTick,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentLifecycleReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CommitmentLifecycleReceipt {
+    #[serde(
+        rename = "fulfillment_source",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub fulfillment_source: Option<CommitmentFulfillmentSource>,
+    #[serde(rename = "commitment_ref")]
+    pub commitment_ref: String,
+    #[serde(rename = "status")]
+    pub status: CommitmentStatus,
+    #[serde(rename = "learned_at")]
+    pub learned_at: u64,
+    #[serde(rename = "evidence_turn_refs")]
+    pub evidence_turn_refs: Vec<String>,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CommitmentView {
+    #[serde(rename = "commitment_ref")]
+    pub commitment_ref: String,
+    #[serde(rename = "obligor")]
+    pub obligor: CommitmentObligor,
+    #[serde(rename = "beneficiary")]
+    pub beneficiary: String,
+    #[serde(rename = "content")]
+    pub content: CommitmentContent,
+    #[serde(rename = "schedule")]
+    pub schedule: CommitmentSchedule,
+    #[serde(
+        rename = "lead_seconds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lead_seconds: Option<u64>,
+    #[serde(rename = "strength")]
+    pub strength: CommitmentStrength,
+    #[serde(rename = "status")]
+    pub status: CommitmentStatus,
+    #[serde(rename = "birth_provenance")]
+    pub birth_provenance: CommitmentBirthProvenance,
+    #[serde(
+        rename = "series_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub series_ref: Option<String>,
+    #[serde(
+        rename = "occurrence",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurrence: Option<CommitmentOccurrence>,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: u64,
+    #[serde(rename = "learned_at")]
+    pub learned_at: u64,
+    #[serde(rename = "evidence_turn_refs")]
+    pub evidence_turn_refs: Vec<String>,
+    #[serde(rename = "receipt")]
+    pub receipt: CommitmentLifecycleReceipt,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentIndexOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "outcome")]
+pub enum CommitmentIndexOutcome {
+    #[serde(rename = "indexed")]
+    Indexed {
+        #[serde(rename = "project_at")]
+        project_at: u64,
+        #[serde(rename = "next_due")]
+        next_due: u64,
+    },
+    #[serde(rename = "stored_rrule")]
+    StoredRrule {
+        #[serde(rename = "route")]
+        route: String,
+    },
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentCreateReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CommitmentCreateReceipt {
+    #[serde(rename = "commitment")]
+    pub commitment: CommitmentView,
+    #[serde(rename = "index")]
+    pub index: CommitmentIndexOutcome,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentRefRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CommitmentRefRequest {
+    #[serde(rename = "commitment_ref")]
+    pub commitment_ref: String,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentWakePhase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CommitmentWakePhase {
+    #[serde(rename = "lead")]
+    Lead,
+    #[serde(rename = "due")]
+    Due,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentWakeProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CommitmentWakeProposal {
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "instance_ref")]
+    pub instance_ref: String,
+    #[serde(rename = "phase")]
+    pub phase: CommitmentWakePhase,
+    #[serde(rename = "fire_at")]
+    pub fire_at: u64,
+    #[serde(rename = "due_at")]
+    pub due_at: u64,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: u64,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
+    #[serde(rename = "trigger_ref")]
+    pub trigger_ref: String,
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "target")]
+    pub target: String,
+    #[serde(
+        rename = "on_behalf_of",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub on_behalf_of: Option<String>,
+    #[serde(
+        rename = "content_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub content_ref: Option<String>,
+    #[serde(
+        rename = "dedupe_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dedupe_key: Option<String>,
+    #[serde(rename = "approval")]
+    pub approval: String,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentFulfillRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CommitmentFulfillRequest {
+    #[serde(rename = "commitment_ref")]
+    pub commitment_ref: String,
+    #[serde(rename = "source")]
+    pub source: CommitmentFulfillmentSource,
+    #[serde(rename = "evidence_turn_refs")]
+    pub evidence_turn_refs: Vec<String>,
+}
+
+/// `oneiron::memory::commitment_doors::types::CommitmentCloseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CommitmentCloseRequest {
+    #[serde(rename = "commitment_ref")]
+    pub commitment_ref: String,
+    #[serde(rename = "evidence_turn_refs")]
+    pub evidence_turn_refs: Vec<String>,
+}
 
 /// `oneiron::edit_distance::publisher::vocab::IssueCategory`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]

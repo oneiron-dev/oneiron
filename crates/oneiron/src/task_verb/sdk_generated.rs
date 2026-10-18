@@ -10,6 +10,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
     > = std::sync::LazyLock::new(|| {
         std::collections::HashMap::from([
             (
+                "vault.commitments.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentCreateRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentRefRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.instances",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentRefRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.proposals",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentRefRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.fulfill",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentFulfillRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentCloseRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.supersede",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentCloseRequest,
+                >(),
+            ),
+            (
                 "report",
                 crate::code_run::vault_read::request_schema::<crate::feedback::ReportRequest>(),
             ),
@@ -4407,6 +4449,13 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
+    "vault.commitments.create",
+    "vault.commitments.get",
+    "vault.commitments.instances",
+    "vault.commitments.proposals",
+    "vault.commitments.fulfill",
+    "vault.commitments.release",
+    "vault.commitments.supersede",
     "feedback.preview",
     "feedback.send",
     "vault.reports.disclosure",
@@ -4843,6 +4892,27 @@ pub const OPENAPI_ROWS: &[&str] = &[
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "vault.commitments.create" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentCreateReceipt,
+        >(),
+        "vault.commitments.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentView,
+        >(),
+        "vault.commitments.instances" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::memory::commitment_doors::CommitmentView>,
+        >(),
+        "vault.commitments.proposals" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::memory::commitment_doors::CommitmentWakeProposal>,
+        >(),
+        "vault.commitments.fulfill" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentView,
+        >(),
+        "vault.commitments.release" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentView,
+        >(),
+        "vault.commitments.supersede" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentView,
+        >(),
         "feedback.preview" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::FeedbackSubjectPreview,
         >(),
@@ -6182,6 +6252,55 @@ pub fn mcp_arguments_schema_from_input(
 ) -> Option<serde_json::Value> {
     let mut properties = serde_json::Map::new();
     let required: &[&str] = match verb {
+        "vault.commitments.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.instances" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.proposals" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.fulfill" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.supersede" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "report" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11691,6 +11810,34 @@ pub fn mcp_arguments_schema_from_input(
 }
 pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> {
     match verb {
+        "vault.commitments.create" => {
+            let _input: crate::memory::commitment_doors::CommitmentCreateRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.get" => {
+            let _input: crate::memory::commitment_doors::CommitmentRefRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.instances" => {
+            let _input: crate::memory::commitment_doors::CommitmentRefRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.proposals" => {
+            let _input: crate::memory::commitment_doors::CommitmentRefRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.fulfill" => {
+            let _input: crate::memory::commitment_doors::CommitmentFulfillRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.release" => {
+            let _input: crate::memory::commitment_doors::CommitmentCloseRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.supersede" => {
+            let _input: crate::memory::commitment_doors::CommitmentCloseRequest =
+                decode(value.clone())?;
+        }
         "report" => {
             let input: crate::feedback::ReportRequest = decode(value.clone())?;
             input.validate().map_err(MemoryError::from)?;
@@ -14523,6 +14670,19 @@ pub fn invoke(
     }
     // The row's one verb-hook boundary (ARCH-0080 §3).
     crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
+        "vault.commitments.create" => encode(vault_commitments_create(memory, decode(value)?)?),
+        "vault.commitments.get" => encode(vault_commitments_get(memory, decode(value)?)?),
+        "vault.commitments.instances" => {
+            encode(vault_commitments_instances(memory, decode(value)?)?)
+        }
+        "vault.commitments.proposals" => {
+            encode(vault_commitments_proposals(memory, decode(value)?)?)
+        }
+        "vault.commitments.fulfill" => encode(vault_commitments_fulfill(memory, decode(value)?)?),
+        "vault.commitments.release" => encode(vault_commitments_release(memory, decode(value)?)?),
+        "vault.commitments.supersede" => {
+            encode(vault_commitments_supersede(memory, decode(value)?)?)
+        }
         "report" => encode(report(memory, decode(value)?)?),
         "feedback.preview" => encode(feedback_preview(memory, decode(value)?)?),
         "feedback.send" => encode(feedback_send(memory, decode(value)?)?),
@@ -16123,6 +16283,57 @@ pub fn invoke_browser(
         }
     };
     output.map_err(|error| oneiron_browser::BrowserError::Protocol(error.to_string()))
+}
+pub fn vault_commitments_create(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentCreateRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentCreateReceipt> {
+    memory.commitments_create_as(&memory.embedded_owner("vault.commitments.create")?, input)
+}
+pub fn vault_commitments_get(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentRefRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
+    memory.commitments_get_as(&memory.embedded_owner("vault.commitments.get")?, input)
+}
+pub fn vault_commitments_instances(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentRefRequest,
+) -> MemoryResult<Vec<crate::memory::commitment_doors::CommitmentView>> {
+    memory.commitments_instances_as(
+        &memory.embedded_owner("vault.commitments.instances")?,
+        input,
+    )
+}
+pub fn vault_commitments_proposals(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentRefRequest,
+) -> MemoryResult<Vec<crate::memory::commitment_doors::CommitmentWakeProposal>> {
+    memory.commitments_proposals_as(
+        &memory.embedded_owner("vault.commitments.proposals")?,
+        input,
+    )
+}
+pub fn vault_commitments_fulfill(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentFulfillRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
+    memory.commitments_fulfill_as(&memory.embedded_owner("vault.commitments.fulfill")?, input)
+}
+pub fn vault_commitments_release(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentCloseRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
+    memory.commitments_release_as(&memory.embedded_owner("vault.commitments.release")?, input)
+}
+pub fn vault_commitments_supersede(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentCloseRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
+    memory.commitments_supersede_as(
+        &memory.embedded_owner("vault.commitments.supersede")?,
+        input,
+    )
 }
 pub fn report(
     memory: &Memory<'_>,

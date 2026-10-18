@@ -9,13 +9,34 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 816 code-mode rows (793 host rows, 23 run rows), 2766 declarations.
-// Replies: 729 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 823 code-mode rows (800 host rows, 23 run rows), 2787 declarations.
+// Replies: 736 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
+  type CommitmentObligorKind = "owner" | "agent" | "third_party";
+  type CommitmentObligor = { kind: CommitmentObligorKind; entity_ref: string };
+  type CommitmentContent = { text: string; payload_ref?: string | null };
+  type CommitmentQuotaWindow = { kind: "iso_week"; tz: string };
+  type CommitmentSchedule = { kind: "once"; due: number } | { kind: "interval"; period: number; anchor: number } | { kind: "quota"; count: number; window: CommitmentQuotaWindow } | { kind: "rrule"; rrule_string: string; tz: string };
+  type CommitmentStrength = "stated_intention" | "decision" | "commitment";
+  type CommitmentBirthKind = "run_tree_node" | "brief" | "surface_action";
+  type CommitmentBirthProvenance = { kind: CommitmentBirthKind; reference: string };
+  type CommitmentCreateRequest = { id?: string | null; obligor: CommitmentObligor; beneficiary: string; content: CommitmentContent; schedule: CommitmentSchedule; lead_seconds?: number | null; strength: CommitmentStrength; birth_provenance: CommitmentBirthProvenance; occurred_at: number; learned_at?: number | null; evidence_turn_refs: string[] };
+  type CommitmentStatus = "open" | "fulfilled" | "released" | "lapsed" | "superseded";
+  type CommitmentOccurrence = { due_at: number; window_start: number; window_end: number; ordinal: number };
+  type CommitmentFulfillmentSource = { kind: "user_done" } | { kind: "brief_completion"; brief_ref: string } | { kind: "checklist_tick" };
+  type CommitmentLifecycleReceipt = { fulfillment_source?: CommitmentFulfillmentSource | null; commitment_ref: string; status: CommitmentStatus; learned_at: number; evidence_turn_refs: string[] };
+  type CommitmentView = { commitment_ref: string; obligor: CommitmentObligor; beneficiary: string; content: CommitmentContent; schedule: CommitmentSchedule; lead_seconds?: number | null; strength: CommitmentStrength; status: CommitmentStatus; birth_provenance: CommitmentBirthProvenance; series_ref?: string | null; occurrence?: CommitmentOccurrence | null; occurred_at: number; learned_at: number; evidence_turn_refs: string[]; receipt: CommitmentLifecycleReceipt };
+  type CommitmentIndexOutcome = { outcome: "indexed"; project_at: number; next_due: number } | { outcome: "stored_rrule"; route: string };
+  type CommitmentCreateReceipt = { commitment: CommitmentView; index: CommitmentIndexOutcome };
+  type CommitmentRefRequest = { commitment_ref: string };
+  type CommitmentWakePhase = "lead" | "due";
+  type CommitmentWakeProposal = { proposal_ref: string; instance_ref: string; phase: CommitmentWakePhase; fire_at: number; due_at: number; occurred_at: number; idempotency_key: string; trigger_ref: string; verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; dedupe_key?: string | null; approval: string };
+  type CommitmentFulfillRequest = { commitment_ref: string; source: CommitmentFulfillmentSource; evidence_turn_refs: string[] };
+  type CommitmentCloseRequest = { commitment_ref: string; evidence_turn_refs: string[] };
   type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear";
   type ReportKind = "problem" | "proposal";
   type FeedbackProposal = { problem: string; fix: string };
@@ -3606,6 +3627,22 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
   commit(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
+  commitments: {
+    /** Creates an authored commitment series and its due index atomically, without approving a reminder. */
+    create(input: Sdk.CommitmentCreateRequest): Promise<Sdk.CommitmentCreateReceipt | StoredResult>;
+    /** Explicitly confirms an obligation fulfilled with witness evidence through the existing fulfillment dispatcher. */
+    fulfill(input: Sdk.CommitmentFulfillRequest): Promise<Sdk.CommitmentView | StoredResult>;
+    /** Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt. */
+    get(input: Sdk.CommitmentRefRequest): Promise<Sdk.CommitmentView | StoredResult>;
+    /** Lists the materialized occurrences of a commitment series, including closed obligations. */
+    instances(input: Sdk.CommitmentRefRequest): Promise<Sdk.CommitmentView[] | StoredResult>;
+    /** Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery. */
+    proposals(input: Sdk.CommitmentRefRequest): Promise<Sdk.CommitmentWakeProposal[] | StoredResult>;
+    /** Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction. */
+    release(input: Sdk.CommitmentCloseRequest): Promise<Sdk.CommitmentView | StoredResult>;
+    /** Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction. */
+    supersede(input: Sdk.CommitmentCloseRequest): Promise<Sdk.CommitmentView | StoredResult>;
+  };
   companions: {
     access_requests: {
       /** The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant. */

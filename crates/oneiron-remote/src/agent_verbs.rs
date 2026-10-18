@@ -35,6 +35,27 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => match verb {
+                "vault.commitments.create" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentCreateReceipt,
+                >(client, verb, &input),
+                "vault.commitments.get" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentView,
+                >(client, verb, &input),
+                "vault.commitments.instances" => remote_agent_verb_output::<
+                    Vec<oneiron::memory::commitment_doors::CommitmentView>,
+                >(client, verb, &input),
+                "vault.commitments.proposals" => remote_agent_verb_output::<
+                    Vec<oneiron::memory::commitment_doors::CommitmentWakeProposal>,
+                >(client, verb, &input),
+                "vault.commitments.fulfill" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentView,
+                >(client, verb, &input),
+                "vault.commitments.release" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentView,
+                >(client, verb, &input),
+                "vault.commitments.supersede" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentView,
+                >(client, verb, &input),
                 "report" => remote_agent_verb_output::<oneiron::feedback::ReportReceipt>(
                     client, verb, &input,
                 ),
@@ -2462,6 +2483,90 @@ impl OneironClient {
                 ))
             }
         }
+    }
+    pub fn vault_commitments_create(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentCreateRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentCreateReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.create", value)
+    }
+    pub fn vault_commitments_get(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentRefRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.get", value)
+    }
+    pub fn vault_commitments_instances(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentRefRequest,
+    ) -> Result<Vec<oneiron::memory::commitment_doors::CommitmentView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.instances", value)
+    }
+    pub fn vault_commitments_proposals(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentRefRequest,
+    ) -> Result<Vec<oneiron::memory::commitment_doors::CommitmentWakeProposal>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.proposals", value)
+    }
+    pub fn vault_commitments_fulfill(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentFulfillRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.fulfill", value)
+    }
+    pub fn vault_commitments_release(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentCloseRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.release", value)
+    }
+    pub fn vault_commitments_supersede(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentCloseRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.supersede", value)
     }
     pub fn report(
         &self,

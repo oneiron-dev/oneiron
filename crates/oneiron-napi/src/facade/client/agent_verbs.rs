@@ -7,6 +7,69 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
+    pub fn vault_commitments_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commitments.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_commitments_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commitments.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_commitments_instances(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commitments.instances", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_commitments_proposals(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commitments.proposals", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_commitments_fulfill(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commitments.fulfill", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_commitments_release(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commitments.release", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_commitments_supersede(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commitments.supersede", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner.agent_verb("report", input).map_err(facade_error)
     }
