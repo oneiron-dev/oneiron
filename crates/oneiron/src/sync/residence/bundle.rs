@@ -32,16 +32,19 @@ use crate::world_keys::{
     retired_bundle_generations, sealed_bundle_slot,
 };
 
-/// The most object bytes one upload part carries; in base64 it stays under the
-/// 8 MiB request bound.
-pub const SEALED_BUNDLE_PUT_PART_MAX: usize = 4 * 1024 * 1024;
-/// The most object bytes one read reply carries; in base64 it stays under the
-/// 32 MiB reply bound.
-pub const SEALED_BUNDLE_READ_PART_MAX: usize = 16 * 1024 * 1024;
+/// The most object bytes one upload part carries (CALLS:
+/// SEALED_BUNDLE_PUT_PART_MAX): in base64 a part moves within the residence
+/// call's default 12 s budget on a link of about 29 KB/s, and a 64 MiB bundle
+/// takes 256 parts (FIX 3356).
+pub const SEALED_BUNDLE_PUT_PART_MAX: usize = 256 * 1024;
+/// The most object bytes one read reply carries (CALLS:
+/// SEALED_BUNDLE_READ_PART_MAX), on the same link floor as an upload part.
+pub const SEALED_BUNDLE_READ_PART_MAX: usize = 256 * 1024;
 /// How long a staged upload waits for its next part before the home drops it.
 pub(super) const STAGE_IDLE_SECS: u64 = 60 * 60;
-/// The length of each stored part of a kept object but its last.
-const STORED_PART: usize = SEALED_BUNDLE_PUT_PART_MAX;
+/// The length of each stored part of a kept object but its last: the layout
+/// kept generations are stored in, whatever the parts an upload arrives in.
+const STORED_PART: usize = 4 * 1024 * 1024;
 /// The machine classes that hold or fetch the vault's sealed bundle (CALLS:
 /// SEALED_BUNDLE_DEVICE_POLICY): a computer only, never a phone.
 const SEALED_BUNDLE_DEVICE_POLICY: &[MachineDeviceClass] = &[MachineDeviceClass::Computer];

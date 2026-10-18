@@ -8,7 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::sync::WindowKey;
 use crate::sync::schema::create_window_doc;
-use crate::sync::window::{self, LoadedWindow, ReplacementConflict};
+use crate::sync::window::{self, LoadedWindow, ReplacementByteBound, ReplacementConflict};
 
 impl WindowManager {
     /// Replaces window `key` with a peer's history-free `snapshot`
@@ -40,6 +40,25 @@ impl WindowManager {
         snapshot: &[u8],
         evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
         admitted: impl FnOnce() -> bool,
+    ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
+        self.replace_window_bounded(
+            key,
+            snapshot,
+            evidence,
+            admitted,
+            ReplacementByteBound::NetworkFrame,
+        )
+    }
+
+    /// [`Self::replace_window_admitted`] for a snapshot up to `bound`
+    /// ([`window::prepare_bounded_replacement`]).
+    pub(in crate::sync) fn replace_window_bounded(
+        self: &Arc<Self>,
+        key: &WindowKey,
+        snapshot: &[u8],
+        evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
+        admitted: impl FnOnce() -> bool,
+        bound: ReplacementByteBound,
     ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
         self.attach_to_vault();
         let mut registry = self.lock_registry();
@@ -76,13 +95,14 @@ impl WindowManager {
                 Err(error) => return Err(error),
             },
         };
-        let prepared = window::prepare_replacement(
+        let prepared = window::prepare_bounded_replacement(
             &self.vault,
             &self.materializer,
             key,
             &old,
             snapshot,
             evidence,
+            bound,
         )?;
         drop(old);
         drop(current);

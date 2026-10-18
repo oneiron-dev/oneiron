@@ -84,7 +84,41 @@ pub fn prepare_replacement(
     snapshot: &[u8],
     evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
 ) -> Result<PreparedReplacement> {
-    if snapshot.len() > MAX_DECODED_PAYLOAD_BYTES {
+    prepare_bounded_replacement(
+        vault,
+        materializer,
+        key,
+        old,
+        snapshot,
+        evidence,
+        ReplacementByteBound::NetworkFrame,
+    )
+}
+
+/// How long a replacement snapshot may be.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::sync) enum ReplacementByteBound {
+    /// A peer's: one network frame's decoded payload, [`MAX_DECODED_PAYLOAD_BYTES`].
+    NetworkFrame,
+    /// A base window of a sealed bundle a kit restore opened: the authenticated
+    /// section that carried it, opened and decoded whole once its signer and
+    /// vault were checked (FIX 3361). No length check applies.
+    AuthenticatedSectionLength,
+}
+
+/// [`prepare_replacement`] for a snapshot up to `bound`. Only the length check
+/// differs: the snapshot passes the same admission, and the install keeps the
+/// same bookkeeping.
+pub(in crate::sync) fn prepare_bounded_replacement(
+    vault: &Vault,
+    materializer: &Materializer,
+    key: &WindowKey,
+    old: &LoroDoc,
+    snapshot: &[u8],
+    evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
+    bound: ReplacementByteBound,
+) -> Result<PreparedReplacement> {
+    if bound == ReplacementByteBound::NetworkFrame && snapshot.len() > MAX_DECODED_PAYLOAD_BYTES {
         return Err(rejected());
     }
     let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;

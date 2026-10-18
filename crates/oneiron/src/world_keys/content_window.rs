@@ -5,24 +5,46 @@
 //! The live window of a world flagged device-only never holds the world's rows
 //! (reverse rematerialization withholds them), so the reader keeps a second Loro
 //! document per sealed window, its mirror, packed with every row of the window.
-//! A row deleted here since the last pack resets the mirror. A section carries
-//! each mirror whole; taking one in merges it into the mirror as more of the same
-//! history and materializes the mirror's rows here. The live window is not
-//! touched.
+//! The mirror keeps its history: before each pack it takes the window's own
+//! deletes here, so a row deleted here leaves every mirror that merges it (FIX
+//! 3360). A section carries each mirror whole; taking one in merges it into the
+//! mirror as more of the same history and materializes the mirror's rows here.
+//! The live window is not touched.
 
 use std::sync::PoisonError;
 
-use loro::{LoroDoc, ValueOrContainer};
+use loro::LoroDoc;
 
 use super::content::MIRROR;
 use super::refused;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result, SyncError};
+use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::sync::WindowManager;
-use crate::sync::loro_support::{export_snapshot, import_doc};
+use crate::sync::loro_support::{
+    export_snapshot, import_doc, map_for_each_tombstone_value, map_get_bytes,
+};
+use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
-use crate::sync::window::{forward_rematerialize, reverse_rematerialize_for_sealing};
+use crate::sync::window::{
+    apply_pending_window_updates, apply_tombstone_to_window_doc, forward_rematerialize,
+    load_window_from_state, reverse_rematerialize_for_sealing,
+};
+
+/// Where a mirror's deletes come from.
+enum MirrorDelete {
+    /// The tombstones the window holds here, live or durable.
+    CanonicalWindow,
+    /// The window's pending delete intent (`pt:` markers), read, not taken.
+    PendingIntent,
+}
+
+/// The deletes a mirror takes before each pack (CALLS:
+/// SEALED_MIRROR_DELETE_SOURCE): the window's own tombstones here and its
+/// pending delete intent, never a row merely missing here.
+const SEALED_MIRROR_DELETE_SOURCE: &[MirrorDelete] =
+    &[MirrorDelete::CanonicalWindow, MirrorDelete::PendingIntent];
 
 fn mirror_key(world: EntityId, window: &WindowKey) -> String {
     format!("{}:{}", world.to_hex(), window.as_str())
@@ -48,23 +70,49 @@ fn store_mirror(vault: &Vault, world: EntityId, window: &WindowKey, doc: &LoroDo
     })
 }
 
-/// Whether the mirror still carries a row this machine no longer holds.
-fn mirror_outlived_rows(vault: &Vault, doc: &LoroDoc) -> Result<bool> {
-    let mut carried = Vec::new();
-    doc.get_map("entities").for_each(|key, value| {
-        if matches!(value, ValueOrContainer::Value(_)) {
-            carried.push(key.to_owned());
+/// Pushes each tombstone `doc` holds onto `deletes`, as its id and raw value.
+fn push_tombstones(doc: &LoroDoc, deletes: &mut Vec<(EntityId, Vec<u8>)>) {
+    map_for_each_tombstone_value(&doc.get_map("tombstones"), |key, raw| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            deletes.push((id, raw.to_vec()));
         }
     });
-    for key in carried {
-        let Ok(id) = EntityId::from_hex(&key) else {
-            return Ok(true);
-        };
-        if vault.get_raw_unsealed(&id)?.is_none() {
-            return Ok(true);
+}
+
+/// Each tombstone of `window` here, from [`SEALED_MIRROR_DELETE_SOURCE`], as
+/// its id and raw value. Persists nothing.
+fn window_deletes(manager: &WindowManager, window: &WindowKey) -> Result<Vec<(EntityId, Vec<u8>)>> {
+    let vault = manager.vault();
+    let mut deletes = Vec::new();
+    for source in SEALED_MIRROR_DELETE_SOURCE {
+        match source {
+            MirrorDelete::CanonicalWindow => match manager.window(window) {
+                Some(live) => push_tombstones(&live.doc, &mut deletes),
+                None => match load_window_from_state(vault, "", window) {
+                    Ok(doc) => push_tombstones(&doc, &mut deletes),
+                    Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                        let doc = create_window_doc("", window);
+                        apply_pending_window_updates(vault, &doc, window)?;
+                        push_tombstones(&doc, &mut deletes);
+                    }
+                    Err(error) => return Err(error),
+                },
+            },
+            MirrorDelete::PendingIntent => {
+                let txn = vault.store.env.read_txn()?;
+                let address = WindowAddress::new(window.as_str());
+                // A marker that does not decode stays for the window's own replay.
+                for marker in vault
+                    .store
+                    .port_pending_tombstones_in_window(&txn, address)?
+                    .flatten()
+                {
+                    deletes.push((marker.id, marker.raw));
+                }
+            }
         }
     }
-    Ok(false)
+    Ok(deletes)
 }
 
 impl WindowManager {
@@ -94,9 +142,9 @@ impl WindowManager {
 
     /// The whole mirror of `window` of the private `world`, packed with every
     /// row of the window here, as one snapshot: what the world's section of the
-    /// sealed cloud bundle carries for the window (FIX 922). A mirror that
-    /// outlived a row deleted here starts over.
-    /// Refused unless this machine may read the world now.
+    /// sealed cloud bundle carries for the window (FIX 922). The mirror keeps
+    /// its history and first takes each delete [`SEALED_MIRROR_DELETE_SOURCE`]
+    /// names. Refused unless this machine may read the world now.
     pub(crate) fn sealed_mirror_snapshot(
         &self,
         world: EntityId,
@@ -107,15 +155,27 @@ impl WindowManager {
         }
         let vault = self.vault();
         vault.world_key(world)?;
+        let deletes = window_deletes(self, window)?;
         let _sealing = vault
             .world_keys
             .sealing
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let (mut mirror, fresh) = load_mirror(vault, world, window)?;
-        if !fresh && mirror_outlived_rows(vault, &mirror)? {
-            mirror = LoroDoc::new();
+        let (mirror, _) = load_mirror(vault, world, window)?;
+        // A delete reaches a taker's mirror as one, where a mirror started
+        // over would merge with it as a union (FIX 3360).
+        let tombstones = mirror.get_map("tombstones");
+        let entities = mirror.get_map("entities");
+        for (id, raw) in &deletes {
+            let key = id.to_hex();
+            if map_get_bytes(&tombstones, &key).as_deref() == Some(raw.as_slice())
+                && entities.get(&key).is_none()
+            {
+                continue;
+            }
+            apply_tombstone_to_window_doc(&mirror, id, raw)?;
         }
+        mirror.commit();
         reverse_rematerialize_for_sealing(vault, &mirror, window)?;
         let snapshot = export_snapshot(&mirror)?;
         vault.with_write_txn_grouped(|wtxn| {

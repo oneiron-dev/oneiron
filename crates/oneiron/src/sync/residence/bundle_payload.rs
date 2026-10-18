@@ -43,8 +43,8 @@ use crate::sync::loro_support::{import_doc, map_delete, map_for_each_value_bytes
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
-    apply_pending_window_updates, export_history_free_window_snapshot, export_window_replacement,
-    load_window_from_state, reverse_rematerialize,
+    ReplacementByteBound, apply_pending_window_updates, export_history_free_window_snapshot,
+    export_window_replacement, load_window_from_state, reverse_rematerialize,
 };
 use crate::sync::{SyncResidenceMode, WindowManager};
 use crate::world_keys::{
@@ -75,6 +75,12 @@ enum CarryDrop {
 /// carried.
 const SEALED_BUNDLE_CARRY_FILTER: &[CarryDrop] = &[CarryDrop::DeletedHere, CarryDrop::Ineligible];
 
+/// How long a base window a kit restore installs may be (CALLS:
+/// SEALED_KIT_REPLACEMENT_BYTE_BOUND): as long as the authenticated section
+/// that carried it, already opened whole, not one network frame (FIX 3361).
+const SEALED_KIT_REPLACEMENT_BYTE_BOUND: ReplacementByteBound =
+    ReplacementByteBound::AuthenticatedSectionLength;
+
 /// What one take moved.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SealedBundleTake {
@@ -100,7 +106,8 @@ pub struct SealedKitRestore {
     pub authority: usize,
     /// Windows of the base section installed here.
     pub windows: usize,
-    /// Windows of the base section that did not install.
+    /// Windows of the base section that did not install: none, since one
+    /// that does not install fails the restore (FIX 3361).
     pub windows_skipped: usize,
     /// Pads stored here from the pad object.
     pub pads: usize,
@@ -120,12 +127,13 @@ impl WindowManager {
         slot: u64,
         holder: Destination,
         latest: Option<(&SealedVaultBundle, &SealedKeyPads)>,
+        configured: SyncResidenceMode,
     ) -> Result<SealedVaultUpload> {
         let vault = self.vault();
         // Judged from what this machine keeps, as its connection judges it, with
-        // the host's default mode for a machine the owner never chose for.
-        if resolve_residence_mode(vault, SyncResidenceMode::default())? == SyncResidenceMode::Opened
-        {
+        // the host's `configured` mode for a machine the owner never chose for
+        // (FIX 3364).
+        if resolve_residence_mode(vault, configured)? == SyncResidenceMode::Opened {
             return Err(refused("an opened-item machine seals no bundle"));
         }
         let windows = discover_local_window_keys(vault)?;
@@ -219,8 +227,10 @@ impl WindowManager {
     /// the kit's `seed` for the vault `vault_id`. The base section's signed
     /// authority history goes in first, so the root's wraps and every world's
     /// policy are here. Once a machine the owner vouched for proves to have
-    /// signed the bundle, each base window installs as a replacement. The pad
-    /// object's pads are stored, the world keys restore from the kit as
+    /// signed the bundle, each base window installs as a replacement, of any
+    /// length the section carried; one that does not install fails the
+    /// restore, and the windows installed before it stay. The pad object's
+    /// pads are stored, the world keys restore from the kit as
     /// [`Vault::restore_world_keys`] restores them (`owner`, `confirm`), and
     /// each section the kit opens merges into its windows' mirrors and
     /// materializes, for the worlds this machine may read now. The keys report
@@ -263,15 +273,17 @@ impl WindowManager {
         let mut windows = base.windows;
         windows.sort_by_key(|(key, _)| key.world().is_some());
         for (key, snapshot) in &windows {
-            match self.replace_window(key, snapshot, &HashMap::new()) {
-                Ok((window, _)) => {
-                    drop(window);
-                    // A restore leaves no window open.
-                    self.unload_window(key)?;
-                    restore.windows += 1;
-                }
-                Err(_) => restore.windows_skipped += 1,
-            }
+            let (window, _) = self.replace_window_bounded(
+                key,
+                snapshot,
+                &HashMap::new(),
+                || true,
+                SEALED_KIT_REPLACEMENT_BYTE_BOUND,
+            )?;
+            drop(window);
+            // A restore leaves no window open.
+            self.unload_window(key)?;
+            restore.windows += 1;
         }
         restore.pads = vault.restore_key_pads(&pads)?;
         restore.keys = vault.restore_world_keys(owner, EditOrigin::ThisMachine, seed, confirm)?;
@@ -349,6 +361,8 @@ impl WindowManager {
             if key.world().is_some_and(|world| !public.contains(&world)) {
                 continue;
             }
+            // One that does not export fails the assembly: a bundle never
+            // carries part of the base (FIX 3361).
             if let Some(snapshot) = self.base_window_snapshot(key)? {
                 snapshots.push((key.clone(), snapshot));
             }

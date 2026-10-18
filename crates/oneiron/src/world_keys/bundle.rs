@@ -49,8 +49,8 @@ use zeroize::Zeroizing;
 
 use super::pads::{WorldKeyPad, pad_in_txn, world_keys_destroyed_in_txn};
 use super::{
-    MachineSecret, RecoveryRootSeed, WORLD_KEY_EPOCH, WorldKey, WorldKeyId, WrapRecipient,
-    base_world, open_counted, os_fill, recipients, refused,
+    MachineSecret, RecoveryRootId, RecoveryRootSeed, WORLD_KEY_EPOCH, WorldKey, WorldKeyId,
+    WrapRecipient, base_world, open_counted, os_fill, recipients, refused,
 };
 use crate::Vault;
 use crate::authority::{AuthorityFold, Destination, EffectiveRead, SealedCopies};
@@ -654,9 +654,10 @@ impl OpenedKeyPads {
 pub struct SealedVaultUpload {
     pub bundle: SealedVaultBundle,
     pub pads: SealedKeyPads,
-    /// Whether the pinned recovery root holds a capsule. False: no root is pinned
-    /// here, and no kit opens this upload.
-    pub kit: bool,
+    /// The pinned recovery root whose capsule the upload holds, read in the
+    /// snapshot that sealed it: a commit names it for the kit door (FIX 3714).
+    /// `None`: no root is pinned here, and no kit opens this upload.
+    pub kit_root: Option<RecoveryRootId>,
 }
 
 /// What one seal reads from the vault, in one snapshot.
@@ -665,7 +666,7 @@ struct SealPlan {
     signing: SigningKey,
     publisher: EntityId,
     readers: Vec<HybridPublicKey>,
-    kit: bool,
+    kit_root: Option<RecoveryRootId>,
     pads: Vec<(WorldKeyId, Zeroizing<[u8; 32]>)>,
 }
 
@@ -745,7 +746,7 @@ impl Vault {
         Ok(SealedVaultUpload {
             bundle: SealedVaultBundle(bundle),
             pads: SealedKeyPads(pads),
-            kit: plan.kit,
+            kit_root: plan.kit_root,
         })
     }
 
@@ -785,7 +786,7 @@ impl Vault {
             }
         }
         let root = self.pinned_root_recipient_in_txn(&txn, &fold)?;
-        let kit = root.is_some();
+        let kit_root = root.as_ref().map(|root| root.id);
         // Base reality reads on every machine mine here: its recipients are the
         // vault's own readers, and the root.
         let readers: Vec<HybridPublicKey> = recipients(&fold, base_world(), root)
@@ -819,7 +820,7 @@ impl Vault {
             signing,
             publisher: secret.machine,
             readers,
-            kit,
+            kit_root,
             pads,
         })
     }
