@@ -50,7 +50,7 @@ fn nest(data: &mut Map<String, Value>, nested: &str, flat: &str) {
     let value = if id.is_null() {
         Value::Null
     } else {
-        Value::Object(Map::from_iter([("id".to_owned(), id)]))
+        serde_json::json!({ "id": id })
     };
     data.insert(nested.to_owned(), value);
 }

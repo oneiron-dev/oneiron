@@ -441,12 +441,11 @@ pub(crate) fn erase_mirror_event_actor_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     let hex = actor.to_hex();
-    let named: Vec<_> = EVENTS
-        .scan(vault, txn)?
-        .into_iter()
-        .filter(|(_, row)| row.writer_actor.as_deref() == Some(hex.as_str()))
-        .collect();
-    for (key, mut row) in named {
+    let rows = EVENTS.scan(vault, txn)?;
+    for (key, mut row) in rows {
+        if row.writer_actor.as_deref() != Some(hex.as_str()) {
+            continue;
+        }
         row.writer_actor = None;
         row.writer_class = None;
         EVENTS.put(vault, txn, &key, &row)?;
@@ -462,12 +461,11 @@ pub(crate) fn erase_mirror_control_actor_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     let hex = actor.to_hex();
-    let named: Vec<_> = CONTROLS
-        .scan(vault, txn)?
-        .into_iter()
-        .filter(|(_, control)| control.by.as_deref() == Some(hex.as_str()))
-        .collect();
-    for (task, mut control) in named {
+    let controls = CONTROLS.scan(vault, txn)?;
+    for (task, mut control) in controls {
+        if control.by.as_deref() != Some(hex.as_str()) {
+            continue;
+        }
         control.by = None;
         CONTROLS.put(vault, txn, &task, &control)?;
     }
