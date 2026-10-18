@@ -182,6 +182,15 @@ fn link<H: bindings::GuestImports + 'static>(
                     Ok((cx.data_mut().host.output_bytes(path, frame),))
                 },
             )?,
+            "oneiron.propose.open" => unary!(root, wit, proposal_open, String),
+            "oneiron.propose.chunk" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>,
+                 (proposal, frame): (u64, Vec<u8>)| {
+                    Ok((cx.data_mut().host.proposal_chunk(proposal, frame),))
+                },
+            )?,
+            "oneiron.propose.close" => unary!(root, wit, proposal_close, u64),
             "vault.agents.put" => unary!(root, wit, agents_put, AgentPutInput),
             "self.json.validate" => root.func_wrap(
                 wit,
@@ -235,36 +244,24 @@ fn link<H: bindings::GuestImports + 'static>(
 mod tests;
 
 /// Validate the canonical typed output before a foreign host stores it for review.
-/// This grants no authority to commit a proposed file or claim.
+/// This grants no authority to commit a proposed file or claim. A proposed
+/// file is not here: it streamed through the proposal imports, and the
+/// host's `proposal_open` checks its path. Nothing here is counted or capped
+/// by size; the result JSON is one message.
 pub fn validate_step_result(
     result: &bindings::StepResult,
     tier: SandboxGuestTier,
 ) -> wasmtime::Result<()> {
     const MAX_BYTES: usize = 1024 * 1024;
-    if result.result_json.len() > MAX_BYTES || result.proposals.len() > 256 {
+    if result.result_json.len() > MAX_BYTES {
         return Err(wasmtime::Error::msg("component output limit"));
     }
     let _: serde_json::Value = serde_json::from_str(&result.result_json)?;
     if tier != SandboxGuestTier::Foreign && !result.proposals.is_empty() {
         return Err(wasmtime::Error::msg("first-party proposals refused"));
     }
-    let mut bytes = result.result_json.len();
     for proposal in &result.proposals {
         match proposal {
-            bindings::ProposalDelta::FileWrite(file) => {
-                let path = super::SandboxVirtualPath::try_new(&file.path)?;
-                if !matches!(
-                    path.mount(),
-                    super::SandboxMount::Outputs | super::SandboxMount::Workspace
-                ) {
-                    return Err(wasmtime::Error::msg(
-                        "foreign proposal path outside writable virtual mounts",
-                    ));
-                }
-                bytes = bytes
-                    .saturating_add(file.path.len())
-                    .saturating_add(file.bytes.len());
-            }
             bindings::ProposalDelta::FileDelete(delete) => {
                 let path = super::SandboxVirtualPath::try_new(&delete.path)?;
                 if path.mount() != super::SandboxMount::Workspace || path.relative_path().is_empty()
@@ -273,7 +270,6 @@ pub fn validate_step_result(
                         "foreign delete path outside workspace",
                     ));
                 }
-                bytes = bytes.saturating_add(delete.path.len());
             }
             bindings::ProposalDelta::FileRename(rename) => {
                 let from = super::SandboxVirtualPath::try_new(&rename.origin)?;
@@ -288,9 +284,6 @@ pub fn validate_step_result(
                         "foreign rename path outside workspace",
                     ));
                 }
-                bytes = bytes
-                    .saturating_add(rename.origin.len())
-                    .saturating_add(rename.destination.len());
             }
             bindings::ProposalDelta::ClaimCandidate(claim) => {
                 crate::EntityId::from_hex(&claim.id)?;
@@ -308,16 +301,7 @@ pub fn validate_step_result(
                 {
                     return Err(wasmtime::Error::msg("invalid claim proposal"));
                 }
-                bytes = bytes
-                    .saturating_add(claim.id.len())
-                    .saturating_add(claim.subject.len())
-                    .saturating_add(claim.predicate.len())
-                    .saturating_add(claim.value.len())
-                    .saturating_add(32);
             }
-        }
-        if bytes > MAX_BYTES {
-            return Err(wasmtime::Error::msg("component proposal limit"));
         }
     }
     Ok(())

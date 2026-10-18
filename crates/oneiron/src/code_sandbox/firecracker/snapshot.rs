@@ -1,10 +1,7 @@
 //! Descriptor-relative, no-symlink source snapshot for a foreign VM.
 
 use super::refused;
-use crate::{
-    Result,
-    code_sandbox::{SandboxFileWriteProposal, SandboxVirtualPath},
-};
+use crate::{Result, code_sandbox::SandboxVirtualPath};
 use oneiron_sandbox_contract::{MAX_FILE_BYTES, WorkspacePath, WorkspaceShape};
 use std::{
     ffi::CString,
@@ -20,8 +17,14 @@ use std::{
 /// Snapshot bytes plus the checked tree they came from, empty directories
 /// included, so proposals can be admitted against the same shape.
 pub(super) struct Snapshot {
-    pub files: Vec<SandboxFileWriteProposal>,
+    pub files: Vec<SnapshotFile>,
     pub shape: WorkspaceShape,
+}
+
+/// One source file as the guest is seeded with it.
+pub(super) struct SnapshotFile {
+    pub path: SandboxVirtualPath,
+    pub bytes: Vec<u8>,
 }
 
 pub(super) fn files(root: &Path) -> Result<Snapshot> {
@@ -85,10 +88,10 @@ pub(super) fn files(root: &Path) -> Result<Snapshot> {
                 shape
                     .add_file(&path, bytes.len())
                     .map_err(|error| refused(error.reason()))?;
-                files.push(SandboxFileWriteProposal::new(
-                    SandboxVirtualPath::try_new(path.as_str())?,
+                files.push(SnapshotFile {
+                    path: SandboxVirtualPath::try_new(path.as_str())?,
                     bytes,
-                ));
+                });
             } else {
                 return Err(refused("source snapshot special file refused"));
             }

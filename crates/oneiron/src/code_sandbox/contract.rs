@@ -182,6 +182,10 @@ pub enum SandboxImportClass {
     /// the host records for the step, as it recorded the returned one, never
     /// a vault write.
     Output,
+    /// A foreign guest's proposed file, streamed to the host in frames. It
+    /// is inert proposal data for review, never a host write; first-party
+    /// guests do not link it.
+    Proposal,
     DurableWait,
     /// The blocked-report receipt. The memory writes it once stood beside
     /// (claim, supersede, edge) are verb-table rows the run answers itself.
@@ -296,6 +300,13 @@ const SELF_THINK_IMPORT: SandboxLinkedImport =
 const SELF_EXPRESS_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.express", SandboxImportClass::Speech);
 
+const PROPOSAL_OPEN_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("oneiron.propose.open", SandboxImportClass::Proposal);
+const PROPOSAL_CHUNK_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("oneiron.propose.chunk", SandboxImportClass::Proposal);
+const PROPOSAL_CLOSE_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("oneiron.propose.close", SandboxImportClass::Proposal);
+
 const NON_WRITE_IMPORTS: &[SandboxLinkedImport] = &[
     READ_FILE_IMPORT,
     CREDENTIAL_CALL_IMPORT,
@@ -303,6 +314,9 @@ const NON_WRITE_IMPORTS: &[SandboxLinkedImport] = &[
     RANDOM_BYTES_IMPORT,
     OUTPUT_TEXT_IMPORT,
     OUTPUT_BYTES_IMPORT,
+    PROPOSAL_OPEN_IMPORT,
+    PROPOSAL_CHUNK_IMPORT,
+    PROPOSAL_CLOSE_IMPORT,
 ];
 
 const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[

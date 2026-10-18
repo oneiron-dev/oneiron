@@ -8,32 +8,32 @@
   "toolchain": {
     "wit-bindgen": "wit-bindgen-cli 0.46.0",
     "wasm-tools": "wasm-tools 1.239.0 (35f8671bc 2025-09-09)",
-    "clang": "clang version 20.1.8-wasi-sdk (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: wasm32-unknown-wasi\nThread model: posix\nInstalledDir: /data/lanes/fl-l11-qjs-61a9ed/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin\nConfiguration file: /data/lanes/fl-l11-qjs-61a9ed/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin/clang.cfg"
+    "clang": "clang version 20.1.8-wasi-sdk (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: wasm32-unknown-wasi\nThread model: posix\nInstalledDir: /home/fl-l11-ask-seam-d4cff1/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin\nConfiguration file: /home/fl-l11-ask-seam-d4cff1/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin/clang.cfg"
   },
   "patched_quickjs_sha256": "81d6e4a91d3167b307b7feca196da09bfecde996ebe360499d0f40d3c9c5640c",
   "patched_dtoa_sha256": "bcbbcff57f97d02d3cbe662b059e1aaad90ef9da213cf8aefee35f548beca2fe",
-  "wit_sha256": "30e136521cbddf475395af5df54915b15338da184ce4e83cc8d81ffa8dd0d9ea",
+  "wit_sha256": "5d315687fdde4be0b324314a39cb86e0cde93631b705db60b96c71e224973c83",
   "sources": {
-    "guest.c": "df292f54abcb0f2afe068ed663b3a41799ef77ed36e2c08fa077a90e7b14f512",
+    "guest.c": "d173555616c5e4d04972bdf204fe1bb1fa20c3f27a2b5c3145efe6a9ae6bdb64",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "c05bc771aa9131681daf04b5033059a08fe2dcb41077759599c02313ffd3e19b",
+    "bootstrap.js": "91dc6433362611b82a9a96fc36df96dd753826957b2e2eb8a04c973c1783306c",
     "reader_forks.js": "8ffd9d1da2ef4731abd26122c4094e28b2a3f1115259f354deef8a556cdc7093",
     "diff.js": "928816d75a92bb0e98c21216c2728044c9095d2c6bc75cd38aee2c08981fcf1f",
     "hook_guest.c": "7e65ba8fce7db9d63991003b9430f3bd451669ab10daaf07788a797ac74d3816",
     "hook_bootstrap.js": "7647b9e3d05d4e0220b38f0f509dbd021eea47f1a0bf125550ba8f752958c8bb",
-    "generate_bridge.py": "e099779784519585bf281f126c4db5630c10ca7b75f5efed94593b890436dcd2",
-    "build.py": "464f0227ba503e82f67f7fa72d2fa2c5f28e876cf052fec3714d3541e15e7b10"
+    "generate_bridge.py": "5bd6af632512ba4814536b3e994b249916b27d6de28d10d534db512f74a48370",
+    "build.py": "af4a69a153d398f43395d73cfecd267b40b6900fda039cc2c28eb51d96168061"
   },
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "9d303f91ce80e706ac6bb55c5927f9503c88bc04f2399adcf5a55c2d0bad0845",
-      "bytes": 1084811
+      "sha256": "7fa2fdb75694ce0f51a84f3cc9773e2e501a8fd64a7b1b59cabf60b2afa4ffaa",
+      "bytes": 1085612
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "71a3eace5eb39c144bb71099fec16af9580cff2398dee8b2507190dcbb726278",
-      "bytes": 1077262
+      "sha256": "571f2fe1fdfc15125b4c4088b56020ae74bac44f1e483df505140ac0b3c75c58",
+      "bytes": 1080715
     },
     "hook": {
       "file": "quickjs-hook.wasm",

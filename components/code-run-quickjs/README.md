@@ -114,6 +114,13 @@ condition either helper keeps is one named top-level const or policy
 function in its file.
 Foreign guests have no `self` object. Their `propose.file(...)` and
 `propose.claim(...)` produce typed proposal deltas, not committed writes.
+`propose.file(path, chunks)` takes one buffer or any iterable of buffers, read
+lazily: each piece streams to the host as it is yielded, through the hidden
+`proposal-open`, `proposal-chunk` and `proposal-close` imports, in frames of
+at most one 1 MiB message. The host spools the file to a temp body, so no
+proposed file is held whole and none has a size bound; the step result
+carries only deletions, renames and claims. The first-party build links none
+of the three.
 Only workspace/output file paths are proposal targets; upload and skill files
 remain read-only. Native globals (`process`, `require`, `fetch`, `std`, `os`)
 are absent. No import loader can reintroduce them.
