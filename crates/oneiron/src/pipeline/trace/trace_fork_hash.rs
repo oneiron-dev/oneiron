@@ -53,7 +53,7 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_entity_seeds(&mut hasher, builder.ppr_expand.as_ref());
     fork_hash_f32(
         &mut hasher,
-        crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
+        crate::ppr::canonical_vad_alpha(builder.ppr_vad_alpha),
     );
     fork_hash_affect_policy(
         &mut hasher,

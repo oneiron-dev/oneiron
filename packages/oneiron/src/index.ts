@@ -310,6 +310,8 @@ export class Oneiron {
       fork: (input: Facade.SkillForkRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsFork(input) as Facade.SkillAuthoringReceipt),
       /** Every loadable callable helper skill and its call contract: what it takes and returns. */
       callables: (input: Facade.EmptyRequest = {}): Facade.CallableCardView[] => this.#call(() => this.#client.selfSkillsCallables(input) as Facade.CallableCardView[]),
+      /** Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately. */
+      call: (input: Facade.LiveRunRequest<Facade.SkillCallInput>): unknown => this.#call(() => this.#client.selfSkillsCall(input) as unknown),
     },
     decisions: {
       asks: (input: Facade.EmptyRequest = {}): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
@@ -431,6 +433,12 @@ export class Oneiron {
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     retrieval: {
+      weights: {
+        /** The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash. */
+        get: (input: Facade.EmptyRequest = {}): Facade.RetrievalWeightsView => this.#call(() => this.#client.vaultRetrievalWeightsGet(input) as Facade.RetrievalWeightsView),
+        /** The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority. */
+        configure: (input: Facade.RetrievalWeightsConfigureRequest): Facade.RetrievalWeightsReceipt => this.#call(() => this.#client.vaultRetrievalWeightsConfigure(input) as Facade.RetrievalWeightsReceipt),
+      },
       /** Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle. */
       recall: (input: Facade.RecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultRetrievalRecall(input) as Facade.MemoryPack),
       /** The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first. */
@@ -451,6 +459,16 @@ export class Oneiron {
       export: (input: Facade.RetrievalDiagnosticRequest): Facade.RetrievalDiagnosticExport => this.#call(() => this.#client.vaultRetrievalExport(input) as Facade.RetrievalDiagnosticExport),
       /** The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used. */
       replay: (input: Facade.RetrievalDiagnosticRequest): Facade.RetrievalDiagnosticReplay => this.#call(() => this.#client.vaultRetrievalReplay(input) as Facade.RetrievalDiagnosticReplay),
+    },
+    affect: {
+      annotations: {
+        /** Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval. */
+        put: (input: Facade.AffectAnnotationPut): Facade.CommitReceipt => this.#call(() => this.#client.vaultAffectAnnotationsPut(input) as Facade.CommitReceipt),
+      },
+      claims: {
+        /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
+        consolidate: (input: Facade.AffectClaimConsolidateRequest): Facade.AffectClaimConsolidation => this.#call(() => this.#client.vaultAffectClaimsConsolidate(input) as Facade.AffectClaimConsolidation),
+      },
     },
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
@@ -624,6 +642,14 @@ export class Oneiron {
       permissions: {
         /** The owner answers one imported skill permission ask at its exact hub source. */
         approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),
+      },
+      /** Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner. */
+      pack_receipt: (input: Facade.SkillPackReceiptRequest): Facade.SkillPackReceipt => this.#call(() => this.#client.vaultSkillsPackReceipt(input) as Facade.SkillPackReceipt),
+      outcomes: {
+        /** Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win. */
+        project: (input: Facade.SkillPackOutcomeRequest): Facade.SkillPackOutcomeProjection => this.#call(() => this.#client.vaultSkillsOutcomesProject(input) as Facade.SkillPackOutcomeProjection),
+        /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */
+        get: (input: Facade.SkillPackCreditRequest): Facade.LateCreditReceipt | null => this.#call(() => this.#client.vaultSkillsOutcomesGet(input) as Facade.LateCreditReceipt | null),
       },
     },
     connectors: {

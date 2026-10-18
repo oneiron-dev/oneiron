@@ -47,6 +47,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.witness", post(facade_route))
         .route("/vault.claims.upsert", post(facade_route))
         .route("/vault.recall", post(facade_route))
+        .route("/vault.retrieval.weights.get", post(facade_route))
+        .route("/vault.retrieval.weights.configure", post(facade_route))
+        .route("/vault.affect.annotations.put", post(facade_route))
+        .route("/vault.affect.claims.consolidate", post(facade_route))
         .route("/vault.retrieval.recall", post(facade_route))
         .route("/vault.retrieval.runs", post(facade_route))
         .route("/vault.retrieval.run", post(facade_route))
@@ -422,6 +426,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.skills.save", post(facade_route))
         .route("/self.skills.fork", post(facade_route))
         .route("/self.skills.callables", post(facade_route))
+        .route("/vault.skills.pack_receipt", post(facade_route))
+        .route("/vault.skills.outcomes.project", post(facade_route))
+        .route("/vault.skills.outcomes.get", post(facade_route))
         .route("/ai.steps.submit", post(facade_route))
         .route("/ai.steps.receipt", post(facade_route))
         .route("/ai.reply", post(facade_route))
@@ -617,6 +624,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.folds", post(facade_route))
         .route("/self.agents.spawn", post(facade_route))
         .route("/self.leader.split", post(facade_route))
+        .route("/self.skills.call", post(facade_route))
 }
 pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
     Router::new().route(
