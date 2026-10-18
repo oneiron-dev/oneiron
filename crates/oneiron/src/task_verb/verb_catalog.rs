@@ -72,6 +72,11 @@ pub enum AgentVerb {
     VaultRetrievalAgingConfigure,
     VaultRetrievalWeightsGet,
     VaultRetrievalWeightsConfigure,
+    VaultRetrievalHydeConfigure,
+    VaultRetrievalHydeGet,
+    VaultRetrievalHydePending,
+    VaultRetrievalHydeComplete,
+    VaultRetrievalHydeReceipt,
     VaultAffectAnnotationsPut,
     VaultTaggingStatus,
     VaultTaggingTags,
@@ -428,6 +433,9 @@ pub enum AgentVerb {
     VaultSharesCreate,
     VaultSharesRevoke,
     VaultSharesView,
+    HostCompact,
+    HostWake,
+    HostBudgetHit,
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
@@ -674,6 +682,11 @@ pub enum AgentVerb {
     VaultBookingConstraintTurn,
     VaultBookingPageToken,
     CalendarInvite,
+    CalendarIcsConfigure,
+    CalendarIcsPoll,
+    CalendarIcsStatus,
+    VaultCalendarPassportsRead,
+    VaultCalendarPassportsHistory,
     CalendarConnectorConfigure,
     CalendarConnectorGet,
     CalendarConnectorPull,
@@ -827,6 +840,16 @@ pub enum AgentVerb {
     VaultRunsSettle,
     VaultRunsSettlement,
     VaultRevertRun,
+    VaultIdentityMerge,
+    VaultIdentitySplit,
+    VaultIdentityFacet,
+    VaultIdentityAssertDistinct,
+    VaultIdentityPropose,
+    VaultIdentityUndo,
+    VaultIdentityResolve,
+    VaultIdentityEventsGet,
+    VaultIdentityProposalsResolve,
+    VaultIdentityProposalsForPair,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -931,6 +954,11 @@ impl AgentVerb {
         Self::VaultRetrievalAgingConfigure,
         Self::VaultRetrievalWeightsGet,
         Self::VaultRetrievalWeightsConfigure,
+        Self::VaultRetrievalHydeConfigure,
+        Self::VaultRetrievalHydeGet,
+        Self::VaultRetrievalHydePending,
+        Self::VaultRetrievalHydeComplete,
+        Self::VaultRetrievalHydeReceipt,
         Self::VaultAffectAnnotationsPut,
         Self::VaultTaggingStatus,
         Self::VaultTaggingTags,
@@ -1287,6 +1315,9 @@ impl AgentVerb {
         Self::VaultSharesCreate,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
+        Self::HostCompact,
+        Self::HostWake,
+        Self::HostBudgetHit,
         Self::VaultHooksReplay,
         Self::VaultHooksRegenDue,
         Self::VaultHooksRegenGet,
@@ -1533,6 +1564,11 @@ impl AgentVerb {
         Self::VaultBookingConstraintTurn,
         Self::VaultBookingPageToken,
         Self::CalendarInvite,
+        Self::CalendarIcsConfigure,
+        Self::CalendarIcsPoll,
+        Self::CalendarIcsStatus,
+        Self::VaultCalendarPassportsRead,
+        Self::VaultCalendarPassportsHistory,
         Self::CalendarConnectorConfigure,
         Self::CalendarConnectorGet,
         Self::CalendarConnectorPull,
@@ -1686,6 +1722,16 @@ impl AgentVerb {
         Self::VaultRunsSettle,
         Self::VaultRunsSettlement,
         Self::VaultRevertRun,
+        Self::VaultIdentityMerge,
+        Self::VaultIdentitySplit,
+        Self::VaultIdentityFacet,
+        Self::VaultIdentityAssertDistinct,
+        Self::VaultIdentityPropose,
+        Self::VaultIdentityUndo,
+        Self::VaultIdentityResolve,
+        Self::VaultIdentityEventsGet,
+        Self::VaultIdentityProposalsResolve,
+        Self::VaultIdentityProposalsForPair,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -1793,6 +1839,11 @@ impl AgentVerb {
             Self::VaultRetrievalAgingConfigure => "vault.retrieval.aging.configure",
             Self::VaultRetrievalWeightsGet => "vault.retrieval.weights.get",
             Self::VaultRetrievalWeightsConfigure => "vault.retrieval.weights.configure",
+            Self::VaultRetrievalHydeConfigure => "vault.retrieval.hyde.configure",
+            Self::VaultRetrievalHydeGet => "vault.retrieval.hyde.get",
+            Self::VaultRetrievalHydePending => "vault.retrieval.hyde.pending",
+            Self::VaultRetrievalHydeComplete => "vault.retrieval.hyde.complete",
+            Self::VaultRetrievalHydeReceipt => "vault.retrieval.hyde.receipt",
             Self::VaultAffectAnnotationsPut => "vault.affect.annotations.put",
             Self::VaultTaggingStatus => "vault.tagging.status",
             Self::VaultTaggingTags => "vault.tagging.tags",
@@ -2163,6 +2214,9 @@ impl AgentVerb {
             Self::VaultSharesCreate => "vault.shares.create",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
+            Self::HostCompact => "host.compact",
+            Self::HostWake => "host.wake",
+            Self::HostBudgetHit => "host.budget.hit",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultHooksRegenDue => "vault.hooks.regen.due",
             Self::VaultHooksRegenGet => "vault.hooks.regen.get",
@@ -2413,6 +2467,11 @@ impl AgentVerb {
             Self::VaultBookingConstraintTurn => "vault.booking.constraint_turn",
             Self::VaultBookingPageToken => "vault.booking.page_token",
             Self::CalendarInvite => "calendar.invite",
+            Self::CalendarIcsConfigure => "calendar.ics.configure",
+            Self::CalendarIcsPoll => "calendar.ics.poll",
+            Self::CalendarIcsStatus => "calendar.ics.status",
+            Self::VaultCalendarPassportsRead => "vault.calendar.passports.read",
+            Self::VaultCalendarPassportsHistory => "vault.calendar.passports.history",
             Self::CalendarConnectorConfigure => "calendar.connector.configure",
             Self::CalendarConnectorGet => "calendar.connector.get",
             Self::CalendarConnectorPull => "calendar.connector.pull",
@@ -2570,6 +2629,16 @@ impl AgentVerb {
             Self::VaultRunsSettle => "vault.runs.settle",
             Self::VaultRunsSettlement => "vault.runs.settlement",
             Self::VaultRevertRun => "vault.revert_run",
+            Self::VaultIdentityMerge => "vault.identity.merge",
+            Self::VaultIdentitySplit => "vault.identity.split",
+            Self::VaultIdentityFacet => "vault.identity.facet",
+            Self::VaultIdentityAssertDistinct => "vault.identity.assert_distinct",
+            Self::VaultIdentityPropose => "vault.identity.propose",
+            Self::VaultIdentityUndo => "vault.identity.undo",
+            Self::VaultIdentityResolve => "vault.identity.resolve",
+            Self::VaultIdentityEventsGet => "vault.identity.events.get",
+            Self::VaultIdentityProposalsResolve => "vault.identity.proposals.resolve",
+            Self::VaultIdentityProposalsForPair => "vault.identity.proposals.for_pair",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -2673,6 +2742,11 @@ impl AgentVerb {
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeGet
+                | Self::VaultRetrievalHydePending
+                | Self::VaultRetrievalHydeComplete
+                | Self::VaultRetrievalHydeReceipt
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultTaggingStatus
                 | Self::VaultTaggingTags
@@ -3029,6 +3103,9 @@ impl AgentVerb {
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -3255,6 +3332,11 @@ impl AgentVerb {
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
+                | Self::CalendarIcsStatus
+                | Self::VaultCalendarPassportsRead
+                | Self::VaultCalendarPassportsHistory
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorGet
                 | Self::CalendarConnectorPull
@@ -3408,6 +3490,16 @@ impl AgentVerb {
                 | Self::VaultRunsSettle
                 | Self::VaultRunsSettlement
                 | Self::VaultRevertRun
+                | Self::VaultIdentityMerge
+                | Self::VaultIdentitySplit
+                | Self::VaultIdentityFacet
+                | Self::VaultIdentityAssertDistinct
+                | Self::VaultIdentityPropose
+                | Self::VaultIdentityUndo
+                | Self::VaultIdentityResolve
+                | Self::VaultIdentityEventsGet
+                | Self::VaultIdentityProposalsResolve
+                | Self::VaultIdentityProposalsForPair
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -3559,6 +3651,11 @@ impl AgentVerb {
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeGet
+                | Self::VaultRetrievalHydePending
+                | Self::VaultRetrievalHydeComplete
+                | Self::VaultRetrievalHydeReceipt
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultTaggingStatus
                 | Self::VaultTaggingTags
@@ -3915,6 +4012,9 @@ impl AgentVerb {
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -4141,6 +4241,11 @@ impl AgentVerb {
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
+                | Self::CalendarIcsStatus
+                | Self::VaultCalendarPassportsRead
+                | Self::VaultCalendarPassportsHistory
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorGet
                 | Self::CalendarConnectorPull
@@ -4294,6 +4399,16 @@ impl AgentVerb {
                 | Self::VaultRunsSettle
                 | Self::VaultRunsSettlement
                 | Self::VaultRevertRun
+                | Self::VaultIdentityMerge
+                | Self::VaultIdentitySplit
+                | Self::VaultIdentityFacet
+                | Self::VaultIdentityAssertDistinct
+                | Self::VaultIdentityPropose
+                | Self::VaultIdentityUndo
+                | Self::VaultIdentityResolve
+                | Self::VaultIdentityEventsGet
+                | Self::VaultIdentityProposalsResolve
+                | Self::VaultIdentityProposalsForPair
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -4349,6 +4464,7 @@ impl AgentVerb {
             Self::SelfStandingList
                 | Self::SelfInboxList
                 | Self::Describe
+                | Self::VaultRetrievalHydePending
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalTurn
                 | Self::VaultRetrievalOutcomesPut
@@ -4440,6 +4556,8 @@ impl AgentVerb {
                 | Self::VaultExportScoped
                 | Self::ExecuteCode
                 | Self::VaultCommit
+                | Self::VaultCalendarPassportsRead
+                | Self::VaultCalendarPassportsHistory
                 | Self::VaultCalendarOccurrences
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
@@ -4527,6 +4645,11 @@ impl AgentVerb {
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeGet
+                | Self::VaultRetrievalHydePending
+                | Self::VaultRetrievalHydeComplete
+                | Self::VaultRetrievalHydeReceipt
                 | Self::VaultTaggingStatus
                 | Self::VaultTaggingTags
                 | Self::VaultTaggingHistory
@@ -4878,6 +5001,9 @@ impl AgentVerb {
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -5122,6 +5248,9 @@ impl AgentVerb {
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
+                | Self::CalendarIcsStatus
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorGet
                 | Self::CalendarConnectorPull
@@ -5248,6 +5377,16 @@ impl AgentVerb {
                 | Self::VaultRunsSettle
                 | Self::VaultRunsSettlement
                 | Self::VaultRevertRun
+                | Self::VaultIdentityMerge
+                | Self::VaultIdentitySplit
+                | Self::VaultIdentityFacet
+                | Self::VaultIdentityAssertDistinct
+                | Self::VaultIdentityPropose
+                | Self::VaultIdentityUndo
+                | Self::VaultIdentityResolve
+                | Self::VaultIdentityEventsGet
+                | Self::VaultIdentityProposalsResolve
+                | Self::VaultIdentityProposalsForPair
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -5325,6 +5464,8 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeComplete
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultAffectCopingRecord
@@ -5547,6 +5688,9 @@ impl AgentVerb {
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksRegenAdopt
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
@@ -5685,6 +5829,8 @@ impl AgentVerb {
                 | Self::VaultBookingReschedule
                 | Self::VaultBookingCancel
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorPull
                 | Self::CalendarConnectorWrite
@@ -5768,6 +5914,13 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::VaultRunsSettle
                 | Self::VaultRevertRun
+                | Self::VaultIdentityMerge
+                | Self::VaultIdentitySplit
+                | Self::VaultIdentityFacet
+                | Self::VaultIdentityAssertDistinct
+                | Self::VaultIdentityPropose
+                | Self::VaultIdentityUndo
+                | Self::VaultIdentityProposalsResolve
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserClickAt
@@ -5901,6 +6054,11 @@ impl AgentVerb {
             Self::VaultRetrievalAgingConfigure => &["spec"],
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
+            Self::VaultRetrievalHydeConfigure => &["spec"],
+            Self::VaultRetrievalHydeGet => &["spec"],
+            Self::VaultRetrievalHydePending => &["spec"],
+            Self::VaultRetrievalHydeComplete => &["spec"],
+            Self::VaultRetrievalHydeReceipt => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
             Self::VaultTaggingStatus => &["spec"],
             Self::VaultTaggingTags => &["spec"],
@@ -6257,6 +6415,9 @@ impl AgentVerb {
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
+            Self::HostCompact => &["spec"],
+            Self::HostWake => &["spec"],
+            Self::HostBudgetHit => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -6503,6 +6664,11 @@ impl AgentVerb {
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
+            Self::CalendarIcsConfigure => &["spec"],
+            Self::CalendarIcsPoll => &["spec"],
+            Self::CalendarIcsStatus => &["spec"],
+            Self::VaultCalendarPassportsRead => &["spec"],
+            Self::VaultCalendarPassportsHistory => &["spec"],
             Self::CalendarConnectorConfigure => &["spec"],
             Self::CalendarConnectorGet => &["spec"],
             Self::CalendarConnectorPull => &["spec"],
@@ -6656,6 +6822,16 @@ impl AgentVerb {
             Self::VaultRunsSettle => &["spec"],
             Self::VaultRunsSettlement => &["spec"],
             Self::VaultRevertRun => &["spec"],
+            Self::VaultIdentityMerge => &["spec"],
+            Self::VaultIdentitySplit => &["spec"],
+            Self::VaultIdentityFacet => &["spec"],
+            Self::VaultIdentityAssertDistinct => &["spec"],
+            Self::VaultIdentityPropose => &["spec"],
+            Self::VaultIdentityUndo => &["spec"],
+            Self::VaultIdentityResolve => &["spec"],
+            Self::VaultIdentityEventsGet => &["spec"],
+            Self::VaultIdentityProposalsResolve => &["spec"],
+            Self::VaultIdentityProposalsForPair => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -6761,6 +6937,11 @@ impl AgentVerb {
             Self::VaultRetrievalAgingConfigure => &["spec"],
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
+            Self::VaultRetrievalHydeConfigure => &["spec"],
+            Self::VaultRetrievalHydeGet => &["spec"],
+            Self::VaultRetrievalHydePending => &["spec"],
+            Self::VaultRetrievalHydeComplete => &["spec"],
+            Self::VaultRetrievalHydeReceipt => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
             Self::VaultTaggingStatus => &["spec"],
             Self::VaultTaggingTags => &["spec"],
@@ -7117,6 +7298,9 @@ impl AgentVerb {
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
+            Self::HostCompact => &["spec"],
+            Self::HostWake => &["spec"],
+            Self::HostBudgetHit => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -7363,6 +7547,11 @@ impl AgentVerb {
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
+            Self::CalendarIcsConfigure => &["spec"],
+            Self::CalendarIcsPoll => &["spec"],
+            Self::CalendarIcsStatus => &["spec"],
+            Self::VaultCalendarPassportsRead => &["spec"],
+            Self::VaultCalendarPassportsHistory => &["spec"],
             Self::CalendarConnectorConfigure => &["spec"],
             Self::CalendarConnectorGet => &["spec"],
             Self::CalendarConnectorPull => &["spec"],
@@ -7516,6 +7705,16 @@ impl AgentVerb {
             Self::VaultRunsSettle => &["spec"],
             Self::VaultRunsSettlement => &["spec"],
             Self::VaultRevertRun => &["spec"],
+            Self::VaultIdentityMerge => &["spec"],
+            Self::VaultIdentitySplit => &["spec"],
+            Self::VaultIdentityFacet => &["spec"],
+            Self::VaultIdentityAssertDistinct => &["spec"],
+            Self::VaultIdentityPropose => &["spec"],
+            Self::VaultIdentityUndo => &["spec"],
+            Self::VaultIdentityResolve => &["spec"],
+            Self::VaultIdentityEventsGet => &["spec"],
+            Self::VaultIdentityProposalsResolve => &["spec"],
+            Self::VaultIdentityProposalsForPair => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -7751,6 +7950,21 @@ impl AgentVerb {
             }
             Self::VaultRetrievalWeightsConfigure => {
                 "The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."
+            }
+            Self::VaultRetrievalHydeConfigure => {
+                "The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work."
+            }
+            Self::VaultRetrievalHydeGet => {
+                "The owner reads the serving host HyDE binding, grounding and bounded retry options."
+            }
+            Self::VaultRetrievalHydePending => {
+                "Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing."
+            }
+            Self::VaultRetrievalHydeComplete => {
+                "Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded."
+            }
+            Self::VaultRetrievalHydeReceipt => {
+                "Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline."
             }
             Self::VaultAffectAnnotationsPut => {
                 "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."
@@ -8794,6 +9008,15 @@ impl AgentVerb {
             }
             Self::VaultSharesRevoke => "",
             Self::VaultSharesView => "",
+            Self::HostCompact => {
+                "Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint."
+            }
+            Self::HostWake => {
+                "Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes."
+            }
+            Self::HostBudgetHit => {
+                "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."
+            }
             Self::VaultHooksReplay => {
                 "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."
             }
@@ -9480,6 +9703,21 @@ impl AgentVerb {
             Self::CalendarInvite => {
                 "Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."
             }
+            Self::CalendarIcsConfigure => {
+                "Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent."
+            }
+            Self::CalendarIcsPoll => {
+                "Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence."
+            }
+            Self::CalendarIcsStatus => {
+                "Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL."
+            }
+            Self::VaultCalendarPassportsRead => {
+                "Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence."
+            }
+            Self::VaultCalendarPassportsHistory => {
+                "Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate."
+            }
             Self::CalendarConnectorConfigure => {
                 "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."
             }
@@ -9932,6 +10170,36 @@ impl AgentVerb {
             }
             Self::VaultRevertRun => {
                 "The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."
+            }
+            Self::VaultIdentityMerge => {
+                "The owner merges source identities into a survivor, retaining claim subjects and append-only evidence."
+            }
+            Self::VaultIdentitySplit => {
+                "The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map."
+            }
+            Self::VaultIdentityFacet => {
+                "The owner mints identity facets and forks assigned claims under their masks without restamping original claims."
+            }
+            Self::VaultIdentityAssertDistinct => {
+                "The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."
+            }
+            Self::VaultIdentityPropose => {
+                "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."
+            }
+            Self::VaultIdentityUndo => {
+                "The owner undoes one current topology event by appending a counter-event under its observed revision."
+            }
+            Self::VaultIdentityResolve => {
+                "The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments."
+            }
+            Self::VaultIdentityEventsGet => {
+                "The owner reads one topology decision with its actor, evidence, action and current decision revision."
+            }
+            Self::VaultIdentityProposalsResolve => {
+                "The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision."
+            }
+            Self::VaultIdentityProposalsForPair => {
+                "The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."
             }
             Self::SelfBrowserOpen => {
                 "Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."

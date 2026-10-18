@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 const RSI_LINE: SideTable<(), Line, LegacyJson> = SideTable::new(&side_table::BUDGET_RSI_LINE);
 
 /// Loop purpose, kept separate from ordinary interactive LLM budget rows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RsiSpendPurpose {
     Experiment,
     Judge,

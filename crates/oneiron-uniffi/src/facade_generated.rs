@@ -342,6 +342,31 @@ export_facade! {
     let output = client.vault_retrieval_weights_configure(&input)?;
     crate::codec::lift_record("vault.retrieval.weights.configure", &output)
 };
+"vault.retrieval.hyde.configure" => fn vault_retrieval_hyde_configure(&self, input: HydeHostConfigureRequest) -> HydeHostConfiguration = |client| {
+    let input: oneiron::query_expansion::host::HydeHostConfigureRequest = crate::codec::lower_record("vault.retrieval.hyde.configure", input)?;
+    let output = client.vault_retrieval_hyde_configure(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.configure", &output)
+};
+"vault.retrieval.hyde.get" => fn vault_retrieval_hyde_get(&self) -> HydeHostConfiguration = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.hyde.get")?;
+    let output = client.vault_retrieval_hyde_get(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.get", &output)
+};
+"vault.retrieval.hyde.pending" => fn vault_retrieval_hyde_pending(&self, input: HydeHostPendingRequest) -> Vec<HydeHostWork> = |client| {
+    let input: oneiron::query_expansion::host::HydeHostPendingRequest = crate::codec::lower_record("vault.retrieval.hyde.pending", input)?;
+    let output = client.vault_retrieval_hyde_pending(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.pending", &output)
+};
+"vault.retrieval.hyde.complete" => fn vault_retrieval_hyde_complete(&self, input: HydeHostCompleteRequest) -> HydeHostReceipt = |client| {
+    let input: oneiron::query_expansion::host::HydeHostCompleteRequest = crate::codec::lower_record("vault.retrieval.hyde.complete", input)?;
+    let output = client.vault_retrieval_hyde_complete(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.complete", &output)
+};
+"vault.retrieval.hyde.receipt" => fn vault_retrieval_hyde_receipt(&self, input: HydeHostReceiptRequest) -> Option<HydeHostReceipt> = |client| {
+    let input: oneiron::query_expansion::host::HydeHostReceiptRequest = crate::codec::lower_record("vault.retrieval.hyde.receipt", input)?;
+    let output = client.vault_retrieval_hyde_receipt(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.receipt", &output)
+};
 "vault.affect.annotations.put" => fn vault_affect_annotations_put(&self, input: AffectAnnotationPut) -> CommitReceipt = |client| {
     let input: oneiron::memory::affect::AffectAnnotationPut = crate::codec::lower_record("vault.affect.annotations.put", input)?;
     let output = client.vault_affect_annotations_put(&input)?;
@@ -2121,6 +2146,21 @@ export_facade! {
     let output = client.vault_shares_view(&input)?;
     crate::codec::lift_record("vault.shares.view", &output)
 };
+"host.compact" => fn host_compact(&self, input: HostCompactRequest) -> HostCompactResult = |client| {
+    let input: oneiron::runtime_hooks::host_doors::HostCompactRequest = crate::codec::lower_record("host.compact", input)?;
+    let output = client.host_compact(&input)?;
+    crate::codec::lift_record("host.compact", &output)
+};
+"host.wake" => fn host_wake(&self, input: HostWakeRequest) -> HostWakeResult = |client| {
+    let input: oneiron::runtime_hooks::host_doors::HostWakeRequest = crate::codec::lower_record("host.wake", input)?;
+    let output = client.host_wake(&input)?;
+    crate::codec::lift_record("host.wake", &output)
+};
+"host.budget.hit" => fn host_budget_hit(&self, input: HostBudgetHitRequest) -> HostBudgetHitResult = |client| {
+    let input: oneiron::runtime_hooks::host_doors::HostBudgetHitRequest = crate::codec::lower_record("host.budget.hit", input)?;
+    let output = client.host_budget_hit(&input)?;
+    crate::codec::lift_record("host.budget.hit", &output)
+};
 "vault.hooks.replay" => fn vault_hooks_replay(&self, input: HooksReplayRequest) -> Vec<HookReplayRow> = |client| {
     let input: oneiron::task_verb::sdk::HooksReplayRequest = crate::codec::lower_record("vault.hooks.replay", input)?;
     let output = client.vault_hooks_replay(&input)?;
@@ -3251,6 +3291,31 @@ export_facade! {
     let output = client.calendar_invite(&input)?;
     Lift::lift(output)
 };
+"calendar.ics.configure" => fn calendar_ics_configure(&self, input: CalendarIcsFeedConfigureRequest) -> CalendarIcsFeedRegistration = |client| {
+    let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest = crate::codec::lower_record("calendar.ics.configure", input)?;
+    let output = client.calendar_ics_configure(&input)?;
+    crate::codec::lift_record("calendar.ics.configure", &output)
+};
+"calendar.ics.poll" => fn calendar_ics_poll(&self, input: CalendarIcsFeedRequest) -> CalendarIcsPollCompletion = |client| {
+    let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest = crate::codec::lower_record("calendar.ics.poll", input)?;
+    let output = client.calendar_ics_poll(&input)?;
+    crate::codec::lift_record("calendar.ics.poll", &output)
+};
+"calendar.ics.status" => fn calendar_ics_status(&self, input: CalendarIcsFeedRequest) -> Option<CalendarIcsFeedStatus> = |client| {
+    let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest = crate::codec::lower_record("calendar.ics.status", input)?;
+    let output = client.calendar_ics_status(&input)?;
+    crate::codec::lift_record("calendar.ics.status", &output)
+};
+"vault.calendar.passports.read" => fn vault_calendar_passports_read(&self, input: CalendarPassportReadRequest) -> ScopedReadResultOptionalCalendarPassportRevision = |client| {
+    let input: oneiron::calendar::query::passport::CalendarPassportReadRequest = crate::codec::lower_record("vault.calendar.passports.read", input)?;
+    let output = client.vault_calendar_passports_read(&input)?;
+    crate::codec::lift_record("vault.calendar.passports.read", &output)
+};
+"vault.calendar.passports.history" => fn vault_calendar_passports_history(&self, input: CalendarPassportReadRequest) -> ScopedReadResultCalendarPassportRevisionList = |client| {
+    let input: oneiron::calendar::query::passport::CalendarPassportReadRequest = crate::codec::lower_record("vault.calendar.passports.history", input)?;
+    let output = client.vault_calendar_passports_history(&input)?;
+    crate::codec::lift_record("vault.calendar.passports.history", &output)
+};
 "calendar.connector.configure" => fn calendar_connector_configure(&self, input: CalendarConnectorConfigureRequest) -> CalendarConnectorRegistration = |client| {
     let input: oneiron::calendar::connectors::door::CalendarConnectorConfigureRequest = crate::codec::lower_record("calendar.connector.configure", input)?;
     let output = client.calendar_connector_configure(&input)?;
@@ -4015,6 +4080,56 @@ export_facade! {
     let input: oneiron::memory::run_review::RevertRunRequest = crate::codec::lower_record("vault.revert_run", input)?;
     let output = client.vault_revert_run(&input)?;
     crate::codec::lift_record("vault.revert_run", &output)
+};
+"vault.identity.merge" => fn vault_identity_merge(&self, input: IdentityMergeRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityMergeRequest = crate::codec::lower_record("vault.identity.merge", input)?;
+    let output = client.vault_identity_merge(&input)?;
+    crate::codec::lift_record("vault.identity.merge", &output)
+};
+"vault.identity.split" => fn vault_identity_split(&self, input: IdentitySplitRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentitySplitRequest = crate::codec::lower_record("vault.identity.split", input)?;
+    let output = client.vault_identity_split(&input)?;
+    crate::codec::lift_record("vault.identity.split", &output)
+};
+"vault.identity.facet" => fn vault_identity_facet(&self, input: IdentityFacetRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityFacetRequest = crate::codec::lower_record("vault.identity.facet", input)?;
+    let output = client.vault_identity_facet(&input)?;
+    crate::codec::lift_record("vault.identity.facet", &output)
+};
+"vault.identity.assert_distinct" => fn vault_identity_assert_distinct(&self, input: IdentityAssertDistinctRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityAssertDistinctRequest = crate::codec::lower_record("vault.identity.assert_distinct", input)?;
+    let output = client.vault_identity_assert_distinct(&input)?;
+    crate::codec::lift_record("vault.identity.assert_distinct", &output)
+};
+"vault.identity.propose" => fn vault_identity_propose(&self, input: IdentityProposeRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityProposeRequest = crate::codec::lower_record("vault.identity.propose", input)?;
+    let output = client.vault_identity_propose(&input)?;
+    crate::codec::lift_record("vault.identity.propose", &output)
+};
+"vault.identity.undo" => fn vault_identity_undo(&self, input: IdentityUndoRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityUndoRequest = crate::codec::lower_record("vault.identity.undo", input)?;
+    let output = client.vault_identity_undo(&input)?;
+    crate::codec::lift_record("vault.identity.undo", &output)
+};
+"vault.identity.resolve" => fn vault_identity_resolve(&self, input: IdentityEntityRequest) -> IdentityResolution = |client| {
+    let input: oneiron::task_verb::sdk::IdentityEntityRequest = crate::codec::lower_record("vault.identity.resolve", input)?;
+    let output = client.vault_identity_resolve(&input)?;
+    crate::codec::lift_record("vault.identity.resolve", &output)
+};
+"vault.identity.events.get" => fn vault_identity_events_get(&self, input: IdentityEventRequest) -> IdentityTopologyReceipt = |client| {
+    let input: oneiron::task_verb::sdk::IdentityEventRequest = crate::codec::lower_record("vault.identity.events.get", input)?;
+    let output = client.vault_identity_events_get(&input)?;
+    crate::codec::lift_record("vault.identity.events.get", &output)
+};
+"vault.identity.proposals.resolve" => fn vault_identity_proposals_resolve(&self, input: IdentityProposalResolveRequest) -> IdentityProposalResolutionResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityProposalResolveRequest = crate::codec::lower_record("vault.identity.proposals.resolve", input)?;
+    let output = client.vault_identity_proposals_resolve(&input)?;
+    crate::codec::lift_record("vault.identity.proposals.resolve", &output)
+};
+"vault.identity.proposals.for_pair" => fn vault_identity_proposals_for_pair(&self, input: IdentityPairRequest) -> IdentityPairProposals = |client| {
+    let input: oneiron::task_verb::sdk::IdentityPairRequest = crate::codec::lower_record("vault.identity.proposals.for_pair", input)?;
+    let output = client.vault_identity_proposals_for_pair(&input)?;
+    crate::codec::lift_record("vault.identity.proposals.for_pair", &output)
 };
 "self.browser.open" => fn self_browser_open(&self, input: LiveRunRequestOpenInput) -> ObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserOpenInput> = crate::codec::lower_record("self.browser.open", input)?;

@@ -22,7 +22,6 @@ pub struct LegalHoldPlaceRequest {
     /// Each `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` (a claim's
     /// gate-decision key partition), or `{"gate_partition": null}` (the
     /// claim-free partition).
-    #[schemars(with = "Vec<serde_json::Value>")]
     pub targets: Vec<LegalHoldTarget>,
     /// An opaque id, never free text: 1 to 128 of A-Z a-z 0-9 . _ : - /.
     #[serde(default)]
@@ -36,7 +35,6 @@ pub struct LegalHoldPlaceRequest {
 pub struct LegalHoldWidenRequest {
     pub hold_id: EntityId,
     /// As [`LegalHoldPlaceRequest::targets`].
-    #[schemars(with = "Vec<serde_json::Value>")]
     pub targets: Vec<LegalHoldTarget>,
 }
 

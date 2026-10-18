@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 833 facade rows, 2881 declarations.
-Inputs: 781 of 833 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 750 of 833 fully typed, 83 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 100; unread shapes: 0.
+Census: 856 facade rows, 2953 declarations.
+Inputs: 804 of 856 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 772 of 856 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 101; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1962,6 +1962,76 @@ class RetrievalWeightsConfigureRequest(TypedDict):
 class RetrievalWeightsReceipt(TypedDict):
     configuration: RetrievalWeightsView
     receipt_ref: str
+class GroundingContext(TypedDict):
+    bindings: dict[str, str]
+class HydeOptions(TypedDict):
+    channel_limit: int
+    retry_once: bool
+class HydeHostConfig(TypedDict):
+    expander: str
+    grounding: GroundingContext
+    options: HydeOptions
+class HydeHostConfigureRequest(TypedDict):
+    binding: NotRequired[HydeHostConfig | None]
+class HydeHostConfiguration(TypedDict):
+    binding: NotRequired[HydeHostConfig | None]
+class HydeHostPendingRequest(TypedDict):
+    limit: NotRequired[int | None]
+class HydeRequest(TypedDict):
+    query: str
+    max_subqueries: int
+class HydeHostCandidate(TypedDict):
+    id: str
+    score: float
+    claim: NotRequired[ClaimView | None]
+class HydeHostInputExpansion(TypedDict):
+    stage: Literal["expansion"]
+    request: HydeRequest
+class HydeHostInputEvidence(TypedDict):
+    stage: Literal["evidence"]
+    query: str
+    candidates: list[HydeHostCandidate]
+HydeHostInput = HydeHostInputExpansion | HydeHostInputEvidence
+class HydeHostWork(TypedDict):
+    request_id: str
+    expander: str
+    requested_at_ms: int
+    deadline_at_ms: NotRequired[int | None]
+    input: HydeHostInput
+class HydeExpansion(TypedDict):
+    grounded_query: str
+    hypothetical_answer: str
+    embedding: list[float]
+    subqueries: list[str]
+class EvidenceVerdictInsufficientBody(TypedDict):
+    gaps: list[str]
+class EvidenceVerdictInsufficient(TypedDict):
+    Insufficient: EvidenceVerdictInsufficientBody
+EvidenceVerdict = Literal["Sufficient"] | EvidenceVerdictInsufficient
+class HydeHostAnswerExpansion(TypedDict):
+    stage: Literal["expansion"]
+    expansion: HydeExpansion
+class HydeHostAnswerEvidence(TypedDict):
+    stage: Literal["evidence"]
+    verdict: EvidenceVerdict
+class HydeHostAnswerFailed(TypedDict):
+    stage: Literal["failed"]
+    reason: str
+HydeHostAnswer = HydeHostAnswerExpansion | HydeHostAnswerEvidence | HydeHostAnswerFailed
+class HydeHostCompleteRequest(TypedDict):
+    request_id: str
+    answer: HydeHostAnswer
+HydeHostStatus = Literal["pending", "expired", "completed", "failed", "discarded_deadline", "cancelled"]
+class HydeHostReceipt(TypedDict):
+    request_id: str
+    expander: str
+    requested_at_ms: int
+    deadline_at_ms: NotRequired[int | None]
+    completed_at_ms: NotRequired[int | None]
+    status: HydeHostStatus
+    received_bytes: int
+class HydeHostReceiptRequest(TypedDict):
+    request_id: str
 VadAnnotationSource = Literal["model_inference", "user_self_report"]
 class AffectAnnotationPut(TypedDict):
     turn_ref: str
@@ -4741,7 +4811,7 @@ class SharedActPoliciesView(TypedDict):
 class SharedActPolicyProposeRequest(TypedDict):
     vault_id: str
     act: str
-    policy: NotRequired[SharedActPolicy | None]
+    policy: SharedActPolicy | None
     expected_policy_hash: str
 SharedActPolicyChangeState = Literal["pending", "applied", "vetoed", "stale"]
 class SharedActPolicyChange(TypedDict):
@@ -7835,6 +7905,52 @@ class SharedBriefView(TypedDict):
     html: str
     citations: list[SharedBriefCitation]
     born_with: BornWith
+class CompactionWindowMessage(TypedDict):
+    message_id: EntityId
+    turn_id: EntityId
+    content: str
+    turn: int
+    tokens: int
+class HostCompactRequest(TypedDict):
+    session_ref: EntityId
+    window: list[CompactionWindowMessage]
+    keep_list: list[str]
+    token_ceiling: int
+class HostCompactResult(TypedDict):
+    epoch: int
+    summary: EntityId
+    text: str
+    keep_list: list[str]
+    first_turn: int
+    last_turn: int
+HostWakeKind = Literal["compaction", "session_end", "event", "timer"]
+class HostWakeRequest(TypedDict):
+    wake_kind: HostWakeKind
+    queue_head: list[EntityId]
+class HostWakeResult(TypedDict):
+    wake_kind: HostWakeKind
+    queue_head: list[EntityId]
+    attempt: str
+    already_queued: bool
+class BudgetExhaustionPolicySuspend(TypedDict):
+    kind: Literal["suspend"]
+class BudgetExhaustionPolicyContinueOnLocal(TypedDict):
+    kind: Literal["continue_on_local"]
+class BudgetExhaustionPolicyOverdraft(TypedDict):
+    kind: Literal["overdraft"]
+    cap: int
+BudgetExhaustionPolicy = BudgetExhaustionPolicySuspend | BudgetExhaustionPolicyContinueOnLocal | BudgetExhaustionPolicyOverdraft
+class HostBudgetHitRequest(TypedDict):
+    seat: str
+    policy: BudgetExhaustionPolicy
+class HostBudgetAccounting(TypedDict):
+    line: SpendScope
+    root: SpendScope
+    spend: SpendRead
+class HostBudgetHitResult(TypedDict):
+    seat: str
+    policy: BudgetExhaustionPolicy
+    accounting: HostBudgetAccounting
 class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
@@ -10243,10 +10359,10 @@ class ScopeResourceProjection(TypedDict):
     key: str
 ScopeResource = ScopeResourceBucket | ScopeResourceDocumentVersion | ScopeResourceProjection
 class ScopeScope(TypedDict):
-    world: NotRequired[str | None]
-    facet: NotRequired[str | None]
-    relationship: NotRequired[str | None]
-    project: NotRequired[str | None]
+    world: str | None
+    facet: str | None
+    relationship: str | None
+    project: str | None
     readable: list[ScopeResource]
     writable: list[ScopeResource]
 class ProjectAuthority(TypedDict):
@@ -11575,7 +11691,7 @@ class DecisionAsk(TypedDict):
     prior: NotRequired[AskPrior | None]
     queue_pin: ProviderPin
     to: AskTo
-    correlation: NotRequired[str | None]
+    correlation: str | None
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
     withdrawn_at: NotRequired[int | None]
@@ -11663,7 +11779,7 @@ class ConstraintObject(TypedDict):
     schema_version: int
     weekdays: NotRequired[list[ConstraintWeekday]]
     local_time_windows: NotRequired[list[LocalMinuteWindow]]
-    utc_window: NotRequired[ConstraintTimeRangeWire | None]
+    utc_window: ConstraintTimeRangeWire | None
     allow_flex_pool: bool
 class BookingConstraintInputObject(TypedDict):
     kind: Literal["object"]
@@ -11826,6 +11942,61 @@ class OutboundIntentReceipt(TypedDict):
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
     deduped: bool
+class IcsFeedPollConfig(TypedDict):
+    secret_ref: str
+    system: str
+    cadence_min_seconds: int
+    cadence_max_seconds: int
+class CalendarIcsFeedConfigureRequest(TypedDict):
+    config: IcsFeedPollConfig
+class CalendarIcsPollResultReenqueued(TypedDict):
+    state: Literal["reenqueued"]
+    next_not_before: int
+class CalendarIcsPollResultPausedNeedsInput(TypedDict):
+    state: Literal["paused_needs_input"]
+    inbox_exception_ref: str
+CalendarIcsPollResult = CalendarIcsPollResultReenqueued | CalendarIcsPollResultPausedNeedsInput
+class IcsFeedCursorSnapshot(TypedDict):
+    etag: NotRequired[str | None]
+    last_complete_at: NotRequired[int | None]
+    paused: bool
+    last_screen_verdict: NotRequired[str | None]
+class CalendarIcsPollCompletion(TypedDict):
+    poll_ref: str
+    completed_at: int
+    result: CalendarIcsPollResult
+    cursor: NotRequired[IcsFeedCursorSnapshot | None]
+class CalendarIcsFeedRegistration(TypedDict):
+    config: IcsFeedPollConfig
+    last_poll: NotRequired[CalendarIcsPollCompletion | None]
+class CalendarIcsFeedRequest(TypedDict):
+    system: str
+class CalendarIcsFeedStatus(TypedDict):
+    config: IcsFeedPollConfig
+    cursor: NotRequired[IcsFeedCursorSnapshot | None]
+    last_poll: NotRequired[CalendarIcsPollCompletion | None]
+class CalendarPassportReadRequest(TypedDict):
+    event_ref: str
+    system: str
+    uid: str
+CalendarPassportDirection = Literal["inbound", "outbound", "two_way"]
+CalendarPassportPresence = Literal["live", "absent"]
+class CalendarPassportValue(TypedDict):
+    system: str
+    uid: str
+    last_sequence: int
+    content_hash: list[int]
+    direction: CalendarPassportDirection
+    last_seen_at: int
+    presence: CalendarPassportPresence
+class CalendarPassportRevision(TypedDict):
+    claim_ref: str
+    event_ref: str
+    recorded_at: int
+    approval: str
+    lifecycle: str
+    stale: bool
+    passport: CalendarPassportValue
 class CalendarConnectorSeatConfig(TypedDict):
     seat_ref: str
     secret_ref: str
@@ -14345,6 +14516,179 @@ class RevertRunOutcome(TypedDict):
     run_id: str
     compensated: list[RunCompensation]
     not_undone: list[RunNotUndone]
+class IdentityEvidence(TypedDict):
+    refs: list[EntityId]
+    rationale: str
+IdentitySurvivorshipPlan = Literal["read_through"]
+class IdentityMergeRequest(TypedDict):
+    sources: list[EntityId]
+    survivor: EntityId
+    evidence: IdentityEvidence
+    survivorship_plan: IdentitySurvivorshipPlan
+ClaimSource = Literal["user_stated", "observed", "inferred", "imported", "tool_output", "generated"]
+class IdentityReassignmentItemClaim(TypedDict):
+    kind: Literal["claim"]
+    claim: EntityId
+class IdentityReassignmentItemEdge(TypedDict):
+    kind: Literal["edge"]
+    source: EntityId
+    edge_kind: str
+    target: EntityId
+IdentityReassignmentItem = IdentityReassignmentItemClaim | IdentityReassignmentItemEdge
+class IdentityReassignmentTargetHead(TypedDict):
+    kind: Literal["head"]
+    head: EntityId
+class IdentityReassignmentTargetFacet(TypedDict):
+    kind: Literal["facet"]
+    index: int
+class IdentityReassignmentTargetResidue(TypedDict):
+    kind: Literal["residue"]
+IdentityReassignmentTarget = IdentityReassignmentTargetHead | IdentityReassignmentTargetFacet | IdentityReassignmentTargetResidue
+class IdentityReassignment(TypedDict):
+    item: IdentityReassignmentItem
+    target: IdentityReassignmentTarget
+IdentityProposalOutcome = Literal["approved_untouched", "approved_amended", "rejected"]
+class IdentityAmendmentMerge(TypedDict):
+    op: Literal["merge"]
+    sources: list[EntityId]
+    survivor: EntityId
+    survivorship_plan: IdentitySurvivorshipPlan
+class IdentityAmendmentSplit(TypedDict):
+    op: Literal["split"]
+    entity: EntityId
+    heads: list[EntityId]
+    reassignment_map: list[IdentityReassignment]
+IdentityAmendment = IdentityAmendmentMerge | IdentityAmendmentSplit
+class IdentityEventActionMerge(TypedDict):
+    op: Literal["merge"]
+    sources: list[EntityId]
+    survivor: EntityId
+class IdentityEventActionSplit(TypedDict):
+    op: Literal["split"]
+    entity: EntityId
+    heads: list[EntityId]
+    reassignment_map: list[IdentityReassignment]
+    applied_assigned: int
+    applied_residue: int
+class IdentityEventActionFacet(TypedDict):
+    op: Literal["facet"]
+    entity: EntityId
+    facets: list[EntityId]
+    reassignment_map: list[IdentityReassignment]
+    applied_assigned: int
+    applied_residue: int
+    forked: list[EntityId]
+class IdentityEventActionAssertDistinct(TypedDict):
+    op: Literal["assert_distinct"]
+    a: EntityId
+    b: EntityId
+    claim: EntityId
+class IdentityEventActionUndo(TypedDict):
+    op: Literal["undo"]
+    target: EntityId
+class IdentityEventActionProposalResolution(TypedDict):
+    op: Literal["proposal_resolution"]
+    proposal: EntityId
+    outcome: IdentityProposalOutcome
+    op_kind: str
+    target_class: str
+    proposer: str
+    amendment: NotRequired[IdentityAmendment | None]
+class IdentityEventActionProposalCancellation(TypedDict):
+    op: Literal["proposal_cancellation"]
+    proposal: EntityId
+    participant: EntityId
+IdentityEventAction = IdentityEventActionMerge | IdentityEventActionSplit | IdentityEventActionFacet | IdentityEventActionAssertDistinct | IdentityEventActionUndo | IdentityEventActionProposalResolution | IdentityEventActionProposalCancellation
+class IdentityTopologyReceipt(TypedDict):
+    event: EntityId
+    seq: int
+    at: int
+    actor: NotRequired[EntityId | None]
+    source: ClaimSource
+    approval: ClaimApprovalStatus
+    confidence: float
+    evidence: NotRequired[IdentityEvidence | None]
+    action: IdentityEventAction
+    seen: str
+IdentityLifecycle = Literal["active", "merged", "split"]
+class IdentityTransition(TypedDict):
+    entity: EntityId
+    state: IdentityLifecycle
+class IdentityTopologyResultApplied(TypedDict):
+    outcome: Literal["applied"]
+    receipt: IdentityTopologyReceipt
+    transitions: list[IdentityTransition]
+class IdentityTopologyResultParked(TypedDict):
+    outcome: Literal["parked"]
+    receipt: IdentityTopologyReceipt
+class IdentityTopologyResultNoop(TypedDict):
+    outcome: Literal["noop"]
+IdentityTopologyResult = IdentityTopologyResultApplied | IdentityTopologyResultParked | IdentityTopologyResultNoop
+class IdentitySplitRequest(TypedDict):
+    entity: EntityId
+    heads: list[EntityId]
+    reassignment_map: list[IdentityReassignment]
+    evidence: IdentityEvidence
+class IdentityFacetSpec(TypedDict):
+    label: str
+class IdentityFacetRequest(TypedDict):
+    entity: EntityId
+    facets: list[IdentityFacetSpec]
+    reassignment_map: list[IdentityReassignment]
+    evidence: IdentityEvidence
+class IdentityAssertDistinctRequest(TypedDict):
+    a: EntityId
+    b: EntityId
+    reason: str
+class IdentityProposedOpMerge(TypedDict):
+    op: Literal["merge"]
+    spec: IdentityMergeRequest
+class IdentityProposedOpSplit(TypedDict):
+    op: Literal["split"]
+    spec: IdentitySplitRequest
+IdentityProposedOp = IdentityProposedOpMerge | IdentityProposedOpSplit
+class IdentityProposeRequest(TypedDict):
+    operation: IdentityProposedOp
+class IdentityUndoRequest(TypedDict):
+    event: EntityId
+    seen: str
+class IdentityEntityRequest(TypedDict):
+    entity: EntityId
+class IdentityResolution(TypedDict):
+    entity: EntityId
+    state: IdentityLifecycle
+    heads: list[EntityId]
+    merged_into: list[EntityId]
+    split_into: list[EntityId]
+    facets: list[EntityId]
+    assigned_claims: list[EntityId]
+    ambiguous_residue: list[EntityId]
+    remaining_claims: list[EntityId]
+class IdentityEventRequest(TypedDict):
+    event: EntityId
+class IdentityProposalRulingApprove(TypedDict):
+    ruling: Literal["approve"]
+class IdentityProposalRulingAmendThenApprove(TypedDict):
+    ruling: Literal["amend_then_approve"]
+    operation: IdentityAmendment
+class IdentityProposalRulingReject(TypedDict):
+    ruling: Literal["reject"]
+IdentityProposalRuling = IdentityProposalRulingApprove | IdentityProposalRulingAmendThenApprove | IdentityProposalRulingReject
+class IdentityProposalResolveRequest(TypedDict):
+    proposal: EntityId
+    seen: str
+    decision: IdentityProposalRuling
+class IdentityProposalResolutionResult(TypedDict):
+    receipt: IdentityTopologyReceipt
+    applied: NotRequired[IdentityTopologyReceipt | None]
+class IdentityPairRequest(TypedDict):
+    a: EntityId
+    b: EntityId
+class IdentityPairProposals(TypedDict):
+    a: EntityId
+    b: EntityId
+    proposals: list[EntityId]
+    distinct_claims: list[EntityId]
 class OpenInput(TypedDict):
     url: str
 class Row(TypedDict):
@@ -14695,6 +15039,19 @@ class LeaderSplitOutput(TypedDict):
 class SkillCallInput(TypedDict):
     skill: str
     args: Any
+class LensFrameEventRequest(TypedDict):
+    event: GeneratedUiActionEvent
+    idempotencyKey: str
+LensFrameEventReplyLocal = TypedDict("LensFrameEventReplyLocal", {"$state": GeneratedUiStateSnapshot})
+class LensFrameEventReplyTool(TypedDict):
+    outcome: Any
+    readReceipt: ScopedReadReceipt
+class LensFrameEventReplyCallback(TypedDict):
+    queued: bool
+    callbackId: str
+LensFrameEventReply = LensFrameEventReplyLocal | LensFrameEventReplyTool | LensFrameEventReplyCallback
+class CloseLensFrameReply(TypedDict):
+    closed: bool
 class MessageResultSource(TypedDict):
     run_id: EntityId
     occurrence: EntityId
