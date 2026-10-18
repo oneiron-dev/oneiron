@@ -26,7 +26,7 @@ const POLICY: SideTable<(), ActionModePolicy, LegacyJson> =
 
 /// One band: an index in `[min_index, max_index)` selects `mode`; a band
 /// whose upper bound is 1 includes 1.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ActionModeRule {
     pub mode: String,
@@ -37,11 +37,19 @@ pub struct ActionModeRule {
 /// The owner's action-mode policy: the window each index is measured over,
 /// with its targets, and ascending bands that do not overlap. A gap selects
 /// no mode.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ActionModePolicy {
     pub window: StateWindow,
     pub rules: Vec<ActionModeRule>,
+}
+
+/// The measured, non-clinical state and the mode the configured policy selects.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ActionModeProjection {
+    pub policy: Option<ActionModePolicy>,
+    pub state_index: crate::affect::state_index::StateIndex,
+    pub mode: Option<ActionModeRule>,
 }
 
 impl ActionModePolicy {
@@ -90,6 +98,30 @@ impl Vault {
     pub fn action_mode_policy(&self) -> Result<Option<ActionModePolicy>> {
         let txn = self.store.env.read_txn()?;
         POLICY.get(&self.store, &txn, &())
+    }
+
+    /// The same measurement and band selection used by the nightly run, for one subject.
+    pub(crate) fn project_action_mode_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        subject: &EntityId,
+        now: u64,
+        refresh: bool,
+    ) -> Result<ActionModeProjection> {
+        let policy = POLICY.get(&self.store, txn, &())?;
+        let state_index = if refresh {
+            match &policy {
+                Some(policy) => self.refresh_state_index_in_txn(txn, subject, &policy.window, now)?
+                    .map(|(_, index)| index).unwrap_or_default(),
+                None => Default::default(),
+            }
+        } else {
+            self.state_index_in_txn(txn, subject, now)?
+        };
+        let mode = state_index.inputs.as_ref().and_then(|_| {
+            policy.as_ref().and_then(|policy| policy.mode_for(state_index.value)).cloned()
+        });
+        Ok(ActionModeProjection { policy, state_index, mode })
     }
 
     /// Replaces the owner's action-mode policy; `None` clears it.
@@ -165,17 +197,12 @@ pub(super) fn run(
     let attempt = attempt.status.attempt.id;
     proposals::land(vault, ACTION_MODE_FACET, attempt, |landing| {
         vault.with_write_txn_grouped(|txn| {
-            let Some(policy) = POLICY.get(&vault.store, &*txn, &())? else {
+            let projection = vault.project_action_mode_in_txn(txn, &subject, now, true)?;
+            let Some(rule) = projection.mode else {
                 return Ok(None);
             };
-            let Some((claim, index)) =
-                vault.refresh_state_index_in_txn(txn, &subject, &policy.window, now)?
-            else {
-                return Ok(None);
-            };
-            let Some(rule) = policy.mode_for(index.value) else {
-                return Ok(None);
-            };
+            let index = projection.state_index;
+            let claim = EntityId::from_hex(index.claim.as_deref().ok_or_else(invalid)?)?;
             let value = serde_json::json!({
                 "mode": rule.mode,
                 "band": [rule.min_index, rule.max_index],
