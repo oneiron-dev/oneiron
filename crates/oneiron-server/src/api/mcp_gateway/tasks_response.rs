@@ -977,6 +977,10 @@ fn mcp_agent_verb_input(
         "self.off_record.execute" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_preview" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_confirm" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.create_child" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.archive" => a.spec.clone().ok_or_else(invalid),
+        "vault.evals.inventory" => a.spec.clone().ok_or_else(invalid),
+        "vault.evals.cohorts.setup" => a.spec.clone().ok_or_else(invalid),
         "vault.research.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.research.fork" => a.spec.clone().ok_or_else(invalid),
         "vault.research.weave" => a.spec.clone().ok_or_else(invalid),
@@ -1901,6 +1905,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.records.erase_confirm" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.create_child" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.archive" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.evals.inventory" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.evals.cohorts.setup" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.bind" => {
@@ -5397,6 +5413,58 @@ async fn execute_agent_verb_row(
                     .flatten(),
             );
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.create_child" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.research.create_child", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ResearchChildWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_research_create_child(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.archive" => {
+            let input: oneiron::task_verb::sdk::ResearchArchiveWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_archive(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.evals.inventory" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.evals.inventory", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EvalInventoryWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_evals_inventory(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.evals.cohorts.setup" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.evals.cohorts.setup", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::EvalCohortSetup =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_evals_cohorts_setup(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

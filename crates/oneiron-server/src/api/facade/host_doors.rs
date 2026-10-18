@@ -121,6 +121,7 @@ pub(crate) use super::core_write_doors::*;
 pub(crate) use super::critic_review_doors::*;
 // The owner's campaign split evaluation door (FIX 655), likewise.
 pub(crate) use super::campaign_split_doors::*;
+pub(crate) use super::research_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
@@ -1137,6 +1138,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.local"
         | "vault.budgets.settlements"
         | "vault.research.evaluate_split"
+        | "vault.research.create_child"
+        | "vault.evals.inventory"
+        | "vault.evals.cohorts.setup"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"

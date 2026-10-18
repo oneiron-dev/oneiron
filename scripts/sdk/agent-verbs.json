@@ -2429,6 +2429,58 @@
       "section": false
     },
     {
+      "name": "vault.research.create_child",
+      "description": "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave.",
+      "input": "crate::task_verb::sdk::ResearchChildWire",
+      "output": "crate::task_verb::sdk::ResearchChildReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.research.create_child\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.research.archive",
+      "description": "Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate.",
+      "input": "crate::task_verb::sdk::ResearchArchiveWire",
+      "output": "crate::task_verb::sdk::ResearchArchive",
+      "call": "crate::task_verb::sdk::research_archive(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.evals.inventory",
+      "description": "The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup.",
+      "input": "crate::task_verb::sdk::EvalInventoryWire",
+      "output": "crate::skill_optimize::EvalAuthoringInventory",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.evals.inventory\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.evals.cohorts.setup",
+      "description": "The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance.",
+      "input": "crate::skill_optimize::EvalCohortSetup",
+      "output": "crate::skill_optimize::EvalAuthoringReport",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.evals.cohorts.setup\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.research.bind",
       "description": "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it.",
       "input": "crate::task_verb::sdk::ResearchBindWire",

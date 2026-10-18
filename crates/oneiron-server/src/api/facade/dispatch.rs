@@ -3407,6 +3407,97 @@ async fn vault_records_erase_confirm(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_research_create_child(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.research.create_child")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.research.create_child", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.research.create_child", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_research_create_child(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_research_archive(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.research.archive",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_evals_inventory(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.evals.inventory")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.evals.inventory", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.evals.inventory", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_evals_inventory(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_evals_cohorts_setup(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.evals.cohorts.setup")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.evals.cohorts.setup", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.evals.cohorts.setup", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_evals_cohorts_setup(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_research_bind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -10438,6 +10529,10 @@ pub(crate) async fn call_verb(
         "self.off_record.execute" => self_off_record_execute(server, call, input).await,
         "vault.records.erase_preview" => vault_records_erase_preview(server, call, input).await,
         "vault.records.erase_confirm" => vault_records_erase_confirm(server, call, input).await,
+        "vault.research.create_child" => vault_research_create_child(server, call, input).await,
+        "vault.research.archive" => vault_research_archive(server, call, input).await,
+        "vault.evals.inventory" => vault_evals_inventory(server, call, input).await,
+        "vault.evals.cohorts.setup" => vault_evals_cohorts_setup(server, call, input).await,
         "vault.research.bind" => vault_research_bind(server, call, input).await,
         "vault.research.fork" => vault_research_fork(server, call, input).await,
         "vault.research.weave" => vault_research_weave(server, call, input).await,
