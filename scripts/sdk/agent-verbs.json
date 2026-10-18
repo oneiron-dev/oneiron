@@ -4327,6 +4327,186 @@
       "openapi": true
     },
     {
+      "name": "vault.evals.author_now",
+      "description": "Queue the production Coach eval-authoring pass, coalescing with nightly work; the caller supplies no plan, skill provenance or lease.",
+      "input": "crate::skill_optimize::eval_doors::EvalAuthorNowRequest",
+      "output": "crate::skill_optimize::eval_doors::EvalAuthoringRef",
+      "call": "crate::skill_optimize::eval_doors::author_now(memory.vault(), &memory.embedded_owner(\"vault.evals.author_now\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.authoring.result",
+      "description": "Read the eval-authoring host attempt's actual state and terminal error; a completed pass may author nothing.",
+      "input": "crate::skill_optimize::eval_doors::EvalAuthoringRef",
+      "output": "Option<crate::skill_optimize::eval_doors::EvalAuthoringResult>",
+      "call": "crate::skill_optimize::eval_doors::authoring_result(memory.vault(), &memory.embedded_owner(\"vault.evals.authoring.result\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.families",
+      "description": "Read a seat's family purposes, source roots, derivative lineage and dates, including retirement and training eligibility, without sealed labels.",
+      "input": "crate::skill_optimize::eval_doors::EvalSeatRequest",
+      "output": "Vec<crate::skill_optimize::eval_doors::EvalFamilyView>",
+      "call": "crate::skill_optimize::eval_doors::families(memory.vault(), &memory.embedded_owner(\"vault.evals.families\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.families.assign",
+      "description": "Assign source roots their fixed eval family and purpose before deriving cases; conflicting families, purposes or seats refuse.",
+      "input": "crate::skill_optimize::eval_doors::EvalFamilyAssignRequest",
+      "output": "crate::skill_optimize::SourceFamily",
+      "call": "crate::skill_optimize::eval_doors::assign_family(memory.vault(), &memory.embedded_owner(\"vault.evals.families.assign\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.cases",
+      "description": "Read development or judge-audit eval cases; sealed confirmation refuses and retired cohorts read as development, never training.",
+      "input": "crate::skill_optimize::eval_doors::EvalCasesRequest",
+      "output": "Vec<crate::skill_optimize::EvalCase>",
+      "call": "crate::skill_optimize::eval_doors::cases(memory.vault(), &memory.embedded_owner(\"vault.evals.cases\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.cases.record",
+      "description": "Record a receipt, repair, paraphrase, summary, translation, synthetic or rubric case through the shared family-inheritance guard; no labels are invented.",
+      "input": "crate::skill_optimize::EvalCaseDraft",
+      "output": "crate::skill_optimize::EvalCase",
+      "call": "crate::skill_optimize::eval_doors::record_case(memory.vault(), &memory.embedded_owner(\"vault.evals.cases.record\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.cohorts",
+      "description": "Read date-cut cohorts, the fixed reference, retirement decisions, exposure counts and near-copy audits; similarity flags review only.",
+      "input": "crate::skill_optimize::eval_doors::EvalSeatRequest",
+      "output": "Vec<crate::skill_optimize::eval_doors::EvalCohortView>",
+      "call": "crate::skill_optimize::eval_doors::cohorts(memory.vault(), &memory.embedded_owner(\"vault.evals.cohorts\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.cohorts.open",
+      "description": "Count a candidate, query or promotion serving before releasing its sealed cohort in the same owner-validated transaction; retired cohorts refuse.",
+      "input": "crate::skill_optimize::eval_doors::EvalCohortOpenRequest",
+      "output": "crate::skill_optimize::EvalRelease",
+      "call": "crate::skill_optimize::eval_doors::open_cohort(memory.vault(), &memory.embedded_owner(\"vault.evals.cohorts.open\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.exposure",
+      "description": "Read a cohort's individual exposure ledger and independent candidate, query and promotion counts; unknown cohorts refuse.",
+      "input": "crate::skill_optimize::eval_doors::EvalCohortRef",
+      "output": "crate::skill_optimize::eval_doors::EvalExposureLedger",
+      "call": "crate::skill_optimize::eval_doors::exposure(memory.vault(), &memory.embedded_owner(\"vault.evals.exposure\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.sufficiency",
+      "description": "Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys.",
+      "input": "crate::skill_optimize::SufficiencyInput",
+      "output": "crate::skill_optimize::SufficiencyCard",
+      "call": "crate::skill_optimize::eval_doors::sufficiency(memory.vault(), &memory.embedded_owner(\"vault.evals.sufficiency\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.labels.blocked",
+      "description": "Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session.",
+      "input": "crate::skill_optimize::eval_doors::EvalBlockedLabelsRequest",
+      "output": "Vec<crate::skill_optimize::EvalLabelAsk>",
+      "call": "crate::skill_optimize::eval_doors::blocked_labels(memory.vault(), &memory.embedded_owner(\"vault.evals.labels.blocked\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.labels.pick",
+      "description": "Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses.",
+      "input": "crate::skill_optimize::eval_doors::EvalLabelPickRequest",
+      "output": "crate::skill_optimize::EvalCase",
+      "call": "crate::skill_optimize::eval_doors::pick_label(memory.vault(), &memory.embedded_owner(\"vault.evals.labels.pick\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.coach.training_offers",
       "description": "Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers.",
       "input": "crate::skill_optimize::offer_doors::OfferListRequest",
@@ -6669,6 +6849,23 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true
+    },
+    {
+      "name": "execute_code",
+      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent.",
+      "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
+      "output": "crate::memory::foreign_code::ForeignCodeRunResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"execute_code\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_session": true,
+      "mcp_scope": "filtered",
+      "openapi": true
     },
     {
       "name": "vault.code.model_heal_count",
@@ -13600,6 +13797,70 @@
       },
       "section": false,
       "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.review",
+      "description": "The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer.",
+      "input": "crate::memory::run_review::RunReviewRequest",
+      "output": "crate::memory::run_review::RunReview",
+      "call": "memory.review_run_as_owner(&memory.embedded_owner(\"vault.runs.review\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.settle",
+      "description": "The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle.",
+      "input": "crate::memory::run_review::RunSettleRequest",
+      "output": "crate::memory::run_review::RunSettlement",
+      "call": "memory.settle_run_as_owner(&memory.embedded_owner(\"vault.runs.settle\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.settlement",
+      "description": "The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle.",
+      "input": "crate::memory::run_review::RunSettlementRequest",
+      "output": "crate::memory::run_review::RunSettlement",
+      "call": "memory.run_settlement_as_owner(&memory.embedded_owner(\"vault.runs.settlement\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.revert_run",
+      "description": "The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why.",
+      "input": "crate::memory::run_review::RevertRunRequest",
+      "output": "crate::memory::run_review::RevertRunOutcome",
+      "call": "memory.revert_run_as_owner(&memory.embedded_owner(\"vault.revert_run\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
       "openapi": true
     }
   ]
