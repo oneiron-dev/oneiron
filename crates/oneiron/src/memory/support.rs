@@ -149,7 +149,9 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> MemoryResult<()> {
-    let fold = vault.authority_fold_readonly_in_txn(txn).map_err(|err| {
+    // The shared view, not a copy of the fold: a host action's read key runs
+    // this once per candidate row (FIX 2222).
+    let fold = vault.authority_view_readonly_in_txn(txn).map_err(|err| {
         if crate::authority::is_corrupt_first_seen_sidecar(&err) {
             return MemoryError::new(
                 MEMORY_CODE_INVALID_STATE,
@@ -407,6 +409,10 @@ pub struct Memory<'v> {
     /// The verified credential this actor presented, when a host bound one:
     /// every read verb then reads under the key that proof builds.
     pub(super) read_proof: Option<crate::authority::VerifiedSlip>,
+    /// The host action this handle's actor is, when a host bound one
+    /// (`with_host_action_authority`, FIX 2222): every read verb then reads
+    /// under its guarded owner key.
+    pub(super) host_action: Option<crate::authority::HostActionAuthority>,
     /// The room turn this handle runs inside, when a host bound one.
     pub(super) room_turn: Option<crate::claim::RoomTurnCeiling>,
     /// The write origin a host bound, when one did: claim doors stamp it in
@@ -551,6 +557,7 @@ impl Vault {
             session_key: None,
             machine_signer: None,
             read_proof: None,
+            host_action: None,
             room_turn: None,
             host_origin: None,
             locality: crate::claim::CallerLocality::OnDevice,
@@ -596,6 +603,7 @@ impl Vault {
             session_key: None,
             machine_signer: Some((public_key, sign)),
             read_proof: None,
+            host_action: None,
             room_turn: None,
             host_origin: None,
             locality: crate::claim::CallerLocality::OnDevice,
@@ -647,6 +655,7 @@ impl<'v> Memory<'v> {
                 session_key: self.session_key,
                 machine_signer: self.machine_signer,
                 read_proof: self.read_proof.clone(),
+                host_action: self.host_action.clone(),
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
                 locality: self.locality,

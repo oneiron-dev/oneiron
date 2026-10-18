@@ -459,8 +459,14 @@ impl<'a> ScopedRead<'a> {
     }
 
     /// The owner key's binding, re-verified in this read's own snapshot, so a
-    /// key minted before a revocation resolves no plan after it.
+    /// key minted before a revocation resolves no plan after it. A host
+    /// action's key also proves its root and owner again (FIX 2222): the
+    /// embedded owner skips the binding below, and a live root alone does not
+    /// show it still binds that owner.
     pub(super) fn owner_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if let Some(action) = self.actor_key.host_action_guard() {
+            action.holds_in(self.vault, txn)?;
+        }
         let Some(owner) = self.actor_key.vault_owner_ref() else {
             return Ok(());
         };
@@ -481,6 +487,15 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub(crate) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        // A host action's key reads nothing once its root, its owner binding
+        // or its owner lapses, whichever door asks (FIX 2222).
+        if let Some(action) = self.actor_key.host_action_guard() {
+            match action.holds_in(self.vault, txn) {
+                Ok(()) => {}
+                Err(error) if crate::authority::host_action_refused(&error) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+        }
         let Some(proof) = &self.actor_key.proof else {
             return Ok(true);
         };

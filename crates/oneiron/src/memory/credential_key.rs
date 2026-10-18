@@ -23,6 +23,18 @@ impl Vault {
     /// one that names none is judged as a person, so only the vault's bound
     /// owner passes. `None` is a credential that grants no read, or whose
     /// holder is no entity.
+    ///
+    /// A host credential reads as a person only on a self-hosted vault (FIX
+    /// 2222): the host root itself reads as the owner it bound at install,
+    /// with that owner's guarded floor key, and a slip cut from it keeps the
+    /// key its Scope gives.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::HostActionRequiresSupportGrant`] for any host credential on
+    /// a vault that is not self-hosted (a hosted operator's root, a relay);
+    /// the owner refusal for a self-hosted root that is not live or binds no
+    /// live owner under its key.
     pub fn credential_read_key(&self, proof: &VerifiedSlip) -> Result<Option<ScopedReadActorKey>> {
         let txn = self.store.env.read_txn()?;
         self.credential_read_key_in(&txn, proof)
@@ -51,11 +63,22 @@ impl Vault {
     ) -> Result<Option<ScopedReadActorKey>> {
         let claims = proof.claims();
         if claims.holder_ref == HOST_HOLDER {
-            // The host root, unattenuated, is the trust root every credential
-            // is cut from: it reads what its Scope grants. A slip cut from it
-            // still names the host but may be held by anyone (`attenuate_to`),
-            // so it reads a relationship's rows only on a grant, which none
-            // can name.
+            // FIX 2222 (owner ruling "A + support"): no host credential reads
+            // as anyone where no host acts as a person. A hosted operator's
+            // root, or a relay's, gets the typed refusal, never a key.
+            if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
+                return Err(Error::HostActionRequiresSupportGrant);
+            }
+            // The self-hosted root itself acts as the owner it bound at
+            // install and reads with that owner's floor key, held to the root
+            // and its binding on every read.
+            if claims.parent_id.is_none() && proof.is_full_vault_owner_grade() {
+                let action = self.host_action_authority_in_txn(txn, proof)?;
+                return Ok(Some(action.read_key()));
+            }
+            // A slip cut from it still names the host but may be held by
+            // anyone (`attenuate_to`): it reads what its Scope grants, and a
+            // relationship's rows only on a grant, which none can name.
             return Ok(ScopedReadActorKey::from_verified_slip(proof).map(|key| {
                 if proof.is_full_vault_owner_grade() {
                     key

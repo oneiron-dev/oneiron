@@ -230,6 +230,10 @@ impl Vault {
     /// The verifier-produced root is rechecked in the export snapshot. A
     /// caller at `locality` off this device takes no device-local world with
     /// it (DEC-0005).
+    ///
+    /// A whole-vault export is an owner act, not a backup (FIX 2222): a
+    /// self-hosted root exports as the owner it acts as, and a host root on
+    /// any other vault gets `HOST_ACTION_REQUIRES_SUPPORT_GRANT`.
     pub fn export_with_verified_host_owner(
         &self,
         opts: &ExportOptions,
@@ -250,19 +254,28 @@ impl Vault {
         proof: &VerifiedSlip,
         locality: CallerLocality,
     ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
-        // A host-root export reads diaries as the vault's owner (OF-490).
-        let reader = WriteActor::new(
-            crate::vault::embedded_owner_actor_id()?,
-            EdgeActorClass::Human,
-        );
+        // A host-root export reads diaries as the owner the root acts as
+        // (OF-490, FIX 2222), resolved by the rule every host action takes.
+        let owner = self.admit_host_owner(proof)?;
+        let reader = WriteActor::new(owner, EdgeActorClass::Human);
         render_export(self, opts, "host", locality, reader, |txn| {
-            host_owner_export_admitted(self, txn, proof)
+            if host_owner_export_admitted(self, txn, proof)? == owner {
+                Ok(())
+            } else {
+                Err(export_forbidden())
+            }
         })
     }
 
     /// Whether [`Self::export_with_verified_host_owner`] admits `proof` now,
     /// in a read snapshot of its own; the export asks again in its own.
     pub fn admit_host_owner_export(&self, proof: &VerifiedSlip) -> MemoryResult<()> {
+        self.admit_host_owner(proof)?;
+        Ok(())
+    }
+
+    /// The owner `proof` exports as, in a read snapshot of its own.
+    fn admit_host_owner(&self, proof: &VerifiedSlip) -> MemoryResult<EntityId> {
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
         host_owner_export_admitted(self, &txn, proof)
     }
@@ -278,16 +291,21 @@ impl Vault {
     }
 }
 
+/// The owner a host root exports as, in `txn`: the one it acts as under
+/// the host-action rule (FIX 2222), which also requires the live, full root.
+/// Off a self-hosted vault the typed refusal; a credential that is not the
+/// host's own exports nothing.
 fn host_owner_export_admitted(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     proof: &VerifiedSlip,
-) -> MemoryResult<()> {
-    validate_verified_owner(vault, txn, proof)?;
+) -> MemoryResult<EntityId> {
     if proof.claims().holder_ref != "host" {
         return Err(export_forbidden());
     }
-    Ok(())
+    vault
+        .host_action_owner_in_txn(txn, Some(proof))
+        .map_err(MemoryError::from)
 }
 
 fn validate_verified_owner(

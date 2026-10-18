@@ -68,6 +68,33 @@ impl Memory<'_> {
         Ok(self.identity_read_key()?.at(self.locality))
     }
 
+    /// Binds the host action a host resolved for this handle's caller (FIX
+    /// 2222): a self-hosted root, or the explicit local dev mode, acting as
+    /// the vault's owner. Every read verb then reads under the action's
+    /// guarded owner key, which proves the root, its owner binding and the
+    /// owner again in each read's own snapshot. A bound credential's own
+    /// holder matching is unchanged: the action stands in for no proof.
+    ///
+    /// # Errors
+    ///
+    /// `FORBIDDEN` when this handle's actor or class is not the one the
+    /// action acts as.
+    pub fn with_host_action_authority(
+        mut self,
+        action: &crate::authority::HostActionAuthority,
+    ) -> MemoryResult<Self> {
+        let actor = action.actor();
+        if actor.entity_ref() != self.actor || actor.actor_class() != self.actor_class {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "this handle's actor is not the owner the host action acts as",
+                &["Bind the handle to the host action's own actor (HostActionAuthority::actor)."],
+            ));
+        }
+        self.host_action = Some(action.clone());
+        Ok(self)
+    }
+
     /// The bound actor's read key by identity alone.
     fn identity_read_key(&self) -> MemoryResult<ScopedReadActorKey> {
         let txn = self
@@ -77,6 +104,12 @@ impl Memory<'_> {
             .read_txn()
             .map_err(|error| MemoryError::from(Error::from(error)))?;
         verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+        if let Some(action) = &self.host_action {
+            // The host action's guarded owner key (FIX 2222), its action
+            // proved again in this snapshot.
+            action.guard().holds_in(self.vault, &txn)?;
+            return Ok(action.read_key());
+        }
         let owner = self.is_vault_owner_in_txn(&txn)?;
         if let Some(proof) = &self.read_proof {
             // The one key every proof-backed door builds (credential_key.rs).

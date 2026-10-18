@@ -100,6 +100,14 @@ pub const MEMORY_CODE_PENDING_ASK: &str = "PENDING_ASK";
 /// error left the engine.
 pub const MEMORY_CODE_INVENTED_REFERENCE: &str = "INVENTED_REFERENCE";
 
+/// A host credential asked to act as the vault's owner where no host acts
+/// as a person: a hosted operator's root, or any vault that is not
+/// self-hosted (FIX 2222, owner ruling "A + support"). Distinct from
+/// `FORBIDDEN` and `OWNER_BINDING_REQUIRED`: no scope, actor or binding the
+/// caller can change admits it. The operator's own admin commands need no
+/// owner; an owner act inside the vault takes the customer's support grant.
+pub const MEMORY_CODE_HOST_ACTION_REFUSED: &str = "HOST_ACTION_REQUIRES_SUPPORT_GRANT";
+
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
 /// engine→binding error mapping (S8); the HTTP mapping stays server-side.
@@ -488,6 +496,15 @@ impl From<Error> for MemoryError {
                 MEMORY_CODE_FORBIDDEN,
                 message,
                 &["Start a work companion in this workspace; its policy refuses a brought one."],
+            ),
+            // FIX 2222: its own code, so a client tells it from a gate's or
+            // the owner binding's refusal; the remedy is the customer's.
+            ErrorKind::HostActionRequiresSupportGrant => Self::new(
+                MEMORY_CODE_HOST_ACTION_REFUSED,
+                message,
+                &[
+                    "Ask the customer for a support grant; the operator's own admin commands (status, backup, restore, repair, move) need none.",
+                ],
             ),
             ErrorKind::ConsentGuestNotRecorded => Self::new(
                 MEMORY_CODE_FORBIDDEN,
