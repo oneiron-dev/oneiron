@@ -625,6 +625,8 @@ fn document_item(view: &EntityView) -> MemoryItem {
         None => (view.id_hex.clone(), None),
     };
     MemoryItem {
+        asset_ref: (view.kind == "ASSET").then(|| view.id_hex.clone()),
+        embedding_matches: Vec::new(),
         short_id,
         source_revision_ref,
         kind: view.kind.clone(),
