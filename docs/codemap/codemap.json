@@ -14430,6 +14430,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConnectorQualificationKit",
       "GroundingOracle",
       "ProbeCitation",
       "ProbeDisposition",
@@ -14454,9 +14455,9 @@
      "surface": {
       "crate-vis": 2,
       "enum": 4,
-      "fn": 2,
+      "fn": 3,
       "re-export": 1,
-      "struct": 11,
+      "struct": 12,
       "trait": 3
      }
     },
@@ -14592,6 +14593,7 @@
       "SlateHolderNarrow",
       "SlateManifest",
       "SlateOwnerOverride",
+      "SlatePackSource",
       "SlateRow",
       "SlateToolManifest"
      ],
@@ -14602,7 +14604,7 @@
       "crate-vis": 12,
       "enum": 3,
       "fn": 36,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -48948,7 +48950,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 32,
+      "re-export": 33,
       "struct": 36
      }
     },
@@ -49074,6 +49076,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConnectorPackAcceptRequest",
+      "ConnectorPackAdvisory",
+      "ConnectorPackBasis",
+      "ConnectorPackDelta",
+      "ConnectorPackGetRequest",
+      "ConnectorPackGrantRow",
+      "ConnectorPackGrants",
+      "ConnectorPackGrantsGetRequest",
+      "ConnectorPackGrantsPutRequest",
+      "ConnectorPackPrepareRequest",
+      "ConnectorPackQualifyRequest",
+      "ConnectorPackUpdateRequest",
+      "ConnectorPackView"
+     ],
+     "path": "src/task_verb/sdk_connector_pack.rs",
+     "purpose": "Typed, source-bound connector-pack admission and delta re-consent",
+     "surface": {
+      "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
@@ -49188,7 +49214,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "fn": 458
+      "fn": 465
      }
     },
     {
@@ -55788,7 +55814,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 144,
+     "files": 145,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55958,7 +55984,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3408,
+   "source_files": 3409,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64371,7 +64397,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 408
+      "fn": 415
      }
     },
     {
@@ -65419,7 +65445,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 409
+      "fn": 416
      }
     },
     {
@@ -68376,6 +68402,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/connector_pack_doors.rs",
+     "purpose": "Source-bound connector packs over the existing owner, probe and slate doors",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -68512,7 +68548,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 82
+      "crate-vis": 83
      }
     },
     {
@@ -69372,7 +69408,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -69432,7 +69468,7 @@
      "path": "src/api/owner_routes/connector_admission_routes.rs",
      "purpose": "`/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 9
      }
     },
     {
@@ -71964,13 +72000,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/connector_admission_host.rs",
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 12
      }
     },
     {
@@ -75827,7 +75863,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 337,
+     "files": 338,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75899,7 +75935,7 @@
     "connector_admission_host": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
@@ -76240,9 +76276,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 56,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 660,
+   "source_files": 661,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76710,11 +76746,27 @@
       "ConnectorCallRequest",
       "ConnectorCallStatus",
       "ConnectorCallStatusRequest",
+      "ConnectorConsentRowView",
+      "ConnectorConsentView",
       "ConnectorEnd",
       "ConnectorEntry",
       "ConnectorListRequest",
       "ConnectorNameRequest",
+      "ConnectorPackAcceptRequest",
+      "ConnectorPackAdvisory",
+      "ConnectorPackBasis",
+      "ConnectorPackDelta",
+      "ConnectorPackGetRequest",
+      "ConnectorPackGrantRow",
+      "ConnectorPackGrants",
+      "ConnectorPackGrantsGetRequest",
+      "ConnectorPackGrantsPutRequest",
+      "ConnectorPackPrepareRequest",
+      "ConnectorPackQualifyRequest",
+      "ConnectorPackUpdateRequest",
+      "ConnectorPackView",
       "ConnectorPreset",
+      "ConnectorQualificationKit",
       "ConnectorQualificationReceipt",
       "ConnectorQuestion",
       "ConnectorSchemaReply",
@@ -76776,6 +76828,7 @@
       "CritiqueVerdict",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
+      "DataClass",
       "DecideRules",
       "DecisionAnswer",
       "DecisionAsk",
@@ -77378,6 +77431,7 @@
       "Preset",
       "PriorRung",
       "PriorSeed",
+      "ProbeRequest",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -77416,6 +77470,11 @@
       "PruneReason",
       "PruneReceipt",
       "PulledImage",
+      "QualificationCase",
+      "QualificationInjection",
+      "QualificationInjectionSurface",
+      "QualificationLimits",
+      "QualificationPlan",
       "QuestionActivation",
       "QuestionAnswer",
       "QuestionAnswersRequest",
@@ -77726,6 +77785,16 @@
       "SkillPublisherRequest",
       "SkillSaveRequest",
       "SkillSourceFile",
+      "SlateDataClass",
+      "SlateDisposition",
+      "SlateDraftRow",
+      "SlateElicitationManifest",
+      "SlateHolderNarrow",
+      "SlateManifest",
+      "SlateOwnerOverride",
+      "SlatePackSource",
+      "SlateRow",
+      "SlateToolManifest",
       "SlideRender",
       "SlideReviewOutcome",
       "SlideReviewSubmit",
@@ -77943,8 +78012,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 422,
-      "struct": 1082
+      "enum": 426,
+      "struct": 1111
      }
     },
     {
