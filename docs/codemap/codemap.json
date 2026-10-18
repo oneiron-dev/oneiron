@@ -33162,7 +33162,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 22,
-      "re-export": 49
+      "re-export": 50
      }
     },
     {
@@ -34371,6 +34371,44 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/stream/api.rs",
+     "purpose": "MESSAGE doors adapt typed calls to the existing witness and stream programs",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AppendToStreamRequest",
+      "BeginMessageStreamRequest",
+      "CancelStreamRequest",
+      "CommitMessageRequest",
+      "MessageBirth",
+      "MessageCancelKind",
+      "MessageCancelReason",
+      "MessageCommitOptions",
+      "MessageCustomCancel",
+      "MessageCustomCancelKind",
+      "MessageDocumentState",
+      "MessageDurability",
+      "MessageDurabilityRequest",
+      "MessageStreamMode",
+      "MessageStreamOptions",
+      "MessageStreamRequest"
+     ],
+     "path": "src/memory/witness/stream/api_types.rs",
+     "purpose": "Typed public MESSAGE lifecycle inputs, projected by the verb table",
+     "surface": {
+      "enum": 4,
+      "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "MessageCompletion"
      ],
@@ -34415,7 +34453,7 @@
      "surface": {
       "crate-vis": 4,
       "fn": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -34447,7 +34485,7 @@
      "path": "src/memory/witness/stream/storage.rs",
      "purpose": "Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 2
      }
     },
@@ -52617,7 +52655,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 921
+      "fn": 929
      }
     },
     {
@@ -59557,7 +59595,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 207,
+     "files": 209,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60238,7 +60276,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3676,
+   "source_files": 3678,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68813,7 +68851,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 890
+      "fn": 898
      }
     },
     {
@@ -69876,7 +69914,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 891
+      "fn": 899
      }
     },
     {
@@ -82041,6 +82079,7 @@
       "AnswerRecord",
       "AnswerSheetAtom",
       "AnsweringAuthority",
+      "AppendToStreamRequest",
       "ApproveOnceRequest",
       "ApproveScope",
       "ArchiveAxesProposal",
@@ -82145,6 +82184,7 @@
       "BatchOutput",
       "BatchState",
       "BatchStep",
+      "BeginMessageStreamRequest",
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
@@ -82307,6 +82347,7 @@
       "CancelMode",
       "CancelRejectionPathology",
       "CancelStanding",
+      "CancelStreamRequest",
       "CandidateLabel",
       "CandidateRef",
       "Care",
@@ -82515,6 +82556,7 @@
       "CollectionAtom",
       "CommReach",
       "CommandOutput",
+      "CommitMessageRequest",
       "CommitmentBirthKind",
       "CommitmentBirthProvenance",
       "CommitmentCloseRequest",
@@ -83519,11 +83561,28 @@
       "MeshPathOutcome",
       "MeshPathReceipt",
       "MeshPathReceiptsRequest",
+      "MessageBirth",
+      "MessageCancelKind",
+      "MessageCancelReason",
+      "MessageCommitOptions",
+      "MessageCompletion",
+      "MessageCustomCancel",
+      "MessageCustomCancelKind",
+      "MessageDocumentState",
+      "MessageDurability",
+      "MessageDurabilityRequest",
       "MessagePersonReceipt",
       "MessagePersonRequest",
       "MessageReactionExternal",
       "MessageReactionReceipt",
       "MessageReactionRequest",
+      "MessageStreamHandle",
+      "MessageStreamMode",
+      "MessageStreamOptions",
+      "MessageStreamPartial",
+      "MessageStreamReceipt",
+      "MessageStreamRequest",
+      "MessageWriteMode",
       "MetaLineAtom",
       "MetricAxis",
       "MetricDirection",
@@ -84264,6 +84323,7 @@
       "ScopedReadResultOptionalCalendarPassportRevision",
       "ScopedReadResultOptionalClaimView",
       "ScopedReadResultOptionalDiagnosticEventView",
+      "ScopedReadResultOptionalMessageDurability",
       "ScopedReadResultOptionalNoteEditorBinding",
       "ScopedReadResultOptionalNoteForkView",
       "ScopedReadResultOptionalNoteHistoryView",
@@ -84611,6 +84671,10 @@
       "StepXfrm",
       "StopCause",
       "StoredShapeSeed",
+      "StreamCadence",
+      "StreamFinality",
+      "StreamFinalityReason",
+      "StreamSyncVisibility",
       "SubgoalStatus",
       "SufficiencyCard",
       "SufficiencyInput",
@@ -84967,8 +85031,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 744,
-      "struct": 2287
+      "enum": 753,
+      "struct": 2304
      }
     },
     {
