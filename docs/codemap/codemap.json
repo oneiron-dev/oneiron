@@ -31375,7 +31375,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 6,
-      "re-export": 42
+      "re-export": 43
      }
     },
     {
@@ -31768,6 +31768,23 @@
       "enum": 5,
       "fn": 2,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HybridPprQuery",
+      "HybridRankReplay",
+      "HybridSearchHit",
+      "HybridSearchRequest",
+      "HybridTemporalQuery"
+     ],
+     "path": "src/memory/search_hybrid.rs",
+     "purpose": "Five-channel search through the caller's ordinary scoped retrieval lane",
+     "surface": {
+      "fn": 2,
+      "struct": 5
      }
     },
     {
@@ -35629,7 +35646,7 @@
      "purpose": "Retrieval telemetry capture and turn context options on the pipeline builder",
      "surface": {
       "crate-vis": 8,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -49540,7 +49557,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 516
+      "fn": 517
      }
     },
     {
@@ -55715,7 +55732,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56396,7 +56413,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3436,
+   "source_files": 3437,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64810,7 +64827,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 466
+      "fn": 467
      }
     },
     {
@@ -65858,7 +65875,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 467
+      "fn": 468
      }
     },
     {
@@ -77706,6 +77723,11 @@
       "HubSkillSyncReceipt",
       "HubSyncPolicy",
       "HumanAskReason",
+      "HybridPprQuery",
+      "HybridRankReplay",
+      "HybridSearchHit",
+      "HybridSearchRequest",
+      "HybridTemporalQuery",
       "IdentityActNow",
       "IdentityActNowRequest",
       "IdentityAnswerRequest",
@@ -78235,6 +78257,7 @@
       "ResolvedRole",
       "ResponseFormat",
       "RetentionDefault",
+      "RetrievalBlendWeights",
       "RetrievalScoreComponent",
       "RetrievalSignal",
       "RetryableLlmError",
@@ -78314,6 +78337,7 @@
       "ScopedReadResultCalendarEventViewList",
       "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultCalendarOccurrenceViewList",
+      "ScopedReadResultHybridSearchHitList",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
@@ -78718,7 +78742,7 @@
      "purpose": "—",
      "surface": {
       "enum": 455,
-      "struct": 1244
+      "struct": 1251
      }
     },
     {
