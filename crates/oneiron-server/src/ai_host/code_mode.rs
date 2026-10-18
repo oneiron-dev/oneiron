@@ -167,6 +167,9 @@ pub(super) async fn bind(
         total: models.code_mode.max_runs,
         wait: server.config.limits.queue_wait(),
     };
+    if let Some(backend) = compaction.host_backend() {
+        let _ = server.ai.host_compaction.set(backend);
+    }
     let embedder = server.embedder.clone();
     server.with_mcp_quickjs_provider(compaction.attach(provider, status, embedder), runs)
 }

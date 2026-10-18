@@ -181,11 +181,7 @@ impl PipelineBuilder<'_> {
             None => None,
             Some(_) if self.deadline_reached() => None,
             Some((expander, grounding, options)) => {
-                if options.channel_limit == 0 {
-                    return Err(Error::InvalidConfig(
-                        "hyde channel_limit must be greater than zero".to_owned(),
-                    ));
-                }
+                options.validate()?;
                 let Some((template, _)) = self.text_search.as_ref() else {
                     return Err(Error::InvalidConfig(
                         "hyde requires search_text query".to_owned(),
@@ -196,23 +192,7 @@ impl PipelineBuilder<'_> {
                     query,
                     max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
                 })?;
-                if expansion.embedding.is_empty() {
-                    return Err(Error::InvalidConfig(
-                        "hyde embedding must not be empty".to_owned(),
-                    ));
-                }
-                if expansion.embedding.len() != self.vault.config.dimensions
-                    && self.vault.config.fast_dims.map(usize::from)
-                        != Some(expansion.embedding.len())
-                {
-                    return Err(Error::DimensionMismatch {
-                        expected: self.vault.config.dimensions,
-                        got: expansion.embedding.len(),
-                    });
-                }
-                if let Some(error) = Error::invalid_vector_component(&expansion.embedding) {
-                    return Err(error);
-                }
+                crate::query_expansion::validate_hyde_expansion(self.vault, &expansion)?;
                 Some(expansion)
             }
         };

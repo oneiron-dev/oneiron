@@ -7,6 +7,7 @@ use super::*;
 use crate::ports::EntityStoreRead;
 
 mod call_mode;
+mod hyde_host;
 mod items;
 mod paid;
 mod presentation;
@@ -852,6 +853,11 @@ impl Memory<'_> {
                 if let Some(vector) = execution.embedding {
                     pipeline = pipeline.search_vector(vector, limit);
                 }
+                if effective.requires_rerank()
+                    && let Some((expander, grounding, options)) = execution.hyde
+                {
+                    pipeline = pipeline.hyde(expander, grounding.clone(), options);
+                }
                 for seed in execution.media {
                     pipeline =
                         pipeline.search_media(seed.space, seed.kind, seed.vector, seed.kinds, limit);
@@ -953,6 +959,11 @@ impl Memory<'_> {
                 }
                 if let Some(vector) = execution.embedding {
                     builder = builder.search_vector(vector, limit);
+                }
+                if effective.requires_rerank()
+                    && let Some((expander, grounding, options)) = execution.hyde
+                {
+                    builder = builder.hyde(expander, grounding.clone(), options);
                 }
                 for seed in execution.media {
                     builder = builder.search_media(seed.space, seed.kind, seed.vector, seed.kinds, limit);

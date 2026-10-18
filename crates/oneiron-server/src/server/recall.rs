@@ -65,7 +65,14 @@ impl SyncServer {
         let media = self.recall_media(&input)?;
         let refused = Mutex::new(None);
         let embed = self.recall_embed_media(input.effort, media, &refused, payer);
+        let arrived = Instant::now();
+        let (_, budget) = oneiron::memory::resolve_recall_dial(
+            input.effort, input.deadline_ms, self.vault.call_mode_deadline(),
+        )?;
+        let hyde = self.hyde_host.expander(memory, effort, budget.map(|budget| arrived + budget))?;
         let door = RecallDoor {
+            arrived,
+            hyde: hyde.as_ref().map(|hyde| hyde.binding()),
             rerank: rerank.engine(),
             ..RecallDoor::now()
         };
@@ -293,14 +300,18 @@ impl SyncServer {
             let server = Arc::clone(self);
             let task = tokio::task::spawn_blocking(move || {
                 let publish = move |pack| publish.put(pack);
+                let memory = reader(&server.vault, actor, class, proof.as_ref())
+                    .at(locality)
+                    .listing_producers(&listing);
+                let hyde = server.hyde_host.expander(
+                    &memory, effort, budget.map(|budget| arrived + budget),
+                )?;
                 let door = RecallDoor {
                     arrived,
                     on_cut: budget.map(|_| &publish as &(dyn Fn(MemoryPack) + Sync)),
                     rerank: rerank.engine(),
+                    hyde: hyde.as_ref().map(|hyde| hyde.binding()),
                 };
-                let memory = reader(&server.vault, actor, class, proof.as_ref())
-                    .at(locality)
-                    .listing_producers(&listing);
                 let refused = Mutex::new(None);
                 // A door's own recall is the owner's: no run funds it.
                 let embed = server.recall_embed_media(input.effort, media, &refused, None);
@@ -394,6 +405,7 @@ impl SyncServer {
                     arrived,
                     on_cut: Some(&publish),
                     rerank: oneiron::memory::RecallRerank::Required,
+                    hyde: None,
                 };
                 let memory = reader(&vault, actor, class, proof.as_ref())
                     .at(locality)
