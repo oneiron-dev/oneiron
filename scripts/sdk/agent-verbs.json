@@ -1529,6 +1529,104 @@
       "section": false
     },
     {
+      "name": "vault.packs.connector.prepare",
+      "description": "Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate.",
+      "input": "ConnectorPackPrepareRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.prepare\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.get",
+      "description": "Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows.",
+      "input": "ConnectorPackGetRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.qualify",
+      "description": "Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant.",
+      "input": "ConnectorPackQualifyRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.qualify\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.accept",
+      "description": "Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent.",
+      "input": "ConnectorPackAcceptRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.accept\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.update",
+      "description": "Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities.",
+      "input": "ConnectorPackUpdateRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackDelta",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.update\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.grants.get",
+      "description": "Reads current per-capability authority for one actor on the reviewed connector pack source.",
+      "input": "ConnectorPackGrantsGetRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackGrants",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.grants.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.grants.put",
+      "description": "Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint.",
+      "input": "ConnectorPackGrantsPutRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackGrants",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.grants.put\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.packs.remove",
       "description": "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate.",
       "input": "PackRemoveRequest",
@@ -3159,6 +3257,158 @@
       }
     },
     {
+      "name": "vault.artifacts.units",
+      "description": "Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::ArtifactUnitsRequest",
+      "output": "crate::anchored_annotation::ArtifactUnitsView",
+      "call": "memory.artifacts_units(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.anchors.pin",
+      "description": "Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationPinRequest",
+      "output": "crate::anchored_annotation::AnnotationAnchorView",
+      "call": "memory.artifacts_anchors_pin(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.threads.open",
+      "description": "Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationThreadOpenRequest",
+      "output": "crate::anchored_annotation::AnnotationThreadView",
+      "call": "memory.artifacts_threads_open(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "prose_links": [
+        "/text"
+      ]
+    },
+    {
+      "name": "vault.artifacts.threads.comment",
+      "description": "Appends a comment as the caller; returns its first stored part, with every part available through threads.read.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationCommentRequest",
+      "output": "crate::anchored_annotation::AnnotationCommentView",
+      "call": "memory.artifacts_threads_comment(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "prose_links": [
+        "/text"
+      ]
+    },
+    {
+      "name": "vault.artifacts.threads.read",
+      "description": "Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationThreadRequest",
+      "output": "Option<crate::anchored_annotation::AnnotationThreadView>",
+      "call": "memory.artifacts_threads_read(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.threads.list",
+      "description": "Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::blob_artifact::ArtifactRefRequest",
+      "output": "Vec<crate::anchored_annotation::AnnotationThreadView>",
+      "call": "memory.artifacts_threads_list(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.threads.assign",
+      "description": "Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine.",
+      "refs": [
+        "/artifact_ref",
+        "/assignee_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationAssignRequest",
+      "output": "crate::anchored_annotation::AnnotationBriefView",
+      "call": "memory.artifacts_threads_assign(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref",
+          "assignee_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.threads.state",
+      "description": "Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationStateRequest",
+      "output": "crate::anchored_annotation::AnnotationThreadView",
+      "call": "memory.artifacts_threads_state(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false
+    },
+    {
       "name": "vault.code.diff",
       "description": "The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort.",
       "input": "crate::code_document::CodeDiffRequest",
@@ -3261,6 +3511,76 @@
           "py": "Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."
         }
       }
+    },
+    {
+      "name": "vault.code.export",
+      "description": "Export one already-finalized and reviewed document revision through the existing origin publication protocol.",
+      "input": "crate::memory::origin_doors::CodeExportRequest",
+      "output": "crate::memory::origin_doors::CodeExportResult",
+      "call": "memory.code_export_as(&memory.embedded_owner(\"vault.code.export\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.origin.authority.get",
+      "description": "Read one served origin authority and this host identity under the owner credential.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::memory::origin_doors::OriginAuthorityView",
+      "call": "memory.origin_authority_get_as(&memory.embedded_owner(\"vault.code.origin.authority.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.origin.authority.set",
+      "description": "Cut over one existing served origin under the owner proof and expected authority epoch.",
+      "input": "crate::memory::origin_doors::OriginAuthoritySetRequest",
+      "output": "crate::memory::origin_doors::OriginAuthorityView",
+      "call": "memory.origin_authority_set_as(&memory.embedded_owner(\"vault.code.origin.authority.set\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.origin.publications",
+      "description": "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement.",
+      "input": "crate::memory::origin_doors::OriginPublicationsRequest",
+      "output": "crate::memory::origin_doors::OriginPublicationsView",
+      "call": "memory.origin_publications_as(&memory.embedded_owner(\"vault.code.origin.publications\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.checkout.bind",
+      "description": "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential.",
+      "input": "crate::memory::origin_doors::CheckoutDoorBindRequest",
+      "output": "crate::memory::origin_doors::CheckoutDoorBinding",
+      "call": "memory.checkout_door_bind_as(&memory.embedded_owner(\"vault.code.checkout.bind\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
     },
     {
       "name": "vault.artifacts.export",
@@ -7380,6 +7700,55 @@
           "py": "One NOTE's overrides and the defaults its gates read after them."
         }
       }
+    },
+    {
+      "name": "vault.tasks.linear.mapping",
+      "description": "One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events.",
+      "refs": ["/task_ref"],
+      "input": "crate::linear_sync::LinearMappingRequest",
+      "output": "crate::linear_sync::LinearMappingView",
+      "call": "memory.linear_mapping(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "task_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.tasks.linear.mapping.edit",
+      "description": "Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key.",
+      "input": "crate::linear_sync::LinearMappingEdit",
+      "output": "crate::linear_sync::LinearMappingEditReceipt",
+      "call": "memory.linear_mapping_edit(&input, None)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.tasks.linear.provenance",
+      "description": "One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts.",
+      "refs": ["/task_ref"],
+      "input": "crate::linear_sync::LinearProvenanceRequest",
+      "output": "crate::linear_sync::LinearProvenancePage",
+      "call": "memory.linear_provenance(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "task_ref"
+        ]
+      },
+      "page": {
+        "rows": "events",
+        "cursor": "next_cursor"
+      },
+      "section": false
     },
     {
       "name": "self.fold",

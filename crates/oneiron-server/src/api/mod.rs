@@ -499,6 +499,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // OF-519: the served built-in channels' provider webhooks. Keyless;
         // the provider's HMAC over the raw body authenticates each one.
         .merge(crate::builtin_host::routes())
+        .merge(crate::linear_host::webhook_routes())
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,
