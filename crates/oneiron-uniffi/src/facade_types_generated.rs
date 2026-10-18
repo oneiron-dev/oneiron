@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 742 facade rows, 2588 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 698.
+// UniFFI census: 753 facade rows, 2616 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 709.
 // WireJson rows: self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
+// WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -15993,6 +15993,629 @@ pub struct EvalAuthoringReport {
     pub skipped: Vec<EvalAuthoringSkip>,
 }
 
+/// `oneiron::skill_optimize::offer_doors::OfferListRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferListRequest {
+    #[serde(rename = "seat", default, skip_serializing_if = "Option::is_none")]
+    pub seat: Option<EvalSeat>,
+    #[serde(
+        rename = "pending_only",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pending_only: Option<bool>,
+}
+
+/// `oneiron::skill_optimize::offer::OfferModelPin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferModelPin {
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(
+        rename = "content_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub content_hash: Option<String>,
+}
+
+/// `oneiron::skill_optimize::offer::OfferCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OfferCandidate {
+    #[serde(rename = "stock")]
+    Stock {
+        #[serde(rename = "model")]
+        model: OfferModelPin,
+        #[serde(rename = "licence")]
+        licence: String,
+        #[serde(rename = "source")]
+        source: String,
+    },
+    #[serde(rename = "train_recipe")]
+    TrainRecipe {
+        #[serde(rename = "base")]
+        base: OfferModelPin,
+        #[serde(rename = "recipe_ref")]
+        recipe_ref: String,
+        #[serde(rename = "licence")]
+        licence: String,
+    },
+}
+
+/// `oneiron::skill_optimize::offer::OfferCost`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferCost {
+    #[serde(rename = "currency")]
+    pub currency: String,
+    #[serde(
+        rename = "monthly_before",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub monthly_before: Option<f64>,
+    #[serde(
+        rename = "monthly_after",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub monthly_after: Option<f64>,
+    #[serde(rename = "one_off", default, skip_serializing_if = "Option::is_none")]
+    pub one_off: Option<f64>,
+    #[serde(
+        rename = "payback_months",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub payback_months: Option<f64>,
+}
+
+/// `oneiron::skill_optimize::offer::OfferOption`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferOption {
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "model")]
+    pub model: OfferModelPin,
+    #[serde(rename = "cost")]
+    pub cost: OfferCost,
+    #[serde(rename = "score", default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
+    #[serde(rename = "evidence_refs")]
+    pub evidence_refs: Vec<String>,
+}
+
+/// `oneiron::skill_optimize::offer::SeatWorkload`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SeatWorkload {
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "until")]
+    pub until: u64,
+    #[serde(rename = "calls", default, skip_serializing_if = "Option::is_none")]
+    pub calls: Option<u64>,
+    #[serde(
+        rename = "input_tokens",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub input_tokens: Option<u64>,
+    #[serde(
+        rename = "output_tokens",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub output_tokens: Option<u64>,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(rename = "receipt_refs")]
+    pub receipt_refs: Vec<String>,
+}
+
+/// `oneiron::skill_optimize::offer::OfferEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferEvidence {
+    #[serde(rename = "cohort", default, skip_serializing_if = "Option::is_none")]
+    pub cohort: Option<String>,
+    #[serde(rename = "exposures")]
+    pub exposures: Vec<String>,
+    #[serde(
+        rename = "rubric_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rubric_revision: Option<String>,
+    #[serde(rename = "card", default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<SufficiencyCard>,
+    #[serde(rename = "losses")]
+    pub losses: Vec<String>,
+    #[serde(rename = "risk", default, skip_serializing_if = "Option::is_none")]
+    pub risk: Option<String>,
+}
+
+/// `oneiron::skill_optimize::offer::ComputeDestination`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ComputeDestination {
+    #[serde(rename = "on_device")]
+    OnDevice,
+    #[serde(rename = "self_hosted")]
+    SelfHosted {
+        #[serde(rename = "host")]
+        host: String,
+    },
+    #[serde(rename = "hosted")]
+    Hosted {
+        #[serde(rename = "provider")]
+        provider: String,
+        #[serde(rename = "rows_leaving")]
+        rows_leaving: u64,
+    },
+}
+
+/// `oneiron::skill_optimize::offer::TrainingOffer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrainingOffer {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "seat")]
+    pub seat: EvalSeat,
+    #[serde(
+        rename = "offer_skill",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub offer_skill: Option<crate::WireJson>,
+    #[serde(
+        rename = "drafted_on",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub drafted_on: Option<String>,
+    #[serde(rename = "attempt")]
+    pub attempt: AttemptId,
+    #[serde(rename = "incumbent")]
+    pub incumbent: OfferModelPin,
+    #[serde(rename = "candidate")]
+    pub candidate: OfferCandidate,
+    #[serde(rename = "baseline")]
+    pub baseline: OfferOption,
+    #[serde(rename = "alternatives")]
+    pub alternatives: Vec<OfferOption>,
+    #[serde(rename = "workload")]
+    pub workload: SeatWorkload,
+    #[serde(rename = "cost")]
+    pub cost: OfferCost,
+    #[serde(rename = "evidence")]
+    pub evidence: OfferEvidence,
+    #[serde(rename = "destination")]
+    pub destination: ComputeDestination,
+    #[serde(rename = "previous", default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<String>,
+    #[serde(
+        rename = "what_changed",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub what_changed: Option<String>,
+    #[serde(rename = "check_at")]
+    pub check_at: u64,
+    #[serde(rename = "offered_at")]
+    pub offered_at: u64,
+    #[serde(rename = "digest")]
+    pub digest: String,
+}
+
+/// `oneiron::skill_optimize::offer::OfferAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OfferAnswer {
+    #[serde(rename = "keep_baseline")]
+    KeepBaseline,
+    #[serde(rename = "approve_switch")]
+    ApproveSwitch,
+    #[serde(rename = "approve_train")]
+    ApproveTrain,
+    #[serde(rename = "decline")]
+    Decline,
+    #[serde(rename = "postpone")]
+    Postpone,
+}
+
+/// `oneiron::skill_optimize::offer::OfferIntent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OfferIntent {
+    #[serde(rename = "switch")]
+    Switch {
+        #[serde(rename = "seat")]
+        seat: EvalSeat,
+        #[serde(rename = "from")]
+        from: OfferModelPin,
+        #[serde(rename = "to")]
+        to: OfferModelPin,
+    },
+    #[serde(rename = "train")]
+    Train {
+        #[serde(rename = "seat")]
+        seat: EvalSeat,
+        #[serde(rename = "base")]
+        base: OfferModelPin,
+        #[serde(rename = "recipe_ref")]
+        recipe_ref: String,
+        #[serde(rename = "destination")]
+        destination: ComputeDestination,
+    },
+}
+
+/// `oneiron::skill_optimize::offer::OfferAnswerRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferAnswerRecord {
+    #[serde(rename = "offer")]
+    pub offer: String,
+    #[serde(rename = "answer")]
+    pub answer: OfferAnswer,
+    #[serde(rename = "owner")]
+    pub owner: String,
+    #[serde(rename = "authentication")]
+    pub authentication: String,
+    #[serde(rename = "offer_digest")]
+    pub offer_digest: String,
+    #[serde(rename = "intent", default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<OfferIntent>,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::skill_optimize::offer::OfferCheck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferCheck {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "offer")]
+    pub offer: String,
+    #[serde(rename = "receipt_refs")]
+    pub receipt_refs: Vec<String>,
+    #[serde(
+        rename = "observed_monthly_cost",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observed_monthly_cost: Option<f64>,
+    #[serde(
+        rename = "observed_score",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observed_score: Option<f64>,
+    #[serde(rename = "held", default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<bool>,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::skill_optimize::offer_doors::OfferView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferView {
+    #[serde(rename = "offer")]
+    pub offer: TrainingOffer,
+    #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<OfferAnswerRecord>,
+    #[serde(rename = "checks")]
+    pub checks: Vec<OfferCheck>,
+}
+
+/// `oneiron::skill_optimize::offer_doors::OfferRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferRef {
+    #[serde(rename = "offer")]
+    pub offer: String,
+}
+
+/// `oneiron::skill_optimize::offer_doors::OfferPassRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferPassRef {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+}
+
+/// `oneiron::skill_optimize::offer_doors::OfferPassResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferPassResult {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "state")]
+    pub state: AttemptState,
+    #[serde(rename = "terminal")]
+    pub terminal: bool,
+    #[serde(rename = "offers")]
+    pub offers: Vec<TrainingOffer>,
+}
+
+/// `oneiron::skill_optimize::offer_doors::OfferAnswerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferAnswerRequest {
+    #[serde(rename = "offer")]
+    pub offer: String,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "answer")]
+    pub answer: OfferAnswer,
+}
+
+/// `oneiron::skill_optimize::offer_doors::OfferUndoReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferUndoReceipt {
+    #[serde(rename = "offer")]
+    pub offer: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "restored_model")]
+    pub restored_model: String,
+}
+
+/// `oneiron::skill_optimize::offer_pilot::OfferCandidateQuery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferCandidateQuery {
+    #[serde(rename = "seat", default, skip_serializing_if = "Option::is_none")]
+    pub seat: Option<EvalSeat>,
+}
+
+/// `oneiron::skill_optimize::offer_pilot::OfferCandidateSetup`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferCandidateSetup {
+    #[serde(rename = "seat")]
+    pub seat: EvalSeat,
+    #[serde(rename = "incumbent")]
+    pub incumbent: OfferModelPin,
+    #[serde(rename = "candidate")]
+    pub candidate: OfferCandidate,
+    #[serde(rename = "destination")]
+    pub destination: ComputeDestination,
+}
+
+/// `oneiron::skill_optimize::offer_pilot::OfferCandidateRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferCandidateRecord {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "setup")]
+    pub setup: OfferCandidateSetup,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::skill_optimize::offer_pilot::OfferPilotPrepare`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferPilotPrepare {
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "cohort")]
+    pub cohort: String,
+}
+
+/// `oneiron::skill_optimize::eval_set::cohort::EvalExposureKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EvalExposureKind {
+    #[serde(rename = "candidate")]
+    Candidate,
+    #[serde(rename = "query")]
+    Query,
+    #[serde(rename = "promotion")]
+    Promotion,
+}
+
+/// `oneiron::skill_optimize::eval_set::cohort::EvalExposure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalExposure {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "cohort")]
+    pub cohort: String,
+    #[serde(rename = "kind")]
+    pub kind: EvalExposureKind,
+    #[serde(rename = "consumer")]
+    pub consumer: String,
+    #[serde(
+        rename = "candidate_pin",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub candidate_pin: Option<String>,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::skill_optimize::offer_pilot::OfferPilotMeasurement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferPilotMeasurement {
+    #[serde(rename = "sufficiency")]
+    pub sufficiency: SufficiencyInput,
+    #[serde(rename = "receipt_refs")]
+    pub receipt_refs: Vec<String>,
+    #[serde(rename = "currency")]
+    pub currency: String,
+    #[serde(
+        rename = "one_off_cost",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub one_off_cost: Option<f64>,
+    #[serde(
+        rename = "incumbent_score",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub incumbent_score: Option<f64>,
+    #[serde(
+        rename = "candidate_score",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub candidate_score: Option<f64>,
+}
+
+/// `oneiron::skill_optimize::offer_pilot::OfferPilot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferPilot {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "exposure")]
+    pub exposure: EvalExposure,
+    #[serde(rename = "membership_digest")]
+    pub membership_digest: String,
+    #[serde(rename = "rubric_revision")]
+    pub rubric_revision: String,
+    #[serde(rename = "families")]
+    pub families: u32,
+    #[serde(rename = "floor_slices")]
+    pub floor_slices: std::collections::HashMap<String, u32>,
+    #[serde(rename = "prepared_at")]
+    pub prepared_at: u64,
+    #[serde(
+        rename = "measurement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub measurement: Option<OfferPilotMeasurement>,
+    #[serde(rename = "card", default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<SufficiencyCard>,
+    #[serde(
+        rename = "completed_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub completed_at: Option<u64>,
+}
+
+/// `oneiron::skill_optimize::eval_set::DerivationKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DerivationKind {
+    #[serde(rename = "receipt")]
+    Receipt,
+    #[serde(rename = "repair")]
+    Repair,
+    #[serde(rename = "paraphrase")]
+    Paraphrase,
+    #[serde(rename = "summary")]
+    Summary,
+    #[serde(rename = "translation")]
+    Translation,
+    #[serde(rename = "synthetic")]
+    Synthetic,
+    #[serde(rename = "rubric")]
+    Rubric,
+}
+
+/// `oneiron::skill_optimize::eval_set::EvalLabel`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalLabel {
+    #[serde(rename = "kind")]
+    pub kind: EvalLabelKind,
+    #[serde(rename = "value")]
+    pub value: String,
+    #[serde(rename = "reference")]
+    pub reference: String,
+    #[serde(rename = "weight")]
+    pub weight: f64,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::skill_optimize::eval_set::EvalCase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalCase {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "family")]
+    pub family: String,
+    #[serde(rename = "seat")]
+    pub seat: EvalSeat,
+    #[serde(rename = "kind")]
+    pub kind: DerivationKind,
+    #[serde(rename = "receipts")]
+    pub receipts: Vec<String>,
+    #[serde(rename = "parents")]
+    pub parents: Vec<String>,
+    #[serde(rename = "stratum", default, skip_serializing_if = "Option::is_none")]
+    pub stratum: Option<String>,
+    #[serde(
+        rename = "draw_probability",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub draw_probability: Option<f64>,
+    #[serde(rename = "source_at")]
+    pub source_at: u64,
+    #[serde(rename = "recorded_at")]
+    pub recorded_at: u64,
+    #[serde(rename = "labels")]
+    pub labels: Vec<EvalLabel>,
+}
+
+/// `oneiron::skill_optimize::eval_set::cohort::EvalRelease`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EvalRelease {
+    #[serde(rename = "exposure")]
+    pub exposure: EvalExposure,
+    #[serde(rename = "cases")]
+    pub cases: Vec<EvalCase>,
+}
+
+/// `oneiron::skill_optimize::offer_pilot::OfferPilotPrepared`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferPilotPrepared {
+    #[serde(rename = "pilot")]
+    pub pilot: OfferPilot,
+    #[serde(rename = "release")]
+    pub release: EvalRelease,
+}
+
+/// `oneiron::skill_optimize::offer_pilot::OfferPilotComplete`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferPilotComplete {
+    #[serde(rename = "pilot")]
+    pub pilot: String,
+    #[serde(rename = "measurement")]
+    pub measurement: OfferPilotMeasurement,
+}
+
+/// `oneiron::skill_optimize::offer_pilot::OfferPilotRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferPilotRef {
+    #[serde(rename = "pilot")]
+    pub pilot: String,
+}
+
 /// `oneiron::task_verb::sdk_research::ResearchBindWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -16697,115 +17320,6 @@ pub struct ResearchCandidateWire {
     pub root: String,
     #[serde(rename = "candidate")]
     pub candidate: String,
-}
-
-/// `oneiron::skill_optimize::eval_set::cohort::EvalExposureKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum EvalExposureKind {
-    #[serde(rename = "candidate")]
-    Candidate,
-    #[serde(rename = "query")]
-    Query,
-    #[serde(rename = "promotion")]
-    Promotion,
-}
-
-/// `oneiron::skill_optimize::eval_set::cohort::EvalExposure`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EvalExposure {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "cohort")]
-    pub cohort: String,
-    #[serde(rename = "kind")]
-    pub kind: EvalExposureKind,
-    #[serde(rename = "consumer")]
-    pub consumer: String,
-    #[serde(
-        rename = "candidate_pin",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub candidate_pin: Option<String>,
-    #[serde(rename = "at")]
-    pub at: u64,
-}
-
-/// `oneiron::skill_optimize::eval_set::DerivationKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum DerivationKind {
-    #[serde(rename = "receipt")]
-    Receipt,
-    #[serde(rename = "repair")]
-    Repair,
-    #[serde(rename = "paraphrase")]
-    Paraphrase,
-    #[serde(rename = "summary")]
-    Summary,
-    #[serde(rename = "translation")]
-    Translation,
-    #[serde(rename = "synthetic")]
-    Synthetic,
-    #[serde(rename = "rubric")]
-    Rubric,
-}
-
-/// `oneiron::skill_optimize::eval_set::EvalLabel`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EvalLabel {
-    #[serde(rename = "kind")]
-    pub kind: EvalLabelKind,
-    #[serde(rename = "value")]
-    pub value: String,
-    #[serde(rename = "reference")]
-    pub reference: String,
-    #[serde(rename = "weight")]
-    pub weight: f64,
-    #[serde(rename = "at")]
-    pub at: u64,
-}
-
-/// `oneiron::skill_optimize::eval_set::EvalCase`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EvalCase {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "family")]
-    pub family: String,
-    #[serde(rename = "seat")]
-    pub seat: EvalSeat,
-    #[serde(rename = "kind")]
-    pub kind: DerivationKind,
-    #[serde(rename = "receipts")]
-    pub receipts: Vec<String>,
-    #[serde(rename = "parents")]
-    pub parents: Vec<String>,
-    #[serde(rename = "stratum", default, skip_serializing_if = "Option::is_none")]
-    pub stratum: Option<String>,
-    #[serde(
-        rename = "draw_probability",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub draw_probability: Option<f64>,
-    #[serde(rename = "source_at")]
-    pub source_at: u64,
-    #[serde(rename = "recorded_at")]
-    pub recorded_at: u64,
-    #[serde(rename = "labels")]
-    pub labels: Vec<EvalLabel>,
-}
-
-/// `oneiron::skill_optimize::eval_set::cohort::EvalRelease`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct EvalRelease {
-    #[serde(rename = "exposure")]
-    pub exposure: EvalExposure,
-    #[serde(rename = "cases")]
-    pub cases: Vec<EvalCase>,
 }
 
 /// `oneiron::task_verb::sdk_research::ResearchRefereeScores`.
@@ -29155,7 +29669,7 @@ pub struct OfferCard {
 
 /// `oneiron::workspace_roster::rooms::offer_settle::OfferAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum OfferAnswer {
+pub enum OfferSettleOfferAnswer {
     #[serde(rename = "join")]
     Join,
     #[serde(rename = "not_now")]
@@ -29165,11 +29679,11 @@ pub enum OfferAnswer {
 /// `oneiron::workspace_roster::rooms::offer_settle::OfferAnswerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct OfferAnswerRequest {
+pub struct OfferSettleOfferAnswerRequest {
     #[serde(rename = "offer_id")]
     pub offer_id: String,
     #[serde(rename = "action")]
-    pub action: OfferAnswer,
+    pub action: OfferSettleOfferAnswer,
     #[serde(rename = "intent_key")]
     pub intent_key: String,
 }
@@ -29196,7 +29710,7 @@ pub struct OfferVoteRequest {
     #[serde(rename = "offer_id")]
     pub offer_id: String,
     #[serde(rename = "action")]
-    pub action: OfferAnswer,
+    pub action: OfferSettleOfferAnswer,
 }
 
 /// `oneiron::workspace_roster::rooms::offer_reopen::OfferReopenRequest`.

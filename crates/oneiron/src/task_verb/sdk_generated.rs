@@ -1331,6 +1331,72 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.coach.training_offers",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_doors::OfferListRequest,
+                >(),
+            ),
+            (
+                "vault.coach.training_offers.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_doors::OfferRef,
+                >(),
+            ),
+            (
+                "vault.coach.training_offers.trigger",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_doors::OfferPassRequest,
+                >(),
+            ),
+            (
+                "vault.coach.training_offers.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_doors::OfferPassRef,
+                >(),
+            ),
+            (
+                "vault.coach.training_offers.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_doors::OfferAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.coach.training_offers.undo",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_doors::OfferRef,
+                >(),
+            ),
+            (
+                "vault.coach.training_offers.candidates",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_pilot::OfferCandidateQuery,
+                >(),
+            ),
+            (
+                "vault.coach.training_offers.candidates.prepare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_pilot::OfferCandidateSetup,
+                >(),
+            ),
+            (
+                "vault.coach.training_offers.pilots.prepare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_pilot::OfferPilotPrepare,
+                >(),
+            ),
+            (
+                "vault.coach.training_offers.pilots.complete",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_pilot::OfferPilotComplete,
+                >(),
+            ),
+            (
+                "vault.coach.training_offers.pilots.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_pilot::OfferPilotRef,
+                >(),
+            ),
+            (
                 "vault.research.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResearchBindWire,
@@ -4336,6 +4402,17 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.archive.coverage",
     "vault.evals.inventory",
     "vault.evals.cohorts.setup",
+    "vault.coach.training_offers",
+    "vault.coach.training_offers.get",
+    "vault.coach.training_offers.trigger",
+    "vault.coach.training_offers.result",
+    "vault.coach.training_offers.answer",
+    "vault.coach.training_offers.undo",
+    "vault.coach.training_offers.candidates",
+    "vault.coach.training_offers.candidates.prepare",
+    "vault.coach.training_offers.pilots.prepare",
+    "vault.coach.training_offers.pilots.complete",
+    "vault.coach.training_offers.pilots.get",
     "vault.cleanup.run",
     "vault.entities.mention",
     "vault.policy.owner.get",
@@ -5039,6 +5116,45 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.evals.cohorts.setup" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalAuthoringReport,
+        >(),
+        "vault.coach.training_offers" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::skill_optimize::offer_doors::OfferView>,
+        >(),
+        "vault.coach.training_offers.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::skill_optimize::offer_doors::OfferView>,
+        >(),
+        "vault.coach.training_offers.trigger" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::offer_doors::OfferPassRef,
+        >(),
+        "vault.coach.training_offers.result" => crate::code_run::vault_read::request_schema::<
+            Option<crate::skill_optimize::offer_doors::OfferPassResult>,
+        >(),
+        "vault.coach.training_offers.answer" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::OfferAnswerRecord,
+        >(),
+        "vault.coach.training_offers.undo" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::offer_doors::OfferUndoReceipt,
+        >(),
+        "vault.coach.training_offers.candidates" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::skill_optimize::offer_pilot::OfferCandidateRecord>,
+        >(),
+        "vault.coach.training_offers.candidates.prepare" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::skill_optimize::offer_pilot::OfferCandidateRecord,
+            >()
+        }
+        "vault.coach.training_offers.pilots.prepare" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::skill_optimize::offer_pilot::OfferPilotPrepared,
+            >()
+        }
+        "vault.coach.training_offers.pilots.complete" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::skill_optimize::offer_pilot::OfferPilot,
+            >()
+        }
+        "vault.coach.training_offers.pilots.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::skill_optimize::offer_pilot::OfferPilot>,
         >(),
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
@@ -7624,6 +7740,83 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.evals.cohorts.setup" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers.trigger" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers.result" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers.undo" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers.candidates" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers.candidates.prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers.pilots.prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers.pilots.complete" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_offers.pilots.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11877,6 +12070,46 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.evals.cohorts.setup" => {
             let _input: crate::skill_optimize::EvalCohortSetup = decode(value.clone())?;
         }
+        "vault.coach.training_offers" => {
+            let _input: crate::skill_optimize::offer_doors::OfferListRequest =
+                decode(value.clone())?;
+        }
+        "vault.coach.training_offers.get" => {
+            let _input: crate::skill_optimize::offer_doors::OfferRef = decode(value.clone())?;
+        }
+        "vault.coach.training_offers.trigger" => {
+            let _input: crate::skill_optimize::offer_doors::OfferPassRequest =
+                decode(value.clone())?;
+        }
+        "vault.coach.training_offers.result" => {
+            let _input: crate::skill_optimize::offer_doors::OfferPassRef = decode(value.clone())?;
+        }
+        "vault.coach.training_offers.answer" => {
+            let _input: crate::skill_optimize::offer_doors::OfferAnswerRequest =
+                decode(value.clone())?;
+        }
+        "vault.coach.training_offers.undo" => {
+            let _input: crate::skill_optimize::offer_doors::OfferRef = decode(value.clone())?;
+        }
+        "vault.coach.training_offers.candidates" => {
+            let _input: crate::skill_optimize::offer_pilot::OfferCandidateQuery =
+                decode(value.clone())?;
+        }
+        "vault.coach.training_offers.candidates.prepare" => {
+            let _input: crate::skill_optimize::offer_pilot::OfferCandidateSetup =
+                decode(value.clone())?;
+        }
+        "vault.coach.training_offers.pilots.prepare" => {
+            let _input: crate::skill_optimize::offer_pilot::OfferPilotPrepare =
+                decode(value.clone())?;
+        }
+        "vault.coach.training_offers.pilots.complete" => {
+            let _input: crate::skill_optimize::offer_pilot::OfferPilotComplete =
+                decode(value.clone())?;
+        }
+        "vault.coach.training_offers.pilots.get" => {
+            let _input: crate::skill_optimize::offer_pilot::OfferPilotRef = decode(value.clone())?;
+        }
         "vault.research.bind" => {
             let _input: crate::task_verb::sdk::ResearchBindWire = decode(value.clone())?;
         }
@@ -14163,6 +14396,41 @@ pub fn invoke(
         }
         "vault.evals.inventory" => encode(vault_evals_inventory(memory, decode(value)?)?),
         "vault.evals.cohorts.setup" => encode(vault_evals_cohorts_setup(memory, decode(value)?)?),
+        "vault.coach.training_offers" => {
+            encode(vault_coach_training_offers(memory, decode(value)?)?)
+        }
+        "vault.coach.training_offers.get" => {
+            encode(vault_coach_training_offers_get(memory, decode(value)?)?)
+        }
+        "vault.coach.training_offers.trigger" => {
+            encode(vault_coach_training_offers_trigger(memory, decode(value)?)?)
+        }
+        "vault.coach.training_offers.result" => {
+            encode(vault_coach_training_offers_result(memory, decode(value)?)?)
+        }
+        "vault.coach.training_offers.answer" => {
+            encode(vault_coach_training_offers_answer(memory, decode(value)?)?)
+        }
+        "vault.coach.training_offers.undo" => {
+            encode(vault_coach_training_offers_undo(memory, decode(value)?)?)
+        }
+        "vault.coach.training_offers.candidates" => encode(vault_coach_training_offers_candidates(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.coach.training_offers.candidates.prepare" => encode(
+            vault_coach_training_offers_candidates_prepare(memory, decode(value)?)?,
+        ),
+        "vault.coach.training_offers.pilots.prepare" => encode(
+            vault_coach_training_offers_pilots_prepare(memory, decode(value)?)?,
+        ),
+        "vault.coach.training_offers.pilots.complete" => encode(
+            vault_coach_training_offers_pilots_complete(memory, decode(value)?)?,
+        ),
+        "vault.coach.training_offers.pilots.get" => encode(vault_coach_training_offers_pilots_get(
+            memory,
+            decode(value)?,
+        )?),
         "vault.research.bind" => encode(vault_research_bind(memory, decode(value)?)?),
         "vault.research.fork" => encode(vault_research_fork(memory, decode(value)?)?),
         "vault.research.weave" => encode(vault_research_weave(memory, decode(value)?)?),
@@ -17329,6 +17597,127 @@ pub fn vault_evals_cohorts_setup(
     input: crate::skill_optimize::EvalCohortSetup,
 ) -> MemoryResult<crate::skill_optimize::EvalAuthoringReport> {
     crate::task_verb::sdk::host_only(memory, "vault.evals.cohorts.setup", &input)
+}
+pub fn vault_coach_training_offers(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_doors::OfferListRequest,
+) -> MemoryResult<Vec<crate::skill_optimize::offer_doors::OfferView>> {
+    crate::skill_optimize::offer_doors::list(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_coach_training_offers_get(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_doors::OfferRef,
+) -> MemoryResult<Option<crate::skill_optimize::offer_doors::OfferView>> {
+    crate::skill_optimize::offer_doors::get(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers.get")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_coach_training_offers_trigger(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_doors::OfferPassRequest,
+) -> MemoryResult<crate::skill_optimize::offer_doors::OfferPassRef> {
+    crate::skill_optimize::offer_doors::trigger(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers.trigger")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_coach_training_offers_result(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_doors::OfferPassRef,
+) -> MemoryResult<Option<crate::skill_optimize::offer_doors::OfferPassResult>> {
+    crate::skill_optimize::offer_doors::result(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers.result")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_coach_training_offers_answer(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_doors::OfferAnswerRequest,
+) -> MemoryResult<crate::skill_optimize::OfferAnswerRecord> {
+    crate::skill_optimize::offer_doors::answer(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers.answer")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_coach_training_offers_undo(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_doors::OfferRef,
+) -> MemoryResult<crate::skill_optimize::offer_doors::OfferUndoReceipt> {
+    crate::skill_optimize::offer_doors::undo(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers.undo")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_coach_training_offers_candidates(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_pilot::OfferCandidateQuery,
+) -> MemoryResult<Vec<crate::skill_optimize::offer_pilot::OfferCandidateRecord>> {
+    crate::skill_optimize::offer_pilot::candidates(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers.candidates")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_coach_training_offers_candidates_prepare(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_pilot::OfferCandidateSetup,
+) -> MemoryResult<crate::skill_optimize::offer_pilot::OfferCandidateRecord> {
+    crate::skill_optimize::offer_pilot::prepare_candidate(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers.candidates.prepare")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_coach_training_offers_pilots_prepare(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_pilot::OfferPilotPrepare,
+) -> MemoryResult<crate::skill_optimize::offer_pilot::OfferPilotPrepared> {
+    crate::skill_optimize::offer_pilot::prepare_pilot(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers.pilots.prepare")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_coach_training_offers_pilots_complete(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_pilot::OfferPilotComplete,
+) -> MemoryResult<crate::skill_optimize::offer_pilot::OfferPilot> {
+    crate::skill_optimize::offer_pilot::complete_pilot(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers.pilots.complete")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_coach_training_offers_pilots_get(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_pilot::OfferPilotRef,
+) -> MemoryResult<Option<crate::skill_optimize::offer_pilot::OfferPilot>> {
+    crate::skill_optimize::offer_pilot::pilot(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_offers.pilots.get")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_research_bind(
     memory: &Memory<'_>,

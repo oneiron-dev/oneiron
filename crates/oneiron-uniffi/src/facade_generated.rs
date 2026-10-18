@@ -1266,6 +1266,61 @@ export_facade! {
     let output = client.vault_evals_cohorts_setup(&input)?;
     crate::codec::lift_record("vault.evals.cohorts.setup", &output)
 };
+"vault.coach.training_offers" => fn vault_coach_training_offers(&self, input: OfferListRequest) -> Vec<OfferView> = |client| {
+    let input: oneiron::skill_optimize::offer_doors::OfferListRequest = crate::codec::lower_record("vault.coach.training_offers", input)?;
+    let output = client.vault_coach_training_offers(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers", &output)
+};
+"vault.coach.training_offers.get" => fn vault_coach_training_offers_get(&self, input: OfferRef) -> Option<OfferView> = |client| {
+    let input: oneiron::skill_optimize::offer_doors::OfferRef = crate::codec::lower_record("vault.coach.training_offers.get", input)?;
+    let output = client.vault_coach_training_offers_get(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.get", &output)
+};
+"vault.coach.training_offers.trigger" => fn vault_coach_training_offers_trigger(&self) -> OfferPassRef = |client| {
+    let input: oneiron::skill_optimize::offer_doors::OfferPassRequest = crate::codec::lower_empty("vault.coach.training_offers.trigger")?;
+    let output = client.vault_coach_training_offers_trigger(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.trigger", &output)
+};
+"vault.coach.training_offers.result" => fn vault_coach_training_offers_result(&self, input: OfferPassRef) -> Option<OfferPassResult> = |client| {
+    let input: oneiron::skill_optimize::offer_doors::OfferPassRef = crate::codec::lower_record("vault.coach.training_offers.result", input)?;
+    let output = client.vault_coach_training_offers_result(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.result", &output)
+};
+"vault.coach.training_offers.answer" => fn vault_coach_training_offers_answer(&self, input: OfferAnswerRequest) -> OfferAnswerRecord = |client| {
+    let input: oneiron::skill_optimize::offer_doors::OfferAnswerRequest = crate::codec::lower_record("vault.coach.training_offers.answer", input)?;
+    let output = client.vault_coach_training_offers_answer(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.answer", &output)
+};
+"vault.coach.training_offers.undo" => fn vault_coach_training_offers_undo(&self, input: OfferRef) -> OfferUndoReceipt = |client| {
+    let input: oneiron::skill_optimize::offer_doors::OfferRef = crate::codec::lower_record("vault.coach.training_offers.undo", input)?;
+    let output = client.vault_coach_training_offers_undo(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.undo", &output)
+};
+"vault.coach.training_offers.candidates" => fn vault_coach_training_offers_candidates(&self, input: OfferCandidateQuery) -> Vec<OfferCandidateRecord> = |client| {
+    let input: oneiron::skill_optimize::offer_pilot::OfferCandidateQuery = crate::codec::lower_record("vault.coach.training_offers.candidates", input)?;
+    let output = client.vault_coach_training_offers_candidates(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.candidates", &output)
+};
+"vault.coach.training_offers.candidates.prepare" => fn vault_coach_training_offers_candidates_prepare(&self, input: OfferCandidateSetup) -> OfferCandidateRecord = |client| {
+    let input: oneiron::skill_optimize::offer_pilot::OfferCandidateSetup = crate::codec::lower_record("vault.coach.training_offers.candidates.prepare", input)?;
+    let output = client.vault_coach_training_offers_candidates_prepare(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.candidates.prepare", &output)
+};
+"vault.coach.training_offers.pilots.prepare" => fn vault_coach_training_offers_pilots_prepare(&self, input: OfferPilotPrepare) -> OfferPilotPrepared = |client| {
+    let input: oneiron::skill_optimize::offer_pilot::OfferPilotPrepare = crate::codec::lower_record("vault.coach.training_offers.pilots.prepare", input)?;
+    let output = client.vault_coach_training_offers_pilots_prepare(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.pilots.prepare", &output)
+};
+"vault.coach.training_offers.pilots.complete" => fn vault_coach_training_offers_pilots_complete(&self, input: OfferPilotComplete) -> OfferPilot = |client| {
+    let input: oneiron::skill_optimize::offer_pilot::OfferPilotComplete = crate::codec::lower_record("vault.coach.training_offers.pilots.complete", input)?;
+    let output = client.vault_coach_training_offers_pilots_complete(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.pilots.complete", &output)
+};
+"vault.coach.training_offers.pilots.get" => fn vault_coach_training_offers_pilots_get(&self, input: OfferPilotRef) -> Option<OfferPilot> = |client| {
+    let input: oneiron::skill_optimize::offer_pilot::OfferPilotRef = crate::codec::lower_record("vault.coach.training_offers.pilots.get", input)?;
+    let output = client.vault_coach_training_offers_pilots_get(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.pilots.get", &output)
+};
 "vault.research.bind" => fn vault_research_bind(&self, input: ResearchBindWire) -> ResearchBinding = |client| {
     let input: oneiron::task_verb::sdk::ResearchBindWire = crate::codec::lower_record("vault.research.bind", input)?;
     let output = client.vault_research_bind(&input)?;
@@ -2401,7 +2456,7 @@ export_facade! {
     let output = client.vault_rooms_offer(&input)?;
     crate::codec::lift_record("vault.rooms.offer", &output)
 };
-"vault.rooms.offer.answer" => fn vault_rooms_offer_answer(&self, input: OfferAnswerRequest) -> OfferSettlement = |client| {
+"vault.rooms.offer.answer" => fn vault_rooms_offer_answer(&self, input: OfferSettleOfferAnswerRequest) -> OfferSettlement = |client| {
     let input: oneiron::workspace_roster::OfferAnswerRequest = crate::codec::lower_record("vault.rooms.offer.answer", input)?;
     let output = client.vault_rooms_offer_answer(&input)?;
     crate::codec::lift_record("vault.rooms.offer.answer", &output)

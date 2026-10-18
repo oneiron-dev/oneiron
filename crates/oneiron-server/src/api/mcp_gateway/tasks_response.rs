@@ -1107,6 +1107,17 @@ fn mcp_agent_verb_input(
         "vault.research.archive.coverage" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.inventory" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.cohorts.setup" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.trigger" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.result" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.answer" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.undo" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.candidates" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.candidates.prepare" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.pilots.prepare" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.pilots.complete" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.pilots.get" => a.spec.clone().ok_or_else(invalid),
         "vault.research.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.research.fork" => a.spec.clone().ok_or_else(invalid),
         "vault.research.weave" => a.spec.clone().ok_or_else(invalid),
@@ -2540,6 +2551,39 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.evals.cohorts.setup" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.trigger" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.result" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.undo" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.candidates" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.candidates.prepare" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.pilots.prepare" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.pilots.complete" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.pilots.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.bind" => {
@@ -8491,6 +8535,177 @@ async fn execute_agent_verb_row(
                     .flatten(),
             );
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.coach.training_offers", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_doors::OfferListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_coach_training_offers(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_doors::OfferRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_coach_training_offers_get(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.trigger" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.trigger", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_doors::OfferPassRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_coach_training_offers_trigger(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.result" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.result", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_doors::OfferPassRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_coach_training_offers_result(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.answer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.answer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_doors::OfferAnswerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_coach_training_offers_answer(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.undo" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.undo", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_doors::OfferRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_coach_training_offers_undo(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.candidates" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.coach.training_offers.candidates",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_pilot::OfferCandidateQuery =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_coach_training_offers_candidates(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.candidates.prepare" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.coach.training_offers.candidates.prepare",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_pilot::OfferCandidateSetup =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_coach_training_offers_candidates_prepare(
+                    server, auth, input,
+                )
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.pilots.prepare" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.coach.training_offers.pilots.prepare",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_pilot::OfferPilotPrepare =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_coach_training_offers_pilots_prepare(
+                    server, auth, input,
+                )
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.pilots.complete" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.coach.training_offers.pilots.complete",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_pilot::OfferPilotComplete =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_coach_training_offers_pilots_complete(
+                    server, auth, input,
+                )
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.pilots.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.coach.training_offers.pilots.get",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::offer_pilot::OfferPilotRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_coach_training_offers_pilots_get(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

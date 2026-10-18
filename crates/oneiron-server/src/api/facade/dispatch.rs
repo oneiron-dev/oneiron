@@ -5922,6 +5922,304 @@ async fn vault_evals_cohorts_setup(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_coach_training_offers(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.coach.training_offers", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_coach_training_offers_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.coach.training_offers.get", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers_get(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_coach_training_offers_trigger(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.trigger")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.trigger", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.coach.training_offers.trigger", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers_trigger(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_coach_training_offers_result(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.result")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.result", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.coach.training_offers.result", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers_result(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_coach_training_offers_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.answer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.coach.training_offers.answer", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers_answer(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_coach_training_offers_undo(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.undo")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.undo", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.coach.training_offers.undo", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers_undo(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_coach_training_offers_candidates(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.candidates")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.candidates", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.coach.training_offers.candidates",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers_candidates(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_coach_training_offers_candidates_prepare(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.candidates.prepare")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input(
+        "vault.coach.training_offers.candidates.prepare",
+        &value,
+    )?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.coach.training_offers.candidates.prepare",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers_candidates_prepare(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_coach_training_offers_pilots_prepare(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.pilots.prepare")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.pilots.prepare", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.coach.training_offers.pilots.prepare",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers_pilots_prepare(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_coach_training_offers_pilots_complete(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.pilots.complete")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.pilots.complete", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.coach.training_offers.pilots.complete",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers_pilots_complete(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_coach_training_offers_pilots_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.pilots.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.pilots.get", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.coach.training_offers.pilots.get",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_coach_training_offers_pilots_get(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_research_bind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -17780,6 +18078,37 @@ pub(crate) async fn call_verb(
         }
         "vault.evals.inventory" => vault_evals_inventory(server, call, input).await,
         "vault.evals.cohorts.setup" => vault_evals_cohorts_setup(server, call, input).await,
+        "vault.coach.training_offers" => vault_coach_training_offers(server, call, input).await,
+        "vault.coach.training_offers.get" => {
+            vault_coach_training_offers_get(server, call, input).await
+        }
+        "vault.coach.training_offers.trigger" => {
+            vault_coach_training_offers_trigger(server, call, input).await
+        }
+        "vault.coach.training_offers.result" => {
+            vault_coach_training_offers_result(server, call, input).await
+        }
+        "vault.coach.training_offers.answer" => {
+            vault_coach_training_offers_answer(server, call, input).await
+        }
+        "vault.coach.training_offers.undo" => {
+            vault_coach_training_offers_undo(server, call, input).await
+        }
+        "vault.coach.training_offers.candidates" => {
+            vault_coach_training_offers_candidates(server, call, input).await
+        }
+        "vault.coach.training_offers.candidates.prepare" => {
+            vault_coach_training_offers_candidates_prepare(server, call, input).await
+        }
+        "vault.coach.training_offers.pilots.prepare" => {
+            vault_coach_training_offers_pilots_prepare(server, call, input).await
+        }
+        "vault.coach.training_offers.pilots.complete" => {
+            vault_coach_training_offers_pilots_complete(server, call, input).await
+        }
+        "vault.coach.training_offers.pilots.get" => {
+            vault_coach_training_offers_pilots_get(server, call, input).await
+        }
         "vault.research.bind" => vault_research_bind(server, call, input).await,
         "vault.research.fork" => vault_research_fork(server, call, input).await,
         "vault.research.weave" => vault_research_weave(server, call, input).await,

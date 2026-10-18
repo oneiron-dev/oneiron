@@ -143,6 +143,8 @@ mod job;
 mod judge_swap;
 mod labels;
 mod offer;
+pub mod offer_doors;
+pub mod offer_pilot;
 mod offer_switch;
 mod offer_training;
 pub(crate) mod policy;

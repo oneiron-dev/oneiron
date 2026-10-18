@@ -469,9 +469,13 @@ side_tables! {
     /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
     /// id16 (offer).
     SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named;
+    /// An immutable owner-nominated seat/candidate pin for a Coach offer. Key: id16.
+    SKILL_OPTIMIZE_OFFER_CANDIDATE: VaultMeta b"skill_optimize:offer_candidate:v1:" Named;
     /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
     /// (check).
     SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
+    /// A counted own-seat pilot and its immutable measured sufficiency card. Key: id16.
+    SKILL_OPTIMIZE_OFFER_PILOT: VaultMeta b"skill_optimize:offer_pilot:v1:" Named;
     /// The stock switch an offer's approval bound: the replaced and new role bindings, and any
     /// undo. Key: id16 (offer).
     SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named

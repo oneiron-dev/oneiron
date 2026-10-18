@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 742 facade rows, 2626 declarations.
-Inputs: 690 of 742 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 665 of 742 fully typed, 77 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 753 facade rows, 2655 declarations.
+Inputs: 701 of 753 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 676 of 753 fully typed, 77 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -5303,6 +5303,198 @@ class EvalAuthoringReport(TypedDict):
     cohorts_retired: list[EntityId]
     cohorts_kept: int
     skipped: list[EvalAuthoringSkip]
+class OfferListRequest(TypedDict):
+    seat: NotRequired[EvalSeat | None]
+    pending_only: NotRequired[bool]
+class OfferModelPin(TypedDict):
+    model: str
+    revision: str
+    content_hash: NotRequired[str | None]
+class OfferCandidateStockBody(TypedDict):
+    model: OfferModelPin
+    licence: str
+    source: str
+class OfferCandidateStock(TypedDict):
+    stock: OfferCandidateStockBody
+class OfferCandidateTrainRecipeBody(TypedDict):
+    base: OfferModelPin
+    recipe_ref: str
+    licence: str
+class OfferCandidateTrainRecipe(TypedDict):
+    train_recipe: OfferCandidateTrainRecipeBody
+OfferCandidate = OfferCandidateStock | OfferCandidateTrainRecipe
+class OfferCost(TypedDict):
+    currency: str
+    monthly_before: NotRequired[float | None]
+    monthly_after: NotRequired[float | None]
+    one_off: NotRequired[float | None]
+    payback_months: NotRequired[float | None]
+class OfferOption(TypedDict):
+    label: str
+    model: OfferModelPin
+    cost: OfferCost
+    score: NotRequired[float | None]
+    evidence_refs: list[str]
+SeatWorkload = TypedDict("SeatWorkload", {"from": int, "until": int, "calls": NotRequired[int | None], "input_tokens": NotRequired[int | None], "output_tokens": NotRequired[int | None], "complete": bool, "receipt_refs": list[str]})
+class OfferEvidence(TypedDict):
+    cohort: NotRequired[EntityId | None]
+    exposures: list[EntityId]
+    rubric_revision: NotRequired[str | None]
+    card: NotRequired[SufficiencyCard | None]
+    losses: list[str]
+    risk: NotRequired[str | None]
+class ComputeDestinationSelfHostedBody(TypedDict):
+    host: str
+class ComputeDestinationSelfHosted(TypedDict):
+    self_hosted: ComputeDestinationSelfHostedBody
+class ComputeDestinationHostedBody(TypedDict):
+    provider: str
+    rows_leaving: int
+class ComputeDestinationHosted(TypedDict):
+    hosted: ComputeDestinationHostedBody
+ComputeDestination = Literal["on_device"] | ComputeDestinationSelfHosted | ComputeDestinationHosted
+class TrainingOffer(TypedDict):
+    id: EntityId
+    seat: EvalSeat
+    offer_skill: NotRequired[tuple[EntityId, str] | None]
+    drafted_on: NotRequired[str | None]
+    attempt: AttemptId
+    incumbent: OfferModelPin
+    candidate: OfferCandidate
+    baseline: OfferOption
+    alternatives: list[OfferOption]
+    workload: SeatWorkload
+    cost: OfferCost
+    evidence: OfferEvidence
+    destination: ComputeDestination
+    previous: NotRequired[EntityId | None]
+    what_changed: NotRequired[str | None]
+    check_at: int
+    offered_at: int
+    digest: str
+OfferAnswer = Literal["keep_baseline", "approve_switch", "approve_train", "decline", "postpone"]
+OfferIntentSwitchBody = TypedDict("OfferIntentSwitchBody", {"seat": EvalSeat, "from": OfferModelPin, "to": OfferModelPin})
+class OfferIntentSwitch(TypedDict):
+    switch: OfferIntentSwitchBody
+class OfferIntentTrainBody(TypedDict):
+    seat: EvalSeat
+    base: OfferModelPin
+    recipe_ref: str
+    destination: ComputeDestination
+class OfferIntentTrain(TypedDict):
+    train: OfferIntentTrainBody
+OfferIntent = OfferIntentSwitch | OfferIntentTrain
+class OfferAnswerRecord(TypedDict):
+    offer: EntityId
+    answer: OfferAnswer
+    owner: EntityId
+    authentication: str
+    offer_digest: str
+    intent: NotRequired[OfferIntent | None]
+    at: int
+class OfferCheck(TypedDict):
+    id: EntityId
+    offer: EntityId
+    receipt_refs: list[str]
+    observed_monthly_cost: NotRequired[float | None]
+    observed_score: NotRequired[float | None]
+    held: NotRequired[bool | None]
+    note: NotRequired[str | None]
+    at: int
+class OfferView(TypedDict):
+    offer: TrainingOffer
+    answer: NotRequired[OfferAnswerRecord | None]
+    checks: list[OfferCheck]
+class OfferRef(TypedDict):
+    offer: EntityId
+class OfferPassRequest(TypedDict):
+    ...
+class OfferPassRef(TypedDict):
+    attempt: EntityId
+class OfferPassResult(TypedDict):
+    attempt: EntityId
+    state: AttemptState
+    terminal: bool
+    offers: list[TrainingOffer]
+class OfferAnswerRequest(TypedDict):
+    offer: EntityId
+    digest: str
+    answer: OfferAnswer
+class OfferUndoReceipt(TypedDict):
+    offer: EntityId
+    at: int
+    restored_model: str
+class OfferCandidateQuery(TypedDict):
+    seat: NotRequired[EvalSeat | None]
+class OfferCandidateSetup(TypedDict):
+    seat: EvalSeat
+    incumbent: OfferModelPin
+    candidate: OfferCandidate
+    destination: ComputeDestination
+class OfferCandidateRecord(TypedDict):
+    id: EntityId
+    setup: OfferCandidateSetup
+    at: int
+class OfferPilotPrepare(TypedDict):
+    candidate: EntityId
+    cohort: EntityId
+EvalExposureKind = Literal["candidate", "query", "promotion"]
+class EvalExposure(TypedDict):
+    id: EntityId
+    cohort: EntityId
+    kind: EvalExposureKind
+    consumer: str
+    candidate_pin: NotRequired[str | None]
+    at: int
+class OfferPilotMeasurement(TypedDict):
+    sufficiency: SufficiencyInput
+    receipt_refs: list[str]
+    currency: str
+    one_off_cost: NotRequired[float | None]
+    incumbent_score: NotRequired[float | None]
+    candidate_score: NotRequired[float | None]
+class OfferPilot(TypedDict):
+    id: EntityId
+    candidate: EntityId
+    exposure: EvalExposure
+    membership_digest: str
+    rubric_revision: str
+    families: int
+    floor_slices: dict[str, int]
+    prepared_at: int
+    measurement: NotRequired[OfferPilotMeasurement | None]
+    card: NotRequired[SufficiencyCard | None]
+    completed_at: NotRequired[int | None]
+DerivationKind = Literal["receipt", "repair", "paraphrase", "summary", "translation", "synthetic", "rubric"]
+class EvalLabel(TypedDict):
+    kind: EvalLabelKind
+    value: str
+    reference: str
+    weight: float
+    at: int
+class EvalCase(TypedDict):
+    id: EntityId
+    family: EntityId
+    seat: EvalSeat
+    kind: DerivationKind
+    receipts: list[str]
+    parents: list[EntityId]
+    stratum: NotRequired[str | None]
+    draw_probability: NotRequired[float | None]
+    source_at: int
+    recorded_at: int
+    labels: list[EvalLabel]
+class EvalRelease(TypedDict):
+    exposure: EvalExposure
+    cases: list[EvalCase]
+class OfferPilotPrepared(TypedDict):
+    pilot: OfferPilot
+    release: EvalRelease
+class OfferPilotComplete(TypedDict):
+    pilot: EntityId
+    measurement: OfferPilotMeasurement
+class OfferPilotRef(TypedDict):
+    pilot: EntityId
 class ResearchBindWire(TypedDict):
     root: EntityId
     config: CampaignConfig
@@ -5545,36 +5737,6 @@ class ResearchBasisWire(TypedDict):
 class ResearchCandidateWire(TypedDict):
     root: EntityId
     candidate: EntityId
-EvalExposureKind = Literal["candidate", "query", "promotion"]
-class EvalExposure(TypedDict):
-    id: EntityId
-    cohort: EntityId
-    kind: EvalExposureKind
-    consumer: str
-    candidate_pin: NotRequired[str | None]
-    at: int
-DerivationKind = Literal["receipt", "repair", "paraphrase", "summary", "translation", "synthetic", "rubric"]
-class EvalLabel(TypedDict):
-    kind: EvalLabelKind
-    value: str
-    reference: str
-    weight: float
-    at: int
-class EvalCase(TypedDict):
-    id: EntityId
-    family: EntityId
-    seat: EvalSeat
-    kind: DerivationKind
-    receipts: list[str]
-    parents: list[EntityId]
-    stratum: NotRequired[str | None]
-    draw_probability: NotRequired[float | None]
-    source_at: int
-    recorded_at: int
-    labels: list[EvalLabel]
-class EvalRelease(TypedDict):
-    exposure: EvalExposure
-    cases: list[EvalCase]
 class ResearchRefereeScores(TypedDict):
     candidate: float
     incumbent: float
@@ -9456,10 +9618,10 @@ class OfferCard(TypedDict):
     until: NotRequired[int | None]
     last_engaged_at: int
     vote_tally: OfferVoteTally
-OfferAnswer = Literal["join", "not_now"]
-class OfferAnswerRequest(TypedDict):
+OfferSettleOfferAnswer = Literal["join", "not_now"]
+class OfferSettleOfferAnswerRequest(TypedDict):
     offer_id: str
-    action: OfferAnswer
+    action: OfferSettleOfferAnswer
     intent_key: str
 class OfferSettlement(TypedDict):
     offer_id: str
@@ -9469,7 +9631,7 @@ class OfferSettlement(TypedDict):
     diary_ref: NotRequired[str | None]
 class OfferVoteRequest(TypedDict):
     offer_id: str
-    action: OfferAnswer
+    action: OfferSettleOfferAnswer
 class OfferReopenRequest(TypedDict):
     offer_id: str
     expected_last_engaged_at: int
