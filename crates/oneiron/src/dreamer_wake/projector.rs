@@ -623,7 +623,11 @@ fn round_held_in_txn(
     txn: &heed::RoTxn<'_>,
     round: &ProjectionRound,
 ) -> Result<bool> {
-    for turn in round.turns.iter().chain(round.riders.iter().map(|(_, rider)| rider)) {
+    for turn in round
+        .turns
+        .iter()
+        .chain(round.riders.iter().map(|(_, rider)| rider))
+    {
         if crate::store::legal_hold::held_in_txn(store, txn, turn.as_bytes())? {
             return Ok(true);
         }

@@ -326,7 +326,15 @@ fn census(
     for row in store.entities.iter(txn)? {
         let (key, raw) = row?;
         if let Ok(bytes) = <[u8; 16]>::try_from(&*key) {
-            let id = EntityId::from_bytes_unchecked(bytes);
+            // A sentinel key that is no entity id is skipped, never an error:
+            // the left env must still open.
+            let Ok(id) = EntityId::from_bytes(bytes) else {
+                tracing::warn!(
+                    key = %crate::entity_id::bytes_to_hex_lower(&bytes),
+                    "left env purge skips an entity key that is no id"
+                );
+                continue;
+            };
             if let Some(reason) = keep_reason(store, txn, &id, &raw, carrier)? {
                 kept.insert(&id);
                 report.keep(id, reason);
@@ -383,7 +391,13 @@ fn remove_entities(
     for key in doomed {
         match <[u8; 16]>::try_from(key.as_slice()) {
             Ok(bytes) => {
-                let id = EntityId::from_bytes_unchecked(bytes);
+                let Ok(id) = EntityId::from_bytes(bytes) else {
+                    tracing::warn!(
+                        key = %crate::entity_id::bytes_to_hex_lower(&bytes),
+                        "left env purge skips an entity key that is no id"
+                    );
+                    continue;
+                };
                 store.port_remove_entity_row(txn, &id)?;
                 removed.push(id);
             }
