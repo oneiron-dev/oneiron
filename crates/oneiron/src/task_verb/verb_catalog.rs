@@ -724,6 +724,12 @@ pub enum AgentVerb {
     VaultCalendarRead,
     VaultCalendarSearch,
     VaultCalendarFreebusy,
+    VaultCalendarPrep,
+    VaultCalendarEventOutcome,
+    VaultCalendarCheckInDue,
+    VaultCalendarCheckInAnswer,
+    VaultCalendarOutcomePolicyGet,
+    VaultCalendarOutcomePolicySet,
     VaultCalendarTranscriptIngest,
     VaultClaimsList,
     VaultClaimsDemote,
@@ -1634,6 +1640,12 @@ impl AgentVerb {
         Self::VaultCalendarRead,
         Self::VaultCalendarSearch,
         Self::VaultCalendarFreebusy,
+        Self::VaultCalendarPrep,
+        Self::VaultCalendarEventOutcome,
+        Self::VaultCalendarCheckInDue,
+        Self::VaultCalendarCheckInAnswer,
+        Self::VaultCalendarOutcomePolicyGet,
+        Self::VaultCalendarOutcomePolicySet,
         Self::VaultCalendarTranscriptIngest,
         Self::VaultClaimsList,
         Self::VaultClaimsDemote,
@@ -2565,6 +2577,12 @@ impl AgentVerb {
             Self::VaultCalendarRead => "vault.calendar.read",
             Self::VaultCalendarSearch => "vault.calendar.search",
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
+            Self::VaultCalendarPrep => "vault.calendar.prep",
+            Self::VaultCalendarEventOutcome => "vault.calendar.event_outcome",
+            Self::VaultCalendarCheckInDue => "vault.calendar.check_in.due",
+            Self::VaultCalendarCheckInAnswer => "vault.calendar.check_in.answer",
+            Self::VaultCalendarOutcomePolicyGet => "vault.calendar.outcome_policy.get",
+            Self::VaultCalendarOutcomePolicySet => "vault.calendar.outcome_policy.set",
             Self::VaultCalendarTranscriptIngest => "vault.calendar.transcript.ingest",
             Self::VaultClaimsList => "vault.claims.list",
             Self::VaultClaimsDemote => "vault.claims.demote",
@@ -3458,6 +3476,12 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarPrep
+                | Self::VaultCalendarEventOutcome
+                | Self::VaultCalendarCheckInDue
+                | Self::VaultCalendarCheckInAnswer
+                | Self::VaultCalendarOutcomePolicyGet
+                | Self::VaultCalendarOutcomePolicySet
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
                 | Self::VaultClaimsDemote
@@ -4395,6 +4419,12 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarPrep
+                | Self::VaultCalendarEventOutcome
+                | Self::VaultCalendarCheckInDue
+                | Self::VaultCalendarCheckInAnswer
+                | Self::VaultCalendarOutcomePolicyGet
+                | Self::VaultCalendarOutcomePolicySet
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
                 | Self::VaultClaimsDemote
@@ -4708,6 +4738,8 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarPrep
+                | Self::VaultCalendarEventOutcome
                 | Self::VaultClaimsList
                 | Self::VaultClaimsListFiltered
                 | Self::VaultClaimsReadFiltered
@@ -5426,6 +5458,10 @@ impl AgentVerb {
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
+                | Self::VaultCalendarCheckInDue
+                | Self::VaultCalendarCheckInAnswer
+                | Self::VaultCalendarOutcomePolicyGet
+                | Self::VaultCalendarOutcomePolicySet
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsDemote
                 | Self::VaultDelete
@@ -6021,6 +6057,8 @@ impl AgentVerb {
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
+                | Self::VaultCalendarCheckInAnswer
+                | Self::VaultCalendarOutcomePolicySet
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsDemote
                 | Self::VaultDelete
@@ -6890,6 +6928,12 @@ impl AgentVerb {
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
+            Self::VaultCalendarPrep => &["spec"],
+            Self::VaultCalendarEventOutcome => &["spec"],
+            Self::VaultCalendarCheckInDue => &["spec"],
+            Self::VaultCalendarCheckInAnswer => &["spec"],
+            Self::VaultCalendarOutcomePolicyGet => &["spec"],
+            Self::VaultCalendarOutcomePolicySet => &["spec"],
             Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsDemote => &["spec"],
@@ -7801,6 +7845,12 @@ impl AgentVerb {
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
+            Self::VaultCalendarPrep => &["spec"],
+            Self::VaultCalendarEventOutcome => &["spec"],
+            Self::VaultCalendarCheckInDue => &["spec"],
+            Self::VaultCalendarCheckInAnswer => &["spec"],
+            Self::VaultCalendarOutcomePolicyGet => &["spec"],
+            Self::VaultCalendarOutcomePolicySet => &["spec"],
             Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsDemote => &["spec"],
@@ -10069,8 +10119,26 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => {
                 "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."
             }
+            Self::VaultCalendarPrep => {
+                "Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."
+            }
+            Self::VaultCalendarEventOutcome => {
+                "Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show."
+            }
+            Self::VaultCalendarCheckInDue => {
+                "Observes whether a meeting check-in is due under owner proof, live evidence and the engine clock, without advancing time or recording an outcome."
+            }
+            Self::VaultCalendarCheckInAnswer => {
+                "The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it."
+            }
+            Self::VaultCalendarOutcomePolicyGet => {
+                "Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists."
+            }
+            Self::VaultCalendarOutcomePolicySet => {
+                "Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence."
+            }
             Self::VaultCalendarTranscriptIngest => {
-                "Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."
+                "Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate."
             }
             Self::VaultClaimsList => {
                 "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."

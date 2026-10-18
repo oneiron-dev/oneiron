@@ -730,6 +730,12 @@ vaultCalendarInstancesMove(input: unknown): unknown
 vaultCalendarRead(input: unknown): unknown
 vaultCalendarSearch(input: unknown): unknown
 vaultCalendarFreebusy(input: unknown): unknown
+vaultCalendarPrep(input: unknown): unknown
+vaultCalendarEventOutcome(input: unknown): unknown
+vaultCalendarCheckInDue(input: unknown): unknown
+vaultCalendarCheckInAnswer(input: unknown): unknown
+vaultCalendarOutcomePolicyGet(input: unknown): unknown
+vaultCalendarOutcomePolicySet(input: unknown): unknown
 vaultCalendarTranscriptIngest(input: unknown): unknown
 vaultClaimsList(input: unknown): unknown
 vaultClaimsDemote(input: unknown): unknown

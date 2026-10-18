@@ -706,6 +706,12 @@ both bindings and their export-census tests in one change.
 - `vault.calendar.read`
 - `vault.calendar.search`
 - `vault.calendar.freebusy`
+- `vault.calendar.prep`
+- `vault.calendar.event_outcome`
+- `vault.calendar.check_in.due`
+- `vault.calendar.check_in.answer`
+- `vault.calendar.outcome_policy.get`
+- `vault.calendar.outcome_policy.set`
 - `vault.calendar.transcript.ingest`
 - `vault.claims.list`
 - `vault.claims.demote`
