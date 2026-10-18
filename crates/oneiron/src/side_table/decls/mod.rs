@@ -1,5 +1,5 @@
 //! The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`,
-//! one entry each. The entries sit in five included files (by database, then leading byte) so
+//! one entry each. The entries sit in seven included files (by database, then leading byte) so
 //! no file outgrows the size bar; they are one list in one module.
 //! `no_declared_prefix_is_a_byte_prefix_of_another` pins that no entry is a byte prefix of another
 //! in the same database, so two tables never read each other's rows.
@@ -59,9 +59,11 @@ macro_rules! side_actor {
 
 include!("sync_state.rs");
 include!("vault_meta_a_c.rs");
-include!("vault_meta_d_l.rs");
+include!("vault_meta_d_e.rs");
+include!("vault_meta_f_l.rs");
 include!("vault_meta_m_r.rs");
-include!("vault_meta_s_z.rs");
+include!("vault_meta_s.rs");
+include!("vault_meta_t_z.rs");
 
 /// Every declared table: the restore-class census walks it, and so does a
 /// left shared vault's purge (`store::local_replica`, `sync`-only).
@@ -119,12 +121,14 @@ pub(crate) fn declared_overlaps(db: SideDb, prefix: &[u8]) -> bool {
 }
 
 /// The files in byte order of their prefixes: `sync_state`, then `vault_meta` by leading byte.
-static PARTS: [&[&SideTableDecl]; 5] = [
+static PARTS: [&[&SideTableDecl]; 7] = [
     SYNC_STATE,
     VAULT_META_A_C,
-    VAULT_META_D_L,
+    VAULT_META_D_E,
+    VAULT_META_F_L,
     VAULT_META_M_R,
-    VAULT_META_S_Z,
+    VAULT_META_S,
+    VAULT_META_T_Z,
 ];
 
 // A declaration list with an overlap does not compile.

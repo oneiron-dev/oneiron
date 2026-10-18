@@ -254,6 +254,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::ExportOptions>(),
             ),
             (
+                "self.credential.attenuate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CredentialAttenuationRequest,
+                >(),
+            ),
+            (
                 "vault.scope.ceiling",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -1405,6 +1411,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.model_heal_count",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunModelHealCountRequest,
+                >(),
+            ),
+            (
                 "vault.code.repo_diff",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_document::CodeRepoDiffRequest,
@@ -1911,6 +1923,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<AiCallRequest>(),
             ),
             (
+                "vault.voices.packs.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceBankPackPutRequest,
+                >(),
+            ),
+            (
+                "vault.voices.render_consent",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceRenderConsentRequest,
+                >(),
+            ),
+            (
+                "vault.voices.targets.provision",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceTargetProvisionRequest,
+                >(),
+            ),
+            (
+                "vault.voices.targets.evict",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceTargetEvictRequest,
+                >(),
+            ),
+            (
+                "vault.voices.inspect",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceBankInspectRequest,
+                >(),
+            ),
+            (
                 "ai.transcribe",
                 crate::code_run::vault_read::request_schema::<AiCallRequest>(),
             ),
@@ -2320,6 +2362,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::HabitCheckinInput>(),
             ),
             (
+                "vault.productivity.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ProductivityCreateRequest,
+                >(),
+            ),
+            (
+                "vault.productivity.tree",
+                crate::code_run::vault_read::request_schema::<crate::memory::ProductivityTreeRequest>(
+                ),
+            ),
+            (
                 "vault.claims.admit",
                 crate::code_run::vault_read::request_schema::<crate::memory::AdmitImportedClaimInput>(
                 ),
@@ -2524,6 +2577,28 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.consolidation.status",
                 crate::code_run::vault_read::request_schema::<ConsolidationStatusRequest>(),
+            ),
+            (
+                "vault.consolidation.promote",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::consolidation::ConsolidationPromoteRequest,
+                >(),
+            ),
+            (
+                "vault.consolidation.evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::consolidation::ConsolidationEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.claims.vet",
+                crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettleRequest>(),
+            ),
+            (
+                "vault.claims.vetting",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ClaimProposalReviewRequest,
+                >(),
             ),
             (
                 "vault.memory.signal_extraction",
@@ -2852,6 +2927,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.lease.top_up",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "self.credential.attenuate",
     "vault.scope.ceiling",
     "vault.export.scoped",
     "vault.skill_hubs.put",
@@ -2925,6 +3001,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.threads.list",
     "vault.artifacts.threads.assign",
     "vault.artifacts.threads.state",
+    "vault.code.model_heal_count",
     "vault.code.export",
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
@@ -2949,6 +3026,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.steps.receipt",
     "ai.reply",
     "vault.receipts.context",
+    "vault.voices.packs.put",
+    "vault.voices.render_consent",
+    "vault.voices.targets.provision",
+    "vault.voices.targets.evict",
+    "vault.voices.inspect",
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
@@ -2961,6 +3043,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.search",
     "vault.calendar.freebusy",
     "vault.search.hybrid",
+    "vault.productivity.create",
+    "vault.productivity.tree",
+    "vault.consolidation.promote",
+    "vault.claims.vet",
+    "vault.claims.vetting",
     "vault.memory.signal_extraction",
     "vault.memory.signal_extraction.result",
     "vault.channel_identities.provision",
@@ -3010,6 +3097,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
+        >(),
+        "self.credential.attenuate" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::CredentialAttenuated,
         >(),
         "vault.scope.ceiling" => {
             crate::code_run::vault_read::request_schema::<crate::memory::CredentialCeiling>()
@@ -3232,6 +3322,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.artifacts.threads.state" => crate::code_run::vault_read::request_schema::<
             crate::anchored_annotation::AnnotationThreadView,
         >(),
+        "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_run_doors::CodeRunModelHealCountView,
+        >(),
         "vault.code.export" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CodeExportResult,
         >(),
@@ -3304,6 +3397,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.receipts.context" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::ContextEmitReceipt>,
         >(),
+        "vault.voices.packs.put" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::VoiceBankPackReceipt,
+        >(),
+        "vault.voices.render_consent" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::VoiceRenderConsentReceipt,
+        >(),
+        "vault.voices.targets.provision" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::VoiceTargetReceipt,
+        >(),
+        "vault.voices.targets.evict" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::VoiceTargetEvictReceipt,
+        >(),
+        "vault.voices.inspect" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::VoiceBankInspection,
+        >(),
         "vault.decisions.bands.read" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
         }
@@ -3340,6 +3448,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.search.hybrid" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>,
         >(),
+        "vault.productivity.create" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
+        }
+        "vault.productivity.tree" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>,
+        >(),
+        "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
+            crate::memory::consolidation::ConsolidationPromotion,
+        >(),
+        "vault.claims.vet" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        "vault.claims.vetting" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
+        }
         "vault.memory.signal_extraction" => {
             crate::code_run::vault_read::request_schema::<crate::memory::SignalExtractionTicket>()
         }
@@ -3852,6 +3975,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.credential.attenuate" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5297,6 +5427,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.model_heal_count" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.repo_diff" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6001,6 +6138,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.voices.packs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.voices.render_consent" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.voices.targets.provision" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.voices.targets.evict" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.voices.inspect" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.transcribe" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6358,6 +6530,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.productivity.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.productivity.tree" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.admit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6611,6 +6797,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consolidation.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consolidation.promote" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consolidation.evidence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.vet" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.vetting" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7125,6 +7339,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.export" => {
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
+        }
+        "self.credential.attenuate" => {
+            let _input: crate::task_verb::sdk::CredentialAttenuationRequest =
+                decode(value.clone())?;
         }
         "vault.scope.ceiling" => {
             let _input: EmptyRequest = decode(value.clone())?;
@@ -7808,6 +8026,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.oplog" => {
             let _input: crate::memory::code_doors::CodeRepoRequest = decode(value.clone())?;
         }
+        "vault.code.model_heal_count" => {
+            let _input: crate::memory::code_run_doors::CodeRunModelHealCountRequest =
+                decode(value.clone())?;
+        }
         "vault.code.repo_diff" => {
             let _input: crate::code_document::CodeRepoDiffRequest = decode(value.clone())?;
         }
@@ -8112,6 +8334,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ai.speech" => {
             let _input: AiCallRequest = decode(value.clone())?;
         }
+        "vault.voices.packs.put" => {
+            let _input: crate::task_verb::sdk::VoiceBankPackPutRequest = decode(value.clone())?;
+        }
+        "vault.voices.render_consent" => {
+            let _input: crate::task_verb::sdk::VoiceRenderConsentRequest = decode(value.clone())?;
+        }
+        "vault.voices.targets.provision" => {
+            let _input: crate::task_verb::sdk::VoiceTargetProvisionRequest = decode(value.clone())?;
+        }
+        "vault.voices.targets.evict" => {
+            let _input: crate::task_verb::sdk::VoiceTargetEvictRequest = decode(value.clone())?;
+        }
+        "vault.voices.inspect" => {
+            let _input: crate::task_verb::sdk::VoiceBankInspectRequest = decode(value.clone())?;
+        }
         "ai.transcribe" => {
             let _input: AiCallRequest = decode(value.clone())?;
         }
@@ -8404,6 +8641,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.habits.checkin" => {
             let _input: crate::memory::HabitCheckinInput = decode(value.clone())?;
         }
+        "vault.productivity.create" => {
+            let _input: crate::memory::ProductivityCreateRequest = decode(value.clone())?;
+        }
+        "vault.productivity.tree" => {
+            let _input: crate::memory::ProductivityTreeRequest = decode(value.clone())?;
+        }
         "vault.claims.admit" => {
             let _input: crate::memory::AdmitImportedClaimInput = decode(value.clone())?;
         }
@@ -8521,6 +8764,20 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.consolidation.status" => {
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
+        }
+        "vault.consolidation.promote" => {
+            let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
+                decode(value.clone())?;
+        }
+        "vault.consolidation.evidence" => {
+            let _input: crate::memory::consolidation::ConsolidationEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.claims.vet" => {
+            let _input: crate::memory::ClaimSettleRequest = decode(value.clone())?;
+        }
+        "vault.claims.vetting" => {
+            let _input: crate::memory::ClaimProposalReviewRequest = decode(value.clone())?;
         }
         "vault.memory.signal_extraction" => {
             let _input: crate::memory::SignalExtractionRequest = decode(value.clone())?;
@@ -8753,6 +9010,7 @@ pub fn invoke(
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
+        "self.credential.attenuate" => encode(self_credential_attenuate(memory, decode(value)?)?),
         "vault.scope.ceiling" => encode(vault_scope_ceiling(memory, decode(value)?)?),
         "vault.export.scoped" => encode(vault_export_scoped(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
@@ -9156,6 +9414,9 @@ pub fn invoke(
         "vault.code.symbols.release" => encode(vault_code_symbols_release(memory, decode(value)?)?),
         "vault.code.proposal_submit" => encode(vault_code_proposal_submit(memory, decode(value)?)?),
         "vault.code.oplog" => encode(vault_code_oplog(memory, decode(value)?)?),
+        "vault.code.model_heal_count" => {
+            encode(vault_code_model_heal_count(memory, decode(value)?)?)
+        }
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
         "vault.code.origin.authority.get" => {
@@ -9309,6 +9570,15 @@ pub fn invoke(
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
+        "vault.voices.packs.put" => encode(vault_voices_packs_put(memory, decode(value)?)?),
+        "vault.voices.render_consent" => {
+            encode(vault_voices_render_consent(memory, decode(value)?)?)
+        }
+        "vault.voices.targets.provision" => {
+            encode(vault_voices_targets_provision(memory, decode(value)?)?)
+        }
+        "vault.voices.targets.evict" => encode(vault_voices_targets_evict(memory, decode(value)?)?),
+        "vault.voices.inspect" => encode(vault_voices_inspect(memory, decode(value)?)?),
         "ai.transcribe" => encode(ai_transcribe(memory, decode(value)?)?),
         "ai.embed" => encode(ai_embed(memory, decode(value)?)?),
         "ai.video" => encode(ai_video(memory, decode(value)?)?),
@@ -9370,6 +9640,8 @@ pub fn invoke(
         "vault.neighbors" => encode(vault_neighbors(memory, decode(value)?)?),
         "vault.structural.put" => encode(vault_structural_put(memory, decode(value)?)?),
         "vault.habits.checkin" => encode(vault_habits_checkin(memory, decode(value)?)?),
+        "vault.productivity.create" => encode(vault_productivity_create(memory, decode(value)?)?),
+        "vault.productivity.tree" => encode(vault_productivity_tree(memory, decode(value)?)?),
         "vault.claims.admit" => encode(vault_claims_admit(memory, decode(value)?)?),
         "vault.artifacts.create" => encode(vault_artifacts_create(memory, decode(value)?)?),
         "vault.esign.create" => encode(vault_esign_create(memory, decode(value)?)?),
@@ -9450,6 +9722,14 @@ pub fn invoke(
             encode(vault_consolidation_enqueue(memory, decode(value)?)?)
         }
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
+        "vault.consolidation.promote" => {
+            encode(vault_consolidation_promote(memory, decode(value)?)?)
+        }
+        "vault.consolidation.evidence" => {
+            encode(vault_consolidation_evidence(memory, decode(value)?)?)
+        }
+        "vault.claims.vet" => encode(vault_claims_vet(memory, decode(value)?)?),
+        "vault.claims.vetting" => encode(vault_claims_vetting(memory, decode(value)?)?),
         "vault.memory.signal_extraction" => {
             encode(vault_memory_signal_extraction(memory, decode(value)?)?)
         }
@@ -10145,6 +10425,12 @@ pub fn vault_export(
     input: crate::memory::ExportOptions,
 ) -> MemoryResult<crate::memory::MemoryExport> {
     memory.export(&input)
+}
+pub fn self_credential_attenuate(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CredentialAttenuationRequest,
+) -> MemoryResult<crate::task_verb::sdk::CredentialAttenuated> {
+    crate::task_verb::sdk::host_only(memory, "self.credential.attenuate", &input)
 }
 pub fn vault_scope_ceiling(
     memory: &Memory<'_>,
@@ -11881,6 +12167,15 @@ pub fn vault_code_oplog(
 ) -> MemoryResult<crate::memory::code_doors::CodeMutationLog> {
     memory.code_mutation_log_as(&memory.embedded_owner("vault.code.oplog")?, input)
 }
+pub fn vault_code_model_heal_count(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunModelHealCountRequest,
+) -> MemoryResult<crate::memory::code_run_doors::CodeRunModelHealCountView> {
+    memory.code_run_model_heal_count_as(
+        &memory.embedded_owner("vault.code.model_heal_count")?,
+        input,
+    )
+}
 pub fn vault_code_repo_diff(
     memory: &Memory<'_>,
     input: crate::code_document::CodeRepoDiffRequest,
@@ -12665,6 +12960,40 @@ pub fn ai_speech(
 ) -> MemoryResult<crate::task_verb::sdk::AiAnswer> {
     crate::task_verb::sdk::host_only(memory, "ai.speech", &input)
 }
+pub fn vault_voices_packs_put(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceBankPackPutRequest,
+) -> MemoryResult<crate::task_verb::sdk::VoiceBankPackReceipt> {
+    crate::task_verb::sdk::put_voice_bank_pack_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.voices.packs.put")?,
+        input,
+    )
+}
+pub fn vault_voices_render_consent(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceRenderConsentRequest,
+) -> MemoryResult<crate::task_verb::sdk::VoiceRenderConsentReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.voices.render_consent", &input)
+}
+pub fn vault_voices_targets_provision(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceTargetProvisionRequest,
+) -> MemoryResult<crate::task_verb::sdk::VoiceTargetReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.voices.targets.provision", &input)
+}
+pub fn vault_voices_targets_evict(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceTargetEvictRequest,
+) -> MemoryResult<crate::task_verb::sdk::VoiceTargetEvictReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.voices.targets.evict", &input)
+}
+pub fn vault_voices_inspect(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceBankInspectRequest,
+) -> MemoryResult<crate::task_verb::sdk::VoiceBankInspection> {
+    crate::task_verb::sdk::host_only(memory, "vault.voices.inspect", &input)
+}
 pub fn ai_transcribe(
     memory: &Memory<'_>,
     input: AiCallRequest,
@@ -13280,6 +13609,24 @@ pub fn vault_habits_checkin(
     )?;
     memory.put_habit_checkin(&input)
 }
+pub fn vault_productivity_create(
+    memory: &Memory<'_>,
+    input: crate::memory::ProductivityCreateRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.productivity.create",
+        &input,
+        &["/parent_ref"],
+    )?;
+    memory.productivity_create(&input)
+}
+pub fn vault_productivity_tree(
+    memory: &Memory<'_>,
+    input: crate::memory::ProductivityTreeRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>> {
+    memory.productivity_tree(&input)
+}
 pub fn vault_claims_admit(
     memory: &Memory<'_>,
     input: crate::memory::AdmitImportedClaimInput,
@@ -13675,6 +14022,32 @@ pub fn vault_consolidation_status(
     input: ConsolidationStatusRequest,
 ) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
     memory_requests::dreamer_attempt_status(memory, input)
+}
+pub fn vault_consolidation_promote(
+    memory: &Memory<'_>,
+    input: crate::memory::consolidation::ConsolidationPromoteRequest,
+) -> MemoryResult<crate::memory::consolidation::ConsolidationPromotion> {
+    crate::task_verb::sdk::host_only(memory, "vault.consolidation.promote", &input)
+}
+pub fn vault_consolidation_evidence(
+    memory: &Memory<'_>,
+    input: crate::memory::consolidation::ConsolidationEvidenceRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<Vec<crate::memory::consolidation::ConsolidationEvidenceSource>>,
+> {
+    crate::task_verb::sdk::host_only(memory, "vault.consolidation.evidence", &input)
+}
+pub fn vault_claims_vet(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimSettleRequest,
+) -> MemoryResult<crate::memory::ClaimSettlement> {
+    crate::task_verb::sdk::host_only(memory, "vault.claims.vet", &input)
+}
+pub fn vault_claims_vetting(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimProposalReviewRequest,
+) -> MemoryResult<crate::memory::ClaimProposalReview> {
+    crate::task_verb::sdk::host_only(memory, "vault.claims.vetting", &input)
 }
 pub fn vault_memory_signal_extraction(
     memory: &Memory<'_>,

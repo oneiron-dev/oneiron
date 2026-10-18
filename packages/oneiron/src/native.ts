@@ -76,6 +76,7 @@ vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
 vaultExport(input: unknown): unknown
+selfCredentialAttenuate(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
@@ -291,6 +292,7 @@ vaultCodeSymbolsRenew(input: unknown): unknown
 vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
+vaultCodeModelHealCount(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
@@ -387,6 +389,11 @@ vaultReceiptsContext(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown
+vaultVoicesPacksPut(input: unknown): unknown
+vaultVoicesRenderConsent(input: unknown): unknown
+vaultVoicesTargetsProvision(input: unknown): unknown
+vaultVoicesTargetsEvict(input: unknown): unknown
+vaultVoicesInspect(input: unknown): unknown
 aiTranscribe(input: unknown): unknown
 aiEmbed(input: unknown): unknown
 aiVideo(input: unknown): unknown
@@ -438,6 +445,8 @@ vaultSearchBm25(input: unknown): unknown
 vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
+vaultProductivityCreate(input: unknown): unknown
+vaultProductivityTree(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
 vaultEsignCreate(input: unknown): unknown
@@ -475,6 +484,10 @@ vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultConsolidationPromote(input: unknown): unknown
+vaultConsolidationEvidence(input: unknown): unknown
+vaultClaimsVet(input: unknown): unknown
+vaultClaimsVetting(input: unknown): unknown
 vaultMemorySignalExtraction(input: unknown): unknown
 vaultMemorySignalExtractionResult(input: unknown): unknown
 vaultClaimsSeed(input: unknown): unknown

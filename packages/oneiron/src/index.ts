@@ -292,6 +292,10 @@ export class Oneiron {
       /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
       land: (input: Facade.BudgetLandRequest): Facade.PartialResultHold => this.#call(() => this.#client.selfBudgetLand(input) as Facade.PartialResultHold),
     }),
+    credential: {
+      /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
+      attenuate: (input: Facade.CredentialAttenuationRequest): Facade.CredentialAttenuated => this.#call(() => this.#client.selfCredentialAttenuate(input) as Facade.CredentialAttenuated),
+    },
     off_record: {
       /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
       execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
@@ -400,6 +404,10 @@ export class Oneiron {
       history: (input: Facade.ClaimRefRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
+      /** Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration. */
+      vet: (input: Facade.ClaimSettleRequest): Facade.ClaimSettlement => this.#call(() => this.#client.vaultClaimsVet(input) as Facade.ClaimSettlement),
+      /** Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle. */
+      vetting: (input: Facade.ClaimProposalReviewRequest): Facade.ClaimProposalReview => this.#call(() => this.#client.vaultClaimsVetting(input) as Facade.ClaimProposalReview),
       /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
       seed: (input: Facade.ScopedCommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitOutcome[]),
       /** Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override. */
@@ -1060,6 +1068,8 @@ export class Oneiron {
       proposal_submit: (input: Facade.CodeProposalSubmitRequest): Facade.CodeProposalSubmitted => this.#call(() => this.#client.vaultCodeProposalSubmit(input) as Facade.CodeProposalSubmitted),
       /** Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal. */
       oplog: (input: Facade.CodeRepoRequest): Facade.CodeMutationLog => this.#call(() => this.#client.vaultCodeOplog(input) as Facade.CodeMutationLog),
+      /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
+      model_heal_count: (input: Facade.CodeRunModelHealCountRequest): Facade.CodeRunModelHealCountView => this.#call(() => this.#client.vaultCodeModelHealCount(input) as Facade.CodeRunModelHealCountView),
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
       /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
@@ -1247,6 +1257,22 @@ export class Oneiron {
         set: (input: Facade.CompanionSharingSetRequest): Facade.CompanionSharingView => this.#call(() => this.#client.vaultCompanionsSharingSet(input) as Facade.CompanionSharingView),
       },
     },
+    voices: {
+      packs: {
+        /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
+        put: (input: Facade.VoiceBankPackPutRequest): Facade.VoiceBankPackReceipt => this.#call(() => this.#client.vaultVoicesPacksPut(input) as Facade.VoiceBankPackReceipt),
+      },
+      /** The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs. */
+      render_consent: (input: Facade.VoiceRenderConsentRequest): Facade.VoiceRenderConsentReceipt => this.#call(() => this.#client.vaultVoicesRenderConsent(input) as Facade.VoiceRenderConsentReceipt),
+      targets: {
+        /** The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call. */
+        provision: (input: Facade.VoiceTargetProvisionRequest): Facade.VoiceTargetReceipt => this.#call(() => this.#client.vaultVoicesTargetsProvision(input) as Facade.VoiceTargetReceipt),
+        /** The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay. */
+        evict: (input: Facade.VoiceTargetEvictRequest): Facade.VoiceTargetEvictReceipt => this.#call(() => this.#client.vaultVoicesTargetsEvict(input) as Facade.VoiceTargetEvictReceipt),
+      },
+      /** The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone. */
+      inspect: (input: Facade.VoiceBankInspectRequest): Facade.VoiceBankInspection => this.#call(() => this.#client.vaultVoicesInspect(input) as Facade.VoiceBankInspection),
+    },
     graph: {
       ask: (input: Facade.GraphAskRequest): Facade.GraphAskOutcome => this.#call(() => this.#client.vaultGraphAsk(input) as Facade.GraphAskOutcome),
     },
@@ -1340,6 +1366,12 @@ export class Oneiron {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
     },
+    productivity: {
+      /** Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write. */
+      create: (input: Facade.ProductivityCreateRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultProductivityCreate(input) as Facade.EntityRefReceipt),
+      /** The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters. */
+      tree: (input: Facade.ProductivityTreeRequest): Facade.ScopedReadResult<Facade.ProductivityTree | null> => this.#call(() => this.#client.vaultProductivityTree(input) as Facade.ScopedReadResult<Facade.ProductivityTree | null>),
+    },
     esign: {
       /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
       create: (input: Facade.EsignCreateRequest): Facade.EsignDraftView => this.#call(() => this.#client.vaultEsignCreate(input) as Facade.EsignDraftView),
@@ -1363,6 +1395,10 @@ export class Oneiron {
       enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
       /** Reads the status of one consolidation attempt by its durable job reference. */
       status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
+      /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
+      promote: (input: Facade.ConsolidationPromoteRequest): Facade.ConsolidationPromotion => this.#call(() => this.#client.vaultConsolidationPromote(input) as Facade.ConsolidationPromotion),
+      /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
+      evidence: (input: Facade.ConsolidationEvidenceRequest): Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]> => this.#call(() => this.#client.vaultConsolidationEvidence(input) as Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]>),
     },
     memory: {
       /** Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates. */
