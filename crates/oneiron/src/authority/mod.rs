@@ -55,6 +55,8 @@ mod fold_resume;
 mod fold_schedule;
 mod fold_state;
 mod forwarded_caller;
+mod grant_travel;
+mod grant_travel_door;
 mod guest_revoke;
 mod handoff_equivocation;
 mod history_coverage;
@@ -126,7 +128,7 @@ pub use oneiron_authority::authority::{
     DeviceAuthority, FEDERATION_PACT_DOMAIN, FEDERATION_SCOPE_COMMIT_DOMAIN,
     FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind,
     FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus,
-    FoldedDevice, GENESIS_FRAGILE_FLAG, GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN,
+    FoldedDevice, GENESIS_FRAGILE_FLAG, GenesisRecoveryStep, GrantTravelSet, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_SEEN_WORLD_EDITS_MAX, MAX_PACT_SCOPE_BYTES,
     MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
     ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerHandover, OwnerHandoverCause, OwnerRootRecord,

@@ -15022,7 +15022,7 @@ pub struct SecretUseAnswer {
     pub receipt: SecretUseRecord,
 }
 
-/// `oneiron::share_travel::BornWithField`.
+/// `oneiron_authority::share_travel::BornWithField`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum BornWithField {
     #[serde(rename = "prompt")]
@@ -15035,7 +15035,7 @@ pub enum BornWithField {
     IntentPrompt,
 }
 
-/// `oneiron::share_travel::TravelChoice`.
+/// `oneiron_authority::share_travel::TravelChoice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TravelChoice {
