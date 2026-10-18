@@ -61,6 +61,7 @@
 //! persisted by a caller during a session are overlay rows like any other, so
 //! they evaporate with the room without the seam knowing their type.
 
+mod creator;
 mod executor;
 mod on_record;
 mod overlay_writes;
@@ -75,6 +76,7 @@ mod telemetry;
 mod types;
 mod vault_api;
 
+pub use self::creator::OffRecordCreator;
 pub(crate) use self::registry::OffRecordSessionRegistry;
 pub use self::room::{SavedTurns, room_session_key};
 pub(crate) use self::session::OverlayShellReservation;

@@ -428,6 +428,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_BUDGET_SPENT
         | oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED
         | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
+        | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,
@@ -443,6 +444,11 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // FIX 2222: one stable kind for the typed host refusal, whichever
         // door reported it.
         oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => Some(MCP_HOST_ACTION_REFUSED),
+        // WILL-PLAN L13 row 03: the room's audience gave no consent to this
+        // management; an agent reads the name, not the sentence.
+        oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
+            Some("off_record_room_management_consent_unavailable")
+        }
         _ => None,
     };
     if let Some(kind) = kind {
@@ -616,7 +622,9 @@ impl McpRowSurface {
 
     /// The caller's surface for one row: its credential at its locality,
     /// born at this position, under this invocation and host origin, in the
-    /// off-record session the request named, its reads listed in `producers`.
+    /// off-record session `mcp_credential_memory` binds for its principal
+    /// (a slip naming none binds none, as its call receipt keeps none), its
+    /// reads listed in `producers`.
     fn memory<'a>(
         &self,
         server: &'a SyncServer,
@@ -637,14 +645,8 @@ impl McpRowSurface {
             Some(run) => memory.with_host_origin(run.origin.clone()),
             None => memory,
         };
-        let memory = match &self.task_work_turn {
+        match &self.task_work_turn {
             Some(turn) => memory.with_task_work_turn(Arc::clone(turn)),
-            None => memory,
-        };
-        // OF-063: the off-record session the request named; inside an anonymous
-        // one a reference refusal writes no receipt (Engine ruling 10-17).
-        match actor.off_record_session.as_deref() {
-            Some(session) => memory.in_off_record_session(session),
             None => memory,
         }
     }
@@ -1014,6 +1016,10 @@ fn mcp_agent_verb_input(
         "vault.shared.policy.propose" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.policy.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.policy.change" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.coreference.link" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.coreference.confirm" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.coreference.share_consent" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.coreference.unlink" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.connect.identity" => Ok(Value::Object(serde_json::Map::new())),
         "vault.federation.connect.grants.mint" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.connect.offer" => a.spec.clone().ok_or_else(invalid),
@@ -1213,6 +1219,7 @@ fn mcp_agent_verb_input(
         "vault.agents.spawn.get" => a.spec.clone().ok_or_else(invalid),
         "vault.tasks.cancel_force" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.branches.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.consults.get" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.establish" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.members.onboard" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.roster" => a.spec.clone().ok_or_else(invalid),
@@ -2138,6 +2145,18 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.shared.policy.change" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.federation.coreference.link" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.coreference.confirm" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.coreference.share_consent" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.coreference.unlink" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.federation.connect.identity" => {}
         "vault.federation.connect.grants.mint" => {
             arguments.insert("spec".to_owned(), input.clone());
@@ -2715,6 +2734,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.runs.branches.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consults.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.workspace.establish" => {
@@ -6365,6 +6387,93 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.federation.coreference.link" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.coreference.link", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CoreferenceLinkRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_federation_coreference_link(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.coreference.confirm" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.coreference.confirm", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CoreferencePairRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_federation_coreference_confirm(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.coreference.share_consent" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.federation.coreference.share_consent",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CoreferenceShareConsentRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_federation_coreference_share_consent(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.coreference.unlink" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.coreference.unlink", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CoreferencePairRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_federation_coreference_unlink(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.federation.connect.identity" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.federation.connect.identity", &input)
@@ -9822,6 +9931,24 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_runs_branches_get(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consults.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consults.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::run_doors::ConsultReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consults_get(server, auth, input).await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

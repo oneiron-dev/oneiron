@@ -35,6 +35,7 @@ pub struct FanoutBatchInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FanoutSlotState {
     Held,
@@ -45,6 +46,7 @@ pub enum FanoutSlotState {
 
 /// The TASK's real terminal result, not an ask answer or an inferred success.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct FanoutSlotTerminal {
     pub disposition: TaskTerminalDisposition,
     pub result_ref: Option<EntityId>,
@@ -54,6 +56,7 @@ pub struct FanoutSlotTerminal {
 /// One recorded spend scope. A closed scope's unused balance is the hold the
 /// existing settlement released, not a synthetic provider-cost receipt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct FanoutLeaseView {
     pub lease: SpendScope,
     pub spend: SpendRead,
@@ -61,6 +64,7 @@ pub struct FanoutLeaseView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct FanoutSlotAttempt {
     pub attempt_ref: String,
     pub state: AttemptState,
@@ -73,6 +77,7 @@ pub struct FanoutSlotAttempt {
 /// A slot never moves when siblings finish or fail. Attempts retain their
 /// own errors and budget holds; a read never cancels or settles any child.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct FanoutChildSlot {
     pub index: usize,
     pub input: FanoutChildInput,
@@ -83,6 +88,7 @@ pub struct FanoutChildSlot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct FanoutSharedAccounting {
     /// Includes spend and reservations from all work on this parent, not
     /// only this batch. It is never a sum of copied per-child limits.
@@ -91,6 +97,7 @@ pub struct FanoutSharedAccounting {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct FanoutBatchView {
     pub launch: FanoutLaunchView,
     pub parent_task_ref: EntityId,

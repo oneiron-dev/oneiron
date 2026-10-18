@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 611 facade rows, 2291 declarations.
-Inputs: 559 of 611 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 542 of 611 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 616 facade rows, 2303 declarations.
+Inputs: 564 of 616 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 547 of 616 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -3701,6 +3701,34 @@ class SharedActPolicyAnswerRequest(TypedDict):
     approve: bool
 class SharedActPolicyChangeRequest(TypedDict):
     change_id: str
+CoreferenceStatus = Literal["proposed", "confirmed"]
+class CoreferenceLinkRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    status: CoreferenceStatus
+class CoreferenceLinkReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    status: CoreferenceStatus
+    status_claim: EntityId
+class CoreferencePairRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+class CoreferenceShareConsentRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    pact: str
+class CoreferenceShareConsentReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    pact: str
+    consent_claim: EntityId
+class CoreferenceUnlinkReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    unlinked: bool
+    retracted_claims: list[EntityId]
+    original_claims_retained: bool
 class ConnectIdentity(TypedDict):
     vault: str
     host_key: str
@@ -7181,6 +7209,27 @@ class RunBranchesRequest(TypedDict):
 class RunBranchesView(TypedDict):
     task_ref: EntityId
     branches: list[RunBranchView]
+class ConsultReadRequest(TypedDict):
+    task_ref: EntityId
+ConsultDisposition = Literal["completed", "rejected", "failed", "expired", "abandoned", "cancelled"]
+class ConsultSummaryViewAnswer(TypedDict):
+    kind: Literal["answer"]
+    evidence_refs: list[ConsultPayloadRef]
+class ConsultSummaryViewAbstained(TypedDict):
+    kind: Literal["abstained"]
+    reason_ref: ConsultPayloadRef
+ConsultSummaryView = ConsultSummaryViewAnswer | ConsultSummaryViewAbstained
+class ConsultTerminalView(TypedDict):
+    disposition: ConsultDisposition
+    result_ref: NotRequired[EntityId | None]
+    summary: NotRequired[ConsultSummaryView | None]
+    finished_at: int
+    ladder: NotRequired[str | None]
+    counter_task_ref: NotRequired[EntityId | None]
+class ConsultInspection(TypedDict):
+    task_ref: EntityId
+    deadline_at: NotRequired[int | None]
+    terminal: NotRequired[ConsultTerminalView | None]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str

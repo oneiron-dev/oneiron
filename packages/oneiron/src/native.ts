@@ -192,6 +192,10 @@ vaultSharedPolicyGet(input: unknown): unknown
 vaultSharedPolicyPropose(input: unknown): unknown
 vaultSharedPolicyAnswer(input: unknown): unknown
 vaultSharedPolicyChange(input: unknown): unknown
+vaultFederationCoreferenceLink(input: unknown): unknown
+vaultFederationCoreferenceConfirm(input: unknown): unknown
+vaultFederationCoreferenceShareConsent(input: unknown): unknown
+vaultFederationCoreferenceUnlink(input: unknown): unknown
 vaultFederationConnectIdentity(input: unknown): unknown
 vaultFederationConnectGrantsMint(input: unknown): unknown
 vaultFederationConnectOffer(input: unknown): unknown
@@ -391,6 +395,7 @@ vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
 vaultTasksCancelForce(input: unknown): unknown
 vaultRunsBranchesGet(input: unknown): unknown
+vaultConsultsGet(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown

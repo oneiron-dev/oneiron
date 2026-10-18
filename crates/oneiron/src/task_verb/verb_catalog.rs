@@ -166,6 +166,10 @@ pub enum AgentVerb {
     VaultSharedPolicyPropose,
     VaultSharedPolicyAnswer,
     VaultSharedPolicyChange,
+    VaultFederationCoreferenceLink,
+    VaultFederationCoreferenceConfirm,
+    VaultFederationCoreferenceShareConsent,
+    VaultFederationCoreferenceUnlink,
     VaultFederationConnectIdentity,
     VaultFederationConnectGrantsMint,
     VaultFederationConnectOffer,
@@ -365,6 +369,7 @@ pub enum AgentVerb {
     VaultAgentsSpawnGet,
     VaultTasksCancelForce,
     VaultRunsBranchesGet,
+    VaultConsultsGet,
     VaultWorkspaceEstablish,
     VaultWorkspaceMembersOnboard,
     VaultWorkspaceRoster,
@@ -823,6 +828,10 @@ impl AgentVerb {
         Self::VaultSharedPolicyPropose,
         Self::VaultSharedPolicyAnswer,
         Self::VaultSharedPolicyChange,
+        Self::VaultFederationCoreferenceLink,
+        Self::VaultFederationCoreferenceConfirm,
+        Self::VaultFederationCoreferenceShareConsent,
+        Self::VaultFederationCoreferenceUnlink,
         Self::VaultFederationConnectIdentity,
         Self::VaultFederationConnectGrantsMint,
         Self::VaultFederationConnectOffer,
@@ -1022,6 +1031,7 @@ impl AgentVerb {
         Self::VaultAgentsSpawnGet,
         Self::VaultTasksCancelForce,
         Self::VaultRunsBranchesGet,
+        Self::VaultConsultsGet,
         Self::VaultWorkspaceEstablish,
         Self::VaultWorkspaceMembersOnboard,
         Self::VaultWorkspaceRoster,
@@ -1483,6 +1493,12 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => "vault.shared.policy.propose",
             Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
             Self::VaultSharedPolicyChange => "vault.shared.policy.change",
+            Self::VaultFederationCoreferenceLink => "vault.federation.coreference.link",
+            Self::VaultFederationCoreferenceConfirm => "vault.federation.coreference.confirm",
+            Self::VaultFederationCoreferenceShareConsent => {
+                "vault.federation.coreference.share_consent"
+            }
+            Self::VaultFederationCoreferenceUnlink => "vault.federation.coreference.unlink",
             Self::VaultFederationConnectIdentity => "vault.federation.connect.identity",
             Self::VaultFederationConnectGrantsMint => "vault.federation.connect.grants.mint",
             Self::VaultFederationConnectOffer => "vault.federation.connect.offer",
@@ -1692,6 +1708,7 @@ impl AgentVerb {
             Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
             Self::VaultTasksCancelForce => "vault.tasks.cancel_force",
             Self::VaultRunsBranchesGet => "vault.runs.branches.get",
+            Self::VaultConsultsGet => "vault.consults.get",
             Self::VaultWorkspaceEstablish => "vault.workspace.establish",
             Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
             Self::VaultWorkspaceRoster => "vault.workspace.roster",
@@ -2153,6 +2170,10 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationCoreferenceLink
+                | Self::VaultFederationCoreferenceConfirm
+                | Self::VaultFederationCoreferenceShareConsent
+                | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -2352,6 +2373,7 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawnGet
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
+                | Self::VaultConsultsGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2817,6 +2839,10 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationCoreferenceLink
+                | Self::VaultFederationCoreferenceConfirm
+                | Self::VaultFederationCoreferenceShareConsent
+                | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -3016,6 +3042,7 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawnGet
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
+                | Self::VaultConsultsGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3536,6 +3563,10 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationCoreferenceLink
+                | Self::VaultFederationCoreferenceConfirm
+                | Self::VaultFederationCoreferenceShareConsent
+                | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -3735,6 +3766,7 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawnGet
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
+                | Self::VaultConsultsGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -4100,6 +4132,10 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
+                | Self::VaultFederationCoreferenceLink
+                | Self::VaultFederationCoreferenceConfirm
+                | Self::VaultFederationCoreferenceShareConsent
+                | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
                 | Self::VaultFederationConnectAccept
@@ -4608,6 +4644,10 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultFederationCoreferenceLink => &["spec"],
+            Self::VaultFederationCoreferenceConfirm => &["spec"],
+            Self::VaultFederationCoreferenceShareConsent => &["spec"],
+            Self::VaultFederationCoreferenceUnlink => &["spec"],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -4807,6 +4847,7 @@ impl AgentVerb {
             Self::VaultAgentsSpawnGet => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
+            Self::VaultConsultsGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -5266,6 +5307,10 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultFederationCoreferenceLink => &["spec"],
+            Self::VaultFederationCoreferenceConfirm => &["spec"],
+            Self::VaultFederationCoreferenceShareConsent => &["spec"],
+            Self::VaultFederationCoreferenceUnlink => &["spec"],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -5465,6 +5510,7 @@ impl AgentVerb {
             Self::VaultAgentsSpawnGet => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
+            Self::VaultConsultsGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -6233,6 +6279,18 @@ impl AgentVerb {
             Self::VaultSharedPolicyChange => {
                 "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."
             }
+            Self::VaultFederationCoreferenceLink => {
+                "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads."
+            }
+            Self::VaultFederationCoreferenceConfirm => {
+                "The owner atomically confirms cross-vault identity without changing either person or their claims."
+            }
+            Self::VaultFederationCoreferenceShareConsent => {
+                "The owner consents to exporting an existing identity link into exactly one named federation pact."
+            }
+            Self::VaultFederationCoreferenceUnlink => {
+                "The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."
+            }
             Self::VaultFederationConnectIdentity => {
                 "The owner reads this vault identity and the host key used for reciprocal Connect consent."
             }
@@ -6319,28 +6377,28 @@ impl AgentVerb {
                 "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."
             }
             Self::VaultOffRecordStart => {
-                "The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it."
+                "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."
             }
             Self::VaultOffRecordStatus => {
-                "The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing."
+                "The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows."
             }
             Self::VaultOffRecordWitness => {
-                "The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close."
+                "The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close."
             }
             Self::VaultOffRecordDiscard => {
-                "The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay."
+                "The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay."
             }
             Self::VaultOffRecordRecall => {
-                "The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."
+                "The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."
             }
             Self::VaultOffRecordNotesCreate => {
-                "The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."
+                "The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."
             }
             Self::VaultOffRecordClaimsUpsert => {
-                "The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."
+                "The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."
             }
             Self::SelfOffRecordExecute => {
-                "The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."
+                "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."
             }
             Self::VaultRecordsErasePreview => {
                 "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."
@@ -6813,6 +6871,9 @@ impl AgentVerb {
             }
             Self::VaultRunsBranchesGet => {
                 "The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."
+            }
+            Self::VaultConsultsGet => {
+                "The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies."
             }
             Self::VaultWorkspaceEstablish => {
                 "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."

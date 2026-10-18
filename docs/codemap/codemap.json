@@ -23705,7 +23705,7 @@
       "const": 1,
       "crate-vis": 3,
       "enum": 1,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -31987,7 +31987,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 11,
-      "re-export": 43
+      "re-export": 44
      }
     },
     {
@@ -33917,6 +33917,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OffRecordCreator"
+     ],
+     "path": "src/off_record/lifecycle/creator.rs",
+     "purpose": "Who manages a stretch entered alone (WILL-PLAN L13 row 03, Engine ruling 2026-10-19): the person or agent…",
+     "surface": {
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -33934,7 +33947,7 @@
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
       "crate-vis": 3,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -34089,7 +34102,7 @@
      "path": "src/off_record/lifecycle/vault_api.rs",
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 10
      }
     },
@@ -50213,11 +50226,16 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CancelForceReceipt",
       "CancelForceRequest",
+      "ConsultDisposition",
+      "ConsultInspection",
+      "ConsultReadRequest",
+      "ConsultSummaryView",
+      "ConsultTerminalView",
       "RunBranchView",
       "RunBranchesRequest",
       "RunBranchesView"
@@ -50225,8 +50243,9 @@
      "path": "src/task_verb/run_doors.rs",
      "purpose": "The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)…",
      "surface": {
-      "fn": 2,
-      "struct": 5
+      "enum": 2,
+      "fn": 3,
+      "struct": 8
      }
     },
     {
@@ -50315,7 +50334,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 50,
+      "re-export": 51,
       "struct": 36
      }
     },
@@ -50476,6 +50495,24 @@
      "purpose": "Typed, source-bound connector-pack admission and delta re-consent",
      "surface": {
       "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoreferenceLinkReceipt",
+      "CoreferenceLinkRequest",
+      "CoreferencePairRequest",
+      "CoreferenceShareConsentReceipt",
+      "CoreferenceShareConsentRequest",
+      "CoreferenceUnlinkReceipt"
+     ],
+     "path": "src/task_verb/sdk_coreference.rs",
+     "purpose": "Typed cross-vault identity links",
+     "surface": {
+      "fn": 5,
+      "struct": 6
      }
     },
     {
@@ -50656,7 +50693,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 659
+      "fn": 664
      }
     },
     {
@@ -50893,9 +50930,8 @@
       "OffRecordWitnessRequest"
      ],
      "path": "src/task_verb/sdk_off_record.rs",
-     "purpose": "The owner's off-record session rows (DOOR-127, e2e PRIVACY-06): typed calls over the engine's off-record…",
+     "purpose": "The off-record session rows (DOOR-127, e2e PRIVACY-06): typed calls over the engine's off-record lifecycle…",
      "surface": {
-      "const": 1,
       "enum": 2,
       "fn": 1,
       "struct": 10
@@ -57235,7 +57271,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57718,7 +57754,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 164,
+     "files": 165,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57888,7 +57924,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3528,
+   "source_files": 3530,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61193,7 +61229,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -61209,7 +61245,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 16,
+      "const": 17,
       "fn": 7,
       "struct": 5,
       "type": 1
@@ -66397,7 +66433,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 609
+      "fn": 614
      }
     },
     {
@@ -67446,7 +67482,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 610
+      "fn": 615
      }
     },
     {
@@ -70539,7 +70575,7 @@
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -70550,6 +70586,16 @@
      "purpose": "The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/coreference_doors.rs",
+     "purpose": "Owner coreference doors: every transport reaches the engine's typed operations",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -70719,7 +70765,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 116
+      "crate-vis": 117
      }
     },
     {
@@ -70817,9 +70863,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/off_record_doors.rs",
-     "purpose": "The host doors of the owner's off-record session rows (DOOR-127, e2e PRIVACY-06)",
+     "purpose": "The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -75913,7 +75959,7 @@
      "path": "src/mcp/exec_host/off_record_run.rs",
      "purpose": "Durable code-mode runs bound to an off-record session (DOOR-127): one entry of a run whose every row stays…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -78387,7 +78433,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 376,
+     "files": 377,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78809,7 +78855,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 712,
+   "source_files": 713,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79452,7 +79498,12 @@
       "ConsolidationPromoteRequest",
       "ConsolidationPromotion",
       "ConsolidationRejection",
+      "ConsultDisposition",
+      "ConsultInspection",
       "ConsultPayloadRef",
+      "ConsultReadRequest",
+      "ConsultSummaryView",
+      "ConsultTerminalView",
       "ContentPart",
       "ContextDefault",
       "ContextEmitReceipt",
@@ -79477,6 +79528,13 @@
       "CoreDagQuoteInput",
       "CoreEntityWriteReceipt",
       "CoreWriteTextField",
+      "CoreferenceLinkReceipt",
+      "CoreferenceLinkRequest",
+      "CoreferencePairRequest",
+      "CoreferenceShareConsentReceipt",
+      "CoreferenceShareConsentRequest",
+      "CoreferenceStatus",
+      "CoreferenceUnlinkReceipt",
       "CostEnvelope",
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
@@ -81227,8 +81285,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 581,
-      "struct": 1639
+      "enum": 584,
+      "struct": 1648
      }
     },
     {
