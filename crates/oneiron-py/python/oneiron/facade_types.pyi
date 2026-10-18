@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 628 facade rows, 2348 declarations.
-Inputs: 576 of 628 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 557 of 628 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 93; unread shapes: 0.
+Census: 660 facade rows, 2420 declarations.
+Inputs: 608 of 660 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 588 of 660 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 94; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -111,6 +111,26 @@ class DiaryReadsView(TypedDict):
 class DiaryReviewAnswer(TypedDict):
     request: str
     approve: bool
+class OwnStandingBlockRequest(TypedDict):
+    world_ref: EntityId
+class StandingBlockView(TypedDict):
+    handle: str
+    agent_ref: EntityId
+    world_ref: EntityId
+    name: str
+    token_floor: int
+class EmptyRequest(TypedDict):
+    ...
+class StandingBlockEditRequest(TypedDict):
+    world_ref: EntityId
+    field: str
+    value: str
+    run_ref: str
+    evidence_refs: NotRequired[list[EntityId]]
+class StandingBlockEditReceipt(TypedDict):
+    handle: str
+    claim_ref: EntityId
+    field: str
 class IdentityAnswerRequest(TypedDict):
     ask: str
     choice: str
@@ -336,8 +356,6 @@ class PeoplePage(TypedDict):
     more: int
 class PersonRequest(TypedDict):
     pr: str
-class EmptyRequest(TypedDict):
-    ...
 ShapePreset = Literal["personal", "family", "team", "org", "community"]
 ShapeMemberRole = Literal["owner", "admin", "member", "viewer"]
 ShapeCeiling = Literal["auto", "proposed"]
@@ -4659,6 +4677,84 @@ class ResearchArchive(TypedDict):
     rounds: list[SelectionReceipt]
     promotions: list[PromotionBasis]
     incumbent: EntityId
+class ArchiveAxesProposal(TypedDict):
+    receipt: EntityId
+    descriptor: ArchiveDescriptor
+class CampaignArchiveInstall(TypedDict):
+    root: EntityId
+    task: EntityId
+    project: EntityId
+    goal_ref: EntityId
+    quality_metric: ArchiveQualityMetric
+    sample_outputs: list[ArchiveOutputRef]
+    proposal: ArchiveAxesProposal
+class ArchiveCellAxes(TypedDict):
+    kind: Literal["axes"]
+    bins: list[str]
+class ArchiveCellCluster(TypedDict):
+    kind: Literal["cluster"]
+    index: int
+ArchiveCell = ArchiveCellAxes | ArchiveCellCluster
+class CampaignArchiveBest(TypedDict):
+    cell: ArchiveCell
+    output: ArchiveOutputRef
+    score: float
+    placement_receipt: EntityId
+    scoring_receipt: EntityId
+class CampaignArchiveView(TypedDict):
+    descriptor_revision: str
+    pin: CampaignArchivePin
+    best: list[CampaignArchiveBest]
+    needs_axes_reproposal: bool
+class ArchiveCellJudgment(TypedDict):
+    receipt: EntityId
+    pin_version: str
+    output: ArchiveOutputRef
+    cell: ArchiveCell
+class CampaignArchivePlacementJudgment(TypedDict):
+    kind: Literal["judgment"]
+    judgment: ArchiveCellJudgment
+class CampaignArchivePlacementEmbedding(TypedDict):
+    kind: Literal["embedding"]
+    output: ArchiveOutputRef
+    receipt: EntityId
+    model_revision: str
+    embedding: list[float]
+CampaignArchivePlacement = CampaignArchivePlacementJudgment | CampaignArchivePlacementEmbedding
+class ArchiveOutputScore(TypedDict):
+    receipt: EntityId
+    pin_version: str
+    output: ArchiveOutputRef
+    quality: float
+class CampaignArchiveOutput(TypedDict):
+    root: EntityId
+    descriptor_revision: str
+    placement: CampaignArchivePlacement
+    score: ArchiveOutputScore
+class CampaignArchiveRequest(TypedDict):
+    root: EntityId
+class CampaignArchiveRecord(TypedDict):
+    project: EntityId
+    pin: CampaignArchivePin
+    placements: list[ArchiveCellJudgment]
+    scores: list[ArchiveOutputScore]
+class CampaignArchiveReproposal(TypedDict):
+    root: EntityId
+    new_root: EntityId
+    proposal: ArchiveAxesProposal
+class CampaignArchiveCoverage(TypedDict):
+    root: EntityId
+    candidate: EntityId
+    incumbent: EntityId
+    descriptor_revision: str
+    incumbent_outputs: list[ArchiveOutputRef]
+    candidate_outputs: list[ArchiveOutputRef]
+class CampaignArchiveAdmission(TypedDict):
+    descriptor_revision: str
+    candidate: EntityId
+    required_cells: list[ArchiveCell]
+    covered_cells: list[ArchiveCell]
+    admitted: bool
 class EvalInventoryWire(TypedDict):
     at: NotRequired[int | None]
 FamilyPurpose = Literal["development", "judge_audit", "sealed_confirmation"]
@@ -5607,10 +5703,12 @@ class ConsentActReceipt(TypedDict):
     reason_code: str
     grant_ref: NotRequired[str | None]
     diff_handle: list[int]
+class DenyConsentRequest(TypedDict):
+    effect_digest: str
 class ActionEnvelopeRequest(TypedDict):
     project: str
     audience: list[str]
-    budget: int
+    budget: NotRequired[int | None]
 ActionBoundRequest = TypedDict("ActionBoundRequest", {"actor": str, "class": str, "envelope": ActionEnvelopeRequest})
 class DisclosureEnvelopeRequest(TypedDict):
     selectors: list[str]
@@ -7041,6 +7139,31 @@ class AgentDefinitionUpdateRequest(TypedDict):
     agent_def_ref: EntityId
     expected_version: str
     definition: AgentDefinitionSpec
+class AgentDreamingRequest(TypedDict):
+    agent_def_ref: EntityId
+DreamingModeInput = Literal["own", "inherit", "off"]
+class AgentDreamingView(TypedDict):
+    agent_def_ref: EntityId
+    version: str
+    mode: NotRequired[DreamingModeInput | None]
+    effective_mode: DreamingModeInput
+    dreaming_model: NotRequired[str | None]
+class AgentDreamingSetRequest(TypedDict):
+    agent_def_ref: EntityId
+    expected_version: str
+    new_version: str
+    mode: DreamingModeInput
+    dreaming_model: NotRequired[str | None]
+class StandingBlockConfigureRequest(TypedDict):
+    agent_ref: EntityId
+    world_ref: EntityId
+    name: str
+    token_floor: int
+class StandingBlockRequest(TypedDict):
+    agent_ref: EntityId
+    world_ref: EntityId
+class StandingBlocksRequest(TypedDict):
+    agent_ref: EntityId
 class WorkflowSaveRequest(TypedDict):
     workflow_ref: EntityId
     name: str
@@ -9754,6 +9877,55 @@ class ForgetPredicateRequest(TypedDict):
     subject_ref: str
     predicate: str
 ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
+EventTypeKey = str
+class BookingConstraintTurnWindow(TypedDict):
+    start: int
+    end: int
+class BookingConstraintTurnInput(TypedDict):
+    event_type: EventTypeKey
+    window: BookingConstraintTurnWindow
+    visitor_tz: str
+    free_text: str
+    session_ref: str
+class BookingConstraintTurnRequest(TypedDict):
+    page_token: str
+    turn: BookingConstraintTurnInput
+GeneratedUiCard = TypedDict("GeneratedUiCard", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "tree": GeneratedLens, "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot})
+ConstraintWeekday = Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+class LocalMinuteWindow(TypedDict):
+    start_minute: int
+    end_minute: int
+class TimeRangeWire(TypedDict):
+    start: int
+    end: int
+class ConstraintObject(TypedDict):
+    schema_version: int
+    weekdays: NotRequired[list[ConstraintWeekday]]
+    local_time_windows: NotRequired[list[LocalMinuteWindow]]
+    utc_window: NotRequired[TimeRangeWire | None]
+    allow_flex_pool: bool
+class BookingConstraintHoldContext(TypedDict):
+    event_type: EventTypeKey
+    visitor_tz: str
+    constraint: ConstraintObject
+    session_ref: str
+class ConstraintContinuation(TypedDict):
+    event_type: EventTypeKey
+    visitor_tz: str
+    constraint: ConstraintObject
+    session_ref: str
+class BookingConstraintTurnResponseSlots(TypedDict):
+    outcome: Literal["slots"]
+    card: GeneratedUiCard
+    flex_used: bool
+    hold: BookingConstraintHoldContext
+class BookingConstraintTurnResponseContinueByEmail(TypedDict):
+    outcome: Literal["continue_by_email"]
+    continuation: ConstraintContinuation
+class BookingConstraintTurnResponseDeflect(TypedDict):
+    outcome: Literal["deflect"]
+    card: GeneratedUiCard
+BookingConstraintTurnResponse = BookingConstraintTurnResponseSlots | BookingConstraintTurnResponseContinueByEmail | BookingConstraintTurnResponseDeflect
 class BookingPageTokenRequest(TypedDict):
     page_ref: str
 class BookingPageTokenResponse(TypedDict):
@@ -12027,6 +12199,218 @@ class FoldHistory(TypedDict):
     epochs: list[FoldHistoryEpoch]
     steps: list[FoldHistoryStep]
     next: NotRequired[int | None]
+class OpenInput(TypedDict):
+    url: str
+class Row(TypedDict):
+    ref: str
+    role: str
+    name: str
+    value: NotRequired[str | None]
+    states: NotRequired[list[str]]
+    depth: int
+class ReceiptEvidenceKept(TypedDict):
+    state: Literal["kept"]
+    artifact_ref: str
+    version: int
+    content_hash: str
+class ReceiptEvidenceNotKept(TypedDict):
+    state: Literal["not_kept"]
+    code: str
+ReceiptEvidence = ReceiptEvidenceKept | ReceiptEvidenceNotKept
+class EffectReceipt(TypedDict):
+    seq: int
+    verb: str
+    url: str
+    title: str
+    target: NotRequired[str | None]
+    target_name: NotRequired[str | None]
+    effect_class: NotRequired[str | None]
+    press: str
+    screenshot: NotRequired[str | None]
+    screenshot_evidence: NotRequired[ReceiptEvidence | None]
+class LibraryCard(TypedDict):
+    workflow: str
+    site: str
+    subgoal: str
+    params: list[str]
+    runs: int
+    failures: int
+class PartialTree(TypedDict):
+    reason: str
+    visited: int
+    pending: int
+    walk_ms: int
+class Observation2(TypedDict):
+    seq: int
+    url: str
+    title: str
+    full: bool
+    rows: list[Row]
+    removed: NotRequired[list[str]]
+    receipt: NotRequired[EffectReceipt | None]
+    library: NotRequired[list[LibraryCard]]
+    no_tree: NotRequired[bool]
+    partial: NotRequired[PartialTree | None]
+class ObservationPage(Observation2):
+    next: NotRequired[str | None]
+class ObserveInput(TypedDict):
+    since: NotRequired[int | None]
+    cursor: NotRequired[str | None]
+class FindInput(TypedDict):
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    cursor: NotRequired[str | None]
+class FindOutput(TypedDict):
+    rows: list[Row]
+    next: NotRequired[str | None]
+    partial: NotRequired[PartialTree | None]
+class ClickInput(TypedDict):
+    ref: str
+class PointInput(TypedDict):
+    image: str
+    x: float
+    y: float
+class TypeInput(TypedDict):
+    ref: str
+    text: str
+    clear: NotRequired[bool]
+class SelectInput(TypedDict):
+    ref: str
+    option: str
+class WaitForInput(TypedDict):
+    targets: NotRequired[list[str]]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    timeout_ms: NotRequired[int | None]
+    cursor: NotRequired[str | None]
+class WaitForOutput(TypedDict):
+    rows: list[Row]
+    timed_out: bool
+    waited_ms: int
+    next: NotRequired[str | None]
+    partial: NotRequired[PartialTree | None]
+class ExpectInput(TypedDict):
+    ref: NotRequired[str | None]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    value: NotRequired[str | None]
+    absent: NotRequired[bool]
+class ExpectOutput(TypedDict):
+    met: bool
+    row: NotRequired[Row | None]
+    partial: NotRequired[PartialTree | None]
+ScreenshotTrigger = Literal["outline_thin", "no_postcondition", "decider_reobserve", "no_accessibility_tree", "effect_receipt"]
+class ScreenshotInput(TypedDict):
+    trigger: ScreenshotTrigger
+class ScreenshotOutput(TypedDict):
+    image: str
+    media_type: str
+    width: int
+    height: int
+    bytes: int
+    trigger: ScreenshotTrigger
+    url: str
+    title: str
+class ViewInput(TypedDict):
+    image: str
+class ImageOutput(TypedDict):
+    image: str
+    media_type: str
+    width: int
+    height: int
+    bytes: int
+    source: str
+class CropInput(TypedDict):
+    image: str
+    x: int
+    y: int
+    width: int
+    height: int
+class ZoomInput(TypedDict):
+    image: str
+    x: int
+    y: int
+    width: int
+    height: int
+    scale: NotRequired[float | None]
+ScrollDirection = Literal["up", "down", "left", "right"]
+class DecideStep(TypedDict):
+    question: str
+    targets: NotRequired[list[str]]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    locate: NotRequired[bool]
+    text: NotRequired[str | None]
+    clear: NotRequired[bool]
+    option: NotRequired[str | None]
+class BatchStepOpen(TypedDict):
+    step: Literal["open"]
+    url: str
+class BatchStepClick(TypedDict):
+    step: Literal["click"]
+    ref: str
+class BatchStepType(TypedDict):
+    step: Literal["type"]
+    ref: str
+    text: str
+    clear: NotRequired[bool]
+class BatchStepSelect(TypedDict):
+    step: Literal["select"]
+    ref: str
+    option: str
+class BatchStepWaitFor(TypedDict):
+    step: Literal["wait_for"]
+    targets: NotRequired[list[str]]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    timeout_ms: NotRequired[int | None]
+class BatchStepExpect(TypedDict):
+    step: Literal["expect"]
+    ref: NotRequired[str | None]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    value: NotRequired[str | None]
+    absent: NotRequired[bool]
+class BatchStepScreenshot(TypedDict):
+    step: Literal["screenshot"]
+    trigger: ScreenshotTrigger
+class BatchStepKey(TypedDict):
+    step: Literal["key"]
+    key: str
+    modifiers: NotRequired[list[str]]
+    ref: NotRequired[str | None]
+class BatchStepHotkey(TypedDict):
+    step: Literal["hotkey"]
+    keys: list[str]
+class BatchStepScroll(TypedDict):
+    step: Literal["scroll"]
+    direction: ScrollDirection
+    amount: NotRequired[int | None]
+    ref: NotRequired[str | None]
+class BatchStepDecide(DecideStep):
+    step: Literal["decide"]
+BatchStep = BatchStepOpen | BatchStepClick | BatchStepType | BatchStepSelect | BatchStepWaitFor | BatchStepExpect | BatchStepScreenshot | BatchStepKey | BatchStepHotkey | BatchStepScroll | BatchStepDecide
+class BatchInput(TypedDict):
+    subgoal: NotRequired[str | None]
+    steps: list[BatchStep]
+    until_ms: NotRequired[int | None]
+    no_model: NotRequired[bool]
+SubgoalStatus = Literal["done", "NEEDS_AGENT", "NEEDS_YOU"]
+class BatchOutput(TypedDict):
+    status: SubgoalStatus
+    completed: int
+    failed_step: NotRequired[int | None]
+    error: NotRequired[str | None]
+    observation: NotRequired[Observation2 | None]
+    receipts: NotRequired[list[EffectReceipt]]
+    decisions: NotRequired[list[Any]]
+    until_ms: NotRequired[int | None]
+    next: NotRequired[str | None]
+class HandoverInput(TypedDict):
+    reason: str
+class HandoverOutput(TypedDict):
+    reason: str
+    asked_at_ms: int
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str

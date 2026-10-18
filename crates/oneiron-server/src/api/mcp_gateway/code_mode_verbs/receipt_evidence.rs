@@ -51,6 +51,14 @@ impl ReceiptWriter {
                 actor.actor_ref,
                 actor.actor_class,
             ),
+            VerdictAsker::Credential(auth, actor) => crate::api::credential_memory(
+                &self.server.vault,
+                Some(auth),
+                actor.entity_ref(),
+                actor.actor_class(),
+            )
+            .at(auth.locality())
+            .with_host_origin(self.origin.clone()),
             VerdictAsker::Agent(actor, _) => self
                 .server
                 .vault
