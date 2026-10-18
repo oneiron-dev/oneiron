@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
-use crate::authority::VerifiedSlip;
+use crate::authority::{HostActionAuthority, VerifiedSlip};
 use crate::claim::CallerLocality;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -264,6 +264,37 @@ impl Vault {
             } else {
                 Err(export_forbidden())
             }
+        })
+    }
+
+    /// [`Self::export_with_verified_host_owner_listing`] for a host action
+    /// that presents no slip (FIX 2222 remainder): the explicit local dev
+    /// mode's ([`Vault::dev_action_authority`]), or a self-hosted root's as
+    /// its host action resolved it. The same archive and the same served
+    /// listing, read as the same owner (the embedded owner Human the action
+    /// acts as), under the same owner-floor checks: the action must hold in
+    /// a snapshot of its own and again in the export's own snapshot (a
+    /// self-hosted vault, the owner-verb rule, a root that still binds that
+    /// owner when there is one, and a live owner PERSON). Anywhere else the
+    /// typed `HOST_ACTION_REQUIRES_SUPPORT_GRANT` refusal.
+    pub fn export_with_host_action_listing(
+        &self,
+        opts: &ExportOptions,
+        action: &HostActionAuthority,
+        locality: CallerLocality,
+    ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
+        {
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+            action
+                .guard()
+                .holds_in(self, &txn)
+                .map_err(MemoryError::from)?;
+        }
+        render_export(self, opts, "host", locality, action.actor(), |txn| {
+            action
+                .guard()
+                .holds_in(self, txn)
+                .map_err(MemoryError::from)
         })
     }
 
