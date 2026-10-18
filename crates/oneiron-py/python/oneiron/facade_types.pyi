@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 586 facade rows, 2223 declarations.
-Inputs: 535 of 586 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 518 of 586 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 91; unread shapes: 0.
+Census: 594 facade rows, 2250 declarations.
+Inputs: 542 of 594 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 525 of 594 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -5341,6 +5341,52 @@ class HostedRelayDecision(TypedDict):
     outbound_halted: bool
     system_notice: NotRequired[str | None]
     system_notices: list[GateSystemNoticeRecord]
+class ApproveOnceRequest(TypedDict):
+    effect_digest: str
+class ConsentActReceipt(TypedDict):
+    decision_ref: str
+    outcome: str
+    reason_code: str
+    grant_ref: NotRequired[str | None]
+    diff_handle: list[int]
+class ActionEnvelopeRequest(TypedDict):
+    project: str
+    audience: list[str]
+    budget: int
+ActionBoundRequest = TypedDict("ActionBoundRequest", {"actor": str, "class": str, "envelope": ActionEnvelopeRequest})
+class DisclosureEnvelopeRequest(TypedDict):
+    selectors: list[str]
+DisclosureBoundRequest = TypedDict("DisclosureBoundRequest", {"audience": list[str], "class": str, "envelope": DisclosureEnvelopeRequest})
+StandingGrantBound = ActionBoundRequest | DisclosureBoundRequest
+class CreateStandingGrantRequest(TypedDict):
+    bound: StandingGrantBound
+class ConsentRegistryQuery(TypedDict):
+    limit: int
+    include_revoked: NotRequired[bool]
+ConsentDomain = Literal["disclosure", "action"]
+ConsentGrantStatus = Literal["active", "revoked"]
+class ConsentRevokeAction(TypedDict):
+    command: str
+    grant_ref: str
+class BypassScopeProject(TypedDict):
+    project: EntityId
+class BypassScopeThread(TypedDict):
+    thread: EntityId
+BypassScope = BypassScopeProject | BypassScopeThread
+class BypassExtent(TypedDict):
+    scope: BypassScope
+    floor_version: int
+class ConsentRegistryDelegation(TypedDict):
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+    approved_by: str
+    wall_expires_at: int
+    status: SupportGrantStatus
+ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None]})
+class ConsentRegistry(TypedDict):
+    rows: list[ConsentRegistryRow]
+class RevokeGrantRequest(TypedDict):
+    grant: str
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]
@@ -5897,6 +5943,57 @@ class SecretUseAnswer(TypedDict):
     result: NotRequired[Any | None]
     failure: NotRequired[str | None]
     receipt: SecretUseRecord
+class LiveRunRequest(TypedDict, Generic[T]):
+    live_run: str
+    spec: T
+class SecretGrantPurposeOperation(TypedDict):
+    kind: Literal["operation"]
+    name: str
+class SecretGrantPurposeConnector(TypedDict):
+    kind: Literal["connector"]
+    name: str
+class SecretGrantPurposeHostDestination(TypedDict):
+    kind: Literal["host_destination"]
+    name: str
+class SecretGrantPurposeLocalFile(TypedDict):
+    kind: Literal["local_file"]
+    effector: str
+    path: str
+    project_id: str
+SecretGrantPurpose = SecretGrantPurposeOperation | SecretGrantPurposeConnector | SecretGrantPurposeHostDestination | SecretGrantPurposeLocalFile
+class SecretGrantMintRequest(TypedDict):
+    handle: str
+    purpose: SecretGrantPurpose
+    ttl_secs: NotRequired[int | None]
+SecretGrantViewStatus = Literal["active", "expired", "revoked", "replaced"]
+class SecretGrantRegistration(TypedDict):
+    path: str
+    project_id: str
+SecretGrantCleanup = Literal["removed", "absent", "kept"]
+class SecretGrantView(TypedDict):
+    grant: str
+    handle: NotRequired[str | None]
+    purpose: SecretGrantPurpose
+    effector: str
+    tier: int
+    generation: int
+    granted_at: int
+    expires_at: int
+    status: SecretGrantViewStatus
+    replaced_by: NotRequired[str | None]
+    lease: NotRequired[str | None]
+    materialization_receipt: NotRequired[str | None]
+    registration: NotRequired[SecretGrantRegistration | None]
+    cleanup: NotRequired[SecretGrantCleanup | None]
+class SecretGrantRenewRequest(TypedDict):
+    grant: str
+    ttl_secs: NotRequired[int | None]
+class SecretGrantTeardownRequest(TypedDict):
+    grant: str
+class SecretGrantUseRequest(TypedDict):
+    grant: str
+    operation: str
+    arguments: NotRequired[Any]
 BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
 class TravelChoice(TypedDict):
     born_with: NotRequired[list[BornWithField]]
@@ -11447,9 +11544,6 @@ class FoldHistory(TypedDict):
     epochs: list[FoldHistoryEpoch]
     steps: list[FoldHistoryStep]
     next: NotRequired[int | None]
-class LiveRunRequest(TypedDict, Generic[T]):
-    live_run: str
-    spec: T
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str

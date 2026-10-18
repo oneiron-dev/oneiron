@@ -87,6 +87,11 @@ pub enum Purpose {
     /// sealed to the machines that read the world and to the recovery root, so a
     /// publisher that may not read the world carries it unchanged (FIX 4211).
     SealedWorldAuthority = 15,
+    /// One kept pad object's outer key, sealed to a machine admitted after that
+    /// generation was sealed, and to the generation's kit root where known, so
+    /// its erase sweep opens the object (FIX 4271). A pad object's own capsules
+    /// are 14 and never open as one.
+    SealedPadAdmission = 16,
 }
 
 impl Purpose {
@@ -107,6 +112,7 @@ impl Purpose {
             13 => Self::SealedVaultBundle,
             14 => Self::SealedKeyPads,
             15 => Self::SealedWorldAuthority,
+            16 => Self::SealedPadAdmission,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

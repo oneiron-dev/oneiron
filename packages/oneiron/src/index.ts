@@ -303,6 +303,16 @@ export class Oneiron {
     },
     /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
     use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),
+    secrets: {
+      /** Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value. */
+      materialize: (input: Facade.LiveRunRequest<Facade.SecretGrantMintRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsMaterialize(input) as Facade.SecretGrantView),
+      /** Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out. */
+      renew: (input: Facade.LiveRunRequest<Facade.SecretGrantRenewRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsRenew(input) as Facade.SecretGrantView),
+      /** Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found. */
+      teardown: (input: Facade.LiveRunRequest<Facade.SecretGrantTeardownRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsTeardown(input) as Facade.SecretGrantView),
+      /** Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value. */
+      use: (input: Facade.LiveRunRequest<Facade.SecretGrantUseRequest>): Facade.SecretUseAnswer => this.#call(() => this.#client.selfSecretsUse(input) as Facade.SecretUseAnswer),
+    },
     skills: {
       /** An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it. */
       save: (input: Facade.SkillSaveRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsSave(input) as Facade.SkillAuthoringReceipt),
@@ -979,6 +989,16 @@ export class Oneiron {
         /** Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer. */
         decide: (input: Facade.PolicyOutboundRequest): Facade.HostedRelayDecision => this.#call(() => this.#client.vaultPolicyRelayDecide(input) as Facade.HostedRelayDecision),
       },
+    },
+    consent: {
+      /** The owner approves exactly one engine-emitted effect digest; no standing grant is created. */
+      approve_once: (input: Facade.ApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentApproveOnce(input) as Facade.ConsentActReceipt),
+      /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
+      create_standing_grant: (input: Facade.CreateStandingGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentCreateStandingGrant(input) as Facade.ConsentActReceipt),
+      /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
+      registry: (input: Facade.ConsentRegistryQuery): Facade.ConsentRegistry => this.#call(() => this.#client.vaultConsentRegistry(input) as Facade.ConsentRegistry),
+      /** The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted. */
+      revoke: (input: Facade.RevokeGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentRevoke(input) as Facade.ConsentActReceipt),
     },
     gate: {
       policy: {
