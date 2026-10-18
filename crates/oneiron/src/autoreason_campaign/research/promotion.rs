@@ -29,7 +29,7 @@ const BASIS: SideTable<([u8; 16], [u8; 16]), PromotionBasis, Named> =
     SideTable::new(&side_table::AUTORESEARCH_BASIS);
 
 /// The held-out decision, as decided by the campaign's dominance rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HeldOutCall {
     Promote,
@@ -39,7 +39,7 @@ pub enum HeldOutCall {
 
 /// The one sealed confirmation of a candidate. `exposure` is empty when the
 /// shot was consumed but the release never completed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConfirmationReceipt {
     pub cohort: EntityId,
@@ -47,7 +47,7 @@ pub struct ConfirmationReceipt {
     pub exposure: Option<EntityId>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PromotionDisposition {
     /// The candidate is the campaign's new incumbent.
@@ -61,7 +61,7 @@ pub enum PromotionDisposition {
 }
 
 /// The durable promotion receipt. It carries the policy version.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CampaignPromotionReceipt {
     pub root: AttemptId,
@@ -91,7 +91,7 @@ pub struct CampaignPromotionReceipt {
 }
 
 /// One candidate's held-out basis and what followed from it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PromotionBasis {
     pub root: AttemptId,

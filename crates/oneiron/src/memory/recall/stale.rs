@@ -1,7 +1,7 @@
 //! Typed stale-federation metadata returned only for admitted recall items.
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryStaleStamp {
     /// None when the terminal fold is visible before the stamp sweep ran.
     pub stale_since: Option<u64>,
