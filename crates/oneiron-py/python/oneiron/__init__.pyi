@@ -409,6 +409,10 @@ class Oneiron:
         def skills(self) -> "Oneiron._SelfSkillsVerbs": ...
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs": ...
+        @property
+        def agents(self) -> "Oneiron._SelfAgentsVerbs": ...
+        @property
+        def leader(self) -> "Oneiron._SelfLeaderVerbs": ...
     class _SelfFocusVerbs:
         @property
         def scratchpad(self) -> "Oneiron._SelfFocusScratchpadVerbs": ...
@@ -459,6 +463,12 @@ class Oneiron:
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
     class _SelfDecisionsVerbs:
         def asks(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.DecisionAsk]: ...
+    class _SelfAgentsVerbs:
+        def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
+            """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
+    class _SelfLeaderVerbs:
+        def split(self, spec: Facade.LiveRunRequest[Facade.LeaderSplitInput]) -> Facade.LeaderSplitOutput:
+            """Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."""
     class _VaultVerbs:
         @property
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...

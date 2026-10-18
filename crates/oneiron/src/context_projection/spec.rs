@@ -30,7 +30,7 @@ pub const CONTEXT_SPEC_DEFAULT_CHAT_LAST_N: usize = 16;
 
 /// A projection DESCRIPTOR. It names what a delegated agent may see; it never
 /// carries the content itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContextSpec {
     #[serde(default)]
     pub layers: Vec<String>,
@@ -84,7 +84,7 @@ impl ContextSpec {
 }
 
 /// How much of the parent's memory the delegate may project.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum MemoryProjection {
     /// Inherit the parent's projection verbatim (the widest legal request).
@@ -98,7 +98,7 @@ pub enum MemoryProjection {
 }
 
 /// How much of the parent's chat history the delegate may project.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ChatProjection {
     #[default]

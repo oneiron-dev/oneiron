@@ -1,0 +1,106 @@
+//! Public coordination doors over the caller's own live-run attachment.
+use std::sync::Arc;
+
+use oneiron::code_run::live_run::LiveRunCredential;
+use oneiron::code_run::{
+    AgentSpawnInput, AgentSpawnOutput, HostSelfDispatcher, LeaderSplitInput, LeaderSplitOutput,
+};
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::task_verb::sdk::LiveRunRequest;
+use oneiron::WriteActor;
+
+use crate::auth::CoreAuth;
+use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer, seated_planner};
+use super::{FacadeApiError, facade_actor};
+use super::host_doors::internal;
+
+pub(crate) async fn self_agents_spawn(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<AgentSpawnInput>,
+) -> MemoryResult<AgentSpawnOutput> {
+    on_live_run(server, auth, session, input.live_run, "self.agents.spawn", move |dispatcher| {
+        dispatcher.spawn_agent_from_host(input.spec)
+    }).await
+}
+
+pub(crate) async fn self_leader_split(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<LeaderSplitInput>,
+) -> MemoryResult<LeaderSplitOutput> {
+    on_live_run(server, auth, session, input.live_run, "self.leader.split", move |dispatcher| {
+        dispatcher.split_leader_from_host(input.spec)
+    }).await
+}
+
+/// Resolves exactly the attachment the caller presents, never a caller-named
+/// attempt or a replacement credential. The existing live-run guard serializes
+/// this call with executor entries and rechecks the lease and attachment.
+async fn on_live_run<T, F>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    handle: String,
+    verb: &'static str,
+    call: F,
+) -> MemoryResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(HostSelfDispatcher<'_>) -> MemoryResult<T> + Send + 'static,
+{
+    if session.is_some() {
+        return Err(MemoryError::new(
+            oneiron::memory::MEMORY_CODE_OFF_RECORD_SESSION_DOOR,
+            "live child admission requires the attached run's canonical storage",
+            &[],
+        ));
+    }
+    let (actor, class) = facade_actor(auth).map_err(FacadeApiError::into_memory_error)?;
+    let refused = || MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        "a live-run call requires this agent's own verified credential",
+        &["Present the same credential that attached to the run."],
+    );
+    let proof = auth.verified_slip().ok_or_else(refused)?;
+    // As on attach and actions, an unbound credential borrows no run.
+    server.vault().credential_read_key(proof)?.ok_or_else(refused)?;
+    let writer = WriteActor::new(actor, class);
+    let run = server.live_runs.resolve(&handle, LiveRunCaller {
+        actor: writer,
+        credential: LiveRunCredential::of(&auth.idempotency_principal(), auth.locality()),
+    }).map_err(live_refusal)?;
+    let held = run.hold(&server.live_runs, &server.vault).await?.map_err(live_refusal)?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        // Keep the run held until the engine call and all its writes finish.
+        let _held = held;
+        let binding = _held.proof();
+        let mut dispatcher = HostSelfDispatcher::for_live_run(server.vault(), writer, &binding)?;
+        let (settings, model) = run.planner();
+        if let Some(settings) = settings {
+            if let Some(planner) = seated_planner(
+                server.vault(), settings, model, server.decision_host().host_planner_decisions(actor),
+            ).map_err(MemoryError::bad_request)? {
+                dispatcher = dispatcher.with_planner(planner);
+            }
+        }
+        // The same configured signing identity the resident runner uses.
+        let derived = match server.managed_issuer {
+            Some(_) => None,
+            None => server.config.auth_secret.as_deref().filter(|secret| !secret.is_empty())
+                .map(|secret| oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()))
+                .transpose()?,
+        };
+        if let Some(issuer) = server.managed_issuer.as_ref().or(derived.as_ref()) {
+            dispatcher = dispatcher.with_slip_issuer(issuer);
+        }
+        call(dispatcher)
+    }).await.map_err(|_| internal(verb))?
+}
+
+fn live_refusal(refusal: LiveRunRefusal) -> MemoryError {
+    MemoryError::new(refusal.code(), refusal.message(), &[refusal.suggestion()])
+}

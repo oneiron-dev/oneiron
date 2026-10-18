@@ -5,6 +5,7 @@ mod emission;
 mod envelope;
 mod fold_verbs;
 mod human_speech;
+mod host_doors;
 mod leader;
 mod memory_verbs;
 mod reader_spawn;

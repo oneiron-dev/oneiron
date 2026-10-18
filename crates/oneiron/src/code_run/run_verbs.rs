@@ -123,7 +123,7 @@ pub struct SkillCallInput {
 /// #spawn). The parent states what it needs apart from the work. With the
 /// host's planner and the agent's lease the planner picks the seat; else the
 /// named agent runs. Parent, run and actor are the host's.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentSpawnInput {
     /// What the parent needs, in one or two lines. The planner routes on it.
@@ -144,7 +144,7 @@ pub struct AgentSpawnInput {
     pub budget: Option<SpawnKnob<u64>>,
     /// What the child may see: a context descriptor (`layers`, `memory`,
     /// `chat`). Its briefing is the prompt.
-    pub context: Option<serde_json::Value>,
+    pub context: Option<crate::context_projection::ContextSpec>,
     /// Settled sibling results the child reads, TASK ids, hex.
     pub context_from: Option<Vec<String>>,
     /// Delegation depth left below the child; clamped to the parent's.
@@ -165,7 +165,7 @@ pub struct AgentSpawnInput {
 
 /// One spawn field as the parent sets it (ARCH-0079 #seed-pin): a seed is
 /// where the planner starts, weighted in runs; a pin is never overridden.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum SpawnKnob<T> {
     Seed { value: T, weight_runs: f64 },
@@ -188,7 +188,7 @@ impl<T> SpawnKnob<T> {
 }
 
 /// How much the parent cares: the five reasoning-effort words.
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SpawnCare {
     Light,
@@ -200,7 +200,7 @@ pub enum SpawnCare {
 }
 
 /// A coordination pattern by its word.
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpawnPattern {
     Solo,
@@ -232,11 +232,7 @@ impl AgentSpawnInput {
         if self.prompt.trim().is_empty() {
             return Err(spawn_invalid("a spawn carries its prompt"));
         }
-        let mut spec = match self.context {
-            Some(value) => serde_json::from_value::<crate::context_projection::ContextSpec>(value)
-                .map_err(|_| spawn_invalid("invalid spawn context descriptor"))?,
-            None => crate::context_projection::ContextSpec::default(),
-        };
+        let mut spec = self.context.unwrap_or_default();
         spec.briefing = Some(self.prompt);
         let context = AgentSpawnContext {
             context_spec: Some(spec),
@@ -328,7 +324,7 @@ pub struct LeaderPatternInput {
 /// `self.leader.split`: the bound leader splits her TASK into a subproject
 /// inside the TASK's wrapper (OF-389). The parent still sees one checkbox.
 /// The TASK and the parent project are the host's, from her lease.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LeaderSplitInput {
     /// The child's leader, hex; herself when absent.
@@ -336,7 +332,8 @@ pub struct LeaderSplitInput {
     /// What the child sees: a scope that narrows the parent's
     /// (`world`, `facet`, `relationship`, `project`, `readable`,
     /// `writable`); the parent's own when absent.
-    pub slice: Option<serde_json::Value>,
+    #[schemars(with = "Option<BranchScopeSchema>")]
+    pub slice: Option<crate::llm::Scope>,
 }
 
 /// `self.spawn`: one reader child over a result of the run (ARCH-0079
@@ -445,7 +442,7 @@ pub struct TaskRefuseOutput {
 
 /// `self.agents.spawn`'s output: the queued attempt, or the widening its
 /// spawn proposed instead.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AgentSpawnOutput {
     Queued {
@@ -463,7 +460,7 @@ pub enum AgentSpawnOutput {
 }
 
 /// The `kind` every `self.agents.spawn` output carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSpawnKind {
     AgentSpawn,
@@ -484,7 +481,7 @@ pub struct LeaderPatternOutput {
 
 /// `self.leader.split`'s output: the subproject her TASK wraps (OF-389).
 /// A retry answers the same child.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeaderSplitOutput {
     /// The child PROJECT.
     pub project: EntityId,
@@ -502,4 +499,28 @@ pub struct LeaderSplitOutput {
 pub struct LeaderPatternFile {
     pub path: String,
     pub text: String,
+}
+
+// The model crate owns Scope but has no schemars dependency. Runtime decoding
+// and SDK types use that Scope directly; these mirrors supply its MCP schema.
+#[derive(schemars::JsonSchema)]
+#[schemars(rename = "BranchScope")]
+#[expect(dead_code, reason = "schema mirror of the model crate's Scope")]
+struct BranchScopeSchema {
+    world: Option<String>,
+    facet: Option<String>,
+    relationship: Option<String>,
+    project: Option<String>,
+    readable: std::collections::BTreeSet<BranchScopeResourceSchema>,
+    writable: std::collections::BTreeSet<BranchScopeResourceSchema>,
+}
+
+#[derive(schemars::JsonSchema)]
+#[schemars(rename = "BranchScopeResource")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of the model crate's ScopeResource")]
+enum BranchScopeResourceSchema {
+    Bucket { key: String },
+    DocumentVersion { document: String, version: String },
+    Projection { key: String },
 }
