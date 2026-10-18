@@ -14,8 +14,6 @@ use std::path::PathBuf;
 
 pub const ENGINE_EXECUTOR_SOFT_STEP_LIMIT: u32 = 6;
 
-pub const ENGINE_EXECUTOR_HARD_STEP_LIMIT: u32 = 50;
-
 pub const ENGINE_EXECUTOR_PURPOSE_NAME: &str = "engine_native_executor";
 
 /// The call purpose of a run's compaction pass (agent-runtime-v1 §d7).
@@ -65,18 +63,18 @@ impl EngineExecutorError {
     }
 }
 
-/// Soft-yield and hard-stop limits for the durable REPL.
+/// The durable REPL's soft yield: the steps one entry runs before it yields.
+/// A run's total steps are the `[limits] executor_run_steps` row, which asks
+/// and never stops the run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngineExecutorLimits {
     pub soft_steps: u32,
-    pub hard_steps: u32,
 }
 
 impl Default for EngineExecutorLimits {
     fn default() -> Self {
         Self {
             soft_steps: ENGINE_EXECUTOR_SOFT_STEP_LIMIT,
-            hard_steps: ENGINE_EXECUTOR_HARD_STEP_LIMIT,
         }
     }
 }
@@ -86,24 +84,6 @@ impl EngineExecutorLimits {
         if self.soft_steps == 0 {
             return Err(Error::InvalidConfig(
                 "engine executor soft step limit must be positive".to_owned(),
-            )
-            .into());
-        }
-        if self.hard_steps == 0 {
-            return Err(Error::InvalidConfig(
-                "engine executor hard step limit must be positive".to_owned(),
-            )
-            .into());
-        }
-        if self.soft_steps > self.hard_steps {
-            return Err(Error::InvalidConfig(
-                "engine executor soft step limit exceeds hard step limit".to_owned(),
-            )
-            .into());
-        }
-        if self.hard_steps > ENGINE_EXECUTOR_HARD_STEP_LIMIT {
-            return Err(Error::InvalidConfig(
-                "engine executor hard step limit exceeds EXEC-1 bound".to_owned(),
             )
             .into());
         }
@@ -498,7 +478,6 @@ pub enum EngineExecutorStatus {
     Yielded {
         next_step_seq: u64,
     },
-    HardStepLimitReached,
     /// The window reached its budget with no accepted swap (agent-runtime-v1
     /// §d7). Not terminal: the same run continues once a swap lands.
     WindowFull {

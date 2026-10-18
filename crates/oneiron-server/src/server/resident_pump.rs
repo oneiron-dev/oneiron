@@ -875,7 +875,6 @@ fn settle(
             }
             // The run waits on a durable signal; its lease waits with it.
             EngineExecutorStatus::Waiting(_) => return park_on_wait(vault, status, &outcome, now),
-            EngineExecutorStatus::HardStepLimitReached => "agent_run_step_limit",
             EngineExecutorStatus::Yielded { .. } | EngineExecutorStatus::WindowFull { .. } => {
                 "agent_run_unfinished"
             }
