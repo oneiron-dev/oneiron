@@ -502,8 +502,16 @@ impl<'a> HostSelfDispatcher<'a> {
                     },
                 ))
             }
-            SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
-            SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
+            // A run's own ask and wait take their turn in the vault's task-work
+            // line (Rule 5), as the SDK rows do.
+            SelfCall::TasksAsk(call) => {
+                let _turn = self.task_work_turn()?;
+                self.dispatch_tasks_ask(*call)
+            }
+            SelfCall::TasksWait(call) => {
+                let _turn = self.task_work_turn()?;
+                self.dispatch_tasks_wait(call, run_id)
+            }
             SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call),
             SelfCall::SkillsCall(_) => Ok(Self::dispatch_skills_call_unhosted()),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as),
