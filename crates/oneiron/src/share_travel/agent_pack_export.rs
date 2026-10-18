@@ -75,17 +75,17 @@ impl Memory<'_> {
         let Some((ENTITY_TYPE_AGENT_DEF, _, body)) = admitted(&lane, &txn, &agent)? else {
             return Err(Error::EntityNotFound.into());
         };
-        // The owner's share reads as the owner's own read; any other sharer's
-        // reads nothing of a world kept off an unknown machine.
-        let kept = if owner {
-            std::collections::BTreeSet::new()
+        // Owner or not, the pack carries nothing of a world his recipient
+        // choice keeps from where it goes (mesh PR2b): this surface's
+        // destination, judged for the machine its connection proved. Reading
+        // as the owner never waives his choice. A delegate's pack travels on
+        // from this device too, so it goes to a recipient nobody proved.
+        let recipient = if owner || self.destination().is_off_device() {
+            self.destination().clone()
         } else {
-            crate::settings::device_local_worlds_at(
-                vault,
-                &txn,
-                crate::claim::CallerLocality::OffDevice,
-            )?
+            crate::claim::CallerLocality::OffDevice.into()
         };
+        let kept = crate::settings::device_local_worlds_for(vault, &txn, &recipient)?;
         let text = super::born_with_text_in_txn(vault, &txn, &lane, &agent, None, &choice, &kept)?;
         let def = decode_agent_definition(&body)?;
         let mut skills = Vec::new();

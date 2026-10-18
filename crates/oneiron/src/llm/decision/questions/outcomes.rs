@@ -42,17 +42,18 @@ pub fn project_bound_outcomes(
 
 /// The stored outcome labels of the caller's standing question, in label
 /// order. Another principal's question is not found, as its answers are
-/// not. A caller at `locality` gets no label naming a row a device-local
-/// world keeps from it, as [`calibration_pairs`] pairs none.
+/// not. A caller toward `destination` gets no label naming a row a world
+/// withheld from its machine keeps (mesh PR2b), as [`calibration_pairs`]
+/// pairs none.
 pub fn outcome_labels(
     vault: &Vault,
     principal: EntityId,
     question: EntityId,
-    locality: crate::claim::CallerLocality,
+    destination: impl Into<crate::settings::ReadDestination>,
 ) -> Result<Vec<OutcomeLabel>> {
     let txn = vault.store.env.read_txn()?;
     owned_head(vault, &txn, principal, question)?;
-    let kept = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
+    let kept = crate::settings::device_local_worlds_for(vault, &txn, &destination.into())?;
     let mut labels = Vec::new();
     for (_, label) in
         QUESTION_LABEL.scan_from(&vault.store, &txn, &family_prefix(question, b"label"))?
@@ -70,16 +71,17 @@ pub fn outcome_labels(
 /// authority are checked again within one read snapshot before returning them.
 /// A window that closed in silence pairs its answer with the binding's
 /// silence label; such a pair names the answer as its own fact.
-/// A caller at `locality` gets no pair derived from a row a device-local
-/// world keeps from it, and each pair names the rows it was derived from.
+/// A caller toward `destination` gets no pair derived from a row a world
+/// withheld from its machine keeps, and each pair names the rows it was
+/// derived from.
 pub fn calibration_pairs(
     vault: &Vault,
     principal: EntityId,
     question: EntityId,
-    locality: crate::claim::CallerLocality,
+    destination: impl Into<crate::settings::ReadDestination>,
 ) -> Result<Vec<CalibrationPair>> {
     let txn = vault.store.env.read_txn()?;
-    let kept = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
+    let kept = crate::settings::device_local_worlds_for(vault, &txn, &destination.into())?;
     let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(question))? else {
         return Ok(Vec::new());
     };
@@ -230,15 +232,16 @@ pub fn calibration_pairs(
 /// yes/no question the label is the person's answer, as a fact's mapped value
 /// is; for any other the label says the prior held, which a changed answer
 /// never does. A record without a prior probability pairs nothing. A caller
-/// at `locality` gets no pair from a row a device-local world keeps from it.
+/// toward `destination` gets no pair from a row a world withheld from its
+/// machine keeps.
 pub fn person_changed_pairs(
     vault: &Vault,
     principal: EntityId,
     question: EntityId,
-    locality: crate::claim::CallerLocality,
+    destination: impl Into<crate::settings::ReadDestination>,
 ) -> Result<Vec<CalibrationPair>> {
     let txn = vault.store.env.read_txn()?;
-    let kept = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
+    let kept = crate::settings::device_local_worlds_for(vault, &txn, &destination.into())?;
     let mut pairs = Vec::new();
     for (source, record) in PERSON_CHANGED.scan(&vault.store, &txn)? {
         if record.question != question || record.principal != principal {
