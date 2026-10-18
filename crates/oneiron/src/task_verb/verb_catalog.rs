@@ -252,6 +252,10 @@ pub enum AgentVerb {
     VaultPolicyOwnerRowChange,
     VaultPolicyOutboundDecide,
     VaultPolicyRelayDecide,
+    VaultConsentApproveOnce,
+    VaultConsentCreateStandingGrant,
+    VaultConsentRegistry,
+    VaultConsentRevoke,
     VaultGatePolicyGet,
     VaultGatePolicyPut,
     VaultGatePolicyPropose,
@@ -630,6 +634,7 @@ pub enum AgentVerb {
     SelfCompact,
     SelfUnfold,
     SelfFolds,
+    TasksRefuse,
     SelfAgentsSpawn,
     SelfLeaderSplit,
     SelfSkillsCall,
@@ -887,6 +892,10 @@ impl AgentVerb {
         Self::VaultPolicyOwnerRowChange,
         Self::VaultPolicyOutboundDecide,
         Self::VaultPolicyRelayDecide,
+        Self::VaultConsentApproveOnce,
+        Self::VaultConsentCreateStandingGrant,
+        Self::VaultConsentRegistry,
+        Self::VaultConsentRevoke,
         Self::VaultGatePolicyGet,
         Self::VaultGatePolicyPut,
         Self::VaultGatePolicyPropose,
@@ -1265,6 +1274,7 @@ impl AgentVerb {
         Self::SelfCompact,
         Self::SelfUnfold,
         Self::SelfFolds,
+        Self::TasksRefuse,
         Self::SelfAgentsSpawn,
         Self::SelfLeaderSplit,
         Self::SelfSkillsCall,
@@ -1529,6 +1539,10 @@ impl AgentVerb {
             Self::VaultPolicyOwnerRowChange => "vault.policy.owner.row.change",
             Self::VaultPolicyOutboundDecide => "vault.policy.outbound.decide",
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
+            Self::VaultConsentApproveOnce => "vault.consent.approve_once",
+            Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
+            Self::VaultConsentRegistry => "vault.consent.registry",
+            Self::VaultConsentRevoke => "vault.consent.revoke",
             Self::VaultGatePolicyGet => "vault.gate.policy.get",
             Self::VaultGatePolicyPut => "vault.gate.policy.put",
             Self::VaultGatePolicyPropose => "vault.gate.policy.propose",
@@ -1913,6 +1927,7 @@ impl AgentVerb {
             Self::SelfCompact => "self.compact",
             Self::SelfUnfold => "self.unfold",
             Self::SelfFolds => "self.folds",
+            Self::TasksRefuse => "tasks.refuse",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderSplit => "self.leader.split",
             Self::SelfSkillsCall => "self.skills.call",
@@ -2169,6 +2184,10 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRegistry
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -2507,6 +2526,7 @@ impl AgentVerb {
                 | Self::SelfCompact
                 | Self::SelfUnfold
                 | Self::SelfFolds
+                | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -2811,6 +2831,10 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRegistry
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3149,6 +3173,7 @@ impl AgentVerb {
                 | Self::SelfCompact
                 | Self::SelfUnfold
                 | Self::SelfFolds
+                | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -3508,6 +3533,10 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRegistry
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3861,6 +3890,7 @@ impl AgentVerb {
                 | Self::SelfCompact
                 | Self::SelfUnfold
                 | Self::SelfFolds
+                | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -4032,6 +4062,9 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerSet
@@ -4245,6 +4278,7 @@ impl AgentVerb {
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
+                | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -4541,6 +4575,10 @@ impl AgentVerb {
             Self::VaultPolicyOwnerRowChange => &["spec"],
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
+            Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConsentCreateStandingGrant => &["spec"],
+            Self::VaultConsentRegistry => &["spec"],
+            Self::VaultConsentRevoke => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -4919,6 +4957,7 @@ impl AgentVerb {
             Self::SelfCompact => &["spec"],
             Self::SelfUnfold => &["spec"],
             Self::SelfFolds => &["spec"],
+            Self::TasksRefuse => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
             Self::SelfSkillsCall => &["spec"],
@@ -5177,6 +5216,10 @@ impl AgentVerb {
             Self::VaultPolicyOwnerRowChange => &["spec"],
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
+            Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConsentCreateStandingGrant => &["spec"],
+            Self::VaultConsentRegistry => &["spec"],
+            Self::VaultConsentRevoke => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -5555,6 +5598,7 @@ impl AgentVerb {
             Self::SelfCompact => &["spec"],
             Self::SelfUnfold => &["spec"],
             Self::SelfFolds => &["spec"],
+            Self::TasksRefuse => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
             Self::SelfSkillsCall => &["spec"],
@@ -6282,6 +6326,18 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => {
                 "Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."
             }
+            Self::VaultConsentApproveOnce => {
+                "The owner approves exactly one engine-emitted effect digest; no standing grant is created."
+            }
+            Self::VaultConsentCreateStandingGrant => {
+                "The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."
+            }
+            Self::VaultConsentRegistry => {
+                "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."
+            }
+            Self::VaultConsentRevoke => {
+                "The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."
+            }
             Self::VaultGatePolicyGet => {
                 "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."
             }
@@ -6516,13 +6572,13 @@ impl AgentVerb {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."
             }
             Self::VaultAgentsCreate => {
-                "The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."
+                "The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."
             }
             Self::VaultAgentsGet => {
-                "The owner reads one saved agent composition and its version and approval state."
+                "The owner reads one saved agent composition, including its declared refusal dial, version and approval state."
             }
             Self::VaultAgentsUpdate => {
-                "The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."
+                "The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."
             }
             Self::VaultWorkflowsSave => {
                 "The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."
@@ -7347,6 +7403,9 @@ impl AgentVerb {
             }
             Self::SelfFolds => {
                 "Lists the attached run's landed folds, pending marks and outstanding compact ask."
+            }
+            Self::TasksRefuse => {
+                "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."
             }
             Self::SelfAgentsSpawn => {
                 "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."

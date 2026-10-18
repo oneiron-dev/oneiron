@@ -2194,6 +2194,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_consent_approve_once(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.approve_once", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_create_standing_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.create_standing_grant", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_registry(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.registry", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.revoke", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_gate_policy_get(
         &self,
         input: serde_json::Value,
@@ -5468,6 +5504,12 @@ impl NativeClient {
     pub fn self_folds(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.folds", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_refuse(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.refuse", input)
             .map_err(facade_error)
     }
     #[napi]

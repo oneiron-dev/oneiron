@@ -124,23 +124,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         }
         RunVerb::TasksRefuse => {
             let args: crate::code_run::TaskRefuseInput = decode(input)?;
-            SelfCall::TasksRefuse(crate::code_run::SelfTaskRefuseCall {
-                task_ref: args
-                    .task_ref
-                    .as_deref()
-                    .map(EntityId::from_hex)
-                    .transpose()?,
-                domain: match args.domain {
-                    crate::code_run::TaskRefuseDomain::Bond => {
-                        crate::agent_def::RefusalDomain::Bond
-                    }
-                    crate::code_run::TaskRefuseDomain::Logistics => {
-                        crate::agent_def::RefusalDomain::Logistics
-                    }
-                },
-                reason_ref: args.reason_ref,
-                at: args.at.map_or(Ok(now), js_time)?,
-            })
+            SelfCall::TasksRefuse(args.into_call(now)?)
         }
         RunVerb::SelfSkillsCall => {
             let args: crate::code_run::SkillCallInput = decode(input)?;

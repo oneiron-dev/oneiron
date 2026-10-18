@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 589 facade rows, 2227 declarations.
-Inputs: 537 of 589 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 520 of 589 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 594 facade rows, 2250 declarations.
+Inputs: 542 of 594 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 525 of 594 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -5341,6 +5341,52 @@ class HostedRelayDecision(TypedDict):
     outbound_halted: bool
     system_notice: NotRequired[str | None]
     system_notices: list[GateSystemNoticeRecord]
+class ApproveOnceRequest(TypedDict):
+    effect_digest: str
+class ConsentActReceipt(TypedDict):
+    decision_ref: str
+    outcome: str
+    reason_code: str
+    grant_ref: NotRequired[str | None]
+    diff_handle: list[int]
+class ActionEnvelopeRequest(TypedDict):
+    project: str
+    audience: list[str]
+    budget: int
+ActionBoundRequest = TypedDict("ActionBoundRequest", {"actor": str, "class": str, "envelope": ActionEnvelopeRequest})
+class DisclosureEnvelopeRequest(TypedDict):
+    selectors: list[str]
+DisclosureBoundRequest = TypedDict("DisclosureBoundRequest", {"audience": list[str], "class": str, "envelope": DisclosureEnvelopeRequest})
+StandingGrantBound = ActionBoundRequest | DisclosureBoundRequest
+class CreateStandingGrantRequest(TypedDict):
+    bound: StandingGrantBound
+class ConsentRegistryQuery(TypedDict):
+    limit: int
+    include_revoked: NotRequired[bool]
+ConsentDomain = Literal["disclosure", "action"]
+ConsentGrantStatus = Literal["active", "revoked"]
+class ConsentRevokeAction(TypedDict):
+    command: str
+    grant_ref: str
+class BypassScopeProject(TypedDict):
+    project: EntityId
+class BypassScopeThread(TypedDict):
+    thread: EntityId
+BypassScope = BypassScopeProject | BypassScopeThread
+class BypassExtent(TypedDict):
+    scope: BypassScope
+    floor_version: int
+class ConsentRegistryDelegation(TypedDict):
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+    approved_by: str
+    wall_expires_at: int
+    status: SupportGrantStatus
+ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None]})
+class ConsentRegistry(TypedDict):
+    rows: list[ConsentRegistryRow]
+class RevokeGrantRequest(TypedDict):
+    grant: str
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]
@@ -6625,6 +6671,10 @@ class AgentScopeInputWorld(TypedDict):
     world: EntityId
 AgentScopeInput = AgentScopeInputAll | AgentScopeInputBase | AgentScopeInputWorld
 AgentCeilingInput = Literal["auto", "proposed"]
+RefusalLevel = Literal["none", "voice", "veto", "full"]
+class RefusalDial(TypedDict):
+    bond: NotRequired[RefusalLevel | None]
+    logistics: NotRequired[RefusalLevel | None]
 class AgentModel(TypedDict):
     model_ref: ModelId
     when: str
@@ -6642,6 +6692,7 @@ class AgentDefinitionSpec(TypedDict):
     forked_from: NotRequired[EntityId | None]
     enabled: NotRequired[bool]
     display_name: NotRequired[str | None]
+    refusal: NotRequired[RefusalDial | None]
     models: NotRequired[list[AgentModel]]
     compaction_model: NotRequired[ModelId | None]
 class AgentDefinitionCreateRequest(TypedDict):
@@ -6813,11 +6864,9 @@ class TeamReceiptView(TypedDict):
     width: int
     models: list[str]
     outcome_receipt: NotRequired[str | None]
-RouteStampState = Literal["unstamped_before_s5", "stamped"]
 class RouteObservation(TypedDict):
     run_ref: EntityId
-    type_ref: NotRequired[TypeStamp | None]
-    stamp_state: RouteStampState
+    type_ref: TypeStamp
     model: str
     effort: ReasoningEffort
     why: str
@@ -11512,6 +11561,18 @@ class FoldCompactAsked(TypedDict):
 FoldUnfolded = TypedDict("FoldUnfolded", {"fold": str, "from": int, "through": int, "unfolded_after_step": int})
 class FoldRunRequest(TypedDict):
     live_run: str
+TaskRefuseDomain = Literal["bond", "logistics"]
+class TaskRefuseInput(TypedDict):
+    taskRef: NotRequired[str | None]
+    domain: TaskRefuseDomain
+    reasonRef: str
+    at: NotRequired[int | None]
+RefusalOutcome = Literal["proceed", "object", "decline"]
+class TaskRefuseOutput(TypedDict):
+    task: EntityId
+    level: RefusalLevel
+    outcome: RefusalOutcome
+    replay: bool
 SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
 class SpawnKnobSeed(TypedDict, Generic[T]):
     mode: Literal["seed"]

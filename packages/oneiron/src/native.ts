@@ -278,6 +278,10 @@ vaultPolicyOwnerConfigure(input: unknown): unknown
 vaultPolicyOwnerRowChange(input: unknown): unknown
 vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
+vaultConsentApproveOnce(input: unknown): unknown
+vaultConsentCreateStandingGrant(input: unknown): unknown
+vaultConsentRegistry(input: unknown): unknown
+vaultConsentRevoke(input: unknown): unknown
 vaultGatePolicyGet(input: unknown): unknown
 vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
@@ -616,6 +620,7 @@ selfFold(input: unknown): unknown
 selfCompact(input: unknown): unknown
 selfUnfold(input: unknown): unknown
 selfFolds(input: unknown): unknown
+tasksRefuse(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 selfSkillsCall(input: unknown): unknown
