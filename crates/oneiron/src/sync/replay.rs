@@ -48,6 +48,8 @@ pub fn replay_entity_with_birth(
         {
             super::row_birth::stamp_birth_or_warn(vault, txn, &entity.id, birth)?;
         }
+        // FIX 3821: a landed machine-history row may advance its target's pin.
+        vault.receive_own_machine_history_row_in_txn(txn, &entity.id)?;
         Ok(())
     });
     if replayed.is_err() {
