@@ -250,7 +250,11 @@ impl HostSlipIssuer {
             Ok(self.signing.sign(bytes).to_bytes().to_vec())
         })?;
         let encoded = crate::federation::encode_guest_share_envelope(&envelope)?;
-        let signature = self.signing.sign(&context.transcript(&encoded)?).to_bytes().to_vec();
+        let signature = self
+            .signing
+            .sign(&context.transcript(&encoded)?)
+            .to_bytes()
+            .to_vec();
         Ok(crate::task_verb::sdk::GuestDocumentEnvelope {
             context,
             envelope,

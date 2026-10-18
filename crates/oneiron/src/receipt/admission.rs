@@ -34,17 +34,29 @@ pub enum AdmissionStatus {
     /// Waiting for the existing fair line's permit, not for a health verdict.
     Queued,
     /// Running, or held by the verb's own typed ask. A health check never holds it.
-    Held { reason: Option<String> },
-    Completed { result_digest: String },
-    Refused { code: String, reason: String },
+    Held {
+        reason: Option<String>,
+    },
+    Completed {
+        result_digest: String,
+    },
+    Refused {
+        code: String,
+        reason: String,
+    },
     /// The host stopped without observing settlement. Effects may have landed;
     /// this is not permission to replay the intent.
-    Interrupted { reason: String },
+    Interrupted {
+        reason: String,
+    },
 }
 
 impl AdmissionStatus {
     fn terminal(&self) -> bool {
-        matches!(self, Self::Completed { .. } | Self::Refused { .. } | Self::Interrupted { .. })
+        matches!(
+            self,
+            Self::Completed { .. } | Self::Refused { .. } | Self::Interrupted { .. }
+        )
     }
 }
 
@@ -109,12 +121,18 @@ impl AdmissionTracker {
             verify_actor_binding_in_txn(&vault, txn, actor, class)?;
             if let Some(mut stored) = ADMISSIONS.get(&vault.store, txn, &key)? {
                 if stored.fingerprint != fingerprint {
-                    return Err(MemoryError::new(crate::memory::MEMORY_CODE_INVALID_STATE,
-                        "admission intent names a different call", &[]));
+                    return Err(MemoryError::new(
+                        crate::memory::MEMORY_CODE_INVALID_STATE,
+                        "admission intent names a different call",
+                        &[],
+                    ));
                 }
                 if stored.active || stored.receipt.state.terminal() {
-                    return Err(MemoryError::new(crate::memory::MEMORY_CODE_INVALID_STATE,
-                        "admission intent is already running or settled; read its status", &[]));
+                    return Err(MemoryError::new(
+                        crate::memory::MEMORY_CODE_INVALID_STATE,
+                        "admission intent is already running or settled; read its status",
+                        &[],
+                    ));
                 }
                 stored.active = true;
                 stored.receipt.state = AdmissionStatus::Held { reason: None };
@@ -132,9 +150,16 @@ impl AdmissionTracker {
                 updated_at: at,
                 state: AdmissionStatus::Held { reason: None },
             };
-            ADMISSIONS.put(vault.as_ref(), txn, &key, &StoredAdmission {
-                receipt, fingerprint, active: true,
-            })?;
+            ADMISSIONS.put(
+                vault.as_ref(),
+                txn,
+                &key,
+                &StoredAdmission {
+                    receipt,
+                    fingerprint,
+                    active: true,
+                },
+            )?;
             Ok(())
         })?;
         Ok(Self { vault, key })
@@ -166,7 +191,8 @@ impl AdmissionTracker {
                 reason: Some(reason.to_owned()),
             },
             Err((code, reason)) => AdmissionStatus::Refused {
-                code: code.to_owned(), reason: reason.to_owned(),
+                code: code.to_owned(),
+                reason: reason.to_owned(),
             },
         };
         self.update(state, false).map_err(MemoryError::from)
@@ -217,20 +243,34 @@ impl Vault {
 impl Memory<'_> {
     /// Reads only this caller's intent, using the same actor-binding check
     /// as call receipts. An unknown or other actor's key returns None.
-    pub fn admission_status(&self, request: &AdmissionStatusRequest) -> MemoryResult<Option<AdmissionReceipt>> {
+    pub fn admission_status(
+        &self,
+        request: &AdmissionStatusRequest,
+    ) -> MemoryResult<Option<AdmissionReceipt>> {
         let invocation = intent(&request.intent_key)?;
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
-        Ok(ADMISSIONS.get(&vault.store, &txn, &key(self.actor(), self.actor_class(), invocation))?
+        Ok(ADMISSIONS
+            .get(
+                &vault.store,
+                &txn,
+                &key(self.actor(), self.actor_class(), invocation),
+            )?
             .map(|stored| stored.receipt))
     }
 
     /// Reconciles an exact authored set in one read snapshot. Each accepted
     /// intent appears once; absent keys are not invented as successes.
-    pub fn admission_receipts(&self, request: &AdmissionReceiptsRequest) -> MemoryResult<Vec<AdmissionReceipt>> {
+    pub fn admission_receipts(
+        &self,
+        request: &AdmissionReceiptsRequest,
+    ) -> MemoryResult<Vec<AdmissionReceipt>> {
         crate::memory::caps::check_limit(request.intent_keys.len())?;
-        let invocations = request.intent_keys.iter().map(|text| intent(text))
+        let invocations = request
+            .intent_keys
+            .iter()
+            .map(|text| intent(text))
             .collect::<MemoryResult<Vec<_>>>()?;
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -239,7 +279,11 @@ impl Memory<'_> {
         let mut receipts = Vec::new();
         for invocation in invocations {
             if seen.insert(invocation)
-                && let Some(stored) = ADMISSIONS.get(&vault.store, &txn, &key(self.actor(), self.actor_class(), invocation))?
+                && let Some(stored) = ADMISSIONS.get(
+                    &vault.store,
+                    &txn,
+                    &key(self.actor(), self.actor_class(), invocation),
+                )?
             {
                 receipts.push(stored.receipt);
             }

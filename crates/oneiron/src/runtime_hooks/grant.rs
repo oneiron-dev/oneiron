@@ -156,8 +156,7 @@ fn effective_grant_in_txn(
     binding_id: EntityId,
     binding: &PackHookBinding,
 ) -> VaultResult<HookGrant> {
-    Ok(grant_in_txn(vault, txn, binding_id)?
-        .unwrap_or_else(|| HookGrant::author_ceiling(binding)))
+    Ok(grant_in_txn(vault, txn, binding_id)?.unwrap_or_else(|| HookGrant::author_ceiling(binding)))
 }
 
 /// The grant a run reads under: the owner's, else the author's ceiling.

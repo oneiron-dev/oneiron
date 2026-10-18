@@ -1,7 +1,7 @@
 //! Actor-bound web acquisition and import. Network work never holds a writer.
 use crate::ingest::{
-    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, admit_imported_evidence_in_content,
-    docs_semantic_segments,
+    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
+    admit_imported_evidence_in_content, docs_semantic_segments,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::birth::RowBirth;
@@ -57,7 +57,10 @@ impl Memory<'_> {
                     end: page.fetched_at(),
                 };
                 for id in [asset, claim] {
-                    if self.vault.local_hard_delete_marker_exists_in_txn(content.read(), &id)? {
+                    if self
+                        .vault
+                        .local_hard_delete_marker_exists_in_txn(content.read(), &id)?
+                    {
                         return Err(MemoryError::new(
                             crate::memory::MEMORY_CODE_FORBIDDEN,
                             "an erased web source revision cannot be recreated",
@@ -74,33 +77,58 @@ impl Memory<'_> {
                     .map_err(|_| MemoryError::bad_request("web source encoding"))?;
                 match self.vault.get_entity_type_in_txn(content.read(), &asset)? {
                     None => content.apply_batch(
-                        self.vault.batch_in()
-                            .put(&asset, ENTITY_TYPE_ASSET, occurred, page.fetched_at(), &data)
-                            .made_by(&asset, RowBirth::written(
-                                writer, MadeByClass::of_writer(self.actor_class),
-                                "web-fetch", &[], &[page.markdown().as_bytes()], page.fetched_at(),
-                            )),
+                        self.vault
+                            .batch_in()
+                            .put(
+                                &asset,
+                                ENTITY_TYPE_ASSET,
+                                occurred,
+                                page.fetched_at(),
+                                &data,
+                            )
+                            .made_by(
+                                &asset,
+                                RowBirth::written(
+                                    writer,
+                                    MadeByClass::of_writer(self.actor_class),
+                                    "web-fetch",
+                                    &[],
+                                    &[page.markdown().as_bytes()],
+                                    page.fetched_at(),
+                                ),
+                            ),
                     )?,
                     Some(ENTITY_TYPE_ASSET) => {
-                        let raw = self.vault.get_raw_in(content.read(), &asset)?
+                        let raw = self
+                            .vault
+                            .get_raw_in(content.read(), &asset)?
                             .ok_or_else(|| MemoryError::not_found("web source missing"))?;
-                        let stored: serde_json::Value = rmp_serde::from_slice(
-                            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                        ).map_err(|_| MemoryError::bad_request("invalid stored web source"))?;
+                        let stored: serde_json::Value =
+                            rmp_serde::from_slice(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+                                .map_err(|_| {
+                                    MemoryError::bad_request("invalid stored web source")
+                                })?;
                         if stored["source"] != source["source"]
                             || stored["source_id"] != source["source_id"]
                             || stored["page"]["canonical_url"] != page.canonical_url()
                             || stored["page"]["content_hash"] != page.content_hash()
                             || stored["page"]["markdown"] != page.markdown()
                         {
-                            return Err(MemoryError::bad_request("web source revision does not match"));
+                            return Err(MemoryError::bad_request(
+                                "web source revision does not match",
+                            ));
                         }
                     }
-                    Some(_) => return Err(MemoryError::bad_request("web source id has another kind")),
+                    Some(_) => {
+                        return Err(MemoryError::bad_request("web source id has another kind"));
+                    }
                 }
                 for segment in docs_semantic_segments(page.markdown()) {
                     let chunk = web_id(writer, page, &format!("chunk:{}", segment.block))?;
-                    if self.vault.local_hard_delete_marker_exists_in_txn(content.read(), &chunk)? {
+                    if self
+                        .vault
+                        .local_hard_delete_marker_exists_in_txn(content.read(), &chunk)?
+                    {
                         return Err(MemoryError::new(
                             crate::memory::MEMORY_CODE_FORBIDDEN,
                             "an erased web text revision cannot be recreated",
@@ -113,27 +141,48 @@ impl Memory<'_> {
                         "asset_ref": asset.to_hex(),
                         "content_hash": page.content_hash(),
                         "section": segment.section,
-                    })).map_err(|_| MemoryError::bad_request("web text encoding"))?;
+                    }))
+                    .map_err(|_| MemoryError::bad_request("web text encoding"))?;
                     match self.vault.get_entity_type_in_txn(content.read(), &chunk)? {
                         Some(ENTITY_TYPE_ASSET_TEXT) => {
-                            let raw = self.vault.get_raw_in(content.read(), &chunk)?
+                            let raw = self
+                                .vault
+                                .get_raw_in(content.read(), &chunk)?
                                 .ok_or_else(|| MemoryError::not_found("web text missing"))?;
                             if raw[crate::batch::ENTITY_METADATA_HEADER_LEN..] != data {
-                                return Err(MemoryError::bad_request("web text revision does not match"));
+                                return Err(MemoryError::bad_request(
+                                    "web text revision does not match",
+                                ));
                             }
                             continue;
                         }
-                        Some(_) => return Err(MemoryError::bad_request("web chunk id has another kind")),
+                        Some(_) => {
+                            return Err(MemoryError::bad_request("web chunk id has another kind"));
+                        }
                         None => {}
                     }
                     content.apply_batch(
-                        self.vault.batch_in()
-                            .asset_text_birth(&chunk, occurred, page.fetched_at(), &data, &[(asset, 1.0)])
+                        self.vault
+                            .batch_in()
+                            .asset_text_birth(
+                                &chunk,
+                                occurred,
+                                page.fetched_at(),
+                                &data,
+                                &[(asset, 1.0)],
+                            )
                             .text(&chunk, &[("text", segment.text.as_str())])
-                            .made_by(&chunk, RowBirth::written(
-                                writer, MadeByClass::of_writer(self.actor_class), "web-fetch.chunk",
-                                &[asset], &[segment.text.as_bytes()], page.fetched_at(),
-                            )),
+                            .made_by(
+                                &chunk,
+                                RowBirth::written(
+                                    writer,
+                                    MadeByClass::of_writer(self.actor_class),
+                                    "web-fetch.chunk",
+                                    &[asset],
+                                    &[segment.text.as_bytes()],
+                                    page.fetched_at(),
+                                ),
+                            ),
                     )?;
                 }
                 let value = rmpv::Value::Map(vec![
@@ -144,28 +193,45 @@ impl Memory<'_> {
                 match self.vault.get_entity_type_in_txn(content.read(), &claim)? {
                     Some(ENTITY_TYPE_CLAIM) => {
                         // A prior approval or decline is not reset by a refetch.
-                        let body = self.vault.get_claim_in_txn(content.read(), &claim)?
+                        let body = self
+                            .vault
+                            .get_claim_in_txn(content.read(), &claim)?
                             .ok_or_else(|| MemoryError::not_found("web claim missing"))?;
                         if body.predicate != "web.page"
                             || body.subject != crate::claim::ClaimSubject::Entity(asset)
                             || body.source != Some(crate::claim::ClaimSource::Imported)
                             || body.value != value
                         {
-                            return Err(MemoryError::bad_request("web claim revision does not match"));
+                            return Err(MemoryError::bad_request(
+                                "web claim revision does not match",
+                            ));
                         }
                         crate::memory::guard_existing_claim_in_txn(
-                            self.vault, content.read(), writer, claim,
+                            self.vault,
+                            content.read(),
+                            writer,
+                            claim,
                         )?;
                     }
-                    Some(_) => return Err(MemoryError::bad_request("web claim id has another kind")),
+                    Some(_) => {
+                        return Err(MemoryError::bad_request("web claim id has another kind"));
+                    }
                     None => {
                         let admission = ImportedEvidenceAdmission::proposed(
-                            "web-fetch", claim, ImportedEvidenceEntityResolution::subject(asset),
-                            writer, occurred, page.fetched_at(),
+                            "web-fetch",
+                            claim,
+                            ImportedEvidenceEntityResolution::subject(asset),
+                            writer,
+                            occurred,
+                            page.fetched_at(),
                         );
                         admit_imported_evidence_in_content(
-                            self.vault, content, "web.page", value,
-                            &format!("{}@{}", page.canonical_url(), page.content_hash()), &admission,
+                            self.vault,
+                            content,
+                            "web.page",
+                            value,
+                            &format!("{}@{}", page.canonical_url(), page.content_hash()),
+                            &admission,
                         )?;
                     }
                 }

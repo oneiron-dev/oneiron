@@ -42,7 +42,13 @@ pub fn execute_foreign_code(
     let backend = select_backend_for_tier(SandboxGuestTier::Foreign)?
         .ok_or_else(|| invalid("foreign execution requires isolation"))?;
     execute_foreign_code_on(
-        source, SandboxGuestTier::Foreign, mounts, artifact.component, backend, Arc::new(NoEgress), budget,
+        source,
+        SandboxGuestTier::Foreign,
+        mounts,
+        artifact.component,
+        backend,
+        Arc::new(NoEgress),
+        budget,
         &StepCancellation::never(),
     )
 }
@@ -50,7 +56,10 @@ pub fn execute_foreign_code(
 /// The finite foreign runtime and the public admission share one launch,
 /// cancellation, manifest and proposal path. Only their host-owned workspace
 /// and egress authority differ.
-#[expect(clippy::too_many_arguments, reason = "the host supplies each isolated execution axis")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the host supplies each isolated execution axis"
+)]
 pub(crate) fn execute_foreign_code_on(
     source: &str,
     tier: SandboxGuestTier,
@@ -80,8 +89,11 @@ pub(crate) fn execute_foreign_code_on(
     )?;
     let result = adapter.run_cancellable(&image, budget, cancel);
     let manifest = adapter.session_manifest();
-    let recorded = manifest.as_ref().map(|manifest| relay.record_session(manifest))
-        .transpose().map_err(Error::from);
+    let recorded = manifest
+        .as_ref()
+        .map(|manifest| relay.record_session(manifest))
+        .transpose()
+        .map_err(Error::from);
     cancel.check()?;
     recorded?;
     let exit = result?;
@@ -91,7 +103,8 @@ pub(crate) fn execute_foreign_code_on(
     let proposals = adapter.collect_overlay_proposals()?;
     cancel.check()?;
     Ok(ForeignCodeOutcome {
-        result_json: exit.result_json
+        result_json: exit
+            .result_json
             .ok_or_else(|| invalid("foreign execution returned no step result"))?,
         proposals,
         manifest,
@@ -100,7 +113,11 @@ pub(crate) fn execute_foreign_code_on(
 
 struct NoCredentials;
 impl CredentialResolver for NoCredentials {
-    fn resolve_for(&self, _: &SandboxCredentialHandle, _: &CredentialDestination) -> Result<Vec<u8>> {
+    fn resolve_for(
+        &self,
+        _: &SandboxCredentialHandle,
+        _: &CredentialDestination,
+    ) -> Result<Vec<u8>> {
         Err(invalid("foreign code has no credential service"))
     }
 }
@@ -109,17 +126,35 @@ impl CredentialResolver for NoCredentials {
 /// existing backend relay, before any socket or delivery is opened.
 struct NoEgress;
 fn network_refused() -> io::Error {
-    io::Error::new(io::ErrorKind::PermissionDenied, "foreign code has no network grant")
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "foreign code has no network grant",
+    )
 }
 impl oneiron_container::EgressRelay for NoEgress {
-    fn connect(&self, _: SocketAddr) -> io::Result<TcpStream> { Err(network_refused()) }
-    fn authorize_datagram(&self, _: SocketAddr) -> io::Result<()> { Err(network_refused()) }
-    fn datagram(&self, _: SocketAddr, _: &[u8]) -> io::Result<Vec<u8>> { Err(network_refused()) }
-    fn fetch(&self, _: oneiron_container::HttpRequest) -> io::Result<oneiron_container::HttpResponse> {
+    fn connect(&self, _: SocketAddr) -> io::Result<TcpStream> {
         Err(network_refused())
     }
-    fn record_session(&self, _: &oneiron_container::SessionManifest) -> io::Result<()> { Ok(()) }
-    fn record_abandoned(&self, _: &oneiron_container::SessionManifest) -> io::Result<()> { Ok(()) }
+    fn authorize_datagram(&self, _: SocketAddr) -> io::Result<()> {
+        Err(network_refused())
+    }
+    fn datagram(&self, _: SocketAddr, _: &[u8]) -> io::Result<Vec<u8>> {
+        Err(network_refused())
+    }
+    fn fetch(
+        &self,
+        _: oneiron_container::HttpRequest,
+    ) -> io::Result<oneiron_container::HttpResponse> {
+        Err(network_refused())
+    }
+    fn record_session(&self, _: &oneiron_container::SessionManifest) -> io::Result<()> {
+        Ok(())
+    }
+    fn record_abandoned(&self, _: &oneiron_container::SessionManifest) -> io::Result<()> {
+        Ok(())
+    }
     fn transferred(&self, _: SocketAddr, _: [u8; 32], _: u64) {}
 }
-fn invalid(message: &str) -> Error { Error::InvalidConfig(message.to_owned()) }
+fn invalid(message: &str) -> Error {
+    Error::InvalidConfig(message.to_owned())
+}

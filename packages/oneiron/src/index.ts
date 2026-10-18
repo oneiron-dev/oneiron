@@ -2299,6 +2299,16 @@ export class Oneiron {
     /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
     describe: (input: Facade.RevealDescribeRequest): Facade.RevealHandleCard => this.#call(() => this.#client.revealDescribe(input) as Facade.RevealHandleCard),
   })
+  readonly host = {
+    /** Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint. */
+    compact: (input: Facade.HostCompactRequest): Facade.HostCompactResult => this.#call(() => this.#client.hostCompact(input) as Facade.HostCompactResult),
+    /** Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes. */
+    wake: (input: Facade.HostWakeRequest): Facade.HostWakeResult => this.#call(() => this.#client.hostWake(input) as Facade.HostWakeResult),
+    budget: {
+      /** Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work. */
+      hit: (input: Facade.HostBudgetHitRequest): Facade.HostBudgetHitResult => this.#call(() => this.#client.hostBudgetHit(input) as Facade.HostBudgetHitResult),
+    },
+  }
   /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
   execute_code(input: Facade.ForeignCodeRunRequest): Facade.ForeignCodeRunResult { return this.#call(() => this.#client.executeCode(input) as Facade.ForeignCodeRunResult) }
   /** Read-only ask routing or attributed partial answers. */

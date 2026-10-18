@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 838 facade rows, 2861 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 794.
+// UniFFI census: 841 facade rows, 2871 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 797.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -24370,6 +24370,135 @@ pub struct ScopedReadResultOptionalSharedBriefView {
     pub value: Option<SharedBriefView>,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::compaction::driver::CompactionWindowMessage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CompactionWindowMessage {
+    #[serde(rename = "message_id")]
+    pub message_id: String,
+    #[serde(rename = "turn_id")]
+    pub turn_id: String,
+    #[serde(rename = "content")]
+    pub content: String,
+    #[serde(rename = "turn")]
+    pub turn: u64,
+    #[serde(rename = "tokens")]
+    pub tokens: u64,
+}
+
+/// `oneiron::runtime_hooks::host_doors::HostCompactRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HostCompactRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "window")]
+    pub window: Vec<CompactionWindowMessage>,
+    #[serde(rename = "keep_list")]
+    pub keep_list: Vec<String>,
+    #[serde(rename = "token_ceiling")]
+    pub token_ceiling: u64,
+}
+
+/// `oneiron::runtime_hooks::host_doors::HostCompactResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HostCompactResult {
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "summary")]
+    pub summary: String,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "keep_list")]
+    pub keep_list: Vec<String>,
+    #[serde(rename = "first_turn")]
+    pub first_turn: u64,
+    #[serde(rename = "last_turn")]
+    pub last_turn: u64,
+}
+
+/// `oneiron::runtime_hooks::host_doors::HostWakeKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HostWakeKind {
+    #[serde(rename = "compaction")]
+    Compaction,
+    #[serde(rename = "session_end")]
+    SessionEnd,
+    #[serde(rename = "event")]
+    Event,
+    #[serde(rename = "timer")]
+    Timer,
+}
+
+/// `oneiron::runtime_hooks::host_doors::HostWakeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HostWakeRequest {
+    #[serde(rename = "wake_kind")]
+    pub wake_kind: HostWakeKind,
+    #[serde(rename = "queue_head")]
+    pub queue_head: Vec<String>,
+}
+
+/// `oneiron::runtime_hooks::host_doors::HostWakeResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HostWakeResult {
+    #[serde(rename = "wake_kind")]
+    pub wake_kind: HostWakeKind,
+    #[serde(rename = "queue_head")]
+    pub queue_head: Vec<String>,
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "already_queued")]
+    pub already_queued: bool,
+}
+
+/// `oneiron_model::llm::budget::types::BudgetExhaustionPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum BudgetExhaustionPolicy {
+    #[serde(rename = "suspend")]
+    Suspend,
+    #[serde(rename = "continue_on_local")]
+    ContinueOnLocal,
+    #[serde(rename = "overdraft")]
+    Overdraft {
+        #[serde(rename = "cap")]
+        cap: u64,
+    },
+}
+
+/// `oneiron::runtime_hooks::host_doors::HostBudgetHitRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HostBudgetHitRequest {
+    #[serde(rename = "seat")]
+    pub seat: String,
+    #[serde(rename = "policy")]
+    pub policy: BudgetExhaustionPolicy,
+}
+
+/// `oneiron::runtime_hooks::host_doors::HostBudgetAccounting`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HostBudgetAccounting {
+    #[serde(rename = "line")]
+    pub line: SpendScope,
+    #[serde(rename = "root")]
+    pub root: SpendScope,
+    #[serde(rename = "spend")]
+    pub spend: SpendRead,
+}
+
+/// `oneiron::runtime_hooks::host_doors::HostBudgetHitResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HostBudgetHitResult {
+    #[serde(rename = "seat")]
+    pub seat: String,
+    #[serde(rename = "policy")]
+    pub policy: BudgetExhaustionPolicy,
+    #[serde(rename = "accounting")]
+    pub accounting: HostBudgetAccounting,
 }
 
 /// `oneiron::task_verb::sdk_host::HooksReplayRequest`.
