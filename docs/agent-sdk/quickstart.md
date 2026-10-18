@@ -263,9 +263,12 @@ you want to act as instead.
 | `handle.vault.receipts(limit?, kinds?)` | `FacadeReceipt[]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
 
 `lensFrameEvent` and `closeLensFrame` are the two lens-card routes outside the
-facade (OF-181), not verbs. A card's frame lives only on the server that
-rendered it (`vault.lenses.default`), so they need a connected handle: an
-embedded one throws `BAD_REQUEST`. Their keys keep the wire's camelCase.
+facade (OF-181), not verbs. A card's frame lives only on the served host
+that rendered it (`vault.lenses.default`), so render the lens through a
+connected handle and send its events and close on that same handle. An
+embedded handle keeps no frame and throws `BAD_REQUEST`; a card it rendered
+is rendered again through the connected handle. Their keys keep the wire's
+camelCase.
 
 Every other verb in the SDK verb table sits at its SDK path on the handle
 (`handle.vault.people.list(input)`, `handle.self.memory.diary(input)`, ...).

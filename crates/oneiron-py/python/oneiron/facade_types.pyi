@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 576 facade rows, 2197 declarations.
+Census: 576 facade rows, 2198 declarations.
 Inputs: 526 of 576 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 509 of 576 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
@@ -6535,6 +6535,9 @@ class AgentScopeInputWorld(TypedDict):
     world: EntityId
 AgentScopeInput = AgentScopeInputAll | AgentScopeInputBase | AgentScopeInputWorld
 AgentCeilingInput = Literal["auto", "proposed"]
+class AgentModel(TypedDict):
+    model_ref: ModelId
+    when: str
 class AgentDefinitionSpec(TypedDict):
     agent_id: str
     desc: str
@@ -6549,6 +6552,8 @@ class AgentDefinitionSpec(TypedDict):
     forked_from: NotRequired[EntityId | None]
     enabled: NotRequired[bool]
     display_name: NotRequired[str | None]
+    models: NotRequired[list[AgentModel]]
+    compaction_model: NotRequired[ModelId | None]
 class AgentDefinitionCreateRequest(TypedDict):
     agent_def_ref: EntityId
     definition: AgentDefinitionSpec

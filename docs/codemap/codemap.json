@@ -521,9 +521,23 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 1,
-      "re-export": 5
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentModel"
+     ],
+     "path": "src/agent_def/models.rs",
+     "purpose": "The owner's per-agent model list (FIX 4472): the models an agent may run on, each with the owner's own words…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -636,10 +650,10 @@
      "path": "src/agent_def/types.rs",
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
-      "const": 13,
-      "crate-vis": 55,
+      "const": 14,
+      "crate-vis": 59,
       "enum": 5,
-      "fn": 24,
+      "fn": 26,
       "struct": 4
      }
     },
@@ -30083,7 +30097,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 14,
+      "fn": 16,
       "re-export": 2,
       "struct": 5
      }
@@ -31483,7 +31497,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 9,
+      "fn": 11,
       "struct": 4
      }
     },
@@ -55972,7 +55986,7 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -57486,7 +57500,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3502,
+   "source_files": 3503,
    "test_files": 902
   },
   "oneiron-android": {
@@ -78476,6 +78490,7 @@
       "AgentHealthSignal",
       "AgentHealthTone",
       "AgentMcpInput",
+      "AgentModel",
       "AgentPackExport",
       "AgentPackExportFile",
       "AgentPackExportRequest",
@@ -80579,7 +80594,7 @@
      "purpose": "—",
      "surface": {
       "enum": 560,
-      "struct": 1572
+      "struct": 1573
      }
     },
     {
