@@ -430,6 +430,14 @@ impl SyncClient {
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
+        // A home that may not read the window's world is not told its name,
+        // the selector or the item (FIX 922 item 11): the touch fails as
+        // with no home.
+        if !home_reads_window(&self.vault, rpc.home, window) {
+            return Err(TransportError::Storage(
+                "home may not read this world".into(),
+            ));
+        }
         let reply: TouchReply = serde_json::from_value(
             rpc.request(
                 "residence.touch",
