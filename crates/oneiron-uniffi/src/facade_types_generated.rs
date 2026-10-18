@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 377 facade rows, 1393 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 345.
+// UniFFI census: 384 facade rows, 1416 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 352.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -22287,6 +22287,302 @@ pub struct NoteDefaultsView {
     pub overrides: NoteOverrides,
     #[serde(rename = "defaults")]
     pub defaults: NoteKindDescriptor,
+}
+
+/// `oneiron::code_run::fold_api::RunAttachRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RunAttachRequest {
+    #[serde(rename = "run")]
+    pub run: String,
+    #[serde(rename = "rebind", default, skip_serializing_if = "Option::is_none")]
+    pub rebind: Option<bool>,
+}
+
+/// `oneiron::code_run::fold_api::RunAttached`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunAttached {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+}
+
+/// `oneiron::code_run::fold_api::FoldUnfoldRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FoldUnfoldRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "fold")]
+    pub fold: String,
+}
+
+/// `oneiron::compaction::folds::FoldDescription`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum FoldDescription {
+    Folded {
+        #[serde(rename = "fold")]
+        fold: String,
+        #[serde(rename = "from")]
+        from: u64,
+        #[serde(rename = "through")]
+        through: u64,
+        #[serde(rename = "stub")]
+        stub: String,
+        #[serde(rename = "source")]
+        source: String,
+        #[serde(rename = "ids")]
+        ids: Vec<String>,
+        #[serde(rename = "handles")]
+        handles: Vec<String>,
+    },
+    Pending {
+        #[serde(rename = "fold")]
+        fold: String,
+        #[serde(rename = "from")]
+        from: u64,
+        #[serde(rename = "through")]
+        through: u64,
+        #[serde(rename = "pending")]
+        pending: bool,
+        #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+        #[serde(rename = "failed", default, skip_serializing_if = "Option::is_none")]
+        failed: Option<String>,
+    },
+}
+
+/// `oneiron::compaction::folds::FoldReply` with `T` = `FoldDescription`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum FoldReplyFoldDescription {
+    Answer(FoldDescription),
+    Refused {
+        #[serde(rename = "error")]
+        error: String,
+    },
+}
+
+/// `oneiron::code_run::fold_api::FoldHistoryRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FoldHistoryRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+}
+
+/// `oneiron::compaction::folds::FoldSpan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldSpan {
+    #[serde(rename = "fold")]
+    pub fold: String,
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "through")]
+    pub through: u64,
+}
+
+/// `oneiron::compaction::folds::FoldPending`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldPending {
+    #[serde(rename = "fold")]
+    pub fold: String,
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "through")]
+    pub through: u64,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(rename = "failed", default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
+}
+
+/// `oneiron::compaction::folds::FoldList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldList {
+    #[serde(rename = "folds")]
+    pub folds: Vec<FoldSpan>,
+    #[serde(rename = "pending")]
+    pub pending: Vec<FoldPending>,
+    #[serde(rename = "compact_asked")]
+    pub compact_asked: bool,
+}
+
+/// `oneiron::compaction::folds::FoldUnfold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldUnfold {
+    #[serde(rename = "fold")]
+    pub fold: u64,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::engine_executor::history::FoldHistoryEpoch`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldHistoryEpoch {
+    #[serde(rename = "summary_ref")]
+    pub summary_ref: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "through")]
+    pub through: u64,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// `oneiron::engine_executor::history::FoldHistoryStep`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldHistoryStep {
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "console")]
+    pub console: String,
+}
+
+/// `oneiron::engine_executor::history::FoldHistory`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldHistory {
+    #[serde(rename = "run")]
+    pub run: String,
+    #[serde(rename = "completed_steps")]
+    pub completed_steps: u64,
+    #[serde(
+        rename = "compacted_through",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub compacted_through: Option<u64>,
+    #[serde(rename = "state")]
+    pub state: FoldList,
+    #[serde(rename = "folds")]
+    pub folds: Vec<FoldDescription>,
+    #[serde(rename = "unfolds")]
+    pub unfolds: Vec<FoldUnfold>,
+    #[serde(rename = "epochs")]
+    pub epochs: Vec<FoldHistoryEpoch>,
+    #[serde(rename = "steps")]
+    pub steps: Vec<FoldHistoryStep>,
+    #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<u64>,
+}
+
+/// `oneiron::code_run::fold_api::FoldMarkRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FoldMarkRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "through")]
+    pub through: u64,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// `oneiron::compaction::folds::FoldMarked`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldMarked {
+    #[serde(rename = "fold")]
+    pub fold: String,
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "through")]
+    pub through: u64,
+    #[serde(rename = "pending")]
+    pub pending: bool,
+}
+
+/// `oneiron::compaction::folds::FoldReply` with `T` = `FoldMarked`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum FoldReplyFoldMarked {
+    Answer(FoldMarked),
+    Refused {
+        #[serde(rename = "error")]
+        error: String,
+    },
+}
+
+/// `oneiron::code_run::fold_api::FoldCompactRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FoldCompactRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// `oneiron::compaction::folds::FoldCompactAsked`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldCompactAsked {
+    #[serde(rename = "pending")]
+    pub pending: Vec<String>,
+    #[serde(rename = "applies")]
+    pub applies: String,
+}
+
+/// `oneiron::compaction::folds::FoldReply` with `T` = `FoldCompactAsked`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum FoldReplyFoldCompactAsked {
+    Answer(FoldCompactAsked),
+    Refused {
+        #[serde(rename = "error")]
+        error: String,
+    },
+}
+
+/// `oneiron::compaction::folds::FoldUnfolded`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldUnfolded {
+    #[serde(rename = "fold")]
+    pub fold: String,
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "through")]
+    pub through: u64,
+    #[serde(rename = "unfolded_after_step")]
+    pub unfolded_after_step: u64,
+}
+
+/// `oneiron::compaction::folds::FoldReply` with `T` = `FoldUnfolded`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum FoldReplyFoldUnfolded {
+    Answer(FoldUnfolded),
+    Refused {
+        #[serde(rename = "error")]
+        error: String,
+    },
+}
+
+/// `oneiron::code_run::fold_api::FoldRunRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FoldRunRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+}
+
+/// `oneiron::compaction::folds::FoldReply` with `T` = `FoldList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum FoldReplyFoldList {
+    Answer(FoldList),
+    Refused {
+        #[serde(rename = "error")]
+        error: String,
+    },
 }
 
 /// `oneiron::code_run::run_verbs::SpawnCare`.

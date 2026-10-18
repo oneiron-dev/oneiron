@@ -2110,6 +2110,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
             ),
             (
+                "self.run.attach",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::RunAttachRequest,
+                >(),
+            ),
+            (
+                "self.folds.describe",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldUnfoldRequest,
+                >(),
+            ),
+            (
+                "self.history",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldHistoryRequest,
+                >(),
+            ),
+            (
+                "self.fold",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldMarkRequest,
+                >(),
+            ),
+            (
+                "self.compact",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldCompactRequest,
+                >(),
+            ),
+            (
+                "self.unfold",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldUnfoldRequest,
+                >(),
+            ),
+            (
+                "self.folds",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldRunRequest,
+                >(),
+            ),
+            (
                 "self.agents.spawn",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
@@ -2143,23 +2185,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.edges.put",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
-            ),
-            (
-                "self.fold",
-                crate::code_run::vault_read::request_schema::<crate::compaction::FoldMarkInput>(),
-            ),
-            (
-                "self.compact",
-                crate::code_run::vault_read::request_schema::<crate::compaction::FoldCompactInput>(
-                ),
-            ),
-            (
-                "self.unfold",
-                crate::code_run::vault_read::request_schema::<crate::compaction::FoldUnfoldInput>(),
-            ),
-            (
-                "self.folds",
-                crate::code_run::vault_read::request_schema::<crate::compaction::FoldsInput>(),
             ),
             (
                 "tasks.refuse",
@@ -4884,6 +4909,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.run.attach" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.folds.describe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.fold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.compact" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.unfold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.folds" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.agents.spawn" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6243,6 +6317,27 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.defaults" => {
             let _input: crate::note::NoteRefRequest = decode(value.clone())?;
         }
+        "self.run.attach" => {
+            let _input: crate::code_run::fold_api::RunAttachRequest = decode(value.clone())?;
+        }
+        "self.folds.describe" => {
+            let _input: crate::code_run::fold_api::FoldUnfoldRequest = decode(value.clone())?;
+        }
+        "self.history" => {
+            let _input: crate::code_run::fold_api::FoldHistoryRequest = decode(value.clone())?;
+        }
+        "self.fold" => {
+            let _input: crate::code_run::fold_api::FoldMarkRequest = decode(value.clone())?;
+        }
+        "self.compact" => {
+            let _input: crate::code_run::fold_api::FoldCompactRequest = decode(value.clone())?;
+        }
+        "self.unfold" => {
+            let _input: crate::code_run::fold_api::FoldUnfoldRequest = decode(value.clone())?;
+        }
+        "self.folds" => {
+            let _input: crate::code_run::fold_api::FoldRunRequest = decode(value.clone())?;
+        }
         "self.agents.spawn" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput> =
                 decode(value.clone())?;
@@ -6879,6 +6974,13 @@ pub fn invoke(
         "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
         "vault.notes.set_overrides" => encode(vault_notes_set_overrides(memory, decode(value)?)?),
         "vault.notes.defaults" => encode(vault_notes_defaults(memory, decode(value)?)?),
+        "self.run.attach" => encode(self_run_attach(memory, decode(value)?)?),
+        "self.folds.describe" => encode(self_folds_describe(memory, decode(value)?)?),
+        "self.history" => encode(self_history(memory, decode(value)?)?),
+        "self.fold" => encode(self_fold(memory, decode(value)?)?),
+        "self.compact" => encode(self_compact(memory, decode(value)?)?),
+        "self.unfold" => encode(self_unfold(memory, decode(value)?)?),
+        "self.folds" => encode(self_folds(memory, decode(value)?)?),
         "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
         "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
@@ -10457,6 +10559,48 @@ pub fn vault_notes_defaults(
         &["/note_ref"],
     )?;
     memory.note_defaults(&input)
+}
+pub fn self_run_attach(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::RunAttachRequest,
+) -> MemoryResult<crate::code_run::fold_api::RunAttached> {
+    crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn self_folds_describe(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldUnfoldRequest,
+) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldDescription>> {
+    crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn self_history(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldHistoryRequest,
+) -> MemoryResult<crate::engine_executor::history::FoldHistory> {
+    crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn self_fold(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldMarkRequest,
+) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldMarked>> {
+    crate::task_verb::sdk::host_only(memory, "self.fold", &input)
+}
+pub fn self_compact(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldCompactRequest,
+) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldCompactAsked>> {
+    crate::task_verb::sdk::host_only(memory, "self.compact", &input)
+}
+pub fn self_unfold(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldUnfoldRequest,
+) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldUnfolded>> {
+    crate::task_verb::sdk::host_only(memory, "self.unfold", &input)
+}
+pub fn self_folds(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldRunRequest,
+) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldList>> {
+    crate::task_verb::sdk::host_only(memory, "self.folds", &input)
 }
 pub fn self_agents_spawn(
     memory: &Memory<'_>,

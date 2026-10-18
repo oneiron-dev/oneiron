@@ -1192,6 +1192,27 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "self.run.attach" => remote_agent_verb_output::<
+                    oneiron::code_run::fold_api::RunAttached,
+                >(client, verb, &input),
+                "self.folds.describe" => remote_agent_verb_output::<
+                    oneiron::compaction::FoldReply<oneiron::compaction::FoldDescription>,
+                >(client, verb, &input),
+                "self.history" => remote_agent_verb_output::<
+                    oneiron::engine_executor::history::FoldHistory,
+                >(client, verb, &input),
+                "self.fold" => remote_agent_verb_output::<
+                    oneiron::compaction::FoldReply<oneiron::compaction::FoldMarked>,
+                >(client, verb, &input),
+                "self.compact" => remote_agent_verb_output::<
+                    oneiron::compaction::FoldReply<oneiron::compaction::FoldCompactAsked>,
+                >(client, verb, &input),
+                "self.unfold" => remote_agent_verb_output::<
+                    oneiron::compaction::FoldReply<oneiron::compaction::FoldUnfolded>,
+                >(client, verb, &input),
+                "self.folds" => remote_agent_verb_output::<
+                    oneiron::compaction::FoldReply<oneiron::compaction::FoldList>,
+                >(client, verb, &input),
                 "self.agents.spawn" => remote_agent_verb_output::<
                     oneiron::code_run::AgentSpawnOutput,
                 >(client, verb, &input),
@@ -5900,6 +5921,93 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.notes.defaults", value)
+    }
+    pub fn self_run_attach(
+        &self,
+        input: &oneiron::code_run::fold_api::RunAttachRequest,
+    ) -> Result<oneiron::code_run::fold_api::RunAttached, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.run.attach", value)
+    }
+    pub fn self_folds_describe(
+        &self,
+        input: &oneiron::code_run::fold_api::FoldUnfoldRequest,
+    ) -> Result<oneiron::compaction::FoldReply<oneiron::compaction::FoldDescription>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.folds.describe", value)
+    }
+    pub fn self_history(
+        &self,
+        input: &oneiron::code_run::fold_api::FoldHistoryRequest,
+    ) -> Result<oneiron::engine_executor::history::FoldHistory, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.history", value)
+    }
+    pub fn self_fold(
+        &self,
+        input: &oneiron::code_run::fold_api::FoldMarkRequest,
+    ) -> Result<oneiron::compaction::FoldReply<oneiron::compaction::FoldMarked>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.fold", value)
+    }
+    pub fn self_compact(
+        &self,
+        input: &oneiron::code_run::fold_api::FoldCompactRequest,
+    ) -> Result<oneiron::compaction::FoldReply<oneiron::compaction::FoldCompactAsked>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.compact", value)
+    }
+    pub fn self_unfold(
+        &self,
+        input: &oneiron::code_run::fold_api::FoldUnfoldRequest,
+    ) -> Result<oneiron::compaction::FoldReply<oneiron::compaction::FoldUnfolded>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.unfold", value)
+    }
+    pub fn self_folds(
+        &self,
+        input: &oneiron::code_run::fold_api::FoldRunRequest,
+    ) -> Result<oneiron::compaction::FoldReply<oneiron::compaction::FoldList>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.folds", value)
     }
     pub fn self_agents_spawn(
         &self,
