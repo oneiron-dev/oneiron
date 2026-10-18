@@ -8950,7 +8950,7 @@ async fn vault_search_hybrid(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
