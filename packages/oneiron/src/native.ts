@@ -406,6 +406,9 @@ vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
+vaultLensesSelect(input: unknown): unknown
+vaultLensesResolve(input: unknown): unknown
+vaultLensesResultSetAction(input: unknown): unknown
 vaultLensesDefault(input: unknown): unknown
 vaultDisclosureOffer(input: unknown): unknown
 reveal(input: unknown): unknown

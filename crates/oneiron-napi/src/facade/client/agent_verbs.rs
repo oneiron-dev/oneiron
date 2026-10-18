@@ -3255,6 +3255,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_lenses_select(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.select", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_lenses_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.resolve", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_lenses_result_set_action(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.result_set.action", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_lenses_default(
         &self,
         input: serde_json::Value,

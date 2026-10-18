@@ -5782,6 +5782,53 @@
       "section": false
     },
     {
+      "name": "vault.lenses.select",
+      "description": "Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card.",
+      "input": "crate::lens::LensSelectRequest",
+      "output": "crate::lens::LensSelection",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.select\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "projection_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.lenses.resolve",
+      "description": "Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span.",
+      "input": "crate::lens::LensSelectionResolveRequest",
+      "output": "crate::lens::LensSelectionResolved",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.resolve\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "projection_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.lenses.result_set.action",
+      "description": "Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate.",
+      "input": "crate::lens::LensResultSetActionRequest",
+      "output": "crate::lens::LensResultSetActionResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.result_set.action\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "projection_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.lenses.default",
       "description": "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server.",
       "input": "crate::lens::LensDefaultRequest",

@@ -189,6 +189,7 @@ pub(crate) use super::hook_regen_doors::*;
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
+pub(crate) use super::lens_selection_doors::*;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
 pub(crate) use crate::api::context_board::{vault_explain_gate, vault_explain_memory};
 

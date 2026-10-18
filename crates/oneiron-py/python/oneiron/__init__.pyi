@@ -1568,8 +1568,17 @@ class Oneiron:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
         def list(self, spec: Facade.LensListRequest) -> Facade.LensListPage:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
+        def select(self, spec: Facade.LensSelectRequest) -> Facade.LensSelection:
+            """Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."""
+        def resolve(self, spec: Facade.LensSelectionResolveRequest) -> Facade.LensSelectionResolved:
+            """Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span."""
+        @property
+        def result_set(self) -> "Oneiron._VaultLensesResultSetVerbs": ...
         def default(self, spec: Facade.LensDefaultRequest) -> Facade.ScopedReadResult[Facade.LensFrameCard]:
             """Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."""
+    class _VaultLensesResultSetVerbs:
+        def action(self, spec: Facade.LensResultSetActionRequest) -> Facade.LensResultSetActionResult:
+            """Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate."""
     class _VaultDisclosureVerbs:
         def offer(self, spec: Facade.DisclosureOfferRequest) -> Facade.DisclosureOffered:
             """An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."""

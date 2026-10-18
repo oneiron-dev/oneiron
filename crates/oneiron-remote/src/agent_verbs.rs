@@ -1201,6 +1201,15 @@ impl OneironClient {
                 "vault.lenses.list" => {
                     remote_agent_verb_output::<oneiron::lens::LensListPage>(client, verb, &input)
                 }
+                "vault.lenses.select" => {
+                    remote_agent_verb_output::<oneiron::lens::LensSelection>(client, verb, &input)
+                }
+                "vault.lenses.resolve" => remote_agent_verb_output::<
+                    oneiron::lens::LensSelectionResolved,
+                >(client, verb, &input),
+                "vault.lenses.result_set.action" => remote_agent_verb_output::<
+                    oneiron::lens::LensResultSetActionResult,
+                >(client, verb, &input),
                 "vault.lenses.default" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<oneiron::lens::LensFrameCard>,
                 >(client, verb, &input),
@@ -7124,6 +7133,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.lenses.list", value)
+    }
+    pub fn vault_lenses_select(
+        &self,
+        input: &oneiron::lens::LensSelectRequest,
+    ) -> Result<oneiron::lens::LensSelection, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.select", value)
+    }
+    pub fn vault_lenses_resolve(
+        &self,
+        input: &oneiron::lens::LensSelectionResolveRequest,
+    ) -> Result<oneiron::lens::LensSelectionResolved, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.resolve", value)
+    }
+    pub fn vault_lenses_result_set_action(
+        &self,
+        input: &oneiron::lens::LensResultSetActionRequest,
+    ) -> Result<oneiron::lens::LensResultSetActionResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.result_set.action", value)
     }
     pub fn vault_lenses_default(
         &self,

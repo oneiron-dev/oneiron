@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 793 facade rows, 2763 declarations.
-Inputs: 741 of 793 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 713 of 793 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 99; unread shapes: 0.
+Census: 796 facade rows, 2774 declarations.
+Inputs: 744 of 796 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 714 of 796 fully typed, 82 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 100; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -7227,6 +7227,70 @@ class LensListRow(TypedDict):
 class LensListPage(TypedDict):
     rows: list[LensListRow]
     next_after: NotRequired[str | None]
+class LensSelectionRange(TypedDict):
+    start: int
+    end: int
+    version: NotRequired[list[int] | None]
+class LensSelectRequest(TypedDict):
+    cardId: str
+    atomId: str
+    handle: str
+    span: NotRequired[LensSelectionRange | None]
+LensReadReach = Literal["claim_set", "entity_set", "timeline", "query_result"]
+class LensSelectedSpan(TypedDict):
+    start: int
+    end: int
+    version: list[int]
+    startCursor: list[int]
+    endCursor: list[int]
+class LensSelection(TypedDict):
+    selectionRef: str
+    cardId: str
+    atomId: str
+    reach: LensReadReach
+    targetKind: LensBackingTargetKind
+    shortRef: str
+    span: NotRequired[LensSelectedSpan | None]
+class LensSelectionResolveRequest(TypedDict):
+    cardId: str
+    selectionRef: str
+class LensSelectionResolved(TypedDict):
+    selection: LensSelection
+    source: InspectionResolved
+class GeneratedUiStatePatchAdd(TypedDict):
+    op: Literal["add"]
+    path: str
+    value: SelfUiStateValue
+class GeneratedUiStatePatchReplace(TypedDict):
+    op: Literal["replace"]
+    path: str
+    value: SelfUiStateValue
+class GeneratedUiStatePatchRemove(TypedDict):
+    op: Literal["remove"]
+    path: str
+GeneratedUiStatePatch = GeneratedUiStatePatchAdd | GeneratedUiStatePatchReplace | GeneratedUiStatePatchRemove
+class GeneratedUiActionEvent(TypedDict):
+    cardId: str
+    elementId: str
+    actionId: str
+    patch: NotRequired[list[GeneratedUiStatePatch]]
+    occurredAt: int
+class GeneratedUiResultSetSelectionExplicit(TypedDict):
+    mode: Literal["explicit"]
+    row_ids: list[str]
+class GeneratedUiResultSetSelectionAllWithinFilter(TypedDict):
+    mode: Literal["all_within_filter"]
+GeneratedUiResultSetSelection = GeneratedUiResultSetSelectionExplicit | GeneratedUiResultSetSelectionAllWithinFilter
+class GeneratedUiResultSetActionEvent(TypedDict):
+    action: GeneratedUiActionEvent
+    selection: GeneratedUiResultSetSelection
+class LensResultSetActionRequest(TypedDict):
+    event: GeneratedUiResultSetActionEvent
+    selected: list[str]
+    idempotencyKey: str
+class LensResultSetActionResult(TypedDict):
+    outcome: Any
+    readReceipt: ScopedReadReceipt
 class LensDossierSource(TypedDict):
     entity_ref: str
     title: str
@@ -14105,24 +14169,6 @@ class LeaderSplitOutput(TypedDict):
 class SkillCallInput(TypedDict):
     skill: str
     args: Any
-class GeneratedUiStatePatchAdd(TypedDict):
-    op: Literal["add"]
-    path: str
-    value: SelfUiStateValue
-class GeneratedUiStatePatchReplace(TypedDict):
-    op: Literal["replace"]
-    path: str
-    value: SelfUiStateValue
-class GeneratedUiStatePatchRemove(TypedDict):
-    op: Literal["remove"]
-    path: str
-GeneratedUiStatePatch = GeneratedUiStatePatchAdd | GeneratedUiStatePatchReplace | GeneratedUiStatePatchRemove
-class GeneratedUiActionEvent(TypedDict):
-    cardId: str
-    elementId: str
-    actionId: str
-    patch: NotRequired[list[GeneratedUiStatePatch]]
-    occurredAt: int
 class MessageResultSource(TypedDict):
     run_id: EntityId
     occurrence: EntityId
