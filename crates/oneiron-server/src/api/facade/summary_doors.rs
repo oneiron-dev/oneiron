@@ -30,7 +30,8 @@ async fn write_as_caller<T: Send + 'static>(
         } else {
             write(memory)
         }
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_summaries_create(
@@ -40,82 +41,144 @@ pub(crate) async fn vault_summaries_create(
     _invocation: Option<InvocationId>,
     input: SummaryCreateRequest,
 ) -> Listed<SummaryQueued> {
-    credential_listing(server, auth, caller, "vault.summaries.create", move |server, _, memory| {
-        server.ai.summary_writer().map_err(|reason| MemoryError::new(
-            oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE, reason, &[],
-        ))?;
-        let queued = memory.create_summary(&input)?;
-        server.ai.attempt_queued();
-        Ok(queued)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.summaries.create",
+        move |server, _, memory| {
+            server.ai.summary_writer().map_err(|reason| {
+                MemoryError::new(oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE, reason, &[])
+            })?;
+            let queued = memory.create_summary(&input)?;
+            server.ai.attempt_queued();
+            Ok(queued)
+        },
+    )
+    .await
 }
 
 pub(crate) async fn vault_summaries_keep(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass), _invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
     input: SummaryKeepRequest,
 ) -> Listed<SummaryKeepResult> {
-    write_as_caller(server, auth, caller, "vault.summaries.keep", move |memory| {
-        memory.set_summary_keep(&input)
-    }).await
+    write_as_caller(
+        server,
+        auth,
+        caller,
+        "vault.summaries.keep",
+        move |memory| memory.set_summary_keep(&input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_summaries_edit(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass), _invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
     input: SummaryEditRequest,
 ) -> Listed<SummaryProposalView> {
-    write_as_caller(server, auth, caller, "vault.summaries.edit", move |memory| {
-        memory.edit_summary(&input)
-    }).await
+    write_as_caller(
+        server,
+        auth,
+        caller,
+        "vault.summaries.edit",
+        move |memory| memory.edit_summary(&input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_summaries_patch(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass), _invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
     input: SummaryPatchRequest,
 ) -> Listed<SummaryMutationResult> {
-    write_as_caller(server, auth, caller, "vault.summaries.patch", move |memory| {
-        memory.patch_summary(&input)
-    }).await
+    write_as_caller(
+        server,
+        auth,
+        caller,
+        "vault.summaries.patch",
+        move |memory| memory.patch_summary(&input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_summaries_regenerate(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass), _invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
     input: SummaryRegenerateRequest,
 ) -> Listed<SummaryMutationResult> {
-    write_as_caller(server, auth, caller, "vault.summaries.regenerate", move |memory| {
-        memory.regenerate_summary(&input)
-    }).await
+    write_as_caller(
+        server,
+        auth,
+        caller,
+        "vault.summaries.regenerate",
+        move |memory| memory.regenerate_summary(&input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_summaries_proposals_merge(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass), _invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
     input: SummaryProposalRequest,
 ) -> Listed<SummaryProposalView> {
-    write_as_caller(server, auth, caller, "vault.summaries.proposals.merge", move |memory| {
-        memory.settle_summary_proposal(&input, oneiron::entity_doc::SettleVerb::Merge)
-    }).await
+    write_as_caller(
+        server,
+        auth,
+        caller,
+        "vault.summaries.proposals.merge",
+        move |memory| {
+            memory.settle_summary_proposal(&input, oneiron::entity_doc::SettleVerb::Merge)
+        },
+    )
+    .await
 }
 
 pub(crate) async fn vault_summaries_proposals_switch(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass), _invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
     input: SummaryProposalRequest,
 ) -> Listed<SummaryProposalView> {
-    write_as_caller(server, auth, caller, "vault.summaries.proposals.switch", move |memory| {
-        memory.settle_summary_proposal(&input, oneiron::entity_doc::SettleVerb::Switch)
-    }).await
+    write_as_caller(
+        server,
+        auth,
+        caller,
+        "vault.summaries.proposals.switch",
+        move |memory| {
+            memory.settle_summary_proposal(&input, oneiron::entity_doc::SettleVerb::Switch)
+        },
+    )
+    .await
 }
 
 pub(crate) async fn vault_summaries_proposals_reject(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass), _invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
     input: SummaryProposalRequest,
 ) -> Listed<SummaryProposalView> {
-    write_as_caller(server, auth, caller, "vault.summaries.proposals.reject", move |memory| {
-        memory.settle_summary_proposal(&input, oneiron::entity_doc::SettleVerb::Reject)
-    }).await
+    write_as_caller(
+        server,
+        auth,
+        caller,
+        "vault.summaries.proposals.reject",
+        move |memory| {
+            memory.settle_summary_proposal(&input, oneiron::entity_doc::SettleVerb::Reject)
+        },
+    )
+    .await
 }
