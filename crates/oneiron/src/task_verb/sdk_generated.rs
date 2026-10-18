@@ -278,6 +278,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.tagging.status",
+                crate::code_run::vault_read::request_schema::<crate::tagging::TaggingTurnRequest>(),
+            ),
+            (
+                "vault.tagging.tags",
+                crate::code_run::vault_read::request_schema::<crate::tagging::TaggingTurnRequest>(),
+            ),
+            (
+                "vault.tagging.history",
+                crate::code_run::vault_read::request_schema::<crate::tagging::TaggingTurnRequest>(),
+            ),
+            (
+                "vault.tagging.mentions",
+                crate::code_run::vault_read::request_schema::<crate::tagging::TaggingMentionsRequest>(
+                ),
+            ),
+            (
                 "vault.affect.claims.consolidate",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::affect::AffectClaimConsolidateRequest,
@@ -3573,6 +3590,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.retrieval.weights.get",
     "vault.retrieval.weights.configure",
     "vault.affect.annotations.put",
+    "vault.tagging.status",
+    "vault.tagging.tags",
+    "vault.tagging.history",
+    "vault.tagging.mentions",
     "vault.affect.claims.consolidate",
     "vault.retrieval.runs",
     "vault.retrieval.run",
@@ -3861,6 +3882,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.affect.annotations.put" => {
             crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
+        }
+        "vault.tagging.status" => {
+            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingStatusView>()
+        }
+        "vault.tagging.tags" => {
+            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingTagsView>()
+        }
+        "vault.tagging.history" => {
+            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingHistoryView>()
+        }
+        "vault.tagging.mentions" => {
+            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingMentionsView>()
         }
         "vault.affect.claims.consolidate" => crate::code_run::vault_read::request_schema::<
             crate::memory::affect::AffectClaimConsolidation,
@@ -5083,6 +5116,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.affect.annotations.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tagging.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tagging.tags" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tagging.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tagging.mentions" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9254,6 +9315,19 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.affect.annotations.put" => {
             let _input: crate::memory::affect::AffectAnnotationPut = decode(value.clone())?;
         }
+        "vault.tagging.status" => {
+            let _input: crate::tagging::TaggingTurnRequest = decode(value.clone())?;
+        }
+        "vault.tagging.tags" => {
+            let _input: crate::tagging::TaggingTurnRequest = decode(value.clone())?;
+        }
+        "vault.tagging.history" => {
+            let _input: crate::tagging::TaggingTurnRequest = decode(value.clone())?;
+        }
+        "vault.tagging.mentions" => {
+            let input: crate::tagging::TaggingMentionsRequest = decode(value.clone())?;
+            crate::memory::caps::check_limit_nonzero(input.limit)?;
+        }
         "vault.affect.claims.consolidate" => {
             let _input: crate::memory::affect::AffectClaimConsolidateRequest =
                 decode(value.clone())?;
@@ -11309,6 +11383,10 @@ pub fn invoke(
         "vault.affect.annotations.put" => {
             encode(vault_affect_annotations_put(memory, decode(value)?)?)
         }
+        "vault.tagging.status" => encode(vault_tagging_status(memory, decode(value)?)?),
+        "vault.tagging.tags" => encode(vault_tagging_tags(memory, decode(value)?)?),
+        "vault.tagging.history" => encode(vault_tagging_history(memory, decode(value)?)?),
+        "vault.tagging.mentions" => encode(vault_tagging_mentions(memory, decode(value)?)?),
         "vault.affect.claims.consolidate" => {
             encode(vault_affect_claims_consolidate(memory, decode(value)?)?)
         }
@@ -12944,6 +13022,49 @@ pub fn vault_affect_annotations_put(
         &["/turn_ref"],
     )?;
     memory.affect_annotation_put(&input)
+}
+pub fn vault_tagging_status(
+    memory: &Memory<'_>,
+    input: crate::tagging::TaggingTurnRequest,
+) -> MemoryResult<crate::tagging::TaggingStatusView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tagging.status",
+        &input,
+        &["/turn_ref"],
+    )?;
+    memory.tagging_status(&input)
+}
+pub fn vault_tagging_tags(
+    memory: &Memory<'_>,
+    input: crate::tagging::TaggingTurnRequest,
+) -> MemoryResult<crate::tagging::TaggingTagsView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tagging.tags",
+        &input,
+        &["/turn_ref"],
+    )?;
+    memory.tagging_tags(&input)
+}
+pub fn vault_tagging_history(
+    memory: &Memory<'_>,
+    input: crate::tagging::TaggingTurnRequest,
+) -> MemoryResult<crate::tagging::TaggingHistoryView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tagging.history",
+        &input,
+        &["/turn_ref"],
+    )?;
+    memory.tagging_history(&input)
+}
+pub fn vault_tagging_mentions(
+    memory: &Memory<'_>,
+    input: crate::tagging::TaggingMentionsRequest,
+) -> MemoryResult<crate::tagging::TaggingMentionsView> {
+    crate::memory::caps::check_limit_nonzero(input.limit)?;
+    memory.tagging_mentions(&input)
 }
 pub fn vault_affect_claims_consolidate(
     memory: &Memory<'_>,

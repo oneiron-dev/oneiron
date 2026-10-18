@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 677 code-mode rows (656 host rows, 21 run rows), 2406 declarations.
-// Replies: 598 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 681 code-mode rows (660 host rows, 21 run rows), 2426 declarations.
+// Replies: 602 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -343,6 +343,26 @@ declare namespace Sdk {
   type RetrievalWeightsReceipt = { configuration: RetrievalWeightsView; receipt_ref: string };
   type VadAnnotationSource = "model_inference" | "user_self_report";
   type AffectAnnotationPut = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number; scope: ClaimScope; sensitivity?: number | null };
+  type TaggingTurnRequest = { turn_ref: string };
+  type TaggingMarkerState = "unconfigured" | "absent" | "pending" | "retrying" | "settled" | "failed";
+  type TaggingMarkerView = { attempt_ref: string; state: string; checkpoint?: string | null; stack?: string | null; attempt_count: number; retry_of?: string | null; scheduled_at?: number | null; last_error?: string | null; created_at: number; updated_at: number };
+  type TaggingFailureView = { class: string; code?: string | null; refusal?: string | null };
+  type TaggingOutcomeView = { outcome: "saved"; spans: number; links: number; mood: boolean; linked: number; minted: number; context_links: number; speaker_links: number; unresolved_context_links: number; unresolved_speaker_links: number; surprise?: number | null } | { outcome: "shadowed"; spans: number; links: number; mood: boolean; mapped_spans: number; context_links: number; speaker_links: number } | { outcome: "imported"; spans: number; links: number; mood: boolean } | { outcome: "skipped"; reason: string } | { outcome: "superseded"; retry_at: number } | { outcome: "deferred"; retry_at: number } | { outcome: "failed"; failure: TaggingFailureView; retry_at: number } | { outcome: "rekeyed" } | { outcome: "handed_back"; reason: string; retry_at: number } | { outcome: "unreadable" };
+  type TaggingTraceView = { recorded_at: number; attempt: string; turn_ref?: string | null; checkpoint: string; stack?: string | null; model?: string | null; input_hash?: string | null; try_number: number; call_micros?: number | null; outcome: TaggingOutcomeView };
+  type TaggingStatusView = { turn_ref: string; state: TaggingMarkerState; configured: boolean; checkpoint?: string | null; stack?: string | null; mode?: string | null; model?: string | null; marker?: TaggingMarkerView | null; failure?: TaggingFailureView | null; retry_at?: number | null; try_number?: number | null; has_tags: boolean; saved_at?: number | null; last_trace?: TaggingTraceView | null };
+  type DerivationEnvelopeView = { content_hash: string; model_id: string; stack?: string | null; version: string; params_hash: string };
+  type MentionLinkView = { link: "tag" } | { link: "candidates"; kind: number; entity_refs: string[] } | { link: "minted"; kind: number; entity_ref: string };
+  type TaggingSpeakerTarget = "speaker" | "addressee";
+  type MentionReferenceView = { kind: "context" } | { kind: "speaker"; target: TaggingSpeakerTarget; resolved: boolean };
+  type TaggedMentionView = { index: number; message_ref: string; start: number; end: number; label: string; confidence: number; link: MentionLinkView; antecedent?: number | null; reference?: MentionReferenceView | null; link_confidence?: number | null };
+  type MergeEvidenceView = { span: number; antecedent: number; confidence: number };
+  type TaggingVadView = { valence: number; arousal: number; dominance: number };
+  type TurnTagsView = { turn_ref: string; envelope: DerivationEnvelopeView; message_refs: string[]; mentions: TaggedMentionView[]; merge_evidence: MergeEvidenceView[]; mood?: TaggingVadView | null; saved_at: number; surprise?: number | null };
+  type TaggingTagsView = { turn_ref: string; tags?: TurnTagsView | null };
+  type TaggingHistoryView = { turn_ref: string; traces: TaggingTraceView[] };
+  type TaggingMentionsRequest = { entity_ref: string; limit: number };
+  type TaggingMentionHitView = { turn_ref: string; index: number; mention: TaggedMentionView };
+  type TaggingMentionsView = { entity_ref: string; mentions: TaggingMentionHitView[] };
   type AffectClaimConsolidateRequest = { claim_ref: string };
   type AffectTurnEvidence = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number };
   type AffectClaimConsolidation = { claim_ref: string; vad?: QueryAffect | null; evidence_turns: AffectTurnEvidence[]; semantic_edges_updated: number; structural_edges_skipped: number; active_state_ref?: string | null; created_state_ref?: string | null; superseded_state_refs: string[] };
@@ -4006,6 +4026,16 @@ declare const vault: Sdk.VaultHost & {
     mint(input: Sdk.SupportGrantMintRequest): Promise<Sdk.SupportGrantMintAnswer | StoredResult>;
     /** The owner revokes one support grant; what support already read is not recalled. */
     revoke(input: Sdk.SupportGrantRevokeRequest): Promise<Sdk.SupportGrantRevokeAnswer | StoredResult>;
+  };
+  tagging: {
+    /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome. */
+    history(input: Sdk.TaggingTurnRequest): Promise<Sdk.TaggingHistoryView | StoredResult>;
+    /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
+    mentions(input: Sdk.TaggingMentionsRequest): Promise<Sdk.TaggingMentionsView | StoredResult>;
+    /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason. */
+    status(input: Sdk.TaggingTurnRequest): Promise<Sdk.TaggingStatusView | StoredResult>;
+    /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them. */
+    tags(input: Sdk.TaggingTurnRequest): Promise<Sdk.TaggingTagsView | StoredResult>;
   };
   task_types: {
     /** The owner reads the task-type tree in force, or one kept tree version, for the vault or a project. */

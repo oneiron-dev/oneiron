@@ -537,6 +537,8 @@ class Oneiron:
         @property
         def affect(self) -> "Oneiron._VaultAffectVerbs": ...
         @property
+        def tagging(self) -> "Oneiron._VaultTaggingVerbs": ...
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs": ...
         @property
         def scope(self) -> "Oneiron._VaultScopeVerbs": ...
@@ -819,6 +821,15 @@ class Oneiron:
     class _VaultAffectClaimsVerbs:
         def consolidate(self, spec: Facade.AffectClaimConsolidateRequest) -> Facade.AffectClaimConsolidation:
             """The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."""
+    class _VaultTaggingVerbs:
+        def status(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingStatusView:
+            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."""
+        def tags(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingTagsView:
+            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."""
+        def history(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingHistoryView:
+            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."""
+        def mentions(self, spec: Facade.TaggingMentionsRequest) -> Facade.TaggingMentionsView:
+            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:

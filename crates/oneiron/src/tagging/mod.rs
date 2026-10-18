@@ -47,6 +47,7 @@ mod reconciler;
 mod save;
 mod tags;
 mod trace;
+mod verbs;
 
 pub use held::{HeldTagsOutcome, UnreadText};
 pub use history::TaggingTraceRecord;
@@ -63,6 +64,13 @@ pub use tags::{
     TurnTags,
 };
 pub use trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
+pub use verbs::{
+    DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView,
+    TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState,
+    TaggingMarkerView, TaggingMentionHitView, TaggingMentionsRequest, TaggingMentionsView,
+    TaggingOutcomeView, TaggingSpeakerTarget, TaggingStatusView, TaggingTagsView,
+    TaggingTraceView, TaggingTurnRequest, TaggingVadView, TurnTagsView,
+};
 
 pub(crate) use held::settle_held_tags_in_txn;
 pub(crate) use input::{shown_message_text, turn_members_in_txn, turn_messages_in_txn, turn_role};
