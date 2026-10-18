@@ -223,6 +223,11 @@ both bindings and their export-census tests in one change.
 - `vault.embedding_spaces.probes.list`
 - `vault.embedding_spaces.probes.put`
 - `vault.embedding_spaces.probes.delete`
+- `vault.policy.owner.get`
+- `vault.policy.owner.configure`
+- `vault.policy.owner.row.change`
+- `vault.policy.outbound.decide`
+- `vault.policy.relay.decide`
 - `vault.gate.policy.get`
 - `vault.gate.policy.put`
 - `vault.gate.policy.propose`

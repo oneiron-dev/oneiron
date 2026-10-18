@@ -20,7 +20,7 @@ use super::manifest_authenticity::manifest_is_trusted;
 const PROJECT_REF_KEY: &str = "project_ref";
 
 /// The row's exact scope. A vault row has neither scope key on disk.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub enum PolicyRowScope {
     Vault,
     World(String),
@@ -29,7 +29,7 @@ pub enum PolicyRowScope {
 }
 
 /// The allowed row actions, with the same spellings as the manifest decoder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyRowAction {
     Warn,
@@ -51,7 +51,7 @@ impl PolicyRowAction {
 
 /// Provenance of optional explanatory text. Model-authored drafts are never
 /// allowed to replace an owner's own reason.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyWhySource {
     Owner,
@@ -68,7 +68,7 @@ impl PolicyWhySource {
 }
 
 /// An exact-key edit: add refuses an occupied key, edit/remove refuse a missing key.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub enum PolicyRowChange {
     Add {
         row_ref: String,

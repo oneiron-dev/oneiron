@@ -88,6 +88,7 @@ mod concurrent;
 mod contract;
 mod decide;
 pub use decide::PolicyDecisions;
+pub mod doors;
 mod enforce;
 mod hold_queue;
 mod in_force;
