@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 911 facade rows, 3122 declarations.
-Inputs: 857 of 911 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 825 of 911 fully typed, 86 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 923 facade rows, 3153 declarations.
+Inputs: 869 of 923 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 837 of 923 fully typed, 86 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 102; unread shapes: 0.
 """
 
@@ -1817,6 +1817,45 @@ class RunSettlementsView(TypedDict):
     run: str
     metering_enabled: bool
     settlements: list[RunRungSettlement]
+class RsiBudgetShare(TypedDict):
+    units: int
+    pinned: bool
+class RsiBudgetConfig(TypedDict):
+    limit: int
+    exploration_exposure_limit: int
+    shares: dict[str, RsiBudgetShare]
+class RsiWorkLineView(TypedDict):
+    unit: str
+    limit: int
+    spent: int
+    reserved: int
+class RsiShareView(TypedDict):
+    label: str
+    units: int
+    pinned: bool
+class RsiExposureLineView(TypedDict):
+    unit: str
+    limit: int
+    spent: int
+    reserved: int
+class RsiLineView(TypedDict):
+    work_line: RsiWorkLineView
+    shares: list[RsiShareView]
+    exposure_line: RsiExposureLineView
+    suspended: bool
+class RsiLineRequest(TypedDict):
+    ...
+class RsiTopUpTokens(TypedDict):
+    line: Literal["tokens"]
+    units: int
+class RsiTopUpExploration(TypedDict):
+    line: Literal["exploration"]
+    units: int
+class RsiTopUpShare(TypedDict):
+    line: Literal["share"]
+    share: str
+    units: int
+RsiTopUp = RsiTopUpTokens | RsiTopUpExploration | RsiTopUpShare
 FanoutLaunchRuling = Literal["approve_once", "approve_and_remember", "deny"]
 class FanoutResumeRequest(TypedDict):
     launch_ref: EntityId
@@ -6918,6 +6957,36 @@ class ResearchReservation(TypedDict):
 class ResearchRefundWire(TypedDict):
     root: EntityId
     reservation: EntityId
+class ResearchExplorationWire(TypedDict):
+    root: EntityId
+    units: int
+    attempt: NotRequired[EntityId | None]
+class RsiOverdraftReceipt(TypedDict):
+    share: str
+    units: int
+class ResearchReservationWire(TypedDict):
+    id: EntityId
+    line: ResearchReservationLine
+    units: int
+    attempt: NotRequired[EntityId | None]
+    settlement: NotRequired[RsiSettlement | None]
+    overdraft: NotRequired[RsiOverdraftReceipt | None]
+    reserved_at: int
+class RsiBudgetRead(TypedDict):
+    limit: int
+    spent: int
+    reserved: int
+    suspended: bool
+class RsiExplorationRead(TypedDict):
+    exposure_limit: int
+    spent_exposure: int
+    reserved_exposure: int
+    suspended: bool
+class ResearchBudgetView(TypedDict):
+    budget: ResearchBudgetRead
+    reservations: list[ResearchReservationWire]
+    rsi_work: NotRequired[RsiBudgetRead | None]
+    rsi_exploration: NotRequired[RsiExplorationRead | None]
 class ResearchBenchmarkWire(TypedDict):
     estimator_version: str
     benchmark: CampaignDatasetRef
@@ -13219,6 +13288,115 @@ class EsignVoidRequest(TypedDict):
     reason: str
     on_behalf_of: NotRequired[str | None]
     idempotency_key: NotRequired[str | None]
+class SigningActionLoad(TypedDict):
+    action: Literal["load"]
+class SigningActionSaveField(TypedDict):
+    action: Literal["save_field"]
+    field: str
+    value: FieldValue
+class SigningActionComplete(TypedDict):
+    action: Literal["complete"]
+    consent: bool
+    next: NotRequired[str | None]
+class SigningActionReject(TypedDict):
+    action: Literal["reject"]
+    reason: str
+SigningAction = SigningActionLoad | SigningActionSaveField | SigningActionComplete | SigningActionReject
+class EsignSigningRequest(TypedDict):
+    token: str
+    action: SigningAction
+class FieldControlText(TypedDict):
+    kind: Literal["text"]
+    max_bytes: int
+    server_computed: bool
+class FieldControlCheckbox(TypedDict):
+    kind: Literal["checkbox"]
+class FieldControlSelect(TypedDict):
+    kind: Literal["select"]
+    options: list[str]
+class FieldControlSignature(TypedDict):
+    kind: Literal["signature"]
+FieldControl = FieldControlText | FieldControlCheckbox | FieldControlSelect | FieldControlSignature
+class FieldPresentation(TypedDict):
+    id: str
+    item: int
+    geometry: FieldGeometry
+    required: bool
+    control: FieldControl
+    value: NotRequired[FieldValue | None]
+class SigningPage(TypedDict):
+    item_count: int
+    title: str
+    recipient: str
+    fields: list[EsignField]
+    presentations: list[FieldPresentation]
+    values: dict[str, SignatureRow]
+class SigningOutcomePage(TypedDict):
+    outcome: Literal["page"]
+    data: SigningPage
+class SigningOutcomeNotYourTurn(TypedDict):
+    outcome: Literal["not_your_turn"]
+class SigningOutcomeTerminalContent(TypedDict):
+    status: DocumentStatus
+    item_count: int
+class SigningOutcomeTerminal(TypedDict):
+    outcome: Literal["terminal"]
+    data: SigningOutcomeTerminalContent
+class SigningOutcomeAwaitingSeal(TypedDict):
+    outcome: Literal["awaiting_seal"]
+class SigningOutcomeHeldForOwnerContent(TypedDict):
+    held_at: int
+class SigningOutcomeHeldForOwner(TypedDict):
+    outcome: Literal["held_for_owner"]
+    data: SigningOutcomeHeldForOwnerContent
+class SigningOutcomeConsentRequired(TypedDict):
+    outcome: Literal["consent_required"]
+SigningOutcome = SigningOutcomePage | SigningOutcomeNotYourTurn | SigningOutcomeTerminal | SigningOutcomeAwaitingSeal | SigningOutcomeHeldForOwner | SigningOutcomeConsentRequired
+class EsignSigningPdfRequest(TypedDict):
+    token: str
+    item: int
+class EsignSigningPdfView(TypedDict):
+    item: int
+    pdf_base64: str
+class EsignSigningImageRequest(TypedDict):
+    token: str
+    png_or_jpeg_base64: str
+class EsignSigningImageView(TypedDict):
+    image_ref: str
+class EsignSigningSignatureRequest(TypedDict):
+    token: str
+    image_ref: str
+class EsignSigningSignatureView(TypedDict):
+    image_ref: str
+    image_base64: str
+class EsignSealGetRequest(TypedDict):
+    document_ref: str
+class EsignSealAttemptView(TypedDict):
+    attempt_ref: str
+    kind: str
+    state: str
+    dedupe_key: NotRequired[str | None]
+    lease_owner: NotRequired[str | None]
+    attempt_count: int
+    created_at: int
+    updated_at: int
+    last_error: NotRequired[str | None]
+class EsignSealedItemView(TypedDict):
+    original_artifact: str
+    original_version: int
+    sealed_artifact: str
+    sealed_version: int
+    sha256: str
+class EsignSealedView(TypedDict):
+    attempt_ref: str
+    audit_chain_sha256: str
+    rejected: bool
+    items: list[EsignSealedItemView]
+class EsignSealView(TypedDict):
+    document_ref: str
+    status: DocumentStatus
+    attempts: list[EsignSealAttemptView]
+    sealed: NotRequired[EsignSealedView | None]
 class CoreWriteTextField(TypedDict):
     field: str
     value: str

@@ -1016,6 +1016,81 @@
       "openapi": true
     },
     {
+      "name": "vault.budgets.rsi.configure",
+      "description": "The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend.",
+      "input": "crate::llm::RsiBudgetConfig",
+      "output": "crate::llm::rsi_doors::RsiLineView",
+      "call": "crate::llm::rsi_doors::configure_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.configure\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.budgets.rsi",
+      "description": "The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure.",
+      "input": "crate::llm::rsi_doors::RsiLineRequest",
+      "output": "crate::llm::rsi_doors::RsiLineView",
+      "call": "crate::llm::rsi_doors::rsi_line_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.budgets.rsi.top_up",
+      "description": "The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself.",
+      "input": "crate::llm::RsiTopUp",
+      "output": "crate::llm::rsi_doors::RsiLineView",
+      "call": "crate::llm::rsi_doors::top_up_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.top_up\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.budgets.rsi.hold",
+      "description": "The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay.",
+      "input": "crate::llm::rsi_doors::RsiLineRequest",
+      "output": "crate::llm::rsi_doors::RsiLineView",
+      "call": "crate::llm::rsi_doors::hold_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.hold\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.budgets.rsi.hold.resume",
+      "description": "The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt.",
+      "input": "crate::llm::rsi_doors::RsiLineRequest",
+      "output": "crate::llm::rsi_doors::RsiLineView",
+      "call": "crate::llm::rsi_doors::resume_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.hold.resume\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.fanout.resume",
       "description": "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible.",
       "input": "crate::task_verb::sdk::FanoutResumeRequest",
@@ -5586,6 +5661,32 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "vault.research.reserve_exploration",
+      "description": "Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work.",
+      "input": "crate::task_verb::sdk::ResearchExplorationWire",
+      "output": "crate::entity_id::EntityId",
+      "call": "crate::task_verb::sdk::research_reserve_exploration(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.budget",
+      "description": "Reads the campaign's lease, every reservation it holds or held with its settlement and soft-share overdraft receipt, and the vault RSI lines behind them, including the observable hold state.",
+      "input": "crate::task_verb::sdk::ResearchArchiveWire",
+      "output": "crate::task_verb::sdk::ResearchBudgetView",
+      "call": "crate::task_verb::sdk::research_budget(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.research.record_benchmark",
@@ -12530,6 +12631,94 @@
       },
       "mcp_scope": "unrestricted",
       "section": false
+    },
+    {
+      "name": "vault.esign.signing.act",
+      "description": "One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act.",
+      "input": "crate::blob_artifact::esign::EsignSigningRequest",
+      "output": "crate::blob_artifact::esign::SigningOutcome",
+      "call": "memory.esign_signing_act(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.esign.signing.pdf",
+      "description": "One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing.",
+      "input": "crate::blob_artifact::esign::EsignSigningPdfRequest",
+      "output": "crate::blob_artifact::esign::EsignSigningPdfView",
+      "call": "memory.esign_signing_pdf(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.esign.signing.image",
+      "description": "Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names.",
+      "input": "crate::blob_artifact::esign::EsignSigningImageRequest",
+      "output": "crate::blob_artifact::esign::EsignSigningImageView",
+      "call": "memory.esign_signing_image(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.esign.signing.signature",
+      "description": "Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes.",
+      "input": "crate::blob_artifact::esign::EsignSigningSignatureRequest",
+      "output": "crate::blob_artifact::esign::EsignSigningSignatureView",
+      "call": "memory.esign_signing_signature(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.esign.seal.get",
+      "description": "Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it.",
+      "refs": [
+        "/document_ref"
+      ],
+      "input": "crate::blob_artifact::esign::EsignSealGetRequest",
+      "output": "crate::blob_artifact::esign::EsignSealView",
+      "call": "memory.esign_seal_get(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.conversations.create",

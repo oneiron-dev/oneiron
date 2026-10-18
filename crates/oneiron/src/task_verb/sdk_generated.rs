@@ -358,6 +358,29 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.budgets.rsi.configure",
+                crate::code_run::vault_read::request_schema::<crate::llm::RsiBudgetConfig>(),
+            ),
+            (
+                "vault.budgets.rsi",
+                crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineRequest>(
+                ),
+            ),
+            (
+                "vault.budgets.rsi.top_up",
+                crate::code_run::vault_read::request_schema::<crate::llm::RsiTopUp>(),
+            ),
+            (
+                "vault.budgets.rsi.hold",
+                crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineRequest>(
+                ),
+            ),
+            (
+                "vault.budgets.rsi.hold.resume",
+                crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineRequest>(
+                ),
+            ),
+            (
                 "vault.fanout.resume",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutResumeRequest,
@@ -1916,6 +1939,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.research.refund_work",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResearchRefundWire,
+                >(),
+            ),
+            (
+                "vault.research.reserve_exploration",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchExplorationWire,
+                >(),
+            ),
+            (
+                "vault.research.budget",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchArchiveWire,
                 >(),
             ),
             (
@@ -4176,6 +4211,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.esign.signing.act",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.pdf",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningPdfRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.image",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningImageRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.signature",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningSignatureRequest,
+                >(),
+            ),
+            (
+                "vault.esign.seal.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSealGetRequest,
+                >(),
+            ),
+            (
                 "vault.conversations.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::core_write::ConversationCreateInput,
@@ -5174,6 +5239,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.hold.resume",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.budgets.rsi.configure",
+    "vault.budgets.rsi",
+    "vault.budgets.rsi.top_up",
+    "vault.budgets.rsi.hold",
+    "vault.budgets.rsi.hold.resume",
     "vault.commit_message",
     "vault.begin_message_stream",
     "vault.append_to_stream",
@@ -5385,6 +5455,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.coach.training_offers.pilots.prepare",
     "vault.coach.training_offers.pilots.complete",
     "vault.coach.training_offers.pilots.get",
+    "vault.research.reserve_exploration",
+    "vault.research.budget",
     "vault.cleanup.run",
     "vault.entities.mention",
     "vault.policy.owner.get",
@@ -5597,6 +5669,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.search.temporal",
     "vault.productivity.create",
     "vault.productivity.tree",
+    "vault.esign.signing.act",
+    "vault.esign.signing.pdf",
+    "vault.esign.signing.image",
+    "vault.esign.signing.signature",
+    "vault.esign.seal.get",
     "vault.consolidation.status",
     "vault.runs.step",
     "vault.runs.checkpoint",
@@ -5811,6 +5888,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
         >(),
+        "vault.budgets.rsi.configure" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
+        }
+        "vault.budgets.rsi" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
+        }
+        "vault.budgets.rsi.top_up" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
+        }
+        "vault.budgets.rsi.hold" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
+        }
+        "vault.budgets.rsi.hold.resume" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
+        }
         "vault.commit_message" => {
             crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
         }
@@ -6451,6 +6543,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.coach.training_offers.pilots.get" => crate::code_run::vault_read::request_schema::<
             Option<crate::skill_optimize::offer_pilot::OfferPilot>,
+        >(),
+        "vault.research.reserve_exploration" => {
+            crate::code_run::vault_read::request_schema::<crate::entity_id::EntityId>()
+        }
+        "vault.research.budget" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ResearchBudgetView,
         >(),
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
@@ -7095,6 +7193,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.productivity.tree" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>,
+        >(),
+        "vault.esign.signing.act" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::SigningOutcome,
+        >(),
+        "vault.esign.signing.pdf" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningPdfView,
+        >(),
+        "vault.esign.signing.image" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningImageView,
+        >(),
+        "vault.esign.signing.signature" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningSignatureView,
+        >(),
+        "vault.esign.seal.get" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSealView,
         >(),
         "vault.consolidation.status" => crate::code_run::vault_read::request_schema::<
             Option<crate::memory::DreamerAttemptView>,
@@ -7954,6 +8067,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.budgets.settlements" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.rsi.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.rsi" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.rsi.top_up" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.rsi.hold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.rsi.hold.resume" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10030,6 +10178,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.research.refund_work" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.reserve_exploration" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.budget" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12778,6 +12940,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.esign.signing.act" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.pdf" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.image" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.signature" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.seal.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.conversations.create" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -14108,6 +14305,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::agent_dispatch::budget_doors::RunSettlementsRequest =
                 decode(value.clone())?;
         }
+        "vault.budgets.rsi.configure" => {
+            let _input: crate::llm::RsiBudgetConfig = decode(value.clone())?;
+        }
+        "vault.budgets.rsi" => {
+            let _input: crate::llm::rsi_doors::RsiLineRequest = decode(value.clone())?;
+        }
+        "vault.budgets.rsi.top_up" => {
+            let _input: crate::llm::RsiTopUp = decode(value.clone())?;
+        }
+        "vault.budgets.rsi.hold" => {
+            let _input: crate::llm::rsi_doors::RsiLineRequest = decode(value.clone())?;
+        }
+        "vault.budgets.rsi.hold.resume" => {
+            let _input: crate::llm::rsi_doors::RsiLineRequest = decode(value.clone())?;
+        }
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
         }
@@ -15076,6 +15288,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.research.refund_work" => {
             let _input: crate::task_verb::sdk::ResearchRefundWire = decode(value.clone())?;
+        }
+        "vault.research.reserve_exploration" => {
+            let _input: crate::task_verb::sdk::ResearchExplorationWire = decode(value.clone())?;
+        }
+        "vault.research.budget" => {
+            let _input: crate::task_verb::sdk::ResearchArchiveWire = decode(value.clone())?;
         }
         "vault.research.record_benchmark" => {
             let _input: crate::task_verb::sdk::ResearchBenchmarkWire = decode(value.clone())?;
@@ -16450,6 +16668,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.esign.void" => {
             let _input: crate::blob_artifact::esign::EsignVoidRequest = decode(value.clone())?;
         }
+        "vault.esign.signing.act" => {
+            let _input: crate::blob_artifact::esign::EsignSigningRequest = decode(value.clone())?;
+        }
+        "vault.esign.signing.pdf" => {
+            let _input: crate::blob_artifact::esign::EsignSigningPdfRequest =
+                decode(value.clone())?;
+        }
+        "vault.esign.signing.image" => {
+            let _input: crate::blob_artifact::esign::EsignSigningImageRequest =
+                decode(value.clone())?;
+        }
+        "vault.esign.signing.signature" => {
+            let _input: crate::blob_artifact::esign::EsignSigningSignatureRequest =
+                decode(value.clone())?;
+        }
+        "vault.esign.seal.get" => {
+            let _input: crate::blob_artifact::esign::EsignSealGetRequest = decode(value.clone())?;
+        }
         "vault.conversations.create" => {
             let _input: crate::core_write::ConversationCreateInput = decode(value.clone())?;
         }
@@ -17226,6 +17462,15 @@ pub fn invoke(
         "vault.budgets.hold.resume" => encode(vault_budgets_hold_resume(memory, decode(value)?)?),
         "vault.budgets.local" => encode(vault_budgets_local(memory, decode(value)?)?),
         "vault.budgets.settlements" => encode(vault_budgets_settlements(memory, decode(value)?)?),
+        "vault.budgets.rsi.configure" => {
+            encode(vault_budgets_rsi_configure(memory, decode(value)?)?)
+        }
+        "vault.budgets.rsi" => encode(vault_budgets_rsi(memory, decode(value)?)?),
+        "vault.budgets.rsi.top_up" => encode(vault_budgets_rsi_top_up(memory, decode(value)?)?),
+        "vault.budgets.rsi.hold" => encode(vault_budgets_rsi_hold(memory, decode(value)?)?),
+        "vault.budgets.rsi.hold.resume" => {
+            encode(vault_budgets_rsi_hold_resume(memory, decode(value)?)?)
+        }
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
@@ -17799,6 +18044,10 @@ pub fn invoke(
         }
         "vault.research.settle_work" => encode(vault_research_settle_work(memory, decode(value)?)?),
         "vault.research.refund_work" => encode(vault_research_refund_work(memory, decode(value)?)?),
+        "vault.research.reserve_exploration" => {
+            encode(vault_research_reserve_exploration(memory, decode(value)?)?)
+        }
+        "vault.research.budget" => encode(vault_research_budget(memory, decode(value)?)?),
         "vault.research.record_benchmark" => {
             encode(vault_research_record_benchmark(memory, decode(value)?)?)
         }
@@ -18430,6 +18679,13 @@ pub fn invoke(
         }
         "vault.esign.remind" => encode(vault_esign_remind(memory, decode(value)?)?),
         "vault.esign.void" => encode(vault_esign_void(memory, decode(value)?)?),
+        "vault.esign.signing.act" => encode(vault_esign_signing_act(memory, decode(value)?)?),
+        "vault.esign.signing.pdf" => encode(vault_esign_signing_pdf(memory, decode(value)?)?),
+        "vault.esign.signing.image" => encode(vault_esign_signing_image(memory, decode(value)?)?),
+        "vault.esign.signing.signature" => {
+            encode(vault_esign_signing_signature(memory, decode(value)?)?)
+        }
+        "vault.esign.seal.get" => encode(vault_esign_seal_get(memory, decode(value)?)?),
         "vault.conversations.create" => encode(vault_conversations_create(memory, decode(value)?)?),
         "vault.conversations.turns.create" => {
             encode(vault_conversations_turns_create(memory, decode(value)?)?)
@@ -19494,6 +19750,61 @@ pub fn vault_budgets_settlements(
     input: crate::agent_dispatch::budget_doors::RunSettlementsRequest,
 ) -> MemoryResult<crate::agent_dispatch::budget_doors::RunSettlementsView> {
     crate::task_verb::sdk::host_only(memory, "vault.budgets.settlements", &input)
+}
+pub fn vault_budgets_rsi_configure(
+    memory: &Memory<'_>,
+    input: crate::llm::RsiBudgetConfig,
+) -> MemoryResult<crate::llm::rsi_doors::RsiLineView> {
+    crate::llm::rsi_doors::configure_rsi_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.rsi.configure")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_rsi(
+    memory: &Memory<'_>,
+    input: crate::llm::rsi_doors::RsiLineRequest,
+) -> MemoryResult<crate::llm::rsi_doors::RsiLineView> {
+    crate::llm::rsi_doors::rsi_line_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.rsi")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_rsi_top_up(
+    memory: &Memory<'_>,
+    input: crate::llm::RsiTopUp,
+) -> MemoryResult<crate::llm::rsi_doors::RsiLineView> {
+    crate::llm::rsi_doors::top_up_rsi_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.rsi.top_up")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_rsi_hold(
+    memory: &Memory<'_>,
+    input: crate::llm::rsi_doors::RsiLineRequest,
+) -> MemoryResult<crate::llm::rsi_doors::RsiLineView> {
+    crate::llm::rsi_doors::hold_rsi_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.rsi.hold")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_rsi_hold_resume(
+    memory: &Memory<'_>,
+    input: crate::llm::rsi_doors::RsiLineRequest,
+) -> MemoryResult<crate::llm::rsi_doors::RsiLineView> {
+    crate::llm::rsi_doors::resume_rsi_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.rsi.hold.resume")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_fanout_resume(
     memory: &Memory<'_>,
@@ -21942,6 +22253,18 @@ pub fn vault_research_refund_work(
     input: crate::task_verb::sdk::ResearchRefundWire,
 ) -> MemoryResult<crate::autoreason_campaign::research::ResearchReservation> {
     crate::task_verb::sdk::research_refund_work(memory, input)
+}
+pub fn vault_research_reserve_exploration(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchExplorationWire,
+) -> MemoryResult<crate::entity_id::EntityId> {
+    crate::task_verb::sdk::research_reserve_exploration(memory, input)
+}
+pub fn vault_research_budget(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchArchiveWire,
+) -> MemoryResult<crate::task_verb::sdk::ResearchBudgetView> {
+    crate::task_verb::sdk::research_budget(memory, input)
 }
 pub fn vault_research_record_benchmark(
     memory: &Memory<'_>,
@@ -25190,6 +25513,42 @@ pub fn vault_esign_void(
         &["/document_ref"],
     )?;
     memory.esign_void(&input)
+}
+pub fn vault_esign_signing_act(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningRequest,
+) -> MemoryResult<crate::blob_artifact::esign::SigningOutcome> {
+    memory.esign_signing_act(&input)
+}
+pub fn vault_esign_signing_pdf(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningPdfRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningPdfView> {
+    memory.esign_signing_pdf(&input)
+}
+pub fn vault_esign_signing_image(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningImageRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningImageView> {
+    memory.esign_signing_image(&input)
+}
+pub fn vault_esign_signing_signature(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningSignatureRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningSignatureView> {
+    memory.esign_signing_signature(&input)
+}
+pub fn vault_esign_seal_get(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSealGetRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSealView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.seal.get",
+        &input,
+        &["/document_ref"],
+    )?;
+    memory.esign_seal_get(&input)
 }
 pub fn vault_conversations_create(
     memory: &Memory<'_>,

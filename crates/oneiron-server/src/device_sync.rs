@@ -207,7 +207,12 @@ async fn open(
         machine,
     };
     let connection = link.connection(link.client_config(&credential)?)?;
-    let renewal = renewal::Renewal::new(&link.url, credential_file, Arc::clone(&server.vault));
+    let renewal = renewal::Renewal::new(
+        &link.url,
+        credential_file,
+        Arc::clone(&server.vault),
+        link.mesh_dialer.clone(),
+    );
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();
     let over = if mesh.is_some() { "mesh" } else { "url" };

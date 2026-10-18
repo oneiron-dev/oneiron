@@ -923,6 +923,9 @@ class Oneiron:
         def settlements(self, spec):
             """The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."""
             return json.loads(_translate(lambda: self._client.vault_budgets_settlements(json.dumps(spec))))
+        @property
+        def rsi(self) -> "Oneiron._VaultBudgetsRsiVerbs":
+            return Oneiron._VaultBudgetsRsiVerbs(self._client)
     class _VaultBudgetsLeaseVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -944,6 +947,30 @@ class Oneiron:
         def resume(self, spec):
             """The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion."""
             return json.loads(_translate(lambda: self._client.vault_budgets_hold_resume(json.dumps(spec))))
+    class _VaultBudgetsRsiVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_rsi(json.dumps(spec))))
+        def configure(self, spec):
+            """The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_rsi_configure(json.dumps(spec))))
+        def top_up(self, spec):
+            """The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_rsi_top_up(json.dumps(spec))))
+        @property
+        def hold(self) -> "Oneiron._VaultBudgetsRsiHoldVerbs":
+            return Oneiron._VaultBudgetsRsiHoldVerbs(self._client)
+    class _VaultBudgetsRsiHoldVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_rsi_hold(json.dumps(spec))))
+        def resume(self, spec):
+            """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_rsi_hold_resume(json.dumps(spec))))
     class _VaultMessagesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2212,6 +2239,12 @@ class Oneiron:
         def refund_work(self, spec):
             """Refunds a work reservation nothing was spent on."""
             return json.loads(_translate(lambda: self._client.vault_research_refund_work(json.dumps(spec))))
+        def reserve_exploration(self, spec):
+            """Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work."""
+            return json.loads(_translate(lambda: self._client.vault_research_reserve_exploration(json.dumps(spec))))
+        def budget(self, spec):
+            """Reads the campaign's lease, every reservation it holds or held with its settlement and soft-share overdraft receipt, and the vault RSI lines behind them, including the observable hold state."""
+            return json.loads(_translate(lambda: self._client.vault_research_budget(json.dumps(spec))))
         def record_benchmark(self, spec):
             """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
             return json.loads(_translate(lambda: self._client.vault_research_record_benchmark(json.dumps(spec))))
@@ -3707,12 +3740,39 @@ class Oneiron:
         def void(self, spec):
             """Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller."""
             return json.loads(_translate(lambda: self._client.vault_esign_void(json.dumps(spec))))
+        @property
+        def signing(self) -> "Oneiron._VaultEsignSigningVerbs":
+            return Oneiron._VaultEsignSigningVerbs(self._client)
+        @property
+        def seal(self) -> "Oneiron._VaultEsignSealVerbs":
+            return Oneiron._VaultEsignSealVerbs(self._client)
     class _VaultEsignLinksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def issue(self, spec):
             """The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."""
             return json.loads(_translate(lambda: self._client.vault_esign_links_issue(json.dumps(spec))))
+    class _VaultEsignSigningVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def act(self, spec):
+            """One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_act(json.dumps(spec))))
+        def pdf(self, spec):
+            """One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_pdf(json.dumps(spec))))
+        def image(self, spec):
+            """Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_image(json.dumps(spec))))
+        def signature(self, spec):
+            """Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_signature(json.dumps(spec))))
+    class _VaultEsignSealVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it."""
+            return json.loads(_translate(lambda: self._client.vault_esign_seal_get(json.dumps(spec))))
     class _VaultConsolidationVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
