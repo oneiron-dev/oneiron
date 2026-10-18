@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use oneiron::board_verb::BoardVerbCall;
 use oneiron::claim::{CallerLocality, ScopedRead, ScopedReadActorKey};
 use oneiron::code_run::{
-    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall,
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::context_board::StreamConnectionId;
 use oneiron::llm::decision::DecisionRung;
@@ -205,12 +205,23 @@ impl AgentVerbDoor for RunHostDoor {
         }
     }
 
-    /// The run's own calls keep the run's own admission.
+    /// The run's own calls keep the run's own admission. A consult landing
+    /// reads its refs on the agent's own lane, on this device (DOOR-063):
+    /// the run holds no credential, and its lane is never the owner's.
     fn admit_run_call(
         &self,
-        _call: RunCall,
+        call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        Ok(None)
+        if call != RunCall::Bridge(SelfEffect::ConsultResult) {
+            return Ok(None);
+        }
+        self.server
+            .vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .at(CallerLocality::OnDevice)
+            .read_key()
+            .map(Some)
+            .map_err(|error| AgentVerbRefusal { code: error.code })
     }
 
     /// The run's answer to its own connector call's questions (ONE-2510),

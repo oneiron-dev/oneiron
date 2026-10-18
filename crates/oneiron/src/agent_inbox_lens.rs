@@ -123,6 +123,25 @@ impl Vault {
         self.agent_inbox_view(&query, |row| row.actor_ref == actor)
     }
 
+    /// The actor's own slice, optionally narrowed to a receiving identity.
+    /// Keep both constraints in the existing fold, before paging.
+    pub fn agent_identity_inbox_slice(
+        &self,
+        actor: EntityId,
+        identity: Option<EntityId>,
+        limit: usize,
+        before: Option<(InboxImpact, u64, String)>,
+    ) -> Result<Vec<AgentInboxLensItem>> {
+        let query = AgentInboxLensQuery {
+            identity_ref: None,
+            limit,
+            before,
+        };
+        self.agent_inbox_view(&query, |row| {
+            row.actor_ref == actor && identity.is_none_or(|id| row.identity_ref == id)
+        })
+    }
+
     fn agent_inbox_view(
         &self,
         query: &AgentInboxLensQuery,
@@ -382,6 +401,8 @@ fn receipt_order(receipt: &ReceiptRecord) -> (u64, bool, &str) {
 }
 
 mod inbound;
+mod serve;
+pub use serve::*;
 mod text;
 
 pub use self::text::{InboxTextSource, ResolvedInboxText};
