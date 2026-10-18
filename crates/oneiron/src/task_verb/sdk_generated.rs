@@ -12878,7 +12878,11 @@ pub fn vault_evals_inventory(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::EvalInventoryWire,
 ) -> MemoryResult<crate::skill_optimize::EvalAuthoringInventory> {
-    crate::task_verb::sdk::host_only(memory, "vault.evals.inventory", &input)
+    crate::task_verb::sdk::eval_inventory_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.inventory")?,
+        input,
+    )
 }
 pub fn vault_evals_cohorts_setup(
     memory: &Memory<'_>,
@@ -15702,7 +15706,10 @@ pub fn vault_consolidation_evidence(
 ) -> MemoryResult<
     crate::claim::ScopedReadResult<Vec<crate::memory::consolidation::ConsolidationEvidenceSource>>,
 > {
-    crate::task_verb::sdk::host_only(memory, "vault.consolidation.evidence", &input)
+    memory.consolidation_evidence_as_owner(
+        &memory.embedded_owner("vault.consolidation.evidence")?,
+        &input,
+    )
 }
 pub fn vault_claims_vet(
     memory: &Memory<'_>,
@@ -15714,7 +15721,7 @@ pub fn vault_claims_vetting(
     memory: &Memory<'_>,
     input: crate::memory::ClaimProposalReviewRequest,
 ) -> MemoryResult<crate::memory::ClaimProposalReview> {
-    crate::task_verb::sdk::host_only(memory, "vault.claims.vetting", &input)
+    memory.claim_vetting_review_as_owner(&memory.embedded_owner("vault.claims.vetting")?, &input)
 }
 pub fn vault_memory_signal_extraction(
     memory: &Memory<'_>,
