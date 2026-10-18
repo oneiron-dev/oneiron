@@ -190,7 +190,10 @@ impl Memory<'_> {
         // and listed as a producer, only when the caller reads it (FIX 4446).
         let provenance = &proposal.op_provenance;
         let proposed = CodeProposedStamp {
-            actor_ref: refs.admitted(Some(proposal.actor))?,
+            actor_ref: match proposal.actor.id() {
+                Some(actor) => refs.admitted(Some(actor))?,
+                None => Some(proposal.actor.to_hex()),
+            },
             session_ref: refs.admitted(Some(proposal.session))?,
             provenance_claim_ref: refs.admitted(Some(proposal.provenance_claim))?,
             turn_ref: refs.admitted(provenance.turn)?,
