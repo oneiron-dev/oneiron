@@ -68791,7 +68791,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
