@@ -180,7 +180,8 @@ impl Vault {
             && now < claims.expires_at
             && fold.vault_id == Some(claims.vault_id)
             && fold.slip_is_live(&claims.slip_id)
-            && verified.witness_pact(&fold).is_ok())
+            && verified.witness_pact(&fold).is_ok()
+            && self.support_delegation_stands_in_txn(txn, claims)?)
     }
     /// Sample the authority plane's local monotonic clock before constructing
     /// a slip mint. Using the wall/store recording clock for `issued_at` can
@@ -204,7 +205,14 @@ impl Vault {
     ) -> Result<bool> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let now = self.instant_in_txn(txn)?;
-        Ok(fold.slip_is_live_at(id, now))
+        if !fold.slip_is_live_at(id, now) {
+            return Ok(false);
+        }
+        // A support slip's delegation (OF-606) bounds every later frame too.
+        match fold.slips.mints.get(id) {
+            Some(mint) => self.support_delegation_stands_in_txn(txn, &mint.action.claims),
+            None => Ok(false),
+        }
     }
 
     /// Bootstrap Genesis + host root slip atomically, and only on a truly empty
@@ -276,6 +284,7 @@ impl Vault {
             org_ref: None,
             grant_ref: None,
             invitation_ref: None,
+            delegation: None,
         };
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
@@ -411,6 +420,7 @@ impl Vault {
             timestamp,
             request_now,
         )?;
+        self.receipt_support_use_in_txn(&mut txn, verified.claims(), nonce, timestamp)?;
         txn.commit()?;
         Ok(verified)
     }
@@ -604,6 +614,12 @@ impl Vault {
             request_nonce,
             request_timestamp,
             request_now,
+        )?;
+        self.receipt_support_use_in_txn(
+            &mut txn,
+            verified.claims(),
+            request_nonce,
+            request_timestamp,
         )?;
         if verified.claims().single_use {
             self.append_slip_op_in_txn(

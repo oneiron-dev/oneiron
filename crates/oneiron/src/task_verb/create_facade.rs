@@ -126,6 +126,7 @@ impl Memory<'_> {
                 &provenance,
                 now,
             )?;
+            self.attach_task_parent_in_txn(wtxn, task_ref, spec.parent_ref)?;
             // The TASK and its realizing work commit together, so a route
             // failure rolls the intent back rather than leaving an invisible
             // half-created task behind.
@@ -431,6 +432,29 @@ impl Memory<'_> {
             )?;
         }
         Ok(task_ref)
+    }
+
+    /// DOOR-113: files a just-minted TASK under the parent its request
+    /// named, with one checked `ChildOf` edge in the landing's own
+    /// transaction, after the mint and before the route. The batch's
+    /// `ChildOf` gate is the authority on the pair; its refusal fails the
+    /// landing whole, so a TASK never commits without the parent it asked
+    /// for. Every landing calls this: direct and approved, brief-less and
+    /// posted.
+    pub(super) fn attach_task_parent_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        task_ref: EntityId,
+        parent_ref: Option<EntityId>,
+    ) -> MemoryResult<()> {
+        let Some(parent_ref) = parent_ref else {
+            return Ok(());
+        };
+        self.vault()
+            .batch_in()
+            .edge_checked(&task_ref, &parent_ref, 1.0)
+            .apply(wtxn)?;
+        Ok(())
     }
 
     pub(super) fn put_task_body_in_txn(

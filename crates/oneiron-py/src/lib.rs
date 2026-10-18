@@ -1666,6 +1666,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_support_grants_mint(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.support_grants.mint")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.support_grants.mint", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_support_grants_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.support_grants.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.support_grants.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_support_grants_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.support_grants.revoke")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.support_grants.revoke", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_residence_mode(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.residence.mode")?;
         let output = py
@@ -4460,6 +4481,62 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.notes.history")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.notes.history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_fork(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.fork")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.fork", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_forks_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.forks.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.forks.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_proposals_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.proposals.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.proposals.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_proposals_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.proposals.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.proposals.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_proposals_merge(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.proposals.merge")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.proposals.merge", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_proposals_switch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.proposals.switch")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.proposals.switch", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_proposals_reject(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.proposals.reject")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.proposals.reject", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_version_tree(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.version_tree")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.version_tree", input))
             .map_err(raise)?;
         encode(&output)
     }

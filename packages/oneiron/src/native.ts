@@ -186,6 +186,9 @@ vaultTrustedContactsConcernPropose(input: unknown): unknown
 vaultTrustedContactsConcernDeliver(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
+vaultSupportGrantsMint(input: unknown): unknown
+vaultSupportGrantsList(input: unknown): unknown
+vaultSupportGrantsRevoke(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown
@@ -514,6 +517,14 @@ vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
+vaultNotesFork(input: unknown): unknown
+vaultNotesForksRead(input: unknown): unknown
+vaultNotesProposalsOpen(input: unknown): unknown
+vaultNotesProposalsRead(input: unknown): unknown
+vaultNotesProposalsMerge(input: unknown): unknown
+vaultNotesProposalsSwitch(input: unknown): unknown
+vaultNotesProposalsReject(input: unknown): unknown
+vaultNotesVersionTree(input: unknown): unknown
 vaultNotesHistoryPurge(input: unknown): unknown
 vaultNotesHistoryPurgeExecute(input: unknown): unknown
 vaultNotesHistoryPurgeReceipts(input: unknown): unknown

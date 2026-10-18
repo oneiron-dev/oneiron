@@ -156,7 +156,11 @@ impl CapabilitySlip {
             return Err(invalid_authority());
         }
         super::strong_ed25519_key(&next_binding_key)?;
-        if self.current_binding_key() != holder.verifying_key().to_bytes() {
+        // A support slip (OF-606) stays with the support party's own key: it
+        // narrows, but never passes to another holder.
+        if self.current_binding_key() != holder.verifying_key().to_bytes()
+            || (self.claims.delegation.is_some() && next_binding_key != self.current_binding_key())
+        {
             return Err(invalid_authority());
         }
         let signature = holder

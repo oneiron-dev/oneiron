@@ -859,6 +859,9 @@ fn mcp_agent_verb_input(
             if let Some(value) = &a.ttl {
                 map.insert("ttl".to_owned(), json!(value));
             }
+            if let Some(value) = &a.parent_ref {
+                map.insert("parent_ref".to_owned(), json!(value));
+            }
             Ok(Value::Object(map))
         }
         "tasks.wave" => a.spec.clone().ok_or_else(invalid),
@@ -1005,6 +1008,9 @@ fn mcp_agent_verb_input(
         "vault.trusted_contacts.concern.deliver" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.mint_slip" => a.spec.clone().ok_or_else(invalid),
+        "vault.support_grants.mint" => a.spec.clone().ok_or_else(invalid),
+        "vault.support_grants.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.support_grants.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.mode" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.open" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.index" => a.spec.clone().ok_or_else(invalid),
@@ -1442,6 +1448,14 @@ fn mcp_agent_verb_input(
         "vault.notes.from_entity" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.read" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.history" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.fork" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.forks.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.proposals.open" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.proposals.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.proposals.merge" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.proposals.switch" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.proposals.reject" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.version_tree" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.history_purge" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.history_purge_execute" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.history_purge_receipts" => a.spec.clone().ok_or_else(invalid),
@@ -1616,6 +1630,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("ttl") {
                 arguments.insert("ttl".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("parent_ref") {
+                arguments.insert("parent_ref".to_owned(), value.clone());
             }
         }
         "tasks.wave" => {
@@ -2006,6 +2023,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.guests.mint_slip" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.support_grants.mint" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.support_grants.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.support_grants.revoke" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.residence.mode" => {
@@ -3019,6 +3045,30 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.notes.history" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.notes.fork" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.forks.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.proposals.open" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.proposals.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.proposals.merge" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.proposals.switch" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.proposals.reject" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.version_tree" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.notes.history_purge" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3901,24 +3951,34 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::ExportOptions =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let proof = auth.verified_slip().ok_or_else(|| {
-                McpGatewayError::new(
-                    -32020,
-                    "forbidden",
-                    "full-vault export requires verified owner authority",
-                )
-            })?;
-            // The person path lists through its surface; the host path beside its archive.
-            let output = if proof.claims().holder_ref == "host" {
-                server
+            // A host credential resolves first (FIX 2222): a hosted operator root gets the typed refusal, and a self-hosted root or the explicit dev mode exports as the owner it acts as.
+            let action = crate::api::host_action::host_action_of(server.vault(), auth)
+                .transpose()
+                .map_err(|error| mcp_engine_error("host action failed", error))?;
+            // The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.
+            let output = match (auth.verified_slip(), action) {
+                (Some(proof), _) if proof.claims().holder_ref == "host" => server
                     .vault
                     .export_with_verified_host_owner_listing(&input, proof, actor.locality())
                     .map(|(output, listed)| {
                         served.extend(listed);
                         output
-                    })
-            } else {
-                memory.export_with_verified_owner(&input, proof)
+                    }),
+                (Some(proof), _) => memory.export_with_verified_owner(&input, proof),
+                (None, Some(action)) => server
+                    .vault
+                    .export_with_host_action_listing(&input, &action, actor.locality())
+                    .map(|(output, listed)| {
+                        served.extend(listed);
+                        output
+                    }),
+                (None, None) => {
+                    return Err(McpGatewayError::new(
+                        -32020,
+                        "forbidden",
+                        "full-vault export requires verified owner authority",
+                    ));
+                }
             }
             .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -5859,6 +5919,63 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_guests_mint_slip(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.support_grants.mint" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.support_grants.mint", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SupportGrantMintRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_support_grants_mint(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.support_grants.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.support_grants.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SupportGrantListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_support_grants_list(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.support_grants.revoke" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.support_grants.revoke", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SupportGrantRevokeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_support_grants_revoke(server, auth, input)
+                    .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -10357,6 +10474,70 @@ async fn execute_agent_verb_row(
             let input: oneiron::note::NoteAccessRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_notes_history(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.fork" => {
+            let input: oneiron::note::NoteForkRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_fork(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.forks.read" => {
+            let input: oneiron::note::NoteForkReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_forks_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.proposals.open" => {
+            let input: oneiron::note::NoteProposalOpenRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_proposals_open(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.proposals.read" => {
+            let input: oneiron::note::NoteProposalRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_proposals_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.proposals.merge" => {
+            let input: oneiron::note::NoteProposalRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_proposals_merge(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.proposals.switch" => {
+            let input: oneiron::note::NoteProposalRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_proposals_switch(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.proposals.reject" => {
+            let input: oneiron::note::NoteProposalRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_proposals_reject(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.version_tree" => {
+            let input: oneiron::note::NoteAccessRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_version_tree(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

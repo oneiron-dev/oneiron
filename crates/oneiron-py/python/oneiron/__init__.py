@@ -633,6 +633,9 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs":
             return Oneiron._VaultGuestsVerbs(self._client)
         @property
+        def support_grants(self) -> "Oneiron._VaultSupportGrantsVerbs":
+            return Oneiron._VaultSupportGrantsVerbs(self._client)
+        @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs":
             return Oneiron._VaultResidenceVerbs(self._client)
         @property
@@ -1441,6 +1444,18 @@ class Oneiron:
         def mint_slip(self, spec):
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
             return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
+    class _VaultSupportGrantsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mint(self, spec):
+            """The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_mint(json.dumps(spec))))
+        def list(self, spec):
+            """The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_list(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes one support grant; what support already read is not recalled."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_revoke(json.dumps(spec))))
     class _VaultResidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2651,6 +2666,18 @@ class Oneiron:
         def history(self, input: dict[str, Any]) -> Any:
             """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
             return json.loads(_translate(lambda: self._client.vault_notes_history(json.dumps(input, allow_nan=False))))
+        def fork(self, input: dict[str, Any]) -> Any:
+            """Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head."""
+            return json.loads(_translate(lambda: self._client.vault_notes_fork(json.dumps(input, allow_nan=False))))
+        @property
+        def forks(self) -> "Oneiron._VaultNotesForksVerbs":
+            return Oneiron._VaultNotesForksVerbs(self._client)
+        @property
+        def proposals(self) -> "Oneiron._VaultNotesProposalsVerbs":
+            return Oneiron._VaultNotesProposalsVerbs(self._client)
+        def version_tree(self, input: dict[str, Any]) -> Any:
+            """Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts."""
+            return json.loads(_translate(lambda: self._client.vault_notes_version_tree(json.dumps(input, allow_nan=False))))
         def history_purge(self, spec):
             """The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."""
             return json.loads(_translate(lambda: self._client.vault_notes_history_purge(json.dumps(spec))))
@@ -2678,6 +2705,30 @@ class Oneiron:
         def defaults(self, request: dict[str, Any]) -> dict[str, Any]:
             """One NOTE's overrides and the defaults its gates read after them."""
             return json.loads(_translate(lambda: self._client.vault_notes_defaults(json.dumps(request, allow_nan=False))))
+    class _VaultNotesForksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, input: dict[str, Any]) -> Any:
+            """Reads a NOTE fork and its retained pending text through the same scoped, reason-logged read as the live NOTE."""
+            return json.loads(_translate(lambda: self._client.vault_notes_forks_read(json.dumps(input, allow_nan=False))))
+    class _VaultNotesProposalsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, input: dict[str, Any]) -> Any:
+            """Opens one explicit set of NOTE forks with its shared explainer; the engine routes each member under the caller's own existing grants."""
+            return json.loads(_translate(lambda: self._client.vault_notes_proposals_open(json.dumps(input, allow_nan=False))))
+        def read(self, input: dict[str, Any]) -> Any:
+            """Reads an entire NOTE proposal set, its pending fork text, explainer and head-move receipts only when every member is readable."""
+            return json.loads(_translate(lambda: self._client.vault_notes_proposals_read(json.dumps(input, allow_nan=False))))
+        def merge(self, input: dict[str, Any]) -> Any:
+            """Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts."""
+            return json.loads(_translate(lambda: self._client.vault_notes_proposals_merge(json.dumps(input, allow_nan=False))))
+        def switch(self, input: dict[str, Any]) -> Any:
+            """Accepts the complete NOTE proposal set by explicit switch under the caller's existing NOTE grants, recording every head move."""
+            return json.loads(_translate(lambda: self._client.vault_notes_proposals_switch(json.dumps(input, allow_nan=False))))
+        def reject(self, input: dict[str, Any]) -> Any:
+            """Rejects the complete NOTE proposal set under the caller's existing NOTE grants, dropping pending text without changing live heads."""
+            return json.loads(_translate(lambda: self._client.vault_notes_proposals_reject(json.dumps(input, allow_nan=False))))
     class _VaultNotesEditorVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
