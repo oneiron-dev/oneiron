@@ -97,8 +97,11 @@ pub enum CodeConsentWaitState {
     Waiting,
     /// Answered; the effect's own gate has not settled it.
     Settling,
-    /// Settled: delivered, refused or of unknown delivery.
+    /// Settled: delivered, refused or of unknown delivery. The parked run
+    /// has not taken the reply into its replay yet.
     Settled,
+    /// The parked run took the settled reply into its replay, once (1b).
+    Consumed,
 }
 
 /// Where one code-mode connector call sits in its durable run. The
@@ -280,6 +283,31 @@ pub(crate) struct CodeConsentSettlement {
     pub(crate) settled_at_ms: u64,
 }
 
+/// The parked run's consumption of the settled reply (1b): written once, by
+/// the replay commit that binds the reply as the run's result, and never
+/// cleared. The result it names does not carry it, so the result's digest
+/// never feeds its own receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CodeConsentConsumption {
+    /// The consumption receipt in the consent Gate family.
+    pub(crate) receipt: GateDecisionId,
+    /// The settlement receipt it consumed, and the digest of the reply that
+    /// settlement delivered.
+    pub(crate) settlement_receipt: GateDecisionId,
+    pub(crate) reply_digest: [u8; 32],
+    /// The parked step's checkpoint index and hash, and the wait generation
+    /// the run resumed from.
+    pub(crate) step_seq: u64,
+    pub(crate) step_hash: [u8; 32],
+    pub(crate) wait_generation: u64,
+    /// The resumed result: its path in the run's record, its handle and its
+    /// body's BLAKE3.
+    pub(crate) resumed_path: String,
+    pub(crate) result_handle: String,
+    pub(crate) result_digest: [u8; 32],
+    pub(crate) consumed_at_ms: u64,
+}
+
 /// One code consent wait's control row. Status is derived from which facts
 /// are present; only the owning module writes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,13 +323,17 @@ pub(crate) struct CodeConsentWaitRow {
     pub(crate) admission: Option<CodeConsentAdmission>,
     #[serde(default)]
     pub(crate) settlement: Option<CodeConsentSettlement>,
+    #[serde(default)]
+    pub(crate) consumption: Option<CodeConsentConsumption>,
     pub(crate) revision: u64,
 }
 
 impl CodeConsentWaitRow {
     /// Where the wait stands.
     pub(crate) const fn state(&self) -> CodeConsentWaitState {
-        if self.settlement.is_some() {
+        if self.consumption.is_some() {
+            CodeConsentWaitState::Consumed
+        } else if self.settlement.is_some() {
             CodeConsentWaitState::Settled
         } else if self.answer.is_some() {
             CodeConsentWaitState::Settling
@@ -365,6 +397,9 @@ pub struct CodeConsentWaitView {
     pub outcome: Option<CodeConsentSettleOutcome>,
     /// The settlement receipt, `gate:<hex>`.
     pub settlement_receipt: Option<String>,
+    /// The parked run's consumption receipt, `gate:<hex>`, once its replay
+    /// took the settled reply. A settled wait may show none yet.
+    pub consumption_receipt: Option<String>,
     /// Why the settlement came out so.
     pub reasons: Vec<String>,
     /// This answer was not the first: the view is the first answer's.

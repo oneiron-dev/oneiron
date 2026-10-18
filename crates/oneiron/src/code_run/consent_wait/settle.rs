@@ -380,6 +380,10 @@ pub(crate) fn refuse_code_consent_wait_in_txn(
 /// same commit. An outcome that is not terminal (still held, or a send the
 /// ledger retries) settles nothing. A settled wait keeps its first
 /// settlement. `true` when this call settled it.
+///
+/// The reply is delivered first, and the settlement binds the reply as it
+/// was stored and delivered (after the side-row wall's masking), so the
+/// parked run's consumption verifies the very reply it takes (1b).
 pub(crate) fn settle_code_consent_wait_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -402,8 +406,12 @@ pub(crate) fn settle_code_consent_wait_in_txn(
         outcome.clone(),
     ))
     .map_err(|_| Error::InvalidConfig("a code consent reply is not JSON".to_owned()))?;
-    let reply_digest = *blake3::hash(reply.to_string().as_bytes()).as_bytes();
     let now = now_ms();
+    crate::code_run::deliver_wait_in_txn(vault, txn, wait_id, &reply, now)?;
+    let delivered = crate::code_run::settled_wait_reply_in_txn(vault, txn, wait_id)?.ok_or(
+        Error::InvariantViolation("a settled code consent wait kept no reply"),
+    )?;
+    let reply_digest = *blake3::hash(delivered.as_bytes()).as_bytes();
     let receipt_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
     let links = CodeWaitReceiptLinks {
         wait_id,
@@ -430,7 +438,6 @@ pub(crate) fn settle_code_consent_wait_in_txn(
         settled_at_ms: now,
     });
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
-    crate::code_run::deliver_wait_in_txn(vault, txn, wait_id, &reply, now)?;
     Ok(true)
 }
 
@@ -527,6 +534,10 @@ fn view_of(row: &CodeConsentWaitRow, already_answered: bool) -> CodeConsentWaitV
             .settlement
             .as_ref()
             .map(|settled| format!("gate:{}", settled.receipt.to_hex())),
+        consumption_receipt: row
+            .consumption
+            .as_ref()
+            .map(|consumed| format!("gate:{}", consumed.receipt.to_hex())),
         reasons: row
             .settlement
             .as_ref()
