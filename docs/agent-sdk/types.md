@@ -2714,6 +2714,12 @@ class Oneiron:
         def evidence(self, spec: Facade.ConsolidationEvidenceRequest) -> Facade.ScopedReadResult[list[Facade.ConsolidationEvidenceSource]]:
             """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
     class _VaultSieveVerbs:
+        @property
+        def evidence(self) -> "Oneiron._VaultSieveEvidenceVerbs": ...
+        def cadence(self, spec: Facade.WakeCadenceRequest) -> Facade.WakeCadenceView:
+            """Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model."""
+        @property
+        def settlements(self) -> "Oneiron._VaultSieveSettlementsVerbs": ...
         def queue(self, spec: Facade.SievePageRequest) -> Facade.SieveQueuePage:
             """The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed."""
         def retained(self, spec: Facade.SievePageRequest) -> Facade.SieveRetainedPage:
@@ -2726,6 +2732,16 @@ class Oneiron:
         def recipe_policy(self) -> "Oneiron._VaultSieveRecipePolicyVerbs": ...
         @property
         def lease(self) -> "Oneiron._VaultSieveLeaseVerbs": ...
+    class _VaultSieveEvidenceVerbs:
+        def __call__(self, spec: Facade.SieveEvidenceRequest) -> Facade.SieveEvidenceView:
+            """Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner."""
+        def replay(self, spec: Facade.SieveEvidenceRequest) -> Facade.SieveEvidenceView:
+            """Replay the same stored TURN through its owed sieve read under the owner proof; preserve every ingress identity and let the existing digest check decide whether evidence changed."""
+    class _VaultSieveSettlementsVerbs:
+        def __call__(self, spec: Facade.WakeSettlementsRequest) -> Facade.WakeSettlementsPage:
+            """Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks."""
+        def get(self, spec: Facade.WakeSettlementRequest) -> Facade.WakeSettlementView | None:
+            """Read one shared-scheduler root and its complete descendant settlement; a completed dispatcher never implies its children completed."""
     class _VaultSievePolicyVerbs:
         def __call__(self, spec: Facade.SievePolicyRequest) -> Facade.SievePolicy:
             """The owner reads the sieve policy row: how much one pass reads, each kind interest, rule confidences and the uncertain band."""

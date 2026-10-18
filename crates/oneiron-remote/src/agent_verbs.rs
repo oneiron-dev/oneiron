@@ -2307,6 +2307,21 @@ impl OneironClient {
                         Vec<oneiron::memory::consolidation::ConsolidationEvidenceSource>,
                     >,
                 >(client, verb, &input),
+                "vault.sieve.evidence" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::sieve_evidence::SieveEvidenceView,
+                >(client, verb, &input),
+                "vault.sieve.evidence.replay" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::sieve_evidence::SieveEvidenceView,
+                >(client, verb, &input),
+                "vault.sieve.cadence" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::WakeCadenceView,
+                >(client, verb, &input),
+                "vault.sieve.settlements" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::observation::WakeSettlementsPage,
+                >(client, verb, &input),
+                "vault.sieve.settlements.get" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::observation::WakeSettlementView>,
+                >(client, verb, &input),
                 "vault.sieve.queue" => remote_agent_verb_output::<
                     oneiron::dreamer_wake::sieve_doors::SieveQueuePage,
                 >(client, verb, &input),
@@ -11791,6 +11806,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consolidation.evidence", value)
+    }
+    pub fn vault_sieve_evidence(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+    ) -> Result<oneiron::dreamer_wake::sieve_evidence::SieveEvidenceView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.evidence", value)
+    }
+    pub fn vault_sieve_evidence_replay(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+    ) -> Result<oneiron::dreamer_wake::sieve_evidence::SieveEvidenceView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.evidence.replay", value)
+    }
+    pub fn vault_sieve_cadence(
+        &self,
+        input: &oneiron::dreamer_wake::WakeCadenceRequest,
+    ) -> Result<oneiron::dreamer_wake::WakeCadenceView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.cadence", value)
+    }
+    pub fn vault_sieve_settlements(
+        &self,
+        input: &oneiron::dreamer_runner::observation::WakeSettlementsRequest,
+    ) -> Result<oneiron::dreamer_runner::observation::WakeSettlementsPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.settlements", value)
+    }
+    pub fn vault_sieve_settlements_get(
+        &self,
+        input: &oneiron::dreamer_runner::observation::WakeSettlementRequest,
+    ) -> Result<Option<oneiron::dreamer_runner::observation::WakeSettlementView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.settlements.get", value)
     }
     pub fn vault_sieve_queue(
         &self,
