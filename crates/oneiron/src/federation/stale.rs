@@ -239,7 +239,7 @@ pub(super) fn register_foreign_world_for_pact(
 /// rather than nesting a second writer (FIX 321). The same rule holds: only
 /// the crate's own sync/import path may call it, with the pact the
 /// authenticated grant resolves to.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "sync")), allow(dead_code))]
 pub(crate) fn register_foreign_world_for_pact_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
