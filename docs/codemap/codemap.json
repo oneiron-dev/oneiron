@@ -41098,7 +41098,22 @@
      "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallableSkillAnswer"
+     ],
+     "path": "src/skill/call/answer.rs",
+     "purpose": "A callable skill's answer, spooled as it streams and checked against its return contract as it is read, with…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -54324,7 +54339,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54613,7 +54628,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3321,
+   "source_files": 3322,
    "test_files": 902
   },
   "oneiron-android": {
