@@ -24,6 +24,7 @@ use oneiron::dispatch_byoa::{decode_byoa_exhaust, parse_byoa_result_ref};
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::dreamer_runner::maintenance::CoachLiveSlice;
 use oneiron::learning::honesty::HONESTY_AXIS;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, ProviderPin,
     TypedDecision,
@@ -58,9 +59,6 @@ const MINUTES: &str = "skill:judge:v1:minutes:";
 const JUDGE_BUDGET: Duration = Duration::from_secs(600);
 /// The instructions' share of a replay state, in bytes.
 const MAX_INSTRUCTIONS: usize = 8_192;
-/// The judge rubric's share of a replay state, in bytes (the shipped rubric
-/// is about 1 KiB).
-const MAX_RUBRIC: usize = 4_096;
 /// The replays' share of a replay state, in bytes: the ladder takes at most
 /// 64 KiB of state.
 const MAX_REPLAY_TEXT: usize = 40_000;
@@ -507,7 +505,12 @@ impl HeldOutReplayNotes for ServeReplayJudge {
             state["goal"] = goal;
         }
         if let Some(rubric) = judge_rubric(&self.vault)? {
-            state["judge_rubric"] = json!(cut(&rubric.text, MAX_RUBRIC));
+            // Read whole; past its `[limits]` row it asks whether all is well.
+            self.vault.measure_limit(
+                EngineLimit::JudgeRubricBytes,
+                u64::try_from(rubric.text.len()).unwrap_or(u64::MAX),
+            );
+            state["judge_rubric"] = json!(rubric.text);
         }
         Ok(state)
     }

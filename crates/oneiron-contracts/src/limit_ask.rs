@@ -108,6 +108,9 @@ pub enum EngineLimit {
     /// Stored cells one workbook import writes into a live office body,
     /// every sheet together. Past it the workbook is imported whole.
     ImportXlsxLiveCells,
+    /// Bytes of the judge's rubric (the active shared `judge` skill's text)
+    /// one judgment or label re-check reads. Past it the rubric is read whole.
+    JudgeRubricBytes,
 }
 
 impl EngineLimit {
@@ -137,6 +140,7 @@ impl EngineLimit {
         Self::SignatureDecodeBytes,
         Self::PptxCommentPatches,
         Self::ImportXlsxLiveCells,
+        Self::JudgeRubricBytes,
     ];
 
     /// The config key that sets the row.
@@ -166,6 +170,7 @@ impl EngineLimit {
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
             Self::PptxCommentPatches => "limits.pptx_comment_patches",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
+            Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
         }
     }
 
@@ -197,6 +202,9 @@ impl EngineLimit {
             Self::SignatureDecodeBytes => 1 << 30,
             Self::PptxCommentPatches => 10_000,
             Self::ImportXlsxLiveCells => 200_000,
+            // The shipped rubric is about 1 KiB; the judgment's state holds
+            // at most 64 KiB in all.
+            Self::JudgeRubricBytes => 8_192,
         }
     }
 }

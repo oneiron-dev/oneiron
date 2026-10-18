@@ -165,6 +165,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::SignatureDecodeBytes),
         Self::Engine(EngineLimit::PptxCommentPatches),
         Self::Engine(EngineLimit::ImportXlsxLiveCells),
+        Self::Engine(EngineLimit::JudgeRubricBytes),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
