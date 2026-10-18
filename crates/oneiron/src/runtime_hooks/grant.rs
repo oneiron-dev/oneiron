@@ -7,7 +7,7 @@ use crate::claim::ClaimBody;
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{HookActorClass, PackHookBinding};
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Error, Result as VaultResult, Vault};
 
 use super::filter::glob_match;
 
@@ -17,10 +17,11 @@ const GRANTS: SideTable<EntityId, GrantRow, Named> = SideTable::new(&side_table:
 const MAX_GRANT_ENTRIES: usize = 64;
 
 /// What a hook may read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HookGrant {
     /// The actor whose read key the hook reads under.
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub reader: EntityId,
     pub reader_class: HookActorClass,
     /// Predicate globs the hook may see; empty is every predicate.
@@ -28,6 +29,7 @@ pub struct HookGrant {
     pub predicates: Vec<String>,
     /// Worlds the hook may see; empty is every world.
     #[serde(default, with = "crate::serialize::entity_ref::sequence")]
+    #[schemars(with = "Vec<String>")]
     pub worlds: Vec<EntityId>,
 }
 
@@ -74,27 +76,27 @@ impl Vault {
         owner: &AuthenticatedOwner,
         binding: EntityId,
         grant: HookGrant,
-    ) -> Result<()> {
-        if grant.predicates.len() > MAX_GRANT_ENTRIES
-            || grant.worlds.len() > MAX_GRANT_ENTRIES
-            || grant
-                .predicates
-                .iter()
-                .any(|glob| glob.is_empty() || glob.len() > 256)
-        {
-            return Err(Error::InvalidConfig(
-                "hook grant is out of bounds".to_owned(),
-            ));
-        }
-        if !self
-            .pack_hook_bindings()?
-            .iter()
-            .any(|(id, _)| *id == binding)
-        {
-            return Err(Error::EntityNotFound);
-        }
+    ) -> VaultResult<()> {
         self.with_write_txn_grouped(|txn| {
             let set_by = owner.revalidate_in_txn(self, txn)?;
+            if grant.predicates.len() > MAX_GRANT_ENTRIES
+                || grant.worlds.len() > MAX_GRANT_ENTRIES
+                || grant
+                    .predicates
+                    .iter()
+                    .any(|glob| glob.is_empty() || glob.len() > 256)
+            {
+                return Err(Error::InvalidConfig(
+                    "hook grant is out of bounds".to_owned(),
+                ));
+            }
+            if !self
+                .pack_hook_bindings_in_txn(txn)?
+                .iter()
+                .any(|(id, _)| *id == binding)
+            {
+                return Err(Error::EntityNotFound);
+            }
             let row = GrantRow {
                 grant,
                 set_by,
@@ -105,12 +107,57 @@ impl Vault {
     }
 
     /// The grant the owner set on a hook, if any.
-    pub fn hook_grant(&self, binding: EntityId) -> Result<Option<HookGrant>> {
+    pub fn hook_grant(&self, binding: EntityId) -> VaultResult<Option<HookGrant>> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(GRANTS
-            .get(&self.store, &rtxn, &binding)?
-            .map(|row| row.grant))
+        grant_in_txn(self, &rtxn, binding)
     }
+
+    /// The grant a live binding reads under: the owner's assignment, or
+    /// its author's ceiling when none was assigned.
+    pub fn effective_hook_grant(&self, binding: EntityId) -> VaultResult<HookGrant> {
+        let txn = self.store.env.read_txn()?;
+        let (_, row) = self
+            .pack_hook_bindings_in_txn(&txn)?
+            .into_iter()
+            .find(|(id, _)| *id == binding)
+            .ok_or(Error::EntityNotFound)?;
+        effective_grant_in_txn(self, &txn, binding, &row)
+    }
+
+    /// Live bindings, enabled or not, with the grants they read under.
+    /// Bindings and grants come from the same snapshot.
+    pub fn pack_hook_bindings_with_grants(
+        &self,
+    ) -> VaultResult<Vec<(EntityId, PackHookBinding, HookGrant)>> {
+        let txn = self.store.env.read_txn()?;
+        self.pack_hook_bindings_in_txn(&txn)?
+            .into_iter()
+            .map(|(id, binding)| {
+                let grant = effective_grant_in_txn(self, &txn, id, &binding)?;
+                Ok((id, binding, grant))
+            })
+            .collect()
+    }
+}
+
+fn grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: EntityId,
+) -> VaultResult<Option<HookGrant>> {
+    Ok(GRANTS
+        .get(&vault.store, txn, &binding)?
+        .map(|row| row.grant))
+}
+
+fn effective_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding_id: EntityId,
+    binding: &PackHookBinding,
+) -> VaultResult<HookGrant> {
+    Ok(grant_in_txn(vault, txn, binding_id)?
+        .unwrap_or_else(|| HookGrant::author_ceiling(binding)))
 }
 
 /// The grant a run reads under: the owner's, else the author's ceiling.
@@ -118,8 +165,7 @@ pub(super) fn effective_grant(
     vault: &Vault,
     binding_id: EntityId,
     binding: &PackHookBinding,
-) -> Result<HookGrant> {
-    Ok(vault
-        .hook_grant(binding_id)?
-        .unwrap_or_else(|| HookGrant::author_ceiling(binding)))
+) -> VaultResult<HookGrant> {
+    let txn = vault.store.env.read_txn()?;
+    effective_grant_in_txn(vault, &txn, binding_id, binding)
 }

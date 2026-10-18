@@ -46,7 +46,7 @@ const fn retry(reason: &'static str) -> Error {
 }
 
 /// A rule matches the exact sets of axes gained and lost, not unbound prose.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TradeoffRule {
     pub gains: BTreeSet<String>,
@@ -57,7 +57,7 @@ pub struct TradeoffRule {
 /// The preference part of a skill's goal record. The responsible person
 /// authors the rules and the judgment band. Learned rules come only from that
 /// person's A/B picks and are kept when the rules or band are revised.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillTradeoffPreferences {
     /// Minted on every configuration write, as the goal-axis override is.
@@ -137,7 +137,7 @@ fn limits_holder(
 
 /// The exact scored question. Jev must echo its digest before its answer can
 /// rule, and the person's pick must name it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillTradeoffQuestion {
     pub goal_id: EntityId,
@@ -178,7 +178,7 @@ impl SkillTradeoffQuestion {
 }
 
 /// Jev's answer to one question. `probability` is the confidence in `choice`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JevTradeoffVerdict {
     pub question_digest: String,
@@ -215,7 +215,7 @@ impl JevTradeoffVerdict {
 
 /// The durable A/B request a host renders for the responsible person. It is
 /// bound to the pending verdict it would answer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillTradeoffAsk {
     pub pending: EntityId,

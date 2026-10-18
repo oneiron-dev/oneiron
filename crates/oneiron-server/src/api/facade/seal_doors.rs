@@ -5,8 +5,8 @@ use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::self_heal::audit::doors::{
-    self, SealAttemptRequest, SealCompleteRequest, SealPendingRequest, SealReceiptView, SealRunReceipt,
-    SealRunRequest,
+    self, SealAttemptRequest, SealCompleteRequest, SealPendingRequest, SealReceiptView,
+    SealRunReceipt, SealRunRequest,
 };
 use oneiron::self_heal::audit::{AttemptConfession, SealCheckRequest};
 
