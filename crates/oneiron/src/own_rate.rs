@@ -212,6 +212,36 @@ pub(crate) fn observe_in_txn(
     )
 }
 
+/// Erasing `actor` (FIX 3520): its windows go, every kind, in the erase's own
+/// transaction. A window counts one actor's acts and keys on that actor.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_window_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    WINDOWS.delete_from(&vault.store, wtxn, actor.as_bytes())?;
+    Ok(())
+}
+
+/// Erasing `actor` (FIX 3520): its checks go, every kind, in the erase's own
+/// transaction. A check asks about one actor's rate and keys on that actor.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_check_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    CHECKS.delete_from(&vault.store, wtxn, actor.as_bytes())?;
+    Ok(())
+}
+
 impl Vault {
     /// The latest window in which this actor's acts of `kind` crossed the
     /// advisory threshold, if any. A check never refuses an act.
