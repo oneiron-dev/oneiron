@@ -287,6 +287,10 @@ export class Oneiron {
       /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
       ask: (input: Facade.GrantAskRequest): Facade.GrantAskReceipt => this.#call(() => this.#client.selfGrantsAsk(input) as Facade.GrantAskReceipt),
     },
+    off_record: {
+      /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+      execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
+    },
     /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
     use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),
     skills: {
@@ -629,6 +633,14 @@ export class Oneiron {
       discard: (input: Facade.OffRecordSessionRequest): Facade.OffRecordClosed => this.#call(() => this.#client.vaultOffRecordDiscard(input) as Facade.OffRecordClosed),
       /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
       recall: (input: Facade.OffRecordRecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultOffRecordRecall(input) as Facade.MemoryPack),
+      notes: {
+        /** The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+        create: (input: Facade.OffRecordNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultOffRecordNotesCreate(input) as Facade.EntityRefReceipt),
+      },
+      claims: {
+        /** The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+        upsert: (input: Facade.OffRecordClaimRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultOffRecordClaimsUpsert(input) as Facade.CommitReceipt),
+      },
     },
     records: {
       /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */

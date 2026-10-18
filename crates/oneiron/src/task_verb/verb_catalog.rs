@@ -126,6 +126,9 @@ pub enum AgentVerb {
     VaultOffRecordWitness,
     VaultOffRecordDiscard,
     VaultOffRecordRecall,
+    VaultOffRecordNotesCreate,
+    VaultOffRecordClaimsUpsert,
+    SelfOffRecordExecute,
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
     VaultResearchBind,
@@ -562,6 +565,9 @@ impl AgentVerb {
         Self::VaultOffRecordWitness,
         Self::VaultOffRecordDiscard,
         Self::VaultOffRecordRecall,
+        Self::VaultOffRecordNotesCreate,
+        Self::VaultOffRecordClaimsUpsert,
+        Self::SelfOffRecordExecute,
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
         Self::VaultResearchBind,
@@ -1001,6 +1007,9 @@ impl AgentVerb {
             Self::VaultOffRecordWitness => "vault.off_record.witness",
             Self::VaultOffRecordDiscard => "vault.off_record.discard",
             Self::VaultOffRecordRecall => "vault.off_record.recall",
+            Self::VaultOffRecordNotesCreate => "vault.off_record.notes.create",
+            Self::VaultOffRecordClaimsUpsert => "vault.off_record.claims.upsert",
+            Self::SelfOffRecordExecute => "self.off_record.execute",
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultResearchBind => "vault.research.bind",
@@ -1444,6 +1453,9 @@ impl AgentVerb {
                 | Self::VaultOffRecordWitness
                 | Self::VaultOffRecordDiscard
                 | Self::VaultOffRecordRecall
+                | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordClaimsUpsert
+                | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -1887,6 +1899,9 @@ impl AgentVerb {
                 | Self::VaultOffRecordWitness
                 | Self::VaultOffRecordDiscard
                 | Self::VaultOffRecordRecall
+                | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordClaimsUpsert
+                | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -2368,6 +2383,9 @@ impl AgentVerb {
                 | Self::VaultOffRecordWitness
                 | Self::VaultOffRecordDiscard
                 | Self::VaultOffRecordRecall
+                | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordClaimsUpsert
+                | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -2741,6 +2759,9 @@ impl AgentVerb {
                 | Self::VaultOffRecordStart
                 | Self::VaultOffRecordWitness
                 | Self::VaultOffRecordDiscard
+                | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordClaimsUpsert
+                | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -3082,6 +3103,9 @@ impl AgentVerb {
             Self::VaultOffRecordWitness => &["spec"],
             Self::VaultOffRecordDiscard => &["spec"],
             Self::VaultOffRecordRecall => &["spec"],
+            Self::VaultOffRecordNotesCreate => &["spec"],
+            Self::VaultOffRecordClaimsUpsert => &["spec"],
+            Self::SelfOffRecordExecute => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchBind => &["spec"],
@@ -3519,6 +3543,9 @@ impl AgentVerb {
             Self::VaultOffRecordWitness => &["spec"],
             Self::VaultOffRecordDiscard => &["spec"],
             Self::VaultOffRecordRecall => &["spec"],
+            Self::VaultOffRecordNotesCreate => &["spec"],
+            Self::VaultOffRecordClaimsUpsert => &["spec"],
+            Self::SelfOffRecordExecute => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchBind => &["spec"],
@@ -4182,6 +4209,15 @@ impl AgentVerb {
             }
             Self::VaultOffRecordRecall => {
                 "The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."
+            }
+            Self::VaultOffRecordNotesCreate => {
+                "The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."
+            }
+            Self::VaultOffRecordClaimsUpsert => {
+                "The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."
+            }
+            Self::SelfOffRecordExecute => {
+                "The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."
             }
             Self::VaultRecordsErasePreview => {
                 "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."

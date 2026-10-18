@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 390 facade rows, 1441 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 7; generated in and out: 356.
+// UniFFI census: 393 facade rows, 1446 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 357.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -8428,6 +8428,82 @@ pub struct OffRecordRecallRequest {
     pub query: String,
     #[serde(rename = "limit")]
     pub limit: u64,
+}
+
+/// `oneiron::task_verb::sdk_memory::CreateNoteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CreateNoteRequest {
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "markdown")]
+    pub markdown: String,
+}
+
+/// `oneiron::task_verb::sdk_off_record::OffRecordNoteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OffRecordNoteRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "note")]
+    pub note: CreateNoteRequest,
+}
+
+/// `oneiron::task_verb::sdk_off_record::OffRecordClaimRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OffRecordClaimRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "claim")]
+    pub claim: ScopedClaimInput,
+}
+
+/// `oneiron::task_verb::sdk_off_record::OffRecordExecuteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OffRecordExecuteRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "task")]
+    pub task: String,
+}
+
+/// `oneiron::task_verb::sdk_off_record::OffRecordRunStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OffRecordRunStatus {
+    #[serde(rename = "complete")]
+    Complete,
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "yielded")]
+    Yielded,
+    #[serde(rename = "window_full")]
+    WindowFull,
+}
+
+/// `oneiron::task_verb::sdk_off_record::OffRecordExecuted`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OffRecordExecuted {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "status")]
+    pub status: OffRecordRunStatus,
+    #[serde(
+        rename = "next_step_seq",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_step_seq: Option<u64>,
+    #[serde(rename = "steps_run")]
+    pub steps_run: u32,
+    #[serde(rename = "bridge_calls")]
+    pub bridge_calls: u64,
 }
 
 /// `oneiron::task_verb::sdk_record_erase::RecordEraseRequest`.
@@ -22303,16 +22379,6 @@ pub struct DeliveryWindowPreview {
     pub policy_refs: Vec<String>,
     #[serde(rename = "resolution")]
     pub resolution: DeliveryWindowResolution,
-}
-
-/// `oneiron::task_verb::sdk_memory::CreateNoteRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct CreateNoteRequest {
-    #[serde(rename = "kind")]
-    pub kind: String,
-    #[serde(rename = "markdown")]
-    pub markdown: String,
 }
 
 /// `oneiron::task_verb::sdk_memory::CreateNoteFromEntityRequest`.

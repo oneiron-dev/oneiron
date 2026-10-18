@@ -346,6 +346,9 @@ class Oneiron:
         @property
         def grants(self) -> "Oneiron._SelfGrantsVerbs":
             return Oneiron._SelfGrantsVerbs(self._client)
+        @property
+        def off_record(self) -> "Oneiron._SelfOffRecordVerbs":
+            return Oneiron._SelfOffRecordVerbs(self._client)
         def use(self, spec):
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
             return json.loads(_translate(lambda: self._client.self_use(json.dumps(spec))))
@@ -454,6 +457,12 @@ class Oneiron:
         def ask(self, spec):
             """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
+    class _SelfOffRecordVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def execute(self, spec):
+            """The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+            return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
     class _SelfSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1204,6 +1213,24 @@ class Oneiron:
         def recall(self, spec):
             """The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."""
             return json.loads(_translate(lambda: self._client.vault_off_record_recall(json.dumps(spec))))
+        @property
+        def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs":
+            return Oneiron._VaultOffRecordNotesVerbs(self._client)
+        @property
+        def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs":
+            return Oneiron._VaultOffRecordClaimsVerbs(self._client)
+    class _VaultOffRecordNotesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_notes_create(json.dumps(spec))))
+    class _VaultOffRecordClaimsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def upsert(self, spec):
+            """The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_claims_upsert(json.dumps(spec))))
     class _VaultRecordsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

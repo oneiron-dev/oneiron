@@ -12,6 +12,11 @@
 //!   the discard.
 //! - `vault.off_record.recall` reads the room's overlay with base, on the
 //!   caller's own credential handle (`Memory::recall_in_session`).
+//! - `vault.off_record.notes.create` and `.claims.upsert` write through the
+//!   session's handle into the room (`Memory::create_note_in_session`,
+//!   `Memory::claim_upsert_in_session`).
+//! - `self.off_record.execute` runs one entry of a durable code-mode run
+//!   bound to the session, on the server's code-mode host.
 //!
 //! None keeps a call receipt (`no_record`): ARCH-0052 keeps no wire receipt
 //! that a session ran. Each lists its rows (`host_door_lists`): a recall
@@ -21,19 +26,23 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
-    Effort, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryError, MemoryPack,
+    CommitReceipt, Effort, EntityRefReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryPack,
     MemoryResult, RecallScope, WitnessReceipt,
 };
 use oneiron::off_record::OffRecordSession;
 use oneiron::task_verb::sdk::{
-    OFF_RECORD_OWNER_ONE_TO_ONE, OffRecordClosed, OffRecordEnterMode, OffRecordRecallRequest,
-    OffRecordSessionRequest, OffRecordSessionView, OffRecordStartRequest, OffRecordWitnessRequest,
+    OFF_RECORD_OWNER_ONE_TO_ONE, OffRecordClaimRequest, OffRecordClosed, OffRecordEnterMode,
+    OffRecordExecuteRequest, OffRecordExecuted, OffRecordNoteRequest, OffRecordRecallRequest,
+    OffRecordRunStatus, OffRecordSessionRequest, OffRecordSessionView, OffRecordStartRequest,
+    OffRecordWitnessRequest,
 };
-use oneiron::{ErrorKind, Vault};
+use oneiron::{EntityId, ErrorKind, Vault, WriteActor};
 
-use super::host_doors::{Listed, internal};
-use super::legal_hold_doors::{as_owner_listing, as_owner_naming};
+use super::host_doors::{Listed, internal, naming};
+use super::legal_hold_doors::{as_owner, as_owner_listing, as_owner_naming};
 use crate::auth::CoreAuth;
+use crate::mcp::McpCodeExecutionError;
 use crate::owner::OwnerError;
 use crate::owner::off_record as owner_off_record;
 use crate::server::SyncServer;
@@ -256,4 +265,158 @@ pub(crate) async fn vault_off_record_recall(
             )
     })
     .await
+}
+
+/// `vault.off_record.notes.create`: one NOTE written into the session's
+/// room through its handle.
+pub(crate) async fn vault_off_record_notes_create(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OffRecordNoteRequest,
+) -> Listed<EntityRefReceipt> {
+    const VERB: &str = "vault.off_record.notes.create";
+    let (actor, class) = match super::facade_actor(auth) {
+        Ok(caller) => caller,
+        Err(error) => return (Err(error.into_memory_error()), Vec::new()),
+    };
+    let held = auth.clone();
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        move |server, owner| {
+            let session = own_session(server.vault(), owner, &input.session_ref)?;
+            crate::api::credential_memory(&server.vault, Some(&held), actor, class)
+                .at(held.locality())
+                .create_note_in_session(&session, &input.note.kind, &input.note.markdown)
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+/// `vault.off_record.claims.upsert`: one claim admitted into the session's
+/// room through its handle.
+pub(crate) async fn vault_off_record_claims_upsert(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OffRecordClaimRequest,
+) -> Listed<CommitReceipt> {
+    const VERB: &str = "vault.off_record.claims.upsert";
+    let (actor, class) = match super::facade_actor(auth) {
+        Ok(caller) => caller,
+        Err(error) => return (Err(error.into_memory_error()), Vec::new()),
+    };
+    let held = auth.clone();
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        move |server, owner| {
+            let session = own_session(server.vault(), owner, &input.session_ref)?;
+            crate::api::credential_memory(&server.vault, Some(&held), actor, class)
+                .at(held.locality())
+                .claim_upsert_in_session(&session, &input.claim)
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+/// A session run's refusal as the row's.
+fn run_refusal(error: &McpCodeExecutionError) -> MemoryError {
+    let (code, suggestion) = match error {
+        McpCodeExecutionError::RunBusy => (
+            MEMORY_CODE_INVALID_STATE,
+            "Call again once the run's current entry ends.",
+        ),
+        McpCodeExecutionError::HostUnbound
+        | McpCodeExecutionError::RunWaitedOut
+        | McpCodeExecutionError::ProviderUnavailable { .. } => (
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            "Call again with the same run_ref.",
+        ),
+        McpCodeExecutionError::RunBinding(_) => (
+            MEMORY_CODE_INVALID_STATE,
+            "Check that the session is live and off record, then call again.",
+        ),
+        McpCodeExecutionError::Run(_) => (
+            MEMORY_CODE_INTERNAL,
+            "Call again with the same run_ref; the run goes on from its last step.",
+        ),
+    };
+    MemoryError::new(code, error.to_string(), &[suggestion])
+}
+
+/// [`self_off_record_execute`]'s answer.
+async fn off_record_execute(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OffRecordExecuteRequest,
+) -> MemoryResult<OffRecordExecuted> {
+    const VERB: &str = "self.off_record.execute";
+    let (actor, class) = super::facade_actor(auth).map_err(|error| error.into_memory_error())?;
+    let session_ref = input.session_ref.clone();
+    // The owner's proof, and their own live 1:1 stretch by that name, before
+    // a run is entered: the run binds it again on its own thread.
+    as_owner(server, auth, VERB, move |server, owner| {
+        own_session(server.vault(), owner, &session_ref).map(drop)
+    })
+    .await?;
+    let host = server
+        .code_execution_host()
+        .and_then(|host| host.engine_native())
+        .ok_or_else(|| {
+            MemoryError::new(
+                MEMORY_CODE_MODEL_UNAVAILABLE,
+                "this server runs no code-mode host",
+                &["Configure the server's code-mode host, then call again."],
+            )
+        })?;
+    let run_id = crate::mcp::off_record_run_id(&input.session_ref, actor, &input.run_ref);
+    let outcome = host
+        .execute_in_off_record_session(
+            Arc::clone(&server.vault),
+            input.session_ref,
+            WriteActor::new(actor, class),
+            input.run_ref.clone(),
+            input.task,
+            run_id,
+        )
+        .await
+        .map_err(|error| run_refusal(&error))?;
+    let (status, next_step_seq) = match &outcome.status {
+        oneiron::engine_executor::EngineExecutorStatus::Complete => {
+            (OffRecordRunStatus::Complete, None)
+        }
+        oneiron::engine_executor::EngineExecutorStatus::Waiting(_) => {
+            (OffRecordRunStatus::Waiting, None)
+        }
+        oneiron::engine_executor::EngineExecutorStatus::Yielded { next_step_seq } => {
+            (OffRecordRunStatus::Yielded, Some(*next_step_seq))
+        }
+        oneiron::engine_executor::EngineExecutorStatus::WindowFull { next_step_seq, .. } => {
+            (OffRecordRunStatus::WindowFull, Some(*next_step_seq))
+        }
+    };
+    Ok(OffRecordExecuted {
+        run_ref: input.run_ref,
+        run_id: run_id.to_hex(),
+        status,
+        next_step_seq,
+        steps_run: outcome.steps_run,
+        bridge_calls: outcome.replay_record.bridge_calls.len(),
+    })
+}
+
+/// `self.off_record.execute`: one entry of a durable code-mode run bound to
+/// the owner's session, listing no row: the run's rows are the room's.
+pub(crate) async fn self_off_record_execute(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OffRecordExecuteRequest,
+) -> Listed<OffRecordExecuted> {
+    naming(off_record_execute(server, auth, input).await, |_| {
+        Vec::<EntityId>::new()
+    })
 }

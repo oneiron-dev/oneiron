@@ -403,6 +403,8 @@ class Oneiron:
             """Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."""
         @property
         def grants(self) -> "Oneiron._SelfGrantsVerbs": ...
+        @property
+        def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
         def use(self, spec: Facade.SecretUseRequest) -> Facade.SecretUseAnswer:
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
         @property
@@ -466,6 +468,9 @@ class Oneiron:
     class _SelfGrantsVerbs:
         def ask(self, spec: Facade.GrantAskRequest) -> Facade.GrantAskReceipt:
             """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
+    class _SelfOffRecordVerbs:
+        def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
+            """The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
     class _SelfSkillsVerbs:
         def save(self, spec: Facade.SkillSaveRequest) -> Facade.SkillAuthoringReceipt:
             """An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it."""
@@ -898,6 +903,16 @@ class Oneiron:
             """The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay."""
         def recall(self, spec: Facade.OffRecordRecallRequest) -> Facade.MemoryPack:
             """The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."""
+        @property
+        def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs": ...
+        @property
+        def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs": ...
+    class _VaultOffRecordNotesVerbs:
+        def create(self, spec: Facade.OffRecordNoteRequest) -> Facade.EntityRefReceipt:
+            """The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
+    class _VaultOffRecordClaimsVerbs:
+        def upsert(self, spec: Facade.OffRecordClaimRequest) -> Facade.CommitReceipt:
+            """The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
     class _VaultRecordsVerbs:
         def erase_preview(self, spec: Facade.RecordEraseRequest) -> Facade.RecordErasePreview:
             """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""

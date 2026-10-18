@@ -628,6 +628,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.off_record.notes.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordNoteRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.claims.upsert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordClaimRequest,
+                >(),
+            ),
+            (
+                "self.off_record.execute",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordExecuteRequest,
+                >(),
+            ),
+            (
                 "vault.records.erase_preview",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RecordEraseRequest,
@@ -2275,6 +2293,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.status",
     "vault.off_record.witness",
     "vault.off_record.discard",
+    "vault.off_record.notes.create",
+    "vault.off_record.claims.upsert",
+    "self.off_record.execute",
     "vault.claims.review",
     "vault.claims.settle",
 ];
@@ -2293,6 +2314,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.off_record.discard" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::OffRecordClosed>()
         }
+        "vault.off_record.notes.create" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
+        }
+        "vault.off_record.claims.upsert" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
+        }
+        "self.off_record.execute" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordExecuted,
+        >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
         }
@@ -2310,6 +2340,9 @@ pub const NO_RECORD_ROWS: &[&str] = &[
     "vault.off_record.witness",
     "vault.off_record.discard",
     "vault.off_record.recall",
+    "vault.off_record.notes.create",
+    "vault.off_record.claims.upsert",
+    "self.off_record.execute",
 ];
 pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
     mcp_arguments_schema_from_input(verb, input_schema(verb)?)
@@ -3233,6 +3266,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.off_record.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.notes.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.claims.upsert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.off_record.execute" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5508,6 +5562,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.off_record.recall" => {
             let _input: crate::task_verb::sdk::OffRecordRecallRequest = decode(value.clone())?;
         }
+        "vault.off_record.notes.create" => {
+            let _input: crate::task_verb::sdk::OffRecordNoteRequest = decode(value.clone())?;
+        }
+        "vault.off_record.claims.upsert" => {
+            let _input: crate::task_verb::sdk::OffRecordClaimRequest = decode(value.clone())?;
+        }
+        "self.off_record.execute" => {
+            let _input: crate::task_verb::sdk::OffRecordExecuteRequest = decode(value.clone())?;
+        }
         "vault.records.erase_preview" => {
             let _input: crate::task_verb::sdk::RecordEraseRequest = decode(value.clone())?;
         }
@@ -6676,6 +6739,13 @@ pub fn invoke(
         "vault.off_record.witness" => encode(vault_off_record_witness(memory, decode(value)?)?),
         "vault.off_record.discard" => encode(vault_off_record_discard(memory, decode(value)?)?),
         "vault.off_record.recall" => encode(vault_off_record_recall(memory, decode(value)?)?),
+        "vault.off_record.notes.create" => {
+            encode(vault_off_record_notes_create(memory, decode(value)?)?)
+        }
+        "vault.off_record.claims.upsert" => {
+            encode(vault_off_record_claims_upsert(memory, decode(value)?)?)
+        }
+        "self.off_record.execute" => encode(self_off_record_execute(memory, decode(value)?)?),
         "vault.records.erase_preview" => {
             encode(vault_records_erase_preview(memory, decode(value)?)?)
         }
@@ -8324,6 +8394,24 @@ pub fn vault_off_record_recall(
     input: crate::task_verb::sdk::OffRecordRecallRequest,
 ) -> MemoryResult<crate::memory::MemoryPack> {
     crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.recall", &input)
+}
+pub fn vault_off_record_notes_create(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordNoteRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.notes.create", &input)
+}
+pub fn vault_off_record_claims_upsert(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordClaimRequest,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.claims.upsert", &input)
+}
+pub fn self_off_record_execute(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordExecuteRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordExecuted> {
+    crate::task_verb::sdk::off_record_host_only(memory, "self.off_record.execute", &input)
 }
 pub fn vault_records_erase_preview(
     memory: &Memory<'_>,

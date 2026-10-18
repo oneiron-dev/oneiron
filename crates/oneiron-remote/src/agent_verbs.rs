@@ -419,6 +419,15 @@ impl OneironClient {
                 "vault.off_record.recall" => {
                     remote_agent_verb_output::<oneiron::memory::MemoryPack>(client, verb, &input)
                 }
+                "vault.off_record.notes.create" => remote_agent_verb_output::<
+                    oneiron::memory::EntityRefReceipt,
+                >(client, verb, &input),
+                "vault.off_record.claims.upsert" => {
+                    remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
+                }
+                "self.off_record.execute" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordExecuted,
+                >(client, verb, &input),
                 "vault.records.erase_preview" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RecordErasePreview,
                 >(client, verb, &input),
@@ -2816,6 +2825,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.off_record.recall", value)
+    }
+    pub fn vault_off_record_notes_create(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordNoteRequest,
+    ) -> Result<oneiron::memory::EntityRefReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.notes.create", value)
+    }
+    pub fn vault_off_record_claims_upsert(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordClaimRequest,
+    ) -> Result<oneiron::memory::CommitReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.claims.upsert", value)
+    }
+    pub fn self_off_record_execute(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordExecuteRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordExecuted, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.off_record.execute", value)
     }
     pub fn vault_records_erase_preview(
         &self,

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 390 facade rows, 1517 declarations.
-Inputs: 346 of 390 fully typed, 44 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 345 of 390 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 393 facade rows, 1522 declarations.
+Inputs: 348 of 393 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 348 of 393 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -2964,6 +2964,32 @@ class OffRecordRecallRequest(TypedDict):
     session_ref: str
     query: str
     limit: int
+class CreateNoteRequest(TypedDict):
+    kind: str
+    markdown: str
+class OffRecordNoteRequest(TypedDict):
+    session_ref: str
+    note: CreateNoteRequest
+class EntityRefReceipt(TypedDict):
+    entity_ref: str
+    id_hex: str
+    receipt_ref: str
+    record: NotRequired[RecordRef | None]
+class OffRecordClaimRequest(TypedDict):
+    session_ref: str
+    claim: ScopedClaimInput
+class OffRecordExecuteRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+    task: str
+OffRecordRunStatus = Literal["complete", "waiting", "yielded", "window_full"]
+class OffRecordExecuted(TypedDict):
+    run_ref: str
+    run_id: str
+    status: OffRecordRunStatus
+    next_step_seq: NotRequired[int | None]
+    steps_run: int
+    bridge_calls: int
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):
@@ -6200,11 +6226,6 @@ class StructuralPutInput(TypedDict):
     edges: NotRequired[list[StructuralEdgeSpec] | None]
     occurred_at: int
     learned_at: NotRequired[int | None]
-class EntityRefReceipt(TypedDict):
-    entity_ref: str
-    id_hex: str
-    receipt_ref: str
-    record: NotRequired[RecordRef | None]
 class HabitCheckinInput(TypedDict):
     habit_ref: str
     id: NotRequired[str | None]
@@ -7593,9 +7614,6 @@ class OutboundIntentReceipt(TypedDict):
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
     deduped: bool
-class CreateNoteRequest(TypedDict):
-    kind: str
-    markdown: str
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str

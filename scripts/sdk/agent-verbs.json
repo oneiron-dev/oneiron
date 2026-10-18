@@ -2044,6 +2044,54 @@
       "section": false
     },
     {
+      "name": "vault.off_record.notes.create",
+      "description": "The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
+      "input": "crate::task_verb::sdk::OffRecordNoteRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.notes.create\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.claims.upsert",
+      "description": "The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
+      "input": "crate::task_verb::sdk::OffRecordClaimRequest",
+      "output": "crate::memory::CommitReceipt",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.claims.upsert\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.off_record.execute",
+      "description": "The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.",
+      "input": "crate::task_verb::sdk::OffRecordExecuteRequest",
+      "output": "crate::task_verb::sdk::OffRecordExecuted",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.execute\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.records.erase_preview",
       "description": "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back.",
       "input": "crate::task_verb::sdk::RecordEraseRequest",

@@ -177,16 +177,13 @@ impl HostSelfDispatcher<'_> {
     /// Executor-path gate routing: DECISIONS FOLLOW THEIR CONTENT.
     ///
     /// `Canonical` takes the unchanged vault-store path. A session run reaches
-    /// here only after [`Self::enforce_off_record_effect_policy`] passed,
-    /// which — for the four durable memory verbs — means the room is ON
-    /// RECORD; its decision is a decision about base content and lands in
-    /// base with it.
-    ///
-    /// The `Overlay` arm is the ordering assertion made structural: an
-    /// off-record durable write must never arrive here at all, and if one
-    /// ever did, the answer would still be refusal rather than an ephemeral
-    /// decision. [`OffRecordSession::executor_check_write_gate`] routes on the
-    /// captured route and raises the talk-only refusal for `Overlay`.
+    /// here only after [`Self::enforce_off_record_effect_policy`] passed. On
+    /// record its decision is a decision about base content and lands in
+    /// base with it. Off record only a claim put gets here (DOOR-127): its
+    /// row stages in the room, so
+    /// [`OffRecordSession::executor_check_write_gate`] judges it against base
+    /// policy and keeps the decision nowhere. The effect policy refuses every
+    /// other off-record write before it.
     pub(super) fn check_write_gate(
         &self,
         id: EntityId,

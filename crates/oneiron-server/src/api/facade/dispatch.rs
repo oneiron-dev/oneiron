@@ -2786,6 +2786,75 @@ async fn vault_off_record_recall(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_off_record_notes_create(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.off_record.notes.create")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.off_record.notes.create", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.off_record.notes.create", value).await?;
+    let (output, listed) = super::host_doors::vault_off_record_notes_create(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_off_record_claims_upsert(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.off_record.claims.upsert")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.off_record.claims.upsert", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.off_record.claims.upsert", value).await?;
+    let (output, listed) = super::host_doors::vault_off_record_claims_upsert(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_off_record_execute(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.off_record.execute")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.off_record.execute", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.off_record.execute", value).await?;
+    let (output, listed) =
+        super::host_doors::self_off_record_execute(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_records_erase_preview(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -9150,6 +9219,11 @@ pub(crate) async fn call_verb(
         "vault.off_record.witness" => vault_off_record_witness(server, call, input).await,
         "vault.off_record.discard" => vault_off_record_discard(server, call, input).await,
         "vault.off_record.recall" => vault_off_record_recall(server, call, input).await,
+        "vault.off_record.notes.create" => vault_off_record_notes_create(server, call, input).await,
+        "vault.off_record.claims.upsert" => {
+            vault_off_record_claims_upsert(server, call, input).await
+        }
+        "self.off_record.execute" => self_off_record_execute(server, call, input).await,
         "vault.records.erase_preview" => vault_records_erase_preview(server, call, input).await,
         "vault.records.erase_confirm" => vault_records_erase_confirm(server, call, input).await,
         "vault.research.bind" => vault_research_bind(server, call, input).await,

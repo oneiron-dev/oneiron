@@ -152,6 +152,9 @@ vaultOffRecordStatus(input: unknown): unknown
 vaultOffRecordWitness(input: unknown): unknown
 vaultOffRecordDiscard(input: unknown): unknown
 vaultOffRecordRecall(input: unknown): unknown
+vaultOffRecordNotesCreate(input: unknown): unknown
+vaultOffRecordClaimsUpsert(input: unknown): unknown
+selfOffRecordExecute(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown

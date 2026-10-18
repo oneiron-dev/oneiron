@@ -1102,6 +1102,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_off_record_notes_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.notes.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_claims_upsert(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.claims.upsert", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_off_record_execute(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.off_record.execute", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_records_erase_preview(
         &self,
         input: serde_json::Value,
