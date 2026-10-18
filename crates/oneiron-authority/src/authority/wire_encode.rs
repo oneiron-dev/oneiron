@@ -245,6 +245,10 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         }
         AuthorityOp::ResidenceResult(result) => super::residence::residence_result_value(result),
         AuthorityOp::GrantTravelSet(set) => super::grant_travel::grant_travel_value(set),
+        AuthorityOp::OwnerWorkRequest(request) => {
+            super::owner_work::owner_work_request_value(request)
+        }
+        AuthorityOp::OwnerWorkResult(result) => super::owner_work::owner_work_result_value(result),
     }
 }
 

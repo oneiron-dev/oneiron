@@ -455,6 +455,13 @@ impl FoldIssues {
                 .or_default()
                 .push("refused_grant_travel");
         }
+        for entry in fold.refused_owner_work() {
+            issues
+                .by_entry
+                .entry(*entry)
+                .or_default()
+                .push("refused_owner_work");
+        }
         issues
     }
 
@@ -593,6 +600,26 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 )),
                 subject_ref: Some(set.machine.to_hex()),
                 grant_ref: Some(set.grant.to_hex()),
+                ..OpFields::default()
+            },
+        ),
+        AuthorityOp::OwnerWorkRequest(request) => (
+            Other,
+            "owner_work_request",
+            OpFields {
+                detail: Some(request.kind().as_str().to_owned()),
+                subject_ref: Some(request.act.target.to_hex()),
+                holder_ref: Some(request.executor.to_hex()),
+                ..OpFields::default()
+            },
+        ),
+        AuthorityOp::OwnerWorkResult(result) => (
+            Other,
+            "owner_work_result",
+            OpFields {
+                detail: Some(result.outcome.as_str().to_owned()),
+                holder_ref: Some(result.executor.to_hex()),
+                parent_ref: Some(hex_lower(&result.request)),
                 ..OpFields::default()
             },
         ),

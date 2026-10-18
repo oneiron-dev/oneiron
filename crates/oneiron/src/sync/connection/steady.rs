@@ -320,6 +320,22 @@ impl SyncConnection {
                             // The owner's residence directives naming this
                             // machine run once its history is in (OF-534).
                             directives.notify_one();
+                            // The owner work those rows name this machine to
+                            // do (a world's key work) runs once they are in.
+                            let vault = std::sync::Arc::clone(manager.vault());
+                            match tokio::task::spawn_blocking(move || vault.run_pending_owner_work(|| true)).await {
+                                Ok(Ok(_)) => {}
+                                Ok(Err(error)) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Owner work pickup failed: {error}"
+                                    )));
+                                }
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Owner work pickup stopped: {error}"
+                                    )));
+                                }
+                            }
                             // A machine those rows made mine gets each portable
                             // credential's value sealed to it again (OF-422).
                             let vault = std::sync::Arc::clone(manager.vault());

@@ -216,6 +216,9 @@ pub(super) fn project_once(
         refused_grant_travel: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.refused_grant_travel.clone()),
+        owner_work: merged.as_ref().map_or_else(Default::default, |state| {
+            super::owner_work::folded_owner_work(state, context.pin, context.machine_standing)
+        }),
         install: merged.as_ref().map_or_else(InstallBound::default, |state| {
             super::install_fold::held_back(state, context.pin, context.machine_standing)
         }),

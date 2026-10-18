@@ -165,6 +165,9 @@ pub struct AuthorityFold {
     /// Well-signed travel choices from a machine no signing chain calls the
     /// owner's: valid entries without effect.
     pub(crate) refused_grant_travel: BTreeSet<AuthorityEntryHash>,
+    /// Every owner work request and its one result, as this install counts
+    /// them.
+    pub(super) owner_work: super::owner_work::FoldedOwnerWork,
     /// What this install holds back beside the roster rule (Astra #1430).
     pub(super) install: InstallBound,
     /// The counted ancestor pairs the fold indexed: those of rows other than
@@ -330,6 +333,8 @@ pub(super) struct FoldState {
     /// Each grant's signed travel choices, merged as the worlds' edits are.
     pub(super) grant_travel: BTreeMap<EntityId, super::grant_travel::GrantFrontier>,
     pub(super) refused_grant_travel: BTreeSet<AuthorityEntryHash>,
+    /// Every owner work request and result, merged by union.
+    pub(super) owner_work: super::owner_work::OwnerWorkState,
     /// Each world key's counted records, merged by union.
     pub(super) world_keys:
         BTreeMap<WorldKeyId, std::sync::Arc<super::world_key_fold::WorldKeyState>>,
@@ -569,6 +574,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .refused_grant_travel
         .extend(right.refused_grant_travel.iter().copied());
+    super::owner_work::merge_owner_work(&mut merged.owner_work, &right.owner_work);
     super::world_key_fold::merge_world_keys(&mut merged.world_keys, &right.world_keys);
     merged
         .refused_world_keys

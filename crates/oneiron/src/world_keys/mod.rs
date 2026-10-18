@@ -23,6 +23,7 @@ mod content_window;
 mod doors;
 mod kit;
 mod machine;
+mod owner_work;
 mod pads;
 mod page_seal;
 mod reassert;
@@ -57,6 +58,9 @@ pub use self::kit::{
 };
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::machine::{machine_encryption_key, machine_secret};
+pub use self::owner_work::{
+    OwnerWorkDrain, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned,
+};
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
     destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, note_world_deleted_in_txn,

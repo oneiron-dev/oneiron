@@ -85,10 +85,11 @@ impl SequenceCounter {
         Ok(next)
     }
 
-    /// The machine's previous row of `world`, a settings edit or a key
-    /// record, which its next key record names. A machine's rows of a world
-    /// thus form one chain in one sequence scope, and a receiver that stores
-    /// a later one first still admits the earlier ones under its floor
+    /// The machine's previous key record of `world`, which its next key
+    /// record names. Settings edits are main-log rows (mesh contract §6), so
+    /// the scope head holds key records only. A machine's key records of a
+    /// world thus form one chain in one sequence scope, and a receiver that
+    /// stores a later one first still admits the earlier ones under its floor
     /// (Astra #1422b F1, #1422c).
     fn chain(
         &self,
@@ -793,7 +794,8 @@ pub(super) fn world_recovery_state_in(fold: &AuthorityFold, world: EntityId) -> 
 }
 
 /// This machine is mine here under the key it signs with, and may read
-/// `world`.
+/// `world`: a recipient limit, the owner's own read choice (mesh contract
+/// §5), never a rule on who decides.
 fn require_mine_reader(
     fold: &AuthorityFold,
     world: EntityId,
@@ -803,11 +805,11 @@ fn require_mine_reader(
     let mine = fold
         .trusted_machine(machine)
         .is_some_and(|trusted| trusted.profile.machine_key == signing.verifying_key().to_bytes());
-    if !mine {
-        return Err(refused("this machine is not one of the owner's here"));
-    }
-    if !fold.world_readable_on(world, Destination::Machine(machine)) {
-        return Err(refused("this machine may not read the world"));
+    if !mine || !fold.world_readable_on(world, Destination::Machine(machine)) {
+        return Err(refused(
+            "the owner-selected world read policy excludes this destination; use an allowed \
+             holder",
+        ));
     }
     Ok(())
 }

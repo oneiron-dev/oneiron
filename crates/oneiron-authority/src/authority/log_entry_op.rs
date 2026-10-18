@@ -101,9 +101,10 @@ pub enum AuthorityOp {
     MachineProfile(MachineProfile),
     /// An owner recovery root, signed by its own anchor (world privacy P6b).
     OwnerRoot(OwnerRootRecord),
-    /// One owner edit of a world's settings, signed by the install key of a
-    /// machine the owner marked "yours". A side-branch entry: no entry but a
-    /// later edit of the same world takes it as a parent.
+    /// One owner edit of a world's settings, signed by the install key of
+    /// the carrier: any live machine of the vault, in any role, that served
+    /// the owner's say-so. A main-log entry (only a world's key records ride
+    /// its side branch), so every linked machine folds it.
     WorldPrivacy(WorldPrivacyEdit),
     /// One machine's wraps of one world key, signed by that machine's install
     /// key. A side-branch entry of the key's world, like its settings edits.
@@ -123,6 +124,14 @@ pub enum AuthorityOp {
     /// of the vault, in any role (OF-491, FIX 2998). A main-log entry, so
     /// every machine the owner admits folds it.
     GrantTravelSet(GrantTravelSet),
+    /// The work an owner act needs done by one named install (a world's key
+    /// work first), signed by the install key of the carrier of the act. A
+    /// main-log entry, value-free.
+    OwnerWorkRequest(OwnerWorkRequest),
+    /// The named executor's result for one owner work request, signed by its
+    /// install key, with the request among its parents. A main-log entry,
+    /// value-free.
+    OwnerWorkResult(OwnerWorkResult),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -178,6 +187,8 @@ impl AuthorityLogEntry {
             AuthorityOp::OwnerRoot(record) => record.validate_entry(self)?,
             AuthorityOp::WorldKeyWraps(record) => record.validate_entry(self)?,
             AuthorityOp::ResidenceResult(result) => result.validate_entry(self)?,
+            AuthorityOp::OwnerWorkRequest(request) => request.validate_entry(self)?,
+            AuthorityOp::OwnerWorkResult(result) => result.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -394,6 +405,8 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::ResidenceDirective(directive) => directive.validate(),
         AuthorityOp::ResidenceResult(result) => result.validate(),
         AuthorityOp::GrantTravelSet(set) => set.validate(),
+        AuthorityOp::OwnerWorkRequest(request) => request.validate(),
+        AuthorityOp::OwnerWorkResult(result) => result.validate(),
     }
 }
 
