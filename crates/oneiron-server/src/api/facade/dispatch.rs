@@ -5543,17 +5543,17 @@ async fn vault_decisions_asks_answer(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.decisions.asks.answer", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.decisions.asks.answer", value).await?;
-    let output = facade_output(
-        super::host_doors::vault_decisions_asks_answer(
-            server,
-            auth,
-            facade_input(hooks.args.clone())?,
-        )
-        .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let (output, listed) = super::host_doors::vault_decisions_asks_answer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_decisions_asks_climb(
     server: &Arc<SyncServer>,
@@ -5567,17 +5567,17 @@ async fn vault_decisions_asks_climb(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.decisions.asks.climb", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.decisions.asks.climb", value).await?;
-    let output = facade_output(
-        super::host_doors::vault_decisions_asks_climb(
-            server,
-            auth,
-            facade_input(hooks.args.clone())?,
-        )
-        .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let (output, listed) = super::host_doors::vault_decisions_asks_climb(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn self_decisions_asks(
     server: &Arc<SyncServer>,
@@ -5591,13 +5591,14 @@ async fn self_decisions_asks(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.decisions.asks", &value)?;
     let hooks = facade_hooks_pre(server, call, "self.decisions.asks", value).await?;
-    let output = facade_output(
+    let (output, listed) =
         super::host_doors::self_decisions_asks(server, auth, facade_input(hooks.args.clone())?)
-            .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn connector_list(
     server: &Arc<SyncServer>,
