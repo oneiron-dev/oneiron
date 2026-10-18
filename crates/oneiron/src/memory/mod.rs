@@ -35,6 +35,7 @@ mod booking;
 mod claim_admission;
 mod claim_conflict;
 mod claim_stale;
+pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
 pub mod consolidation;
@@ -59,6 +60,7 @@ mod claims;
 pub mod code_doors;
 pub mod code_run_doors;
 pub mod code_wait_doors;
+pub mod code_view_doors;
 pub mod codebase_doors;
 mod conversation_list;
 mod credential_key;
@@ -252,6 +254,12 @@ pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
 pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
+};
+pub use witness::{
+    AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
+    MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
+    MessageCustomCancel, MessageCustomCancelKind, MessageDocumentState, MessageDurability,
+    MessageDurabilityRequest, MessageStreamMode, MessageStreamOptions, MessageStreamRequest,
 };
 pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageCompletion,
