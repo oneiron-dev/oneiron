@@ -10,6 +10,10 @@ use super::ladder::OfferLadder;
 /// Each model by id: where it runs and the ladder that serves it.
 pub(super) type Routes = BTreeMap<ModelId, (ModelLocality, Arc<OfferLadder>)>;
 
+/// How a discovered model's offer names its route: the owner's node that
+/// offers it, by machine id (FIX 3229).
+pub(super) const MESH_ORIGIN: &str = "mesh:";
+
 #[derive(Default)]
 pub struct ModelRouter {
     routes: Routes,
@@ -97,6 +101,19 @@ impl ModelRouter {
                 .map(|(locality, ladder)| (*locality, Arc::clone(ladder)))
         };
         route(&self.routes).or_else(|| route(&self.discovered()))
+    }
+
+    /// Each model the last mesh catalog refresh found, with the machine id
+    /// of the owner's node that offers it and the ladder that serves it, in
+    /// id order.
+    pub(super) fn discovered_routes(&self) -> Vec<(ModelId, String, Arc<OfferLadder>)> {
+        self.discovered()
+            .iter()
+            .filter_map(|(model, (_, ladder))| {
+                let peer = ladder.first_provider()?.strip_prefix(MESH_ORIGIN)?;
+                Some((model.clone(), peer.to_owned(), Arc::clone(ladder)))
+            })
+            .collect()
     }
 
     /// The routes the last mesh catalog refresh found.

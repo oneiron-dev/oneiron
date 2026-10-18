@@ -4645,6 +4645,28 @@ async fn vault_rooms_join(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_rooms_invite(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.invite",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_rooms_consent(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -6080,6 +6102,116 @@ async fn vault_esign_create(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_esign_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.esign.get",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_esign_links_issue(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.esign.links.issue",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_esign_send_for_signature(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.esign.send_for_signature",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_esign_remind(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.esign.remind",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_esign_void(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.esign.void",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_conversations_create(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -7287,6 +7419,7 @@ pub(crate) async fn call_verb(
         "vault.projects.roster.write" => vault_projects_roster_write(server, call, input).await,
         "vault.projects.goal.intake" => vault_projects_goal_intake(server, call, input).await,
         "vault.rooms.join" => vault_rooms_join(server, call, input).await,
+        "vault.rooms.invite" => vault_rooms_invite(server, call, input).await,
         "vault.rooms.consent" => vault_rooms_consent(server, call, input).await,
         "vault.rooms.offer" => vault_rooms_offer(server, call, input).await,
         "vault.rooms.offer.answer" => vault_rooms_offer_answer(server, call, input).await,
@@ -7362,6 +7495,13 @@ pub(crate) async fn call_verb(
         "vault.claims.admit" => vault_claims_admit(server, call, input).await,
         "vault.artifacts.create" => vault_artifacts_create(server, call, input).await,
         "vault.esign.create" => vault_esign_create(server, call, input).await,
+        "vault.esign.get" => vault_esign_get(server, call, input).await,
+        "vault.esign.links.issue" => vault_esign_links_issue(server, call, input).await,
+        "vault.esign.send_for_signature" => {
+            vault_esign_send_for_signature(server, call, input).await
+        }
+        "vault.esign.remind" => vault_esign_remind(server, call, input).await,
+        "vault.esign.void" => vault_esign_void(server, call, input).await,
         "vault.conversations.create" => vault_conversations_create(server, call, input).await,
         "vault.conversations.turns.create" => {
             vault_conversations_turns_create(server, call, input).await
@@ -7448,7 +7588,9 @@ pub(crate) async fn call_verb(
         | "self.browser.library.find"
         | "self.browser.library.propose"
         | "self.browser.library.retire"
+        | "self.browser.library.retired"
         | "self.browser.library.run"
+        | "self.browser.handover"
         | "self.desktop.open"
         | "self.desktop.observe"
         | "self.desktop.find"

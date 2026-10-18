@@ -103,7 +103,9 @@ pub struct AiHandle {
     status: Arc<StatusCell>,
     hints: Option<Arc<HintPusher>>,
     chat: ChatSettings,
-    raw_budget_units: Option<u64>,
+    /// The raw routes' meter: `[models]`'s, else its default, so a device
+    /// with no `[models]` serves the models the mesh discovered (FIX 3229).
+    raw_budget_units: u64,
     /// Each paid recall's line for its rerank calls (`[models.recall]`).
     rerank_budget_units: u64,
     turns: TurnTracker,
@@ -154,7 +156,10 @@ impl AiHandle {
                 },
                 |models| models.chat,
             ),
-            raw_budget_units: models.map(|models| models.raw_budget_units),
+            raw_budget_units: models.map_or(
+                crate::config::models::DEFAULT_RAW_BUDGET_UNITS,
+                |models| models.raw_budget_units,
+            ),
             rerank_budget_units: models.map_or(0, |models| models.recall.rerank_budget_units),
             turns: TurnTracker::new(),
             inbound: Arc::new(AtomicU64::new(unix_now())),
@@ -610,9 +615,9 @@ impl AiHost {
         }
         host.handle = handle;
         turn_actions::spawn(&vault, &host.handle);
-        if host.dreamer.is_some() {
-            resume_on_recovery(&vault, &runtime);
-        }
+        // A provider's recovery resumes the Dreamer's outage parks and the
+        // agent runs' (FIX 3194), so it runs whether or not a Dreamer does.
+        resume_on_recovery(&vault, &runtime);
         // Turns that landed while no Dreamer ran, or just before a crash,
         // get their due wake now rather than waiting for the next turn. It
         // settles before start returns, so it reads only those turns: one
@@ -694,9 +699,11 @@ impl Drop for AiHost {
 ///
 /// A parked attempt is requeued only when this server's Dreamer parked it
 /// itself (a pass cut at its deadline, an executor error): that park is its
-/// own checkpoint, cleared here. One parked on a signal (a budget or consent
-/// trap, a wait) stays leased: a restart is not its resume signal (runtime.md),
-/// and it resumes only when its signal is consumed. Expiry is by age, so "now"
+/// own checkpoint, cleared here; so is an agent run's park on a provider
+/// outage (FIX 3194), whose run goes on from its next step. One parked on a
+/// signal (a budget or consent trap, a wait) stays leased: a restart is not
+/// its resume signal (runtime.md), and it resumes only when its signal is
+/// consumed. Expiry is by age, so "now"
 /// is the later of the wall clock and one second past the youngest lease:
 /// every dead lease expires, even after the clock stepped back, and none
 /// waits.
@@ -725,7 +732,10 @@ fn recover_dead_leases(vault: &Vault) {
             }
         };
         match parked {
-            Some(park) if park.park_owner == dreamer::LEASE_OWNER => {
+            Some(park)
+                if park.park_owner == dreamer::LEASE_OWNER
+                    || run_outage_park(&park.park_owner, park.cause) =>
+            {
                 if let Err(error) = runner.resume_parked(row.id, &park.park_owner, unix_now()) {
                     tracing::warn!(%error, attempt = ?row.id, "a checkpoint park was not cleared; its lease is kept");
                     held.insert(row.id);
@@ -762,11 +772,12 @@ fn recover_dead_leases(vault: &Vault) {
 }
 
 /// After each stable recovery of a provider that was down (OF-305), the
-/// attempts this server's Dreamer parked because a provider was unavailable
-/// are requeued, as a restart requeues them: the outage that failed their
-/// step is over. One parked on a signal (a budget or consent trap, a wait),
-/// by a hard cut or on any other error is not this resume's. The task holds the vault weakly and ends with
-/// the runtime.
+/// attempts this server's Dreamer parked because a provider was unavailable,
+/// and the agent runs the pump parked on one (FIX 3194), are requeued, as a
+/// restart requeues them: the outage that failed their step is over. One
+/// parked on a signal (a budget or consent trap, a wait), by a hard cut or
+/// on any other error is not this resume's. The task holds the vault weakly
+/// and ends with the runtime.
 fn resume_on_recovery(vault: &Arc<Vault>, runtime: &ModelRuntime) {
     let vault = Arc::downgrade(vault);
     let mut recoveries = runtime.recoveries();
@@ -786,8 +797,8 @@ fn resume_on_recovery(vault: &Arc<Vault>, runtime: &ModelRuntime) {
     });
 }
 
-/// Requeues every attempt this server's Dreamer parked on an unavailable
-/// provider.
+/// Requeues every attempt this server's Dreamer or its agent run pump parked
+/// on an unavailable provider.
 fn resume_outage_parks(vault: &Vault) {
     let rows = match AttemptQueue::new(vault).list() {
         Ok(rows) => rows,
@@ -805,9 +816,9 @@ fn resume_outage_parks(vault: &Vault) {
         let Ok(Some(park)) = runner.parked_attempt(row.id) else {
             continue;
         };
-        if park.park_owner != dreamer::LEASE_OWNER
-            || park.cause != oneiron::DreamerParkCause::ProviderUnavailable
-        {
+        let dreamer_outage = park.park_owner == dreamer::LEASE_OWNER
+            && park.cause == oneiron::DreamerParkCause::ProviderUnavailable;
+        if !dreamer_outage && !run_outage_park(&park.park_owner, park.cause) {
             continue;
         }
         match runner.resume_parked(row.id, &park.park_owner, unix_now()) {
@@ -824,6 +835,13 @@ fn resume_outage_parks(vault: &Vault) {
             "a provider recovered; attempts its outage parked resume"
         );
     }
+}
+
+/// Whether a park is an agent run's on a provider outage (FIX 3194): the
+/// pump's own, under its lease owner.
+fn run_outage_park(park_owner: &str, cause: oneiron::DreamerParkCause) -> bool {
+    park_owner == crate::server::RUN_LEASE_OWNER
+        && cause == oneiron::DreamerParkCause::ProviderUnavailable
 }
 
 fn unix_now() -> u64 {
@@ -969,17 +987,18 @@ impl AiHandle {
         self.runtime.decision_read().cloned()
     }
 
-    pub(crate) fn raw_inference(&self) -> Option<RawInference> {
-        let router = self.runtime.router()?;
-        let units = self.raw_budget_units?;
-        Some(RawInference::configured(
-            router,
+    /// The raw routes' inference: the runtime's raw router on its own meter.
+    /// With no configured model the router holds only the models the
+    /// owner's other nodes offer (FIX 3229).
+    pub(crate) fn raw_inference(&self) -> RawInference {
+        RawInference::configured(
+            self.runtime.raw_router(),
             oneiron::BudgetGuard::new(
                 "raw-inference",
-                units,
+                self.raw_budget_units,
                 oneiron::BudgetExhaustionPolicy::Suspend,
             ),
             self.runtime.host_account(),
-        ))
+        )
     }
 }
