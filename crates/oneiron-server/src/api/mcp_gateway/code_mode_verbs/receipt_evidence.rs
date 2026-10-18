@@ -51,7 +51,7 @@ impl ReceiptWriter {
                 actor.actor_ref,
                 actor.actor_class,
             ),
-            VerdictAsker::Agent(actor) => self
+            VerdictAsker::Agent(actor, _) => self
                 .server
                 .vault
                 .memory(actor.entity_ref(), actor.actor_class())

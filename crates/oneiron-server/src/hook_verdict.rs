@@ -51,7 +51,7 @@ impl HookVerdict for ServerHookVerdict {
         // A hook pulls no image: it has no credential lane to pull one
         // with, and no browser holds one for it.
         let verdict = crate::decision_verdict::run_verdict(
-            &server, reader, class, &memory, None, None, &request,
+            &server, reader, class, &memory, None, None, &request, None,
         )
         .map_err(|error| format!("{}: {}", error.code, error.message))?;
         serde_json::to_string(&verdict).map_err(|_| "the verdict did not encode".to_owned())
