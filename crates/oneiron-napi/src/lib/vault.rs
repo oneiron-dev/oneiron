@@ -24,6 +24,30 @@ use super::types::{
     NapiBatchEntity, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig,
     NapiEmailInboundEvent, NapiScoredEntity, NapiSubtreeEntry,
 };
+use crate::facade::{NapiRecallMedia, facade_error, recall_media_to_engine};
+
+/// What this embedded vault says to a context pack naming `media` (OF-370):
+/// it serves no `ai.embed` rung, so it cannot embed the bytes into their
+/// space, and it never packs the rest of the request without them.
+const CONTEXT_PACK_MEDIA_UNSERVED: &str = "context pack: this embedded vault serves no ai.embed rung, so it cannot search media; retry without media or pack on a server";
+
+/// A context pack's `media` on this embedded vault (OF-370). It is lowered
+/// onto the served route's shape as `vault.recall`'s is (an unknown kind is
+/// the caller's `BAD_REQUEST`), then refused with the typed
+/// `MODEL_UNAVAILABLE` an embedded `vault.recall` answers, as the JSON
+/// `{code, message, suggestions}` the facade's errors carry. No pack is
+/// read: media is never dropped silently.
+fn refuse_unserved_media(media: Option<NapiRecallMedia>) -> napi::Result<()> {
+    let Some(media) = media else {
+        return Ok(());
+    };
+    recall_media_to_engine(media).map_err(facade_error)?;
+    Err(facade_error(oneiron::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+        CONTEXT_PACK_MEDIA_UNSERVED,
+        &["Pack media through a server that serves the space's rung under [models.media.embed]."],
+    )))
+}
 
 /// Node.js binding for the Oneiron Vault.
 #[napi]
@@ -338,6 +362,10 @@ impl NapiVault {
     /// - `query_vector`: Vector search query (f64 array)
     /// - `limit`: Max number of results (default: 10)
     /// - `format`: Output format — "json", "yaml", "toon", "markdown", "plaintext" (default: "json")
+    /// - `media`: A media query (`{space, mime, bytesB64, kinds}`), the served
+    ///   context pack's and `vault.recall`'s shape (OF-370). This embedded
+    ///   vault serves no `ai.embed` rung, so a pack naming it is refused with
+    ///   the typed `MODEL_UNAVAILABLE`, never packed without it.
     #[napi]
     pub fn context_pack(
         &self,
@@ -345,6 +373,7 @@ impl NapiVault {
         query_vector: Option<Array<'_>>,
         limit: Option<u32>,
         format: Option<String>,
+        media: Option<NapiRecallMedia>,
     ) -> napi::Result<String> {
         let limit = parse_search_limit(limit.unwrap_or(DEFAULT_NAPI_SEARCH_LIMIT))
             .map_err(napi::Error::from_reason)?;
@@ -361,6 +390,7 @@ impl NapiVault {
         let query_vector = query_vector
             .map(|vec| read_vector(&vec, self.dimensions, "query vector"))
             .transpose()?;
+        refuse_unserved_media(media)?;
         let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
 
         if let Some(text) = &query_text {
@@ -376,7 +406,12 @@ impl NapiVault {
             .map_err(|e| napi::Error::from_reason(format!("context pack output is not utf8: {e}")))
     }
 
-    /// Run a context pack query scoped to codebase metadata.
+    /// Run a context pack query scoped to codebase metadata. `media` is
+    /// refused as on `context_pack`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one positional JS argument per option, media appended last"
+    )]
     #[napi]
     pub fn context_pack_scoped(
         &self,
@@ -386,6 +421,7 @@ impl NapiVault {
         format: Option<String>,
         repo_ref: Option<String>,
         project_id: Option<String>,
+        media: Option<NapiRecallMedia>,
     ) -> napi::Result<String> {
         let limit = parse_search_limit(limit.unwrap_or(DEFAULT_NAPI_SEARCH_LIMIT))
             .map_err(napi::Error::from_reason)?;
@@ -401,6 +437,7 @@ impl NapiVault {
         let query_vector = query_vector
             .map(|vec| read_vector(&vec, self.dimensions, "query vector"))
             .transpose()?;
+        refuse_unserved_media(media)?;
         let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
 
         if let Some(text) = &query_text {
