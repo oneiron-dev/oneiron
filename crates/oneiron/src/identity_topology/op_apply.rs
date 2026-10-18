@@ -175,7 +175,10 @@ impl Vault {
         Ok(outcome)
     }
 
-    /// Transaction-composable [`Vault::apply_identity_topology_op`].
+    /// Transaction-composable [`Vault::apply_identity_topology_op`]. Every
+    /// engine caller names its seal context through
+    /// [`Vault::apply_identity_topology_op_as_in_txn`]; tests keep this one.
+    #[cfg(test)]
     pub(crate) fn apply_identity_topology_op_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
