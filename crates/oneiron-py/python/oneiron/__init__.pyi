@@ -1369,9 +1369,45 @@ class Oneiron:
             """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
         @property
         def cohorts(self) -> "Oneiron._VaultEvalsCohortsVerbs": ...
+        def author_now(self, spec: Facade.EvalAuthorNowRequest) -> Facade.EvalAuthoringRef:
+            """Queue the production Coach eval-authoring pass, coalescing with nightly work; the caller supplies no plan, skill provenance or lease."""
+        @property
+        def authoring(self) -> "Oneiron._VaultEvalsAuthoringVerbs": ...
+        @property
+        def families(self) -> "Oneiron._VaultEvalsFamiliesVerbs": ...
+        @property
+        def cases(self) -> "Oneiron._VaultEvalsCasesVerbs": ...
+        def exposure(self, spec: Facade.EvalCohortRef) -> Facade.EvalExposureLedger:
+            """Read a cohort's individual exposure ledger and independent candidate, query and promotion counts; unknown cohorts refuse."""
+        def sufficiency(self, spec: Facade.SufficiencyInput) -> Facade.SufficiencyCard:
+            """Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys."""
+        @property
+        def labels(self) -> "Oneiron._VaultEvalsLabelsVerbs": ...
     class _VaultEvalsCohortsVerbs:
+        def __call__(self, spec: Facade.EvalSeatRequest) -> list[Facade.EvalCohortView]:
+            """Read date-cut cohorts, the fixed reference, retirement decisions, exposure counts and near-copy audits; similarity flags review only."""
         def setup(self, spec: Facade.EvalCohortSetup) -> Facade.EvalAuthoringReport:
             """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
+        def open(self, spec: Facade.EvalCohortOpenRequest) -> Facade.EvalRelease:
+            """Count a candidate, query or promotion serving before releasing its sealed cohort in the same owner-validated transaction; retired cohorts refuse."""
+    class _VaultEvalsAuthoringVerbs:
+        def result(self, spec: Facade.EvalAuthoringRef) -> Facade.EvalAuthoringResult | None:
+            """Read the eval-authoring host attempt's actual state and terminal error; a completed pass may author nothing."""
+    class _VaultEvalsFamiliesVerbs:
+        def __call__(self, spec: Facade.EvalSeatRequest) -> list[Facade.EvalFamilyView]:
+            """Read a seat's family purposes, source roots, derivative lineage and dates, including retirement and training eligibility, without sealed labels."""
+        def assign(self, spec: Facade.EvalFamilyAssignRequest) -> Facade.SourceFamily:
+            """Assign source roots their fixed eval family and purpose before deriving cases; conflicting families, purposes or seats refuse."""
+    class _VaultEvalsCasesVerbs:
+        def __call__(self, spec: Facade.EvalCasesRequest) -> list[Facade.EvalCase]:
+            """Read development or judge-audit eval cases; sealed confirmation refuses and retired cohorts read as development, never training."""
+        def record(self, spec: Facade.EvalCaseDraft) -> Facade.EvalCase:
+            """Record a receipt, repair, paraphrase, summary, translation, synthetic or rubric case through the shared family-inheritance guard; no labels are invented."""
+    class _VaultEvalsLabelsVerbs:
+        def blocked(self, spec: Facade.EvalBlockedLabelsRequest) -> list[Facade.EvalLabelAsk]:
+            """Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session."""
+        def pick(self, spec: Facade.EvalLabelPickRequest) -> Facade.EvalCase:
+            """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
