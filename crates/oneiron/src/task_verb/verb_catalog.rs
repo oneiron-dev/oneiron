@@ -50,6 +50,7 @@ pub enum AgentVerb {
     VaultClaimsUpsert,
     VaultRecall,
     VaultExport,
+    SelfCredentialAttenuate,
     VaultScopeCeiling,
     VaultExportScoped,
     VaultReceipts,
@@ -549,6 +550,7 @@ impl AgentVerb {
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
         Self::VaultExport,
+        Self::SelfCredentialAttenuate,
         Self::VaultScopeCeiling,
         Self::VaultExportScoped,
         Self::VaultReceipts,
@@ -1051,6 +1053,7 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
             Self::VaultExport => "vault.export",
+            Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::VaultScopeCeiling => "vault.scope.ceiling",
             Self::VaultExportScoped => "vault.export.scoped",
             Self::VaultReceipts => "vault.receipts",
@@ -1557,6 +1560,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
+                | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -2063,6 +2067,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
+                | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -2551,6 +2556,7 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultCommit
@@ -3421,6 +3427,7 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -3921,6 +3928,7 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -4507,6 +4515,9 @@ impl AgentVerb {
             }
             Self::VaultExport => {
                 "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
+            }
+            Self::SelfCredentialAttenuate => {
+                "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
             }
             Self::VaultScopeCeiling => {
                 "Reads the caller credential ceiling as a typed ceiling, never as a record position."

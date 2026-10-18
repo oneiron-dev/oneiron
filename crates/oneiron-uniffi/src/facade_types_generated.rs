@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 453 facade rows, 1665 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 417.
+// UniFFI census: 454 facade rows, 1668 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 418.
 // WireJson rows: none.
-// WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
+// WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -4403,6 +4403,56 @@ pub struct Scope {
         skip_serializing_if = "Option::is_none"
     )]
     pub sensitivity: Option<SensitivityCeiling>,
+}
+
+/// `oneiron::authority::slip::SlipCaveat`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SlipCaveat {
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Scope>,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+    #[serde(rename = "ttl_secs", default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+    #[serde(rename = "single_use")]
+    pub single_use: bool,
+    #[serde(rename = "records", default, skip_serializing_if = "Option::is_none")]
+    pub records: Option<Vec<String>>,
+    #[serde(rename = "channels", default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<Vec<String>>,
+    #[serde(rename = "pact", default, skip_serializing_if = "Option::is_none")]
+    pub pact: Option<crate::WireJson>,
+}
+
+/// `oneiron::task_verb::sdk_credential::CredentialAttenuationRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialAttenuationRequest {
+    #[serde(rename = "holder_seed")]
+    pub holder_seed: Vec<u8>,
+    #[serde(rename = "caveat")]
+    pub caveat: SlipCaveat,
+    #[serde(
+        rename = "next_binding_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_binding_key: Option<Vec<u8>>,
+}
+
+/// `oneiron::task_verb::sdk_credential::CredentialAttenuated`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialAttenuated {
+    #[serde(rename = "token")]
+    pub token: String,
+    #[serde(rename = "binding_key")]
+    pub binding_key: Vec<u8>,
 }
 
 /// `oneiron::memory::scoped_export::CredentialCeiling`.

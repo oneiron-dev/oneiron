@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 510 code-mode rows (489 host rows, 21 run rows), 1828 declarations.
-// Replies: 446 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 511 code-mode rows (490 host rows, 21 run rows), 1831 declarations.
+// Replies: 447 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -329,6 +329,9 @@ declare namespace Sdk {
   type Sensitivity = "public" | "private" | "sensitive" | "restricted";
   type SensitivityCeiling = { kind: "bottom" } | { kind: "at_most"; value: Sensitivity };
   type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling };
+  type SlipCaveat = { scope?: Scope | null; expires_at?: number | null; ttl_secs?: number | null; single_use: boolean; records?: string[] | null; channels?: string[] | null; pact?: [ScopeId, number[]] | null };
+  type CredentialAttenuationRequest = { holder_seed: number[]; caveat: SlipCaveat; next_binding_key?: number[] | null };
+  type CredentialAttenuated = { token: string; binding_key: number[] };
   type CredentialCeiling = { kind: "ceiling"; scope: Scope };
   type RecordSelector = { worlds?: RecallWorlds | null; facet_refs?: string[]; kinds?: string[]; project_refs?: string[] };
   type ScopeAxisInput<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
@@ -1965,6 +1968,10 @@ declare namespace self {
     land(input: Sdk.BudgetLandRequest): Promise<Sdk.PartialResultHold | StoredResult>;
   };
   const compact: (input: Sdk.FoldCompactInput) => Promise<Sdk.FoldReply<Sdk.FoldCompactAsked> | StoredResult>;
+  const credential: {
+    /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
+    attenuate(input: Sdk.CredentialAttenuationRequest): Promise<Sdk.CredentialAttenuated | StoredResult>;
+  };
   const decisions: {
     asks(input: Sdk.EmptyRequest): Promise<Sdk.DecisionAsk[] | StoredResult>;
   };

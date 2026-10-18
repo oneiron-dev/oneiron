@@ -41,6 +41,7 @@ mod connector_call_doors;
 mod connector_pack_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
+mod credential_doors;
 mod craft_candidate_doors;
 mod critic_review_doors;
 mod decision_ask_doors;
