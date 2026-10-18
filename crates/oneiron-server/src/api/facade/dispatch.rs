@@ -6656,6 +6656,34 @@ async fn vault_calendar_freebusy(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_calendar_transcript_ingest(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.calendar.transcript.ingest",
+        oneiron::memory::RoomTurnHandle::serves("vault.calendar.transcript.ingest"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "source_blob_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.transcript.ingest",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_claims_list(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -8993,6 +9021,9 @@ pub(crate) async fn call_verb(
         "vault.calendar.read" => vault_calendar_read(server, call, input).await,
         "vault.calendar.search" => vault_calendar_search(server, call, input).await,
         "vault.calendar.freebusy" => vault_calendar_freebusy(server, call, input).await,
+        "vault.calendar.transcript.ingest" => {
+            vault_calendar_transcript_ingest(server, call, input).await
+        }
         "vault.claims.list" => vault_claims_list(server, call, input).await,
         "vault.claims.history" => vault_claims_history(server, call, input).await,
         "vault.delete" => vault_delete(server, call, input).await,

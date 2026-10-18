@@ -339,6 +339,7 @@ pub enum AgentVerb {
     VaultCalendarRead,
     VaultCalendarSearch,
     VaultCalendarFreebusy,
+    VaultCalendarTranscriptIngest,
     VaultClaimsList,
     VaultClaimsHistory,
     VaultDelete,
@@ -760,6 +761,7 @@ impl AgentVerb {
         Self::VaultCalendarRead,
         Self::VaultCalendarSearch,
         Self::VaultCalendarFreebusy,
+        Self::VaultCalendarTranscriptIngest,
         Self::VaultClaimsList,
         Self::VaultClaimsHistory,
         Self::VaultDelete,
@@ -1188,6 +1190,7 @@ impl AgentVerb {
             Self::VaultCalendarRead => "vault.calendar.read",
             Self::VaultCalendarSearch => "vault.calendar.search",
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
+            Self::VaultCalendarTranscriptIngest => "vault.calendar.transcript.ingest",
             Self::VaultClaimsList => "vault.claims.list",
             Self::VaultClaimsHistory => "vault.claims.history",
             Self::VaultDelete => "vault.delete",
@@ -1572,6 +1575,7 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
@@ -2000,6 +2004,7 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
@@ -2502,6 +2507,7 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
@@ -2779,6 +2785,7 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
@@ -3196,6 +3203,7 @@ impl AgentVerb {
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
+            Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
@@ -3618,6 +3626,7 @@ impl AgentVerb {
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
+            Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
@@ -4620,6 +4629,9 @@ impl AgentVerb {
             }
             Self::VaultCalendarFreebusy => {
                 "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."
+            }
+            Self::VaultCalendarTranscriptIngest => {
+                "Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."
             }
             Self::VaultClaimsList => {
                 "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."

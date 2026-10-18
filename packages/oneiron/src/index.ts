@@ -1027,6 +1027,10 @@ export class Oneiron {
       search: (input: Facade.CalendarSearchRequest): Facade.ScopedReadResult<Facade.CalendarEventView[]> => this.#call(() => this.#client.vaultCalendarSearch(input) as Facade.ScopedReadResult<Facade.CalendarEventView[]>),
       /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
       freebusy: (input: Facade.CalendarFreebusyRequest): Facade.ScopedReadResult<Facade.CalendarFreebusyDto> => this.#call(() => this.#client.vaultCalendarFreebusy(input) as Facade.ScopedReadResult<Facade.CalendarFreebusyDto>),
+      transcript: {
+        /** Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts. */
+        ingest: (input: Facade.TranscriptFileDropInput): Facade.TranscriptIngestOutcome => this.#call(() => this.#client.vaultCalendarTranscriptIngest(input) as Facade.TranscriptIngestOutcome),
+      },
     },
     /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
     delete: (input: Facade.SafeDeleteRequest): Facade.DeleteReceipt => this.#call(() => this.#client.vaultDelete(input) as Facade.DeleteReceipt),
