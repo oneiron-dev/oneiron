@@ -159,6 +159,12 @@ pub struct AuthorityFold {
     /// Well-signed world edits from a machine that could not edit that
     /// world: valid entries without effect.
     pub refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// Each grant a signed travel choice names, keyed by its
+    /// FEDERATION_GRANT row (FIX 2998).
+    pub(crate) grant_travel: BTreeMap<EntityId, super::grant_travel::FoldedGrantTravel>,
+    /// Well-signed travel choices from a machine no signing chain calls the
+    /// owner's: valid entries without effect.
+    pub(crate) refused_grant_travel: BTreeSet<AuthorityEntryHash>,
     /// What this install holds back beside the roster rule (Astra #1430).
     pub(super) install: InstallBound,
     /// The counted ancestor pairs the fold indexed: those of rows other than
@@ -176,9 +182,10 @@ pub struct AuthorityFold {
 /// What bounds this install's view beside the roster rule (Astra #1430).
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct InstallBound {
-    /// The machine revisions and world edits this install holds back: each
-    /// revision that landed restriction only, and each edit that never counts
-    /// at full strength here, one valid without effect included.
+    /// The machine revisions, world edits and grant travel choices this
+    /// install holds back: each revision that landed restriction only, and
+    /// each edit or choice that never counts at full strength here, one valid
+    /// without effect included.
     pub(super) held_back: BTreeSet<AuthorityEntryHash>,
     /// The first still-future second at which the fold with no vouch that
     /// bounds this view changes (`install_fold::NoVouch`). A cached view
@@ -320,6 +327,9 @@ pub(super) struct FoldState {
     pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
     pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
     pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// Each grant's signed travel choices, merged as the worlds' edits are.
+    pub(super) grant_travel: BTreeMap<EntityId, super::grant_travel::GrantFrontier>,
+    pub(super) refused_grant_travel: BTreeSet<AuthorityEntryHash>,
     /// Each world key's counted records, merged by union.
     pub(super) world_keys:
         BTreeMap<WorldKeyId, std::sync::Arc<super::world_key_fold::WorldKeyState>>,
@@ -555,6 +565,10 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .refused_world_edits
         .extend(right.refused_world_edits.iter().copied());
+    merge_world_frontiers(&mut merged.grant_travel, &right.grant_travel);
+    merged
+        .refused_grant_travel
+        .extend(right.refused_grant_travel.iter().copied());
     super::world_key_fold::merge_world_keys(&mut merged.world_keys, &right.world_keys);
     merged
         .refused_world_keys

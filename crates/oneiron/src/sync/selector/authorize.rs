@@ -75,25 +75,9 @@ fn live_federation_grant(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     live_federation_grant_in(vault, &txn, id)
 }
 
-/// [`live_federation_grant`], read in `txn`.
-pub(super) fn live_federation_grant_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<Vec<u8>> {
-    let raw = vault
-        .get_raw_in(txn, id)?
-        .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
-    let header = EntityMetadataHeader::parse(&raw)
-        .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
-    if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
-        return Err(selector_err(SelectorError::GrantWrongType));
-    }
-    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live() {
-        return Err(selector_err(SelectorError::GrantNotFound));
-    }
-    Ok(raw)
-}
+// [`live_federation_grant`], read in `txn`: the shared federation helper the
+// grant travel door reads too (FIX 2998).
+pub(super) use crate::federation::live_federation_grant_in;
 
 /// [`authorize_sync_selector`], plus the resolved position the export path
 /// must then filter under.

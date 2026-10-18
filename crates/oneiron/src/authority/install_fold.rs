@@ -103,10 +103,13 @@ pub(super) fn fold_as_install(
                 );
             }
         }
-        // Counting reaches only world edits and key records, and a key record
-        // counts only for a world an edit made private (an unedited world
-        // reads everywhere): with no edited world, nothing rests on it.
-        if fold.worlds.is_empty() || (now_stale.is_subset(&stale) && now_held.is_subset(&held)) {
+        // Counting reaches only world edits, grant travel choices and key
+        // records, and a key record counts only for a world an edit made
+        // private (an unedited world reads everywhere): with no edited world
+        // and no chosen grant, nothing rests on it.
+        if (fold.worlds.is_empty() && fold.grant_travel.is_empty())
+            || (now_stale.is_subset(&stale) && now_held.is_subset(&held))
+        {
             break fold;
         }
         stale = now_stale;
@@ -438,7 +441,8 @@ impl NoVouch {
 
     /// Holds every chain this install does not count, and reads each world
     /// as the meet of both folds' settings, a world no edit reaches here
-    /// included, unless only edits after a settled handoff stand in it.
+    /// included, unless only edits after a settled handoff stand in it. Each
+    /// chosen grant is bounded the same way.
     fn cap(&self, fold: &mut AuthorityFold) {
         fold.install.no_vouch_deadline = self.deadline;
         let uncounted: Vec<_> = fold
@@ -480,6 +484,19 @@ impl NoVouch {
                 &self.fold.world_privacy(*world),
             );
         }
+        let fresh_grants: BTreeSet<_> = fold
+            .grant_travel
+            .iter()
+            .filter(|(_, folded)| {
+                !folded.live.is_empty() && folded.live.keys().all(|choice| self.fresh(fold, choice))
+            })
+            .map(|(grant, _)| *grant)
+            .collect();
+        super::grant_travel::cap_grants(
+            &mut fold.grant_travel,
+            &self.fold.grant_travel,
+            &fresh_grants,
+        );
     }
 }
 
@@ -506,7 +523,8 @@ fn after_handoffs(
     after
 }
 
-/// The machine revisions and world edits `state` holds back on this install.
+/// The machine revisions, world edits and grant travel choices `state`
+/// holds back on this install.
 pub(super) fn held_back(
     state: &FoldState,
     pin: Option<&PinnedRoot>,
@@ -515,6 +533,7 @@ pub(super) fn held_back(
     let mut held_back = BTreeSet::new();
     super::machine_standing::held_revisions(state, &mut held_back);
     super::world_privacy::held_edits(state, pin, counted, &mut held_back);
+    super::grant_travel::held_grant_choices(state, pin, counted, &mut held_back);
     InstallBound {
         held_back,
         no_vouch_deadline: None,

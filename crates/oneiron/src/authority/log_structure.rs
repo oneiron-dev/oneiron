@@ -326,8 +326,9 @@ impl<'a> StructureBuilder<'a> {
 
 impl AuthorityStructure {
     /// Whether a key that may vouch for `entry` signed or cosigned it: an
-    /// admitter, or, for a world edit, a world key record or a residence
-    /// result, the install key of the machine it names, as its primary signer. A root record vouches
+    /// admitter, or, for a world edit, a world key record, a residence result
+    /// or a grant travel choice, the install key of the machine it names, as
+    /// its primary signer. A root record vouches
     /// for itself when its own anchor signed it alone, and an anchor signs
     /// machine marks alone; as the fold's anchor rules have it, an anchor
     /// vouches for nothing else. A genesis vouches for itself only in a log
@@ -346,6 +347,7 @@ impl AuthorityStructure {
             AuthorityOp::WorldPrivacy(edit) => install_key(edit.machine),
             AuthorityOp::WorldKeyWraps(record) => install_key(record.machine),
             AuthorityOp::ResidenceResult(result) => install_key(result.machine),
+            AuthorityOp::GrantTravelSet(set) => install_key(set.machine),
             AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
             AuthorityOp::MachineProfile(_)
                 if self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty() =>
@@ -381,6 +383,7 @@ impl AuthorityStructure {
             AuthorityOp::WorldPrivacy(edit) => machine_key(edit.machine),
             AuthorityOp::WorldKeyWraps(record) => machine_key(record.machine),
             AuthorityOp::ResidenceResult(result) => machine_key(result.machine),
+            AuthorityOp::GrantTravelSet(set) => machine_key(set.machine),
             _ => false,
         }
     }

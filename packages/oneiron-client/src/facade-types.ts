@@ -2172,9 +2172,9 @@ export type SecretUseStatus = "answered" | "failed" | "withheld"
 export type SecretUseRecord = { handle: string; generation: number; effector: string; operation: string; decision: string; used_at: number }
 /** `oneiron::task_verb::sdk_secret_use::SecretUseAnswer` */
 export type SecretUseAnswer = { status: SecretUseStatus; result?: unknown | null; failure?: string | null; receipt: SecretUseRecord }
-/** `oneiron::share_travel::BornWithField` */
+/** `oneiron_authority::share_travel::BornWithField` */
 export type BornWithField = "prompt" | "why" | "keep" | "intent_prompt"
-/** `oneiron::share_travel::TravelChoice` */
+/** `oneiron_authority::share_travel::TravelChoice` */
 export type TravelChoice = { born_with?: BornWithField[] }
 /** `oneiron::task_verb::sdk_share::ShareCreateRequest` */
 export type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null }
@@ -2190,7 +2190,7 @@ export type ShareViewNarrowing = { world_refs?: string[]; facet_refs?: string[];
 export type ShareViewRequest = { share_ref: string; narrowing?: ShareViewNarrowing | null }
 /** `oneiron::receipt::share_doors::SharedBriefCitation` */
 export type SharedBriefCitation = { claim_ref: string; stale: boolean; drifted: boolean; redacted: boolean; confidence?: number | null; lifecycle?: string | null; quote?: string | null }
-/** `oneiron::share_travel::BornWith` */
+/** `oneiron_authority::share_travel::BornWith` */
 export type BornWith = Record<string, string>
 /** `oneiron::receipt::share_doors::SharedBriefView` */
 export type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith }

@@ -138,7 +138,9 @@ pub(super) fn fold_adopted_checkpoint_tail(
         window_secs,
         log.pin,
     );
-    if !view.worlds.is_empty() && !super::install_fold::stale_chains(&view).is_empty() {
+    if (!view.worlds.is_empty() || !view.grant_travel.is_empty())
+        && !super::install_fold::stale_chains(&view).is_empty()
+    {
         return Ok(whole());
     }
     let mut metas: BTreeMap<_, _> = image

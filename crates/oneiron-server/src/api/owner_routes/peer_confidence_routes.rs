@@ -3,7 +3,8 @@
 //! its scale; a peer without one gets the default.
 //! `/v1/owner/federation/grant-travel`: the born-with text one federation
 //! grant's windows carry to another vault (OF-491); a grant without one
-//! sends none. GET reads one grant's bound choice, POST binds or clears it.
+//! sends none. GET reads one grant's effective choice, POST sets or clears
+//! it for every machine of the owner's that serves the grant (FIX 2998).
 
 use std::sync::Arc;
 
@@ -156,8 +157,11 @@ async fn get_travel(
     Ok(Json(travel))
 }
 
-/// `POST /v1/owner/federation/grant-travel`: binds or clears one live
-/// grant's travel choice. Text a guest already holds stays its copy.
+/// `POST /v1/owner/federation/grant-travel`: sets or clears one live
+/// grant's travel choice, and answers the effective choice after: a choice
+/// another of the owner's machines made concurrently meets it. Text a guest
+/// already holds stays its copy. The engine's refusal keeps its type: a
+/// host's operator root stays `HostActionRequiresSupportGrant` (FIX 2222).
 async fn set_travel(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -170,14 +174,14 @@ async fn set_travel(
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs());
-        server
-            .vault()
-            .set_federation_grant_travel_as(&owner, &grant, request.travel.clone(), now)
-            .map_err(|error| crate::owner::OwnerError::Invalid(error.to_string()))?;
+        let effective =
+            server
+                .vault()
+                .set_federation_grant_travel_as(&owner, &grant, request.travel, now)?;
         Ok(GrantTravel {
             grant: grant.to_hex(),
-            set: request.travel.as_ref().map(|_| rfc3339_secs(now)),
-            travel: request.travel,
+            set: effective.as_ref().map(|bound| rfc3339_secs(bound.set_at)),
+            travel: effective.map(|bound| bound.travel),
         })
     })
     .await?;

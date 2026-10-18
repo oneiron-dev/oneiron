@@ -210,6 +210,12 @@ pub(super) fn project_once(
         refused_world_edits: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.refused_world_edits.clone()),
+        grant_travel: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            super::grant_travel::folded_grants(state, context.pin, context.machine_standing)
+        }),
+        refused_grant_travel: merged
+            .as_ref()
+            .map_or_else(BTreeSet::new, |state| state.refused_grant_travel.clone()),
         install: merged.as_ref().map_or_else(InstallBound::default, |state| {
             super::install_fold::held_back(state, context.pin, context.machine_standing)
         }),

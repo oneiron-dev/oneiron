@@ -448,6 +448,13 @@ impl FoldIssues {
                 .or_default()
                 .push("refused_world_key");
         }
+        for entry in &fold.refused_grant_travel {
+            issues
+                .by_entry
+                .entry(*entry)
+                .or_default()
+                .push("refused_grant_travel");
+        }
         issues
     }
 
@@ -576,6 +583,19 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::OwnerHandover(_) => (Other, "owner_handover", OpFields::default()),
         AuthorityOp::ResidenceDirective(_) => (Other, "residence_directive", OpFields::default()),
         AuthorityOp::ResidenceResult(_) => (Other, "residence_result", OpFields::default()),
+        AuthorityOp::GrantTravelSet(set) => (
+            Other,
+            "grant_travel_set",
+            OpFields {
+                detail: Some(set.choice.as_ref().map_or_else(
+                    || "clear".to_owned(),
+                    |choice| crate::share_travel::travelled_value(choice.born_with.iter().copied()),
+                )),
+                subject_ref: Some(set.machine.to_hex()),
+                grant_ref: Some(set.grant.to_hex()),
+                ..OpFields::default()
+            },
+        ),
     }
 }
 

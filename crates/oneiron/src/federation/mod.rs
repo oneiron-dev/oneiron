@@ -25,6 +25,10 @@ pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 pub(crate) use coreference::share_consent_valid_at;
 mod grant;
 pub(crate) mod grant_policy;
+#[cfg(feature = "sync")]
+mod grant_travel;
+#[cfg(feature = "sync")]
+pub(crate) use grant_travel::live_federation_grant_in;
 mod membership_gate;
 pub use membership_gate::MembershipStanding;
 pub use membership_gate::SharedVaultWrite;

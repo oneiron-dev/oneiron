@@ -280,8 +280,8 @@ impl Once {
 /// `merged` (the merge of every surviving state) as it was, given the confirms
 /// already in the log (which it joins): an agent enrollment, a fresh binding,
 /// a slip mint or consume, a critical-write confirm, a fresh federation
-/// confirm. A resumed fold and a fold past an adopted checkpoint take only
-/// these.
+/// confirm, a grant travel choice (it judges only its own grant's choices).
+/// A resumed fold and a fold past an adopted checkpoint take only these.
 pub(super) fn admits_past(
     merged: &FoldState,
     entry: &AuthorityLogEntry,
@@ -308,7 +308,8 @@ pub(super) fn admits_past(
         }
         AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipConsume { .. }
-        | AuthorityOp::CriticalWriteConfirm(_) => true,
+        | AuthorityOp::CriticalWriteConfirm(_)
+        | AuthorityOp::GrantTravelSet(_) => true,
         AuthorityOp::FederationConfirm(action) => {
             confirms.0.insert(action.confirm_id) && confirms.1.insert(action.nonce)
         }
@@ -955,7 +956,9 @@ impl FoldBase {
             observations.policy.stale_roster_window_secs,
             inputs.pin.as_ref(),
         );
-        if !view.worlds.is_empty() && !super::install_fold::stale_chains(&view).is_empty() {
+        if (!view.worlds.is_empty() || !view.grant_travel.is_empty())
+            && !super::install_fold::stale_chains(&view).is_empty()
+        {
             return None;
         }
         let chained: Vec<_> = chain.iter().map(|hash| (*hash, new_rows[hash])).collect();

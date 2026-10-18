@@ -208,8 +208,9 @@ pub(super) fn every_chain(_: EntityId, _: MachineAdmitter) -> InstallHold {
 }
 
 /// Whether an edit's machine was mine under `T(X)`, with the edit's key, at
-/// its parents: strength's condition (a) for every admitter at once.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// its parents: strength's condition (a) for every admitter at once. A grant
+/// travel choice, which needs no "yours", carries the default: mine nowhere.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct TrustedAt {
     roster: bool,
     /// The anchors whose trust set judged the machine otherwise than the
@@ -359,13 +360,32 @@ impl<'s> Standing<'s> {
         id: EntityId,
         signer: &AuthorityKey,
     ) -> BTreeMap<MachineAdmitter, Mark> {
+        self.chains_signed_by(id, signer, MachineRevision::says_yours)
+    }
+
+    /// The chains whose live head names `id` under `signer`, in any role,
+    /// each with its mark: a grant travel choice's signing chains (FIX 2998).
+    pub(super) fn live_signing_chains(
+        &self,
+        id: EntityId,
+        signer: &AuthorityKey,
+    ) -> BTreeMap<MachineAdmitter, Mark> {
+        self.chains_signed_by(id, signer, MachineRevision::is_live)
+    }
+
+    fn chains_signed_by(
+        &self,
+        id: EntityId,
+        signer: &AuthorityKey,
+        counts: fn(&MachineRevision) -> bool,
+    ) -> BTreeMap<MachineAdmitter, Mark> {
         let Some(folded) = self.view(id, Kind::Roster) else {
             return BTreeMap::new();
         };
         folded
             .chains()
             .filter(|(_, chain)| {
-                chain.says_yours() && *signer == AuthorityKey::Ed25519(chain.profile.machine_key)
+                counts(chain) && *signer == AuthorityKey::Ed25519(chain.profile.machine_key)
             })
             .map(|(admitter, chain)| {
                 let prior = self
@@ -477,6 +497,100 @@ impl<'s> Standing<'s> {
                     .is_some_and(|chain| {
                         acknowledged(self.state, chain, edit, mark, kind == Kind::Roster)
                     });
+            if !lifts {
+                return false;
+            }
+        }
+        reasons
+    }
+
+    /// Some chain of `id` names `key`, live or not: a grant travel choice's
+    /// signer is that machine's install key at all (FIX 2998).
+    pub(super) fn names_key(&self, id: EntityId, key: &[u8; 32]) -> bool {
+        self.view(id, Kind::Roster)
+            .is_some_and(|folded| folded.names_key(key))
+    }
+
+    /// [`super::grant_travel::grant_travel_signer_admits`] for `id` and
+    /// `key` under `view`: pin-free in the roster view, with this install's
+    /// holds and staleness in the install view.
+    pub(super) fn admits_grant_signer(
+        &self,
+        id: EntityId,
+        key: &[u8; 32],
+        view: StandingView,
+    ) -> bool {
+        let (_, kind) = self.admitter_kind(view);
+        super::grant_travel::grant_travel_signer_admits(
+            self.view(id, kind).as_deref(),
+            &self.state.roster,
+            key,
+        )
+    }
+
+    /// The race rule for a grant travel choice under `view` (FIX 2998). It
+    /// passes while the choice's machine is still admitted there under the
+    /// key that signed it. Otherwise each chain that admitted it at the
+    /// choice's parents (`marks`) and no longer does is a reason, and there
+    /// must be one: its head must be neither conflicted, held, stale nor
+    /// unsettled, and every revision of the chain outside its mark's past
+    /// that no longer names the key live (a removal, a new key) must have
+    /// seen the choice and, judged as this install reads it, landed in full.
+    /// A chain that admitted the machine and is gone now never lifts. So a
+    /// removal the owner signed after the choice keeps it; a choice a
+    /// machine signed after it was removed, which no removal saw, only
+    /// narrows. Unlike a world edit's race, the remover's custody does not
+    /// matter: a custodial install may sign a choice itself.
+    pub(super) fn grant_race(
+        &self,
+        id: EntityId,
+        choice: &AuthorityEntryHash,
+        key: &[u8; 32],
+        marks: &BTreeMap<MachineAdmitter, Mark>,
+        view: StandingView,
+    ) -> bool {
+        if self.admits_grant_signer(id, key, view) {
+            return true;
+        }
+        let (_, kind) = self.admitter_kind(view);
+        let Some(folded) = self.view(id, kind) else {
+            return false;
+        };
+        let mut reasons = false;
+        for (admitter, mark) in marks {
+            let Some(head) = folded.chain(admitter) else {
+                return false;
+            };
+            if head.is_live() && head.profile.machine_key == *key {
+                continue;
+            }
+            reasons = true;
+            let saw = self
+                .state
+                .machines
+                .get(&id)
+                .and_then(|chains| chains.get(admitter))
+                .is_some_and(|chain| {
+                    let mut takers = chain
+                        .revisions
+                        .iter()
+                        .filter(|(hash, revision)| {
+                            !mark.prior.contains(*hash)
+                                && (revision.profile.role == MachineRole::Removed
+                                    || revision.profile.machine_key != *key)
+                        })
+                        .peekable();
+                    takers.peek().is_some()
+                        && takers.all(|(_, revision)| {
+                            (kind == Kind::Roster || !revision.past_floor)
+                                && revision.profile.seen_world_edits.contains(choice)
+                        })
+                });
+            let lifts = !head.conflicted
+                && !head.floor_held
+                && !head.stale
+                && !head.admitter_unsettled
+                && saw;
             if !lifts {
                 return false;
             }
