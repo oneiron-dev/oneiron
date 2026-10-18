@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "area": "coordination",
+  "assets": [
+    {
+      "id": "coordination-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:owner-coordination-e2e-20261018",
+        "revision": "1305f3fbba2e0939570fe79ee98c2e9c15dbc62e7dbc21f316ccf6d0c92258e2"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "0a9b30aaf4e49f54a0e9741599fe1f6940228649d77aeca021e95cd6527632b7",
+      "expectedFacts": {
+        "scenarioCount": 9,
+        "authoredContent": true,
+        "oracle": "Pinned canon and owner rulings; each ordered scenario retains its inputs, expected facts and missing typed public prerequisites. No engine-generated expected values.",
+        "ownerRuling": "G01: a designed verb waits for its typed HTTP and SDK call",
+        "allFlowsBlocked": true
+      },
+      "scenarios": [
+        "COORDINATION-01",
+        "COORDINATION-02",
+        "COORDINATION-03",
+        "COORDINATION-04",
+        "COORDINATION-05",
+        "COORDINATION-06",
+        "COORDINATION-07",
+        "COORDINATION-08",
+        "COORDINATION-09"
+      ],
+      "requires": [
+        "typed public AGENT_DEF creation/import for project leader and workers",
+        "typed house drafting fixture setup",
+        "typed public project-leader and roster fixture setup",
+        "typed companion/AGENT_DEF onboarding",
+        "typed HTTP/SDK self.leader.split bound to its parent run",
+        "typed HTTP/SDK self.agents.spawn bound to its parent run",
+        "typed public custom AGENT_DEF fixture creation for the local assignee lane",
+        "typed HTTP/SDK child spawn",
+        "typed evidence-or-abstention consult-result landing and read",
+        "typed HTTP/SDK planned spawn/team",
+        "typed type-tree fixture pin/read",
+        "typed cross-consumer typeRef receipt observations",
+        "typed refusal-dial setup/read",
+        "typed HTTP/SDK tasks.refuse bound to its running task",
+        "typed Linear webhook/event intake",
+        "typed task-issue mapping/provenance inspection and mirrored-field edit",
+        "typed local tracker configuration and mirror completion observation"
+      ]
+    }
+  ]
+}
