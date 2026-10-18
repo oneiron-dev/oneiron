@@ -25,6 +25,7 @@
 //! edited to admit these codes; that is the whole point of the local type.
 
 pub(super) mod action_routes;
+mod affect_doors;
 mod agent_definition_doors;
 mod agent_verbs;
 mod authority_history_doors;
@@ -63,7 +64,6 @@ mod guest_doors;
 pub(super) mod host_doors;
 mod hub_doors;
 mod learning_doors;
-mod skill_doors;
 mod legal_hold_doors;
 mod linear_doors;
 mod live_run_doors;
@@ -78,21 +78,22 @@ mod project_card_doors;
 mod reaction_doors;
 mod reply_doors;
 mod research_doors;
-mod retrieval_doors;
 mod residence_doors;
 mod result_doors;
+mod retrieval_doors;
 pub(super) mod role_picks;
 mod secret_lift_doors;
 mod secret_use_doors;
 mod setting_doors;
-mod slim_doors;
 mod share_doors;
-mod skill_execution_doors;
 mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
-mod support_grant_doors;
+mod skill_doors;
+mod skill_execution_doors;
+mod slim_doors;
 mod summary_doors;
+mod support_grant_doors;
 #[cfg(test)]
 pub(super) mod tests;
 mod trusted_contact_doors;
@@ -170,6 +171,12 @@ pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
         .merge(agent_verbs::routes())
         .fallback(facade_unknown_verb)
         .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
+}
+
+/// The anonymous-chat SDK route, mounted with the existing standalone
+/// handler outside invocation claims, wire telemetry and call receipts.
+pub(crate) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
+    agent_verbs::anonymous_chat_routes().layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
 }
 
 /// [`facade_routes`] with every reply's call receipt (OF-538): one layer

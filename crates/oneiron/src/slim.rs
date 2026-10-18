@@ -49,7 +49,9 @@ pub enum VaultResidency {
 
 /// Why the host asked for a shed. Observability only — the engine never
 /// compares it, or `waited_secs`, against a policy constant.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShedCause {
     LongOutboundWait,
@@ -120,7 +122,17 @@ pub struct SlimResidue {
 }
 
 /// Counts of concrete work one shed performed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct HeapDropReport {
     pub sync_windows: u64,
     pub ppr_cache_rows: u64,
@@ -155,7 +167,9 @@ impl HeapDropReport {
 
 /// Why a shed was refused. Every variant is defined unconditionally so the
 /// public outcome shape does not vary by build feature.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ShedBlocker {
     NoPendingOutboundStep,

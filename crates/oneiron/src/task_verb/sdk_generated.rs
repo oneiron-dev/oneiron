@@ -250,6 +250,28 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RecallRequest>(),
             ),
             (
+                "vault.retrieval.weights.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.retrieval.weights.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::RetrievalWeightsConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.affect.annotations.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::affect::AffectAnnotationPut,
+                >(),
+            ),
+            (
+                "vault.affect.claims.consolidate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::affect::AffectClaimConsolidateRequest,
+                >(),
+            ),
+            (
                 "vault.retrieval.recall",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RecallRequest>(
                 ),
@@ -2205,6 +2227,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "ai.anonymous_chat",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AnonymousChatRequest,
+                >(),
+            ),
+            (
                 "ai.options",
                 crate::code_run::vault_read::request_schema::<AiOptionsRequest>(),
             ),
@@ -3237,6 +3265,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "tasks.refuse",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>,
+                >(),
+            ),
+            (
                 "self.agents.spawn",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
@@ -3271,10 +3305,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.edges.put",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
-            ),
-            (
-                "tasks.refuse",
-                crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
             (
                 "self.leader.advice",
@@ -3322,6 +3352,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.lease.top_up",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.retrieval.weights.get",
+    "vault.retrieval.weights.configure",
+    "vault.affect.annotations.put",
+    "vault.affect.claims.consolidate",
     "vault.retrieval.runs",
     "vault.retrieval.run",
     "vault.retrieval.turn",
@@ -3469,6 +3503,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.voice.usage",
     "ai.voice.end",
     "ai.voice.close",
+    "ai.anonymous_chat",
     "vault.voices.packs.put",
     "vault.voices.render_consent",
     "vault.voices.targets.provision",
@@ -3559,6 +3594,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
+        >(),
+        "vault.retrieval.weights.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::RetrievalWeightsView,
+        >(),
+        "vault.retrieval.weights.configure" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::RetrievalWeightsReceipt,
+        >(),
+        "vault.affect.annotations.put" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
+        }
+        "vault.affect.claims.consolidate" => crate::code_run::vault_read::request_schema::<
+            crate::memory::affect::AffectClaimConsolidation,
         >(),
         "vault.retrieval.runs" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::RetrievalRunEvidence>,
@@ -4003,6 +4050,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "ai.voice.close" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::LiveVoiceProcessed,
         >(),
+        "ai.anonymous_chat" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AnonymousChatResponse,
+        >(),
         "vault.voices.packs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::VoiceBankPackReceipt,
         >(),
@@ -4237,6 +4287,7 @@ pub const NO_RECORD_ROWS: &[&str] = &[
     "vault.off_record.notes.create",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
+    "ai.anonymous_chat",
 ];
 pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
     mcp_arguments_schema_from_input(verb, input_schema(verb)?)
@@ -4631,6 +4682,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.weights.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.weights.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.annotations.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.claims.consolidate" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7165,6 +7244,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.anonymous_chat" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.options" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8327,6 +8413,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "tasks.refuse" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.agents.spawn" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8524,6 +8617,20 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             )?;
             crate::memory::caps::check_as_of(input.as_of)?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+        }
+        "vault.retrieval.weights.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.weights.configure" => {
+            let _input: crate::policy_manifest_doors::RetrievalWeightsConfigureRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.annotations.put" => {
+            let _input: crate::memory::affect::AffectAnnotationPut = decode(value.clone())?;
+        }
+        "vault.affect.claims.consolidate" => {
+            let _input: crate::memory::affect::AffectClaimConsolidateRequest =
+                decode(value.clone())?;
         }
         "vault.retrieval.recall" => {
             let _input: crate::task_verb::sdk::RecallRequest = decode(value.clone())?;
@@ -9682,6 +9789,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ai.voice.close" => {
             let _input: crate::task_verb::sdk::LiveVoiceSessionRequest = decode(value.clone())?;
         }
+        "ai.anonymous_chat" => {
+            let _input: crate::task_verb::sdk::AnonymousChatRequest = decode(value.clone())?;
+        }
         "ai.options" => {
             let _input: AiOptionsRequest = decode(value.clone())?;
         }
@@ -10347,6 +10457,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.folds" => {
             let _input: crate::code_run::fold_api::FoldRunRequest = decode(value.clone())?;
         }
+        "tasks.refuse" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput> =
+                decode(value.clone())?;
+        }
         "self.agents.spawn" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput> =
                 decode(value.clone())?;
@@ -10375,6 +10489,9 @@ pub fn invoke(
         return Err(
             wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))
         );
+    }
+    if verb == "ai.anonymous_chat" {
+        return encode(ai_anonymous_chat(memory, decode(value)?)?);
     }
     // The row's one verb-hook boundary (ARCH-0080 §3).
     crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
@@ -10427,6 +10544,18 @@ pub fn invoke(
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
+        "vault.retrieval.weights.get" => {
+            encode(vault_retrieval_weights_get(memory, decode(value)?)?)
+        }
+        "vault.retrieval.weights.configure" => {
+            encode(vault_retrieval_weights_configure(memory, decode(value)?)?)
+        }
+        "vault.affect.annotations.put" => {
+            encode(vault_affect_annotations_put(memory, decode(value)?)?)
+        }
+        "vault.affect.claims.consolidate" => {
+            encode(vault_affect_claims_consolidate(memory, decode(value)?)?)
+        }
         "vault.retrieval.recall" => encode(vault_retrieval_recall(memory, decode(value)?)?),
         "vault.retrieval.runs" => encode(vault_retrieval_runs(memory, decode(value)?)?),
         "vault.retrieval.run" => encode(vault_retrieval_run(memory, decode(value)?)?),
@@ -11064,6 +11193,7 @@ pub fn invoke(
         "ai.voice.tool" => encode(ai_voice_tool(memory, decode(value)?)?),
         "ai.voice.end" => encode(ai_voice_end(memory, decode(value)?)?),
         "ai.voice.close" => encode(ai_voice_close(memory, decode(value)?)?),
+        "ai.anonymous_chat" => encode(ai_anonymous_chat(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
@@ -11355,6 +11485,7 @@ pub fn invoke(
         "self.compact" => encode(self_compact(memory, decode(value)?)?),
         "self.unfold" => encode(self_unfold(memory, decode(value)?)?),
         "self.folds" => encode(self_folds(memory, decode(value)?)?),
+        "tasks.refuse" => encode(tasks_refuse(memory, decode(value)?)?),
         "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
         "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
         "self.skills.call" => encode(self_skills_call(memory, decode(value)?)?),
@@ -11950,6 +12081,48 @@ pub fn vault_recall(
     crate::memory::caps::check_as_of(input.as_of)?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::recall_unembedded(memory, input)
+}
+pub fn vault_retrieval_weights_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_manifest_doors::RetrievalWeightsView> {
+    crate::policy_manifest_doors::retrieval_weights_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.retrieval.weights.get")?,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_retrieval_weights_configure(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::RetrievalWeightsConfigureRequest,
+) -> MemoryResult<crate::policy_manifest_doors::RetrievalWeightsReceipt> {
+    crate::policy_manifest_doors::configure_retrieval_weights_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.retrieval.weights.configure")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_affect_annotations_put(
+    memory: &Memory<'_>,
+    input: crate::memory::affect::AffectAnnotationPut,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.affect.annotations.put",
+        &input,
+        &["/turn_ref"],
+    )?;
+    memory.affect_annotation_put(&input)
+}
+pub fn vault_affect_claims_consolidate(
+    memory: &Memory<'_>,
+    input: crate::memory::affect::AffectClaimConsolidateRequest,
+) -> MemoryResult<crate::memory::affect::AffectClaimConsolidation> {
+    memory.affect_claim_consolidate_as_owner(
+        &memory.embedded_owner("vault.affect.claims.consolidate")?,
+        &input,
+    )
 }
 pub fn vault_retrieval_recall(
     memory: &Memory<'_>,
@@ -14943,6 +15116,12 @@ pub fn ai_voice_close(
 ) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
     crate::task_verb::sdk::host_only(memory, "ai.voice.close", &input)
 }
+pub fn ai_anonymous_chat(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AnonymousChatRequest,
+) -> MemoryResult<crate::task_verb::sdk::AnonymousChatResponse> {
+    crate::task_verb::sdk::host_only(memory, "ai.anonymous_chat", &input)
+}
 pub fn ai_options(
     memory: &Memory<'_>,
     input: AiOptionsRequest,
@@ -16583,6 +16762,12 @@ pub fn self_folds(
     input: crate::code_run::fold_api::FoldRunRequest,
 ) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldList>> {
     crate::task_verb::sdk::host_only(memory, "self.folds", &input)
+}
+pub fn tasks_refuse(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>,
+) -> MemoryResult<crate::code_run::TaskRefuseOutput> {
+    crate::task_verb::sdk::host_only(memory, "tasks.refuse", &input)
 }
 pub fn self_agents_spawn(
     memory: &Memory<'_>,

@@ -267,8 +267,10 @@ async fn fetch_authority_checkpoint(
 /// Appends to the home the signed entries it named as lacking, parents
 /// first, in pages that each import whole there: every parent of an entry is
 /// held by the home or sent before it. The side branch of a world the home
-/// may not read stays here (FIX 922 item 11); nothing outside the world
-/// names it. Returns how many it sent.
+/// may not read, its key records, stays here (FIX 922 item 11); nothing
+/// outside the world names it. A world's settings edits are main-log
+/// metadata and go to every linked home (the Engine call "OwnerAct world
+/// metadata to every linked machine"). Returns how many it sent.
 async fn append_authority(
     vault: &Vault,
     rpc: &mut ResidenceRpc,

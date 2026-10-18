@@ -850,6 +850,69 @@
       "mcp_scope": "filtered"
     },
     {
+      "name": "vault.retrieval.weights.get",
+      "description": "The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash.",
+      "input": "EmptyRequest",
+      "output": "crate::policy_manifest_doors::RetrievalWeightsView",
+      "call": "crate::policy_manifest_doors::retrieval_weights_as_owner(memory.vault(), &memory.embedded_owner(\"vault.retrieval.weights.get\")?).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.weights.configure",
+      "description": "The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority.",
+      "input": "crate::policy_manifest_doors::RetrievalWeightsConfigureRequest",
+      "output": "crate::policy_manifest_doors::RetrievalWeightsReceipt",
+      "call": "crate::policy_manifest_doors::configure_retrieval_weights_as_owner(memory.vault(), &memory.embedded_owner(\"vault.retrieval.weights.configure\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.annotations.put",
+      "description": "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval.",
+      "input": "crate::memory::affect::AffectAnnotationPut",
+      "output": "crate::memory::CommitReceipt",
+      "call": "memory.affect_annotation_put(&input)?",
+      "scope": "Write",
+      "proposes": true,
+      "refs": [
+        "/turn_ref"
+      ],
+      "admission": {
+        "claim_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.claims.consolidate",
+      "description": "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction.",
+      "input": "crate::memory::affect::AffectClaimConsolidateRequest",
+      "output": "crate::memory::affect::AffectClaimConsolidation",
+      "call": "memory.affect_claim_consolidate_as_owner(&memory.embedded_owner(\"vault.affect.claims.consolidate\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.retrieval.recall",
       "description": "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle.",
       "input": "crate::task_verb::sdk::RecallRequest",
@@ -5009,7 +5072,7 @@
     },
     {
       "name": "vault.agents.create",
-      "description": "The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched.",
+      "description": "The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched.",
       "input": "crate::task_verb::sdk::AgentDefinitionCreateRequest",
       "output": "crate::task_verb::sdk::AgentDefinitionView",
       "call": "crate::task_verb::sdk::create_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.create\")?, input)?",
@@ -5024,7 +5087,7 @@
     },
     {
       "name": "vault.agents.get",
-      "description": "The owner reads one saved agent composition and its version and approval state.",
+      "description": "The owner reads one saved agent composition, including its declared refusal dial, version and approval state.",
       "input": "crate::task_verb::sdk::AgentDefinitionRequest",
       "output": "crate::task_verb::sdk::AgentDefinitionView",
       "call": "crate::task_verb::sdk::read_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.get\")?, input)?",
@@ -5039,7 +5102,7 @@
     },
     {
       "name": "vault.agents.update",
-      "description": "The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision.",
+      "description": "The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial.",
       "input": "crate::task_verb::sdk::AgentDefinitionUpdateRequest",
       "output": "crate::task_verb::sdk::AgentDefinitionView",
       "call": "crate::task_verb::sdk::update_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.update\")?, input)?",
@@ -6668,6 +6731,18 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.anonymous_chat",
+      "description": "One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call.",
+      "input": "crate::task_verb::sdk::AnonymousChatRequest",
+      "output": "crate::task_verb::sdk::AnonymousChatResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.anonymous_chat\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Read",
       "section": false,
       "openapi": true
     },
@@ -10382,7 +10457,11 @@
       "output": "crate::code_run::TaskRefuseOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "TasksRefuse"
+      "effect": "TasksRefuse",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>",
+        "description": "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."
+      }
     },
     {
       "name": "self.agents.spawn",

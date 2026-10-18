@@ -394,7 +394,7 @@ impl PipelineBuilder<'_> {
                         seeds,
                         *depth,
                         PPR_DAMPING,
-                        self.vault.config.ppr_vad_alpha,
+                        self.ppr_vad_alpha,
                         crate::ppr::SeedWeighting::Specificity,
                     )
                 })?
@@ -774,11 +774,7 @@ impl PipelineBuilder<'_> {
             // Only admitted final candidates participate. This selection cannot
             // surface hidden bridge nodes, undo filters, or multiply scores twice.
             if let Some(diversity) = community_diversity {
-                diversity.apply(
-                    &mut scores,
-                    self.result_limit,
-                    &self.vault.config.ppr_community,
-                )?;
+                diversity.apply(&mut scores, self.result_limit, &self.ppr_community)?;
             }
             match world_share {
                 Some(share) => {

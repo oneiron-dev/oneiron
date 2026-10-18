@@ -433,6 +433,12 @@ export class Oneiron {
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     retrieval: {
+      weights: {
+        /** The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash. */
+        get: (input: Facade.EmptyRequest = {}): Facade.RetrievalWeightsView => this.#call(() => this.#client.vaultRetrievalWeightsGet(input) as Facade.RetrievalWeightsView),
+        /** The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority. */
+        configure: (input: Facade.RetrievalWeightsConfigureRequest): Facade.RetrievalWeightsReceipt => this.#call(() => this.#client.vaultRetrievalWeightsConfigure(input) as Facade.RetrievalWeightsReceipt),
+      },
       /** Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle. */
       recall: (input: Facade.RecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultRetrievalRecall(input) as Facade.MemoryPack),
       /** The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first. */
@@ -453,6 +459,16 @@ export class Oneiron {
       export: (input: Facade.RetrievalDiagnosticRequest): Facade.RetrievalDiagnosticExport => this.#call(() => this.#client.vaultRetrievalExport(input) as Facade.RetrievalDiagnosticExport),
       /** The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used. */
       replay: (input: Facade.RetrievalDiagnosticRequest): Facade.RetrievalDiagnosticReplay => this.#call(() => this.#client.vaultRetrievalReplay(input) as Facade.RetrievalDiagnosticReplay),
+    },
+    affect: {
+      annotations: {
+        /** Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval. */
+        put: (input: Facade.AffectAnnotationPut): Facade.CommitReceipt => this.#call(() => this.#client.vaultAffectAnnotationsPut(input) as Facade.CommitReceipt),
+      },
+      claims: {
+        /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
+        consolidate: (input: Facade.AffectClaimConsolidateRequest): Facade.AffectClaimConsolidation => this.#call(() => this.#client.vaultAffectClaimsConsolidate(input) as Facade.AffectClaimConsolidation),
+      },
     },
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
@@ -1229,11 +1245,11 @@ export class Oneiron {
       slice: (input: Facade.ResultSliceRequest): Facade.ResultSliceView => this.#call(() => this.#client.vaultResultsSlice(input) as Facade.ResultSliceView),
     },
     agents: {
-      /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
+      /** The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
       create: (input: Facade.AgentDefinitionCreateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsCreate(input) as Facade.AgentDefinitionView),
-      /** The owner reads one saved agent composition and its version and approval state. */
+      /** The owner reads one saved agent composition, including its declared refusal dial, version and approval state. */
       get: (input: Facade.AgentDefinitionRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsGet(input) as Facade.AgentDefinitionView),
-      /** The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision. */
+      /** The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial. */
       update: (input: Facade.AgentDefinitionUpdateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsUpdate(input) as Facade.AgentDefinitionView),
       spawn: {
         /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
@@ -1691,6 +1707,8 @@ export class Oneiron {
     answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
     outcomes: (handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]),
+    /** Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay. */
+    refuse: (input: Facade.LiveRunRequest<Facade.TaskRefuseInput>): Facade.TaskRefuseOutput => this.#call(() => this.#client.tasksRefuse(input) as Facade.TaskRefuseOutput),
   }
   /** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
   readonly reveal = Object.assign((input: Facade.RevealRequest): Facade.RevealPending => this.#call(() => this.#client.reveal(input) as Facade.RevealPending), {
@@ -1734,6 +1752,8 @@ export class Oneiron {
       /** Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing. */
       close: (input: Facade.LiveVoiceSessionRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiVoiceClose(input) as Facade.LiveVoiceProcessed),
     },
+    /** One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call. */
+    anonymous_chat: (input: Facade.AnonymousChatRequest): Facade.AnonymousChatResponse => this.#call(() => this.#client.aiAnonymousChat(input) as Facade.AnonymousChatResponse),
     /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
     options: (input: Facade.AiOptionsRequest): Facade.AiOptions => this.#call(() => this.#client.aiOptions(input) as Facade.AiOptions),
     /** One image out of the host's image model; reference images make it an edit. */

@@ -180,6 +180,18 @@ impl OneironClient {
                 "vault.recall" => {
                     remote_agent_verb_output::<oneiron::memory::MemoryPack>(client, verb, &input)
                 }
+                "vault.retrieval.weights.get" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::RetrievalWeightsView,
+                >(client, verb, &input),
+                "vault.retrieval.weights.configure" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::RetrievalWeightsReceipt,
+                >(client, verb, &input),
+                "vault.affect.annotations.put" => {
+                    remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
+                }
+                "vault.affect.claims.consolidate" => remote_agent_verb_output::<
+                    oneiron::memory::affect::AffectClaimConsolidation,
+                >(client, verb, &input),
                 "vault.retrieval.recall" => {
                     remote_agent_verb_output::<oneiron::memory::MemoryPack>(client, verb, &input)
                 }
@@ -1298,6 +1310,9 @@ impl OneironClient {
                 "ai.voice.close" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::LiveVoiceProcessed,
                 >(client, verb, &input),
+                "ai.anonymous_chat" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AnonymousChatResponse,
+                >(client, verb, &input),
                 "ai.options" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiOptions>(
                     client, verb, &input,
                 ),
@@ -1810,6 +1825,9 @@ impl OneironClient {
                 "self.folds" => remote_agent_verb_output::<
                     oneiron::compaction::FoldReply<oneiron::compaction::FoldList>,
                 >(client, verb, &input),
+                "tasks.refuse" => remote_agent_verb_output::<oneiron::code_run::TaskRefuseOutput>(
+                    client, verb, &input,
+                ),
                 "self.agents.spawn" => remote_agent_verb_output::<
                     oneiron::code_run::AgentSpawnOutput,
                 >(client, verb, &input),
@@ -2449,6 +2467,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.recall", value)
+    }
+    pub fn vault_retrieval_weights_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::policy_manifest_doors::RetrievalWeightsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.weights.get", value)
+    }
+    pub fn vault_retrieval_weights_configure(
+        &self,
+        input: &oneiron::policy_manifest_doors::RetrievalWeightsConfigureRequest,
+    ) -> Result<oneiron::policy_manifest_doors::RetrievalWeightsReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.weights.configure", value)
+    }
+    pub fn vault_affect_annotations_put(
+        &self,
+        input: &oneiron::memory::affect::AffectAnnotationPut,
+    ) -> Result<oneiron::memory::CommitReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.affect.annotations.put", value)
+    }
+    pub fn vault_affect_claims_consolidate(
+        &self,
+        input: &oneiron::memory::affect::AffectClaimConsolidateRequest,
+    ) -> Result<oneiron::memory::affect::AffectClaimConsolidation, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.affect.claims.consolidate", value)
     }
     pub fn vault_retrieval_recall(
         &self,
@@ -6889,6 +6955,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("ai.voice.close", value)
     }
+    pub fn ai_anonymous_chat(
+        &self,
+        input: &oneiron::task_verb::sdk::AnonymousChatRequest,
+    ) -> Result<oneiron::task_verb::sdk::AnonymousChatResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.anonymous_chat", value)
+    }
     pub fn ai_options(
         &self,
         input: &oneiron::task_verb::sdk::AiOptionsRequest,
@@ -8967,6 +9045,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.folds", value)
+    }
+    pub fn tasks_refuse(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput>,
+    ) -> Result<oneiron::code_run::TaskRefuseOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.refuse", value)
     }
     pub fn self_agents_spawn(
         &self,
