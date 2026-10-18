@@ -9265,6 +9265,89 @@ async fn vault_notes_defaults(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_tasks_linear_mapping(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.tasks.linear.mapping",
+        oneiron::memory::RoomTurnHandle::serves("vault.tasks.linear.mapping"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tasks.linear.mapping",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_tasks_linear_mapping_edit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.tasks.linear.mapping.edit")?;
+    let caller = facade_actor(auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.tasks.linear.mapping.edit", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.tasks.linear.mapping.edit", value).await?;
+    let (output, listed) = super::host_doors::vault_tasks_linear_mapping_edit(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_tasks_linear_provenance(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.tasks.linear.provenance",
+        oneiron::memory::RoomTurnHandle::serves("vault.tasks.linear.provenance"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tasks.linear.provenance",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn self_run_attach(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -10067,6 +10150,11 @@ pub(crate) async fn call_verb(
         "vault.notes.lifecycle" => vault_notes_lifecycle(server, call, input).await,
         "vault.notes.set_overrides" => vault_notes_set_overrides(server, call, input).await,
         "vault.notes.defaults" => vault_notes_defaults(server, call, input).await,
+        "vault.tasks.linear.mapping" => vault_tasks_linear_mapping(server, call, input).await,
+        "vault.tasks.linear.mapping.edit" => {
+            vault_tasks_linear_mapping_edit(server, call, input).await
+        }
+        "vault.tasks.linear.provenance" => vault_tasks_linear_provenance(server, call, input).await,
         "self.run.attach" => self_run_attach(server, call, input).await,
         "self.folds.describe" => self_folds_describe(server, call, input).await,
         "self.history" => self_history(server, call, input).await,

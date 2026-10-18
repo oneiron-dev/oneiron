@@ -447,6 +447,9 @@ pub enum AgentVerb {
     VaultNotesLifecycle,
     VaultNotesSetOverrides,
     VaultNotesDefaults,
+    VaultTasksLinearMapping,
+    VaultTasksLinearMappingEdit,
+    VaultTasksLinearProvenance,
     SelfRunAttach,
     SelfFoldsDescribe,
     SelfHistory,
@@ -905,6 +908,9 @@ impl AgentVerb {
         Self::VaultNotesLifecycle,
         Self::VaultNotesSetOverrides,
         Self::VaultNotesDefaults,
+        Self::VaultTasksLinearMapping,
+        Self::VaultTasksLinearMappingEdit,
+        Self::VaultTasksLinearProvenance,
         Self::SelfRunAttach,
         Self::SelfFoldsDescribe,
         Self::SelfHistory,
@@ -1374,6 +1380,9 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
             Self::VaultNotesSetOverrides => "vault.notes.set_overrides",
             Self::VaultNotesDefaults => "vault.notes.defaults",
+            Self::VaultTasksLinearMapping => "vault.tasks.linear.mapping",
+            Self::VaultTasksLinearMappingEdit => "vault.tasks.linear.mapping.edit",
+            Self::VaultTasksLinearProvenance => "vault.tasks.linear.provenance",
             Self::SelfRunAttach => "self.run.attach",
             Self::SelfFoldsDescribe => "self.folds.describe",
             Self::SelfHistory => "self.history",
@@ -1791,6 +1800,9 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::VaultTasksLinearMapping
+                | Self::VaultTasksLinearMappingEdit
+                | Self::VaultTasksLinearProvenance
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
@@ -2256,6 +2268,9 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::VaultTasksLinearMapping
+                | Self::VaultTasksLinearMappingEdit
+                | Self::VaultTasksLinearProvenance
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
@@ -2330,6 +2345,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultArtifactsBodyCommits
                 | Self::VaultClaimsSeed
+                | Self::VaultTasksLinearProvenance
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -2782,6 +2798,9 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::VaultTasksLinearMapping
+                | Self::VaultTasksLinearMappingEdit
+                | Self::VaultTasksLinearProvenance
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
@@ -3063,6 +3082,7 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
+                | Self::VaultTasksLinearMappingEdit
                 | Self::SelfRunAttach
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -3548,6 +3568,9 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::VaultTasksLinearMapping => &["spec"],
+            Self::VaultTasksLinearMappingEdit => &["spec"],
+            Self::VaultTasksLinearProvenance => &["spec"],
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
@@ -4007,6 +4030,9 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::VaultTasksLinearMapping => &["spec"],
+            Self::VaultTasksLinearMappingEdit => &["spec"],
+            Self::VaultTasksLinearProvenance => &["spec"],
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
@@ -5256,6 +5282,15 @@ impl AgentVerb {
             }
             Self::VaultNotesDefaults => {
                 "One NOTE's overrides and the extraction, context and retention defaults its gates read after them."
+            }
+            Self::VaultTasksLinearMapping => {
+                "One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."
+            }
+            Self::VaultTasksLinearMappingEdit => {
+                "Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."
+            }
+            Self::VaultTasksLinearProvenance => {
+                "One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."
             }
             Self::SelfRunAttach => {
                 "Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls."

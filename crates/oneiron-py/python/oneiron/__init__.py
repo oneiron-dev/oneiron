@@ -752,6 +752,9 @@ class Oneiron:
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
+        @property
+        def tasks(self) -> "Oneiron._VaultTasksVerbs":
+            return Oneiron._VaultTasksVerbs(self._client)
     class _VaultPeopleVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2243,6 +2246,30 @@ class Oneiron:
         def close(self, spec):
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
             return json.loads(_translate(lambda: self._client.vault_notes_editor_close(json.dumps(spec))))
+    class _VaultTasksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def linear(self) -> "Oneiron._VaultTasksLinearVerbs":
+            return Oneiron._VaultTasksLinearVerbs(self._client)
+    class _VaultTasksLinearVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs":
+            return Oneiron._VaultTasksLinearMappingVerbs(self._client)
+        def provenance(self, spec):
+            """One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_linear_provenance(json.dumps(spec))))
+    class _VaultTasksLinearMappingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_linear_mapping(json.dumps(spec))))
+        def edit(self, spec):
+            """Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_linear_mapping_edit(json.dumps(spec))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

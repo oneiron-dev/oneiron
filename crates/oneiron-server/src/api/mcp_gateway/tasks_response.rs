@@ -1340,6 +1340,9 @@ fn mcp_agent_verb_input(
         "vault.notes.lifecycle" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.set_overrides" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.defaults" => a.spec.clone().ok_or_else(invalid),
+        "vault.tasks.linear.mapping" => a.spec.clone().ok_or_else(invalid),
+        "vault.tasks.linear.mapping.edit" => a.spec.clone().ok_or_else(invalid),
+        "vault.tasks.linear.provenance" => a.spec.clone().ok_or_else(invalid),
         "self.run.attach" => a.spec.clone().ok_or_else(invalid),
         "self.folds.describe" => a.spec.clone().ok_or_else(invalid),
         "self.history" => a.spec.clone().ok_or_else(invalid),
@@ -2660,6 +2663,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.defaults" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tasks.linear.mapping" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tasks.linear.mapping.edit" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tasks.linear.provenance" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.run.attach" => {
@@ -8444,6 +8456,52 @@ async fn execute_agent_verb_row(
             let output = oneiron::task_verb::sdk::vault_notes_defaults(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tasks.linear.mapping" => {
+            let input: oneiron::linear_sync::LinearMappingRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_tasks_linear_mapping(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tasks.linear.mapping.edit" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.tasks.linear.mapping.edit", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::linear_sync::LinearMappingEdit =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_tasks_linear_mapping_edit(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tasks.linear.provenance" => {
+            let input: oneiron::linear_sync::LinearProvenanceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_tasks_linear_provenance(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.events.len(),
+                0,
+                usize::from(output.next_cursor.is_some()),
+                true,
+            )
+            .rows_at("events");
             mcp_agent_verb_output(output, source)
         }
         "self.run.attach" => {

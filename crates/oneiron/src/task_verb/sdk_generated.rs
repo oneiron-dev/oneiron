@@ -2262,6 +2262,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
             ),
             (
+                "vault.tasks.linear.mapping",
+                crate::code_run::vault_read::request_schema::<
+                    crate::linear_sync::LinearMappingRequest,
+                >(),
+            ),
+            (
+                "vault.tasks.linear.mapping.edit",
+                crate::code_run::vault_read::request_schema::<crate::linear_sync::LinearMappingEdit>(
+                ),
+            ),
+            (
+                "vault.tasks.linear.provenance",
+                crate::code_run::vault_read::request_schema::<
+                    crate::linear_sync::LinearProvenanceRequest,
+                >(),
+            ),
+            (
                 "self.run.attach",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_run::fold_api::RunAttachRequest,
@@ -5272,6 +5289,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.tasks.linear.mapping" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tasks.linear.mapping.edit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tasks.linear.provenance" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.run.attach" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6779,6 +6817,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.defaults" => {
             let _input: crate::note::NoteRefRequest = decode(value.clone())?;
         }
+        "vault.tasks.linear.mapping" => {
+            let _input: crate::linear_sync::LinearMappingRequest = decode(value.clone())?;
+        }
+        "vault.tasks.linear.mapping.edit" => {
+            let _input: crate::linear_sync::LinearMappingEdit = decode(value.clone())?;
+        }
+        "vault.tasks.linear.provenance" => {
+            let _input: crate::linear_sync::LinearProvenanceRequest = decode(value.clone())?;
+        }
         "self.run.attach" => {
             let _input: crate::code_run::fold_api::RunAttachRequest = decode(value.clone())?;
         }
@@ -7486,6 +7533,13 @@ pub fn invoke(
         "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
         "vault.notes.set_overrides" => encode(vault_notes_set_overrides(memory, decode(value)?)?),
         "vault.notes.defaults" => encode(vault_notes_defaults(memory, decode(value)?)?),
+        "vault.tasks.linear.mapping" => encode(vault_tasks_linear_mapping(memory, decode(value)?)?),
+        "vault.tasks.linear.mapping.edit" => {
+            encode(vault_tasks_linear_mapping_edit(memory, decode(value)?)?)
+        }
+        "vault.tasks.linear.provenance" => {
+            encode(vault_tasks_linear_provenance(memory, decode(value)?)?)
+        }
         "self.run.attach" => encode(self_run_attach(memory, decode(value)?)?),
         "self.folds.describe" => encode(self_folds_describe(memory, decode(value)?)?),
         "self.history" => encode(self_history(memory, decode(value)?)?),
@@ -11285,6 +11339,36 @@ pub fn vault_notes_defaults(
         &["/note_ref"],
     )?;
     memory.note_defaults(&input)
+}
+pub fn vault_tasks_linear_mapping(
+    memory: &Memory<'_>,
+    input: crate::linear_sync::LinearMappingRequest,
+) -> MemoryResult<crate::linear_sync::LinearMappingView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tasks.linear.mapping",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.linear_mapping(&input)
+}
+pub fn vault_tasks_linear_mapping_edit(
+    memory: &Memory<'_>,
+    input: crate::linear_sync::LinearMappingEdit,
+) -> MemoryResult<crate::linear_sync::LinearMappingEditReceipt> {
+    memory.linear_mapping_edit(&input, None)
+}
+pub fn vault_tasks_linear_provenance(
+    memory: &Memory<'_>,
+    input: crate::linear_sync::LinearProvenanceRequest,
+) -> MemoryResult<crate::linear_sync::LinearProvenancePage> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tasks.linear.provenance",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.linear_provenance(&input)
 }
 pub fn self_run_attach(
     memory: &Memory<'_>,

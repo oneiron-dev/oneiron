@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 412 facade rows, 1604 declarations.
-Inputs: 366 of 412 fully typed, 46 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 362 of 412 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 415 facade rows, 1617 declarations.
+Inputs: 369 of 415 fully typed, 46 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 365 of 415 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 77; unread shapes: 0.
 """
 
@@ -1386,7 +1386,12 @@ class TaskReportBodyRelease(TypedDict):
     release: TaskReportBodyReleaseBody
 class TaskReportBodyBrief(TypedDict):
     brief: QueueTaskBrief
-TaskReportBody = Literal["ack"] | TaskReportBodyProgress | TaskReportBodyBlocked | TaskReportBodyDone | TaskReportBodyFailed | TaskReportBodyRelease | TaskReportBodyBrief
+class TaskReportBodyEditBody(TypedDict):
+    expected_revision: int
+    title: str
+class TaskReportBodyEdit(TypedDict):
+    edit: TaskReportBodyEditBody
+TaskReportBody = Literal["ack"] | TaskReportBodyProgress | TaskReportBodyBlocked | TaskReportBodyDone | TaskReportBodyFailed | TaskReportBodyRelease | TaskReportBodyBrief | TaskReportBodyEdit
 class TaskUpdateRequest(TypedDict):
     task_ref: str
     resultRef: NotRequired[str | None]
@@ -8134,6 +8139,88 @@ class NoteKindDescriptor(TypedDict):
 class NoteDefaultsView(TypedDict):
     overrides: NoteOverrides
     defaults: NoteKindDescriptor
+class LinearMappingRequest(TypedDict):
+    task_ref: str
+class LinearIssueRef(TypedDict):
+    issue_id: str
+    team_id: str
+    identifier: str
+class LinearFieldConflict(TypedDict):
+    field: str
+    task_value: NotRequired[str | None]
+    issue_value: NotRequired[str | None]
+class LinearLinkView(TypedDict):
+    issue: LinearIssueRef
+    link_revision: int
+    task_revision: int
+    issue_updated_at_ms: int
+    unresolved_conflicts: list[LinearFieldConflict]
+class LinearMappingView(TypedDict):
+    task_ref: str
+    task_revision: int
+    link: NotRequired[LinearLinkView | None]
+    opted_out: bool
+    mapping_revision: int
+    dirty_revision: NotRequired[int | None]
+    newest_event_refs: list[str]
+class LinearMappingOpLink(TypedDict):
+    kind: Literal["link"]
+    issue_id: str
+    identifier: str
+class LinearMappingOpUnlink(TypedDict):
+    kind: Literal["unlink"]
+class LinearMappingOpMirror(TypedDict):
+    kind: Literal["mirror"]
+LinearMappingOp = LinearMappingOpLink | LinearMappingOpUnlink | LinearMappingOpMirror
+class LinearMappingEdit(TypedDict):
+    task_ref: str
+    expected_mapping_revision: int
+    intent_key: str
+    op: LinearMappingOp
+class LinearMappingEditReceipt(TypedDict):
+    task_ref: str
+    op: str
+    mapping_revision: int
+    opted_out: bool
+    issue: NotRequired[LinearIssueRef | None]
+    event_ref: str
+    replayed: bool
+    at: int
+class LinearProvenanceRequest(TypedDict):
+    task_ref: str
+    cursor: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class LinearExternalActor(TypedDict):
+    id: str
+    kind: str
+    name: NotRequired[str | None]
+class LinearMirrorEvent(TypedDict):
+    direction: str
+    task_ref: NotRequired[str | None]
+    issue: NotRequired[LinearIssueRef | None]
+    delivery_id: NotRequired[str | None]
+    operation_id: NotRequired[str | None]
+    body_digest: NotRequired[str | None]
+    payload_ref: NotRequired[str | None]
+    external_actor: NotRequired[LinearExternalActor | None]
+    webhook_id: NotRequired[str | None]
+    organization_id: NotRequired[str | None]
+    webhook_timestamp_ms: NotRequired[int | None]
+    changed_fields: list[str]
+    status: str
+    conflicts: list[LinearFieldConflict]
+    writer_actor: NotRequired[str | None]
+    writer_class: NotRequired[str | None]
+    gate_ref: NotRequired[str | None]
+    receipt: NotRequired[str | None]
+    at: int
+class LinearProvenanceEntry(TypedDict):
+    event_ref: str
+    event: LinearMirrorEvent
+class LinearProvenancePage(TypedDict):
+    task_ref: str
+    events: list[LinearProvenanceEntry]
+    next_cursor: NotRequired[str | None]
 class RunAttachRequest(TypedDict):
     run: str
     rebind: NotRequired[bool]
