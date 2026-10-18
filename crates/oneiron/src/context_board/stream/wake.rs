@@ -8,7 +8,9 @@ use super::frames::StreamConnectionId;
 use super::registry::BoardStreamRegistry;
 
 /// One pending wake, minted from a committed TASK.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct WakeEnvelope {
     /// The envelope id, `<task id>:<arrived|failed>:<revision>` (ARCH-0067
     /// `#wake-envelope-id`). The revision names the committed TASK state the

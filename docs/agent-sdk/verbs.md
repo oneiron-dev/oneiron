@@ -21,6 +21,7 @@ both bindings and their export-census tests in one change.
 - `vault.reports.disclosure`
 - `vault.reports.route`
 - `vault.reports.outbound`
+- `self.focus.wakes`
 - `self.focus.scratchpad.recall`
 - `self.focus.scratchpad.append`
 - `self.focus.scratchpad.seal`

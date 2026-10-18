@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 938 facade rows, 3201 declarations.
-Inputs: 882 of 938 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 840 of 938 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 942 facade rows, 3212 declarations.
+Inputs: 886 of 942 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 844 of 942 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -257,6 +257,18 @@ class ReportPayloadView(TypedDict):
 class ReportOutboundView(TypedDict):
     issue_ref: str
     payload: NotRequired[ReportPayloadView | None]
+class LiveRunRequest(TypedDict, Generic[T]):
+    live_run: str
+    spec: T
+class BoardWakeRequest(TypedDict):
+    ...
+class WakeEnvelope(TypedDict):
+    event_ref: str
+    task_ref: str
+    actor_ref: str
+    line: str
+class BoardWakeReply(TypedDict):
+    wakes: list[WakeEnvelope]
 class ScratchpadRecallRequest(TypedDict):
     session_id: str
     query: str
@@ -1534,9 +1546,6 @@ class TaskWaveRequest(TypedDict):
 class TaskWaveReceipt(TypedDict):
     attempt_ref: str
     state: str
-class LiveRunRequest(TypedDict, Generic[T]):
-    live_run: str
-    spec: T
 class FanoutChildInput(TypedDict):
     agent_ref: EntityId
     label: str
@@ -16196,6 +16205,29 @@ class LeaderSplitOutput(TypedDict):
 class SkillCallInput(TypedDict):
     skill: str
     args: Any
+class BoardRefreshRequest(TypedDict):
+    frame_epoch: NotRequired[int | None]
+class DeltaRow(TypedDict):
+    key: str
+    line: str
+class FrameKindKeyframe(TypedDict):
+    kind: Literal["keyframe"]
+    payload: str
+class FrameKindDelta(TypedDict):
+    kind: Literal["delta"]
+    payload: list[DeltaRow]
+FrameKind = FrameKindKeyframe | FrameKindDelta
+class BoardStreamFrame(TypedDict):
+    epoch: int
+    kind: FrameKind
+class BoardFrameReply(TypedDict):
+    frame: BoardStreamFrame
+SubscriptionScope = Literal["my_tasks", "my_children", "consults_to_me", "memories", "worlds", "presence", "counts"]
+class BoardSubscriptionRequest(TypedDict):
+    scopes: list[SubscriptionScope]
+class BoardSubscriptionReply(TypedDict):
+    connection: str
+    active: list[SubscriptionScope]
 class LensFrameEventRequest(TypedDict):
     event: GeneratedUiActionEvent
     idempotencyKey: str

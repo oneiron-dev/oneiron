@@ -443,6 +443,36 @@ pub struct BoardRefreshRequest {
 pub struct BoardSubscriptionRequest {
     pub scopes: std::collections::BTreeSet<crate::context_board::SubscriptionScope>,
 }
+/// The typed facade answer of `self.focus.refresh` on an attached run: the
+/// one STREAM frame the refresh minted, a keyframe at its epoch.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoardFrameReply {
+    pub frame: crate::context_board::BoardStreamFrame,
+}
+/// The typed facade answer of `self.focus.subscribe` and
+/// `self.focus.unsubscribe` on an attached run: the run's board STREAM
+/// connection and the scopes now active on it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSubscriptionReply {
+    pub connection: String,
+    pub active: std::collections::BTreeSet<crate::context_board::SubscriptionScope>,
+}
+/// `self.focus.wakes`'s spec on an attached run: it names nothing beside the
+/// attachment; the run's own board STREAM connection is the queue read.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoardWakeRequest {}
+/// The typed facade answer of `self.focus.wakes`: every wake queued for the
+/// attached run's board STREAM connection, oldest first, each re-read under
+/// the caller's credential at delivery. Taking them drains the queue; the
+/// TASK each names remains the durable mailbox.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoardWakeReply {
+    pub wakes: Vec<crate::context_board::WakeEnvelope>,
+}
 
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
     serde_path_to_error::deserialize(value)

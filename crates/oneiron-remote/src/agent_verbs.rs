@@ -80,6 +80,9 @@ impl OneironClient {
                 "vault.reports.outbound" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ReportOutboundView,
                 >(client, verb, &input),
+                "self.focus.wakes" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardWakeReply,
+                >(client, verb, &input),
                 "self.focus.scratchpad.recall" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ScratchpadRecallReply,
                 >(client, verb, &input),
@@ -2923,6 +2926,15 @@ impl OneironClient {
                 "self.skills.call" => {
                     remote_agent_verb_output::<serde_json::Value>(client, verb, &input)
                 }
+                "self.focus.refresh" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardFrameReply,
+                >(client, verb, &input),
+                "self.focus.subscribe" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardSubscriptionReply,
+                >(client, verb, &input),
+                "self.focus.unsubscribe" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardSubscriptionReply,
+                >(client, verb, &input),
                 _ => Err(crate::error::bad_request(
                     "unknown SDK agent verb",
                     &["Use a verb from the SDK catalog."],
@@ -3131,6 +3143,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.reports.outbound", value)
+    }
+    pub fn self_focus_wakes(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BoardWakeRequest>,
+    ) -> Result<oneiron::task_verb::sdk::BoardWakeReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.focus.wakes", value)
     }
     pub fn self_focus_scratchpad_recall(
         &self,
@@ -14507,5 +14531,47 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.skills.call", value)
+    }
+    pub fn self_focus_refresh(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BoardRefreshRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BoardFrameReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.focus.refresh", value)
+    }
+    pub fn self_focus_subscribe(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BoardSubscriptionRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BoardSubscriptionReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.focus.subscribe", value)
+    }
+    pub fn self_focus_unsubscribe(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BoardSubscriptionRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BoardSubscriptionReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.focus.unsubscribe", value)
     }
 }

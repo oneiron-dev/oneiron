@@ -4310,9 +4310,21 @@ class Oneiron:
     class _SelfFocusVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def wakes(self, spec):
+            """Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery."""
+            return json.loads(_translate(lambda: self._client.self_focus_wakes(json.dumps(spec))))
         @property
         def scratchpad(self) -> "Oneiron._SelfFocusScratchpadVerbs":
             return Oneiron._SelfFocusScratchpadVerbs(self._client)
+        def refresh(self, spec):
+            """Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw."""
+            return json.loads(_translate(lambda: self._client.self_focus_refresh(json.dumps(spec))))
+        def subscribe(self, spec):
+            """Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling."""
+            return json.loads(_translate(lambda: self._client.self_focus_subscribe(json.dumps(spec))))
+        def unsubscribe(self, spec):
+            """Unsubscribes the attached run's board STREAM connection from the named scopes."""
+            return json.loads(_translate(lambda: self._client.self_focus_unsubscribe(json.dumps(spec))))
     class _SelfFocusScratchpadVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

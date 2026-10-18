@@ -7,7 +7,7 @@
 
 use serde_json::{Map, Value, json};
 
-use oneiron::task_verb::sdk::{AgentVerb, OPENAPI_ROWS, input_schema, output_schema};
+use oneiron::task_verb::sdk::{AgentVerb, OPENAPI_ROWS, facade_input_schema, output_schema};
 
 /// Adds each published facade row's operation to `spec`'s paths.
 pub(super) fn merge_facade_paths(spec: &mut Value) {
@@ -15,7 +15,7 @@ pub(super) fn merge_facade_paths(spec: &mut Value) {
         return;
     };
     for &verb in OPENAPI_ROWS {
-        let (Some(request), Some(answer)) = (input_schema(verb), output_schema(verb)) else {
+        let (Some(request), Some(answer)) = (facade_input_schema(verb), output_schema(verb)) else {
             continue;
         };
         let mut operation = Map::new();
