@@ -408,6 +408,20 @@ impl From<Error> for MemoryError {
                 ],
             );
         }
+        // The hold names the live call a room's assembly waits on: refresh
+        // that call's roster and speaker entries, then assemble again.
+        if matches!(
+            err,
+            Error::Record(crate::error::RecordError::RoomLiveSpeakersIncomplete(_))
+        ) {
+            return Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "A voice call live in this room has no stored roster, or a speaker it must place is not entered yet; its host records them on its next roster refresh. Assemble again after that.",
+                ],
+            );
+        }
         if matches!(
             err,
             Error::Record(crate::error::RecordError::InvalidTaskBody(

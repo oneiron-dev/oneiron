@@ -55,10 +55,11 @@ pub(super) fn task_is_past_retention(
 /// Seconds in one retention day.
 const DAY_SECS: u64 = 86_400;
 
-/// A NOTE whose kind keeps it a set number of days (ARCH-0032: a handoff's
-/// 60), born longer ago than that (CALLS: OF-073 NOTE retention). A durable
-/// or session-sealed kind never passes. The archive keeps the body and its
-/// indexes, and restore brings the NOTE back; nothing here erases.
+/// A NOTE whose kind, or its own override, keeps it a set number of days
+/// (ARCH-0032: a handoff's 60), born longer ago than that (CALLS: OF-073
+/// NOTE retention). A durable or session-sealed NOTE never passes. The
+/// archive keeps the body and its indexes, and restore brings the NOTE back;
+/// nothing here erases.
 pub(super) fn note_is_past_retention(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -71,11 +72,8 @@ pub(super) fn note_is_past_retention(
     let Ok(note) = crate::note::decode_note_body_in_txn(&vault.store, txn, &row.body) else {
         return Ok(false);
     };
-    let Some(kind) =
-        crate::note::descriptor_in_txn(&vault.store, txn, note.kind.as_str().as_ref())?
-    else {
-        return Ok(false);
-    };
+    let kind =
+        crate::note::note_defaults_in_txn(&vault.store, txn, id, note.kind.as_str().as_ref())?;
     let (crate::note::RetentionDefault::ArchiveAfterDays, Some(days)) =
         (kind.retention, kind.archive_after_days)
     else {

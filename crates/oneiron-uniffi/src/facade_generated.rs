@@ -1581,4 +1581,14 @@ export_facade! {
     let output = client.vault_notes_lifecycle(&input)?;
     crate::codec::lift_record("vault.notes.lifecycle", &output)
 };
+"vault.notes.set_overrides" => fn vault_notes_set_overrides(&self, input: SetNoteOverridesRequest) -> NoteDefaultsView = |client| {
+    let input: oneiron::note::SetNoteOverridesRequest = crate::codec::lower_record("vault.notes.set_overrides", input)?;
+    let output = client.vault_notes_set_overrides(&input)?;
+    crate::codec::lift_record("vault.notes.set_overrides", &output)
+};
+"vault.notes.defaults" => fn vault_notes_defaults(&self, input: NoteRefRequest) -> NoteDefaultsView = |client| {
+    let input: oneiron::note::NoteRefRequest = crate::codec::lower_record("vault.notes.defaults", input)?;
+    let output = client.vault_notes_defaults(&input)?;
+    crate::codec::lift_record("vault.notes.defaults", &output)
+};
 }

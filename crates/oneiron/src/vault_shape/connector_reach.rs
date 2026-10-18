@@ -130,9 +130,11 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             self.reach_connectors_in_txn(&txn, Some((slate, overrides)))?
         };
+        let txn = self.store.env.read_txn()?;
+        let mut name = |reference: &str| self.reach_name_in(&txn, reference);
         Ok(ShapePlanReach::of(
-            reach_projection(&live.reach),
-            reach_projection(&after),
+            reach_projection(&live.reach).named(&mut name)?,
+            reach_projection(&after).named(&mut name)?,
             Vec::new(),
         ))
     }
@@ -151,9 +153,11 @@ impl Vault {
         if !after.grants.contains(&bound) {
             after.grants.push(bound);
         }
+        let txn = self.store.env.read_txn()?;
+        let mut name = |reference: &str| self.reach_name_in(&txn, reference);
         Ok(ShapePlanReach::of(
-            reach_projection(&live.reach),
-            reach_projection(&after),
+            reach_projection(&live.reach).named(&mut name)?,
+            reach_projection(&after).named(&mut name)?,
             Vec::new(),
         ))
     }

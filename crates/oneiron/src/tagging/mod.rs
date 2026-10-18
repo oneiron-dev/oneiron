@@ -79,8 +79,8 @@ pub(crate) use provisional::{demote_in_txn as demote_tags_in_txn, demotion_kept_
 pub(crate) use save::{save_shadow_output_in_txn, shares_world_in_txn};
 pub(crate) use tags::{
     current_tags_in_txn, erase_in_txn, erase_scope_exists_in_txn, message_text_in_txn,
-    readable_page_in_txn, saved_turn_mood_in_txn, settle_mention_in_txn, tag_set_in_txn,
-    tear_in_txn,
+    readable_page_in_txn, readable_view_in_txn, saved_turn_mood_in_txn, settle_mention_in_txn,
+    tagged_messages_absent_in_txn, tear_in_txn,
 };
 
 #[cfg(test)]
