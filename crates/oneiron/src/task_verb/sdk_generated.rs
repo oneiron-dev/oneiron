@@ -158,6 +158,60 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.budget",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::SelfBudgetRequest,
+                >(),
+            ),
+            (
+                "self.budget.land",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::BudgetLandRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.lease.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.lease",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::SpendScopeRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.lease.top_up",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.hold",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.hold.resume",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.local",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.settlements",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::RunSettlementsRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.resume",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutResumeRequest,
@@ -413,6 +467,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.authority.audit",
                 crate::code_run::vault_read::request_schema::<crate::receipt::AuthorityAuditQuery>(
                 ),
+            ),
+            (
+                "vault.authority.history.export",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.authority.history.import",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SignedAuthorityHistory,
+                >(),
             ),
             (
                 "vault.mesh.path_receipts",
@@ -1041,6 +1105,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.repo_diff",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_document::CodeRepoDiffRequest,
+                >(),
+            ),
+            (
+                "vault.code.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeExportRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.authority.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.authority.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginAuthoritySetRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.publications",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginPublicationsRequest,
+                >(),
+            ),
+            (
+                "vault.code.checkout.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CheckoutDoorBindRequest,
                 >(),
             ),
             (
@@ -1690,6 +1784,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.calendar.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::door::CalendarEventCreateRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.ics.import",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::ingest::door::CalendarIcsImportRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.occurrences",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::query::CalendarOccurrencesRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.instances.move",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::ingest::door::CalendarInstanceMoveRequest,
+                >(),
+            ),
+            (
                 "vault.calendar.read",
                 crate::code_run::vault_read::request_schema::<crate::calendar::CalendarReadRequest>(
                 ),
@@ -2116,6 +2234,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
             ),
             (
+                "vault.tasks.linear.mapping",
+                crate::code_run::vault_read::request_schema::<
+                    crate::linear_sync::LinearMappingRequest,
+                >(),
+            ),
+            (
+                "vault.tasks.linear.mapping.edit",
+                crate::code_run::vault_read::request_schema::<crate::linear_sync::LinearMappingEdit>(
+                ),
+            ),
+            (
+                "vault.tasks.linear.provenance",
+                crate::code_run::vault_read::request_schema::<
+                    crate::linear_sync::LinearProvenanceRequest,
+                >(),
+            ),
+            (
                 "self.run.attach",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_run::fold_api::RunAttachRequest,
@@ -2515,6 +2650,69 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.fanout.launch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.budget" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.budget.land" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.lease.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.lease" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.lease.top_up" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.hold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.hold.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.local" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.settlements" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2929,6 +3127,14 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.authority.audit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.authority.history.export" => &[],
+        "vault.authority.history.import" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3658,6 +3864,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.authority.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.authority.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.publications" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4369,6 +4610,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.calendar.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.ics.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.occurrences" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.instances.move" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.calendar.read" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4943,6 +5212,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.tasks.linear.mapping" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tasks.linear.mapping.edit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tasks.linear.provenance" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.run.attach" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5113,6 +5403,42 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.fanout.launch" => {
             let _input: crate::task_verb::sdk::FanoutLaunchRequest = decode(value.clone())?;
+        }
+        "self.budget" => {
+            let _input: crate::agent_dispatch::budget_doors::SelfBudgetRequest =
+                decode(value.clone())?;
+        }
+        "self.budget.land" => {
+            let _input: crate::agent_dispatch::budget_doors::BudgetLandRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.lease.open" => {
+            let _input: crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.lease" => {
+            let _input: crate::agent_dispatch::budget_doors::SpendScopeRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.lease.top_up" => {
+            let _input: crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.hold" => {
+            let _input: crate::agent_dispatch::budget_doors::BudgetHoldRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.hold.resume" => {
+            let _input: crate::agent_dispatch::budget_doors::BudgetHoldRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.local" => {
+            let _input: crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.settlements" => {
+            let _input: crate::agent_dispatch::budget_doors::RunSettlementsRequest =
+                decode(value.clone())?;
         }
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
@@ -5305,6 +5631,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.authority.audit" => {
             let _input: crate::receipt::AuthorityAuditQuery = decode(value.clone())?;
+        }
+        "vault.authority.history.export" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.authority.history.import" => {
+            let _input: crate::task_verb::sdk::SignedAuthorityHistory = decode(value.clone())?;
         }
         "vault.mesh.path_receipts" => {
             let _input: crate::task_verb::sdk::MeshPathReceiptsRequest = decode(value.clone())?;
@@ -5655,6 +5987,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.repo_diff" => {
             let _input: crate::code_document::CodeRepoDiffRequest = decode(value.clone())?;
+        }
+        "vault.code.export" => {
+            let _input: crate::memory::origin_doors::CodeExportRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.authority.get" => {
+            let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.authority.set" => {
+            let _input: crate::memory::origin_doors::OriginAuthoritySetRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.origin.publications" => {
+            let _input: crate::memory::origin_doors::OriginPublicationsRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.checkout.bind" => {
+            let _input: crate::memory::origin_doors::CheckoutDoorBindRequest =
+                decode(value.clone())?;
         }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
@@ -6075,6 +6425,20 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.booking.page_token" => {
             let _input: crate::task_verb::sdk::BookingPageTokenRequest = decode(value.clone())?;
         }
+        "vault.calendar.create" => {
+            let _input: crate::calendar::door::CalendarEventCreateRequest = decode(value.clone())?;
+        }
+        "vault.calendar.ics.import" => {
+            let _input: crate::calendar::ingest::door::CalendarIcsImportRequest =
+                decode(value.clone())?;
+        }
+        "vault.calendar.occurrences" => {
+            let _input: crate::calendar::query::CalendarOccurrencesRequest = decode(value.clone())?;
+        }
+        "vault.calendar.instances.move" => {
+            let _input: crate::calendar::ingest::door::CalendarInstanceMoveRequest =
+                decode(value.clone())?;
+        }
         "vault.calendar.read" => {
             let _input: crate::calendar::CalendarReadRequest = decode(value.clone())?;
         }
@@ -6355,6 +6719,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.defaults" => {
             let _input: crate::note::NoteRefRequest = decode(value.clone())?;
         }
+        "vault.tasks.linear.mapping" => {
+            let _input: crate::linear_sync::LinearMappingRequest = decode(value.clone())?;
+        }
+        "vault.tasks.linear.mapping.edit" => {
+            let _input: crate::linear_sync::LinearMappingEdit = decode(value.clone())?;
+        }
+        "vault.tasks.linear.provenance" => {
+            let _input: crate::linear_sync::LinearProvenanceRequest = decode(value.clone())?;
+        }
         "self.run.attach" => {
             let _input: crate::code_run::fold_api::RunAttachRequest = decode(value.clone())?;
         }
@@ -6435,6 +6808,15 @@ pub fn invoke(
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
         "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
         "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
+        "self.budget" => encode(self_budget(memory, decode(value)?)?),
+        "self.budget.land" => encode(self_budget_land(memory, decode(value)?)?),
+        "vault.budgets.lease.open" => encode(vault_budgets_lease_open(memory, decode(value)?)?),
+        "vault.budgets.lease" => encode(vault_budgets_lease(memory, decode(value)?)?),
+        "vault.budgets.lease.top_up" => encode(vault_budgets_lease_top_up(memory, decode(value)?)?),
+        "vault.budgets.hold" => encode(vault_budgets_hold(memory, decode(value)?)?),
+        "vault.budgets.hold.resume" => encode(vault_budgets_hold_resume(memory, decode(value)?)?),
+        "vault.budgets.local" => encode(vault_budgets_local(memory, decode(value)?)?),
+        "vault.budgets.settlements" => encode(vault_budgets_settlements(memory, decode(value)?)?),
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
@@ -6518,6 +6900,12 @@ pub fn invoke(
         "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
         "vault.packs.setup.verify" => encode(vault_packs_setup_verify(memory, decode(value)?)?),
         "vault.authority.audit" => encode(vault_authority_audit(memory, decode(value)?)?),
+        "vault.authority.history.export" => {
+            encode(vault_authority_history_export(memory, decode(value)?)?)
+        }
+        "vault.authority.history.import" => {
+            encode(vault_authority_history_import(memory, decode(value)?)?)
+        }
         "vault.mesh.path_receipts" => encode(vault_mesh_path_receipts(memory, decode(value)?)?),
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
@@ -6716,6 +7104,17 @@ pub fn invoke(
         "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
+        "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
+        "vault.code.origin.authority.get" => {
+            encode(vault_code_origin_authority_get(memory, decode(value)?)?)
+        }
+        "vault.code.origin.authority.set" => {
+            encode(vault_code_origin_authority_set(memory, decode(value)?)?)
+        }
+        "vault.code.origin.publications" => {
+            encode(vault_code_origin_publications(memory, decode(value)?)?)
+        }
+        "vault.code.checkout.bind" => encode(vault_code_checkout_bind(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
         "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
@@ -6847,6 +7246,12 @@ pub fn invoke(
         "vault.claims.retract" => encode(vault_claims_retract(memory, decode(value)?)?),
         "vault.forget" => encode(vault_forget(memory, decode(value)?)?),
         "vault.booking.page_token" => encode(vault_booking_page_token(memory, decode(value)?)?),
+        "vault.calendar.create" => encode(vault_calendar_create(memory, decode(value)?)?),
+        "vault.calendar.ics.import" => encode(vault_calendar_ics_import(memory, decode(value)?)?),
+        "vault.calendar.occurrences" => encode(vault_calendar_occurrences(memory, decode(value)?)?),
+        "vault.calendar.instances.move" => {
+            encode(vault_calendar_instances_move(memory, decode(value)?)?)
+        }
         "vault.calendar.read" => encode(vault_calendar_read(memory, decode(value)?)?),
         "vault.calendar.search" => encode(vault_calendar_search(memory, decode(value)?)?),
         "vault.calendar.freebusy" => encode(vault_calendar_freebusy(memory, decode(value)?)?),
@@ -7011,6 +7416,13 @@ pub fn invoke(
         "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
         "vault.notes.set_overrides" => encode(vault_notes_set_overrides(memory, decode(value)?)?),
         "vault.notes.defaults" => encode(vault_notes_defaults(memory, decode(value)?)?),
+        "vault.tasks.linear.mapping" => encode(vault_tasks_linear_mapping(memory, decode(value)?)?),
+        "vault.tasks.linear.mapping.edit" => {
+            encode(vault_tasks_linear_mapping_edit(memory, decode(value)?)?)
+        }
+        "vault.tasks.linear.provenance" => {
+            encode(vault_tasks_linear_provenance(memory, decode(value)?)?)
+        }
         "self.run.attach" => encode(self_run_attach(memory, decode(value)?)?),
         "self.folds.describe" => encode(self_folds_describe(memory, decode(value)?)?),
         "self.history" => encode(self_history(memory, decode(value)?)?),
@@ -7447,6 +7859,90 @@ pub fn vault_fanout_launch(
     input: crate::task_verb::sdk::FanoutLaunchRequest,
 ) -> MemoryResult<Option<crate::task_verb::sdk::FanoutLaunchView>> {
     crate::task_verb::sdk::read_fanout_launch(memory, input)
+}
+pub fn self_budget(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::SelfBudgetRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::AgentBudgetView> {
+    crate::agent_dispatch::budget_doors::self_budget(memory, &input)
+}
+pub fn self_budget_land(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::BudgetLandRequest,
+) -> MemoryResult<crate::agent_dispatch::PartialResultHold> {
+    crate::agent_dispatch::budget_doors::land_for_budget(memory, &input)
+}
+pub fn vault_budgets_lease_open(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::SpendLeaseView> {
+    crate::agent_dispatch::budget_doors::open_spend_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.lease.open")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_lease(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::SpendScopeRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::SpendLeaseView> {
+    crate::agent_dispatch::budget_doors::spend_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.lease")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_lease_top_up(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::SpendLeaseView> {
+    crate::agent_dispatch::budget_doors::top_up_spend_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.lease.top_up")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_hold(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+) -> MemoryResult<Option<crate::agent_dispatch::PartialResultHold>> {
+    crate::agent_dispatch::budget_doors::budget_hold_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.hold")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_hold_resume(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+) -> MemoryResult<crate::agent_dispatch::PartialResultHold> {
+    crate::agent_dispatch::budget_doors::resume_budget_hold_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.hold.resume")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_local(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::LocalRunnerBudgetView> {
+    crate::agent_dispatch::budget_doors::local_runner_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.local")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_settlements(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::RunSettlementsRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::RunSettlementsView> {
+    crate::task_verb::sdk::host_only(memory, "vault.budgets.settlements", &input)
 }
 pub fn vault_fanout_resume(
     memory: &Memory<'_>,
@@ -7906,6 +8402,25 @@ pub fn vault_authority_audit(
     input: crate::receipt::AuthorityAuditQuery,
 ) -> MemoryResult<crate::receipt::AuthorityAuditPage> {
     crate::receipt::authority_audit_embedded(memory, input)
+}
+pub fn vault_authority_history_export(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::SignedAuthorityHistory> {
+    crate::task_verb::sdk::export_authority_history_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.authority.history.export")?,
+    )
+}
+pub fn vault_authority_history_import(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SignedAuthorityHistory,
+) -> MemoryResult<crate::task_verb::sdk::AuthorityHistoryImported> {
+    crate::task_verb::sdk::import_authority_history_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.authority.history.import")?,
+        input,
+    )
 }
 pub fn vault_mesh_path_receipts(
     memory: &Memory<'_>,
@@ -8805,6 +9320,45 @@ pub fn vault_code_repo_diff(
     input: crate::code_document::CodeRepoDiffRequest,
 ) -> MemoryResult<Option<crate::code_document::CodeRepoDiffView>> {
     memory.code_repo_diff(&input)
+}
+pub fn vault_code_export(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeExportRequest,
+) -> MemoryResult<crate::memory::origin_doors::CodeExportResult> {
+    memory.code_export_as(&memory.embedded_owner("vault.code.export")?, input)
+}
+pub fn vault_code_origin_authority_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRepoRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginAuthorityView> {
+    memory.origin_authority_get_as(
+        &memory.embedded_owner("vault.code.origin.authority.get")?,
+        input,
+    )
+}
+pub fn vault_code_origin_authority_set(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginAuthoritySetRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginAuthorityView> {
+    memory.origin_authority_set_as(
+        &memory.embedded_owner("vault.code.origin.authority.set")?,
+        input,
+    )
+}
+pub fn vault_code_origin_publications(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginPublicationsRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginPublicationsView> {
+    memory.origin_publications_as(
+        &memory.embedded_owner("vault.code.origin.publications")?,
+        input,
+    )
+}
+pub fn vault_code_checkout_bind(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CheckoutDoorBindRequest,
+) -> MemoryResult<crate::memory::origin_doors::CheckoutDoorBinding> {
+    memory.checkout_door_bind_as(&memory.embedded_owner("vault.code.checkout.bind")?, input)
 }
 pub fn vault_artifacts_export(
     memory: &Memory<'_>,
@@ -9809,6 +10363,31 @@ pub fn vault_booking_page_token(
 ) -> MemoryResult<crate::task_verb::sdk::BookingPageTokenResponse> {
     crate::task_verb::sdk::host_only(memory, "vault.booking.page_token", &input)
 }
+pub fn vault_calendar_create(
+    memory: &Memory<'_>,
+    input: crate::calendar::door::CalendarEventCreateRequest,
+) -> MemoryResult<crate::calendar::door::CalendarEventCreated> {
+    memory.calendar_create(&input)
+}
+pub fn vault_calendar_ics_import(
+    memory: &Memory<'_>,
+    input: crate::calendar::ingest::door::CalendarIcsImportRequest,
+) -> MemoryResult<crate::calendar::ingest::door::CalendarIcsImportReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.ics.import", &input)
+}
+pub fn vault_calendar_occurrences(
+    memory: &Memory<'_>,
+    input: crate::calendar::query::CalendarOccurrencesRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::calendar::query::CalendarOccurrenceView>>>
+{
+    memory.calendar_occurrences(&input)
+}
+pub fn vault_calendar_instances_move(
+    memory: &Memory<'_>,
+    input: crate::calendar::ingest::door::CalendarInstanceMoveRequest,
+) -> MemoryResult<crate::calendar::ingest::door::CalendarIcsImportReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.instances.move", &input)
+}
 pub fn vault_calendar_read(
     memory: &Memory<'_>,
     input: crate::calendar::CalendarReadRequest,
@@ -10601,6 +11180,36 @@ pub fn vault_notes_defaults(
         &["/note_ref"],
     )?;
     memory.note_defaults(&input)
+}
+pub fn vault_tasks_linear_mapping(
+    memory: &Memory<'_>,
+    input: crate::linear_sync::LinearMappingRequest,
+) -> MemoryResult<crate::linear_sync::LinearMappingView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tasks.linear.mapping",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.linear_mapping(&input)
+}
+pub fn vault_tasks_linear_mapping_edit(
+    memory: &Memory<'_>,
+    input: crate::linear_sync::LinearMappingEdit,
+) -> MemoryResult<crate::linear_sync::LinearMappingEditReceipt> {
+    memory.linear_mapping_edit(&input, None)
+}
+pub fn vault_tasks_linear_provenance(
+    memory: &Memory<'_>,
+    input: crate::linear_sync::LinearProvenanceRequest,
+) -> MemoryResult<crate::linear_sync::LinearProvenancePage> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tasks.linear.provenance",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.linear_provenance(&input)
 }
 pub fn self_run_attach(
     memory: &Memory<'_>,

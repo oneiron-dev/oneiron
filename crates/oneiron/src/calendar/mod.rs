@@ -55,6 +55,7 @@
 pub mod caldav;
 pub mod claims;
 pub mod connectors;
+pub mod door;
 pub mod freebusy;
 pub mod google_internal;
 pub mod ics;

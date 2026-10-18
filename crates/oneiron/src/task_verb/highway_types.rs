@@ -252,6 +252,12 @@ pub enum TaskReportBody {
     },
     /// A brief revision: parked as a `tasks.brief` proposal.
     Brief(Box<QueueTaskBrief>),
+    /// The owner's title edit at the TASK revision the mirror read surface
+    /// exposes (OF-427 C8); the next mirror pass carries it outward.
+    Edit {
+        expected_revision: u64,
+        title: String,
+    },
 }
 
 impl TaskReportBody {
@@ -266,6 +272,7 @@ impl TaskReportBody {
             Self::Failed { .. } => "failed",
             Self::Release { .. } => "released",
             Self::Brief(_) => "brief",
+            Self::Edit { .. } => "edit",
         }
     }
 }

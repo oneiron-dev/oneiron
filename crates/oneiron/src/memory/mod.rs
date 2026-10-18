@@ -60,6 +60,7 @@ mod machine_write;
 mod message_result;
 mod note_tombstone;
 mod notes;
+pub mod origin_doors;
 mod outbound;
 mod owner_door;
 mod presented_credential;

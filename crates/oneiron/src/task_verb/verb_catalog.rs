@@ -32,6 +32,15 @@ pub enum AgentVerb {
     TasksCreate,
     TasksWave,
     VaultFanoutLaunch,
+    SelfBudget,
+    SelfBudgetLand,
+    VaultBudgetsLeaseOpen,
+    VaultBudgetsLease,
+    VaultBudgetsLeaseTopUp,
+    VaultBudgetsHold,
+    VaultBudgetsHoldResume,
+    VaultBudgetsLocal,
+    VaultBudgetsSettlements,
     VaultFanoutResume,
     VaultFanoutResumeAs,
     VaultFanoutAck,
@@ -90,6 +99,8 @@ pub enum AgentVerb {
     VaultPacksSetupAnswer,
     VaultPacksSetupVerify,
     VaultAuthorityAudit,
+    VaultAuthorityHistoryExport,
+    VaultAuthorityHistoryImport,
     VaultMeshPathReceipts,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
@@ -201,6 +212,11 @@ pub enum AgentVerb {
     VaultCodeBlame,
     VaultCodeProposalView,
     VaultCodeRepoDiff,
+    VaultCodeExport,
+    VaultCodeOriginAuthorityGet,
+    VaultCodeOriginAuthoritySet,
+    VaultCodeOriginPublications,
+    VaultCodeCheckoutBind,
     VaultArtifactsExport,
     VaultAgentsCreate,
     VaultAgentsGet,
@@ -338,6 +354,10 @@ pub enum AgentVerb {
     VaultClaimsRetract,
     VaultForget,
     VaultBookingPageToken,
+    VaultCalendarCreate,
+    VaultCalendarIcsImport,
+    VaultCalendarOccurrences,
+    VaultCalendarInstancesMove,
     VaultCalendarRead,
     VaultCalendarSearch,
     VaultCalendarFreebusy,
@@ -420,6 +440,9 @@ pub enum AgentVerb {
     VaultNotesLifecycle,
     VaultNotesSetOverrides,
     VaultNotesDefaults,
+    VaultTasksLinearMapping,
+    VaultTasksLinearMappingEdit,
+    VaultTasksLinearProvenance,
     SelfRunAttach,
     SelfFoldsDescribe,
     SelfHistory,
@@ -463,6 +486,15 @@ impl AgentVerb {
         Self::TasksCreate,
         Self::TasksWave,
         Self::VaultFanoutLaunch,
+        Self::SelfBudget,
+        Self::SelfBudgetLand,
+        Self::VaultBudgetsLeaseOpen,
+        Self::VaultBudgetsLease,
+        Self::VaultBudgetsLeaseTopUp,
+        Self::VaultBudgetsHold,
+        Self::VaultBudgetsHoldResume,
+        Self::VaultBudgetsLocal,
+        Self::VaultBudgetsSettlements,
         Self::VaultFanoutResume,
         Self::VaultFanoutResumeAs,
         Self::VaultFanoutAck,
@@ -521,6 +553,8 @@ impl AgentVerb {
         Self::VaultPacksSetupAnswer,
         Self::VaultPacksSetupVerify,
         Self::VaultAuthorityAudit,
+        Self::VaultAuthorityHistoryExport,
+        Self::VaultAuthorityHistoryImport,
         Self::VaultMeshPathReceipts,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
@@ -632,6 +666,11 @@ impl AgentVerb {
         Self::VaultCodeBlame,
         Self::VaultCodeProposalView,
         Self::VaultCodeRepoDiff,
+        Self::VaultCodeExport,
+        Self::VaultCodeOriginAuthorityGet,
+        Self::VaultCodeOriginAuthoritySet,
+        Self::VaultCodeOriginPublications,
+        Self::VaultCodeCheckoutBind,
         Self::VaultArtifactsExport,
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
@@ -769,6 +808,10 @@ impl AgentVerb {
         Self::VaultClaimsRetract,
         Self::VaultForget,
         Self::VaultBookingPageToken,
+        Self::VaultCalendarCreate,
+        Self::VaultCalendarIcsImport,
+        Self::VaultCalendarOccurrences,
+        Self::VaultCalendarInstancesMove,
         Self::VaultCalendarRead,
         Self::VaultCalendarSearch,
         Self::VaultCalendarFreebusy,
@@ -851,6 +894,9 @@ impl AgentVerb {
         Self::VaultNotesLifecycle,
         Self::VaultNotesSetOverrides,
         Self::VaultNotesDefaults,
+        Self::VaultTasksLinearMapping,
+        Self::VaultTasksLinearMappingEdit,
+        Self::VaultTasksLinearProvenance,
         Self::SelfRunAttach,
         Self::SelfFoldsDescribe,
         Self::SelfHistory,
@@ -897,6 +943,15 @@ impl AgentVerb {
             Self::TasksCreate => "tasks.create",
             Self::TasksWave => "tasks.wave",
             Self::VaultFanoutLaunch => "vault.fanout.launch",
+            Self::SelfBudget => "self.budget",
+            Self::SelfBudgetLand => "self.budget.land",
+            Self::VaultBudgetsLeaseOpen => "vault.budgets.lease.open",
+            Self::VaultBudgetsLease => "vault.budgets.lease",
+            Self::VaultBudgetsLeaseTopUp => "vault.budgets.lease.top_up",
+            Self::VaultBudgetsHold => "vault.budgets.hold",
+            Self::VaultBudgetsHoldResume => "vault.budgets.hold.resume",
+            Self::VaultBudgetsLocal => "vault.budgets.local",
+            Self::VaultBudgetsSettlements => "vault.budgets.settlements",
             Self::VaultFanoutResume => "vault.fanout.resume",
             Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
             Self::VaultFanoutAck => "vault.fanout.ack",
@@ -955,6 +1010,8 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => "vault.packs.setup.answer",
             Self::VaultPacksSetupVerify => "vault.packs.setup.verify",
             Self::VaultAuthorityAudit => "vault.authority.audit",
+            Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
+            Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
             Self::VaultMeshPathReceipts => "vault.mesh.path_receipts",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
@@ -1070,6 +1127,11 @@ impl AgentVerb {
             Self::VaultCodeBlame => "vault.code.blame",
             Self::VaultCodeProposalView => "vault.code.proposal_view",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
+            Self::VaultCodeExport => "vault.code.export",
+            Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
+            Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
+            Self::VaultCodeOriginPublications => "vault.code.origin.publications",
+            Self::VaultCodeCheckoutBind => "vault.code.checkout.bind",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
@@ -1207,6 +1269,10 @@ impl AgentVerb {
             Self::VaultClaimsRetract => "vault.claims.retract",
             Self::VaultForget => "vault.forget",
             Self::VaultBookingPageToken => "vault.booking.page_token",
+            Self::VaultCalendarCreate => "vault.calendar.create",
+            Self::VaultCalendarIcsImport => "vault.calendar.ics.import",
+            Self::VaultCalendarOccurrences => "vault.calendar.occurrences",
+            Self::VaultCalendarInstancesMove => "vault.calendar.instances.move",
             Self::VaultCalendarRead => "vault.calendar.read",
             Self::VaultCalendarSearch => "vault.calendar.search",
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
@@ -1293,6 +1359,9 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
             Self::VaultNotesSetOverrides => "vault.notes.set_overrides",
             Self::VaultNotesDefaults => "vault.notes.defaults",
+            Self::VaultTasksLinearMapping => "vault.tasks.linear.mapping",
+            Self::VaultTasksLinearMappingEdit => "vault.tasks.linear.mapping.edit",
+            Self::VaultTasksLinearProvenance => "vault.tasks.linear.provenance",
             Self::SelfRunAttach => "self.run.attach",
             Self::SelfFoldsDescribe => "self.folds.describe",
             Self::SelfHistory => "self.history",
@@ -1335,6 +1404,15 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::TasksWave
                 | Self::VaultFanoutLaunch
+                | Self::SelfBudget
+                | Self::SelfBudgetLand
+                | Self::VaultBudgetsLeaseOpen
+                | Self::VaultBudgetsLease
+                | Self::VaultBudgetsLeaseTopUp
+                | Self::VaultBudgetsHold
+                | Self::VaultBudgetsHoldResume
+                | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsSettlements
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -1393,6 +1471,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultAuthorityHistoryExport
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -1504,6 +1584,11 @@ impl AgentVerb {
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
+                | Self::VaultCodeExport
+                | Self::VaultCodeOriginAuthorityGet
+                | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeOriginPublications
+                | Self::VaultCodeCheckoutBind
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -1601,6 +1686,10 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarOccurrences
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
@@ -1683,6 +1772,9 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::VaultTasksLinearMapping
+                | Self::VaultTasksLinearMappingEdit
+                | Self::VaultTasksLinearProvenance
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
@@ -1773,6 +1865,15 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::TasksWave
                 | Self::VaultFanoutLaunch
+                | Self::SelfBudget
+                | Self::SelfBudgetLand
+                | Self::VaultBudgetsLeaseOpen
+                | Self::VaultBudgetsLease
+                | Self::VaultBudgetsLeaseTopUp
+                | Self::VaultBudgetsHold
+                | Self::VaultBudgetsHoldResume
+                | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsSettlements
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -1831,6 +1932,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultAuthorityHistoryExport
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -1942,6 +2045,11 @@ impl AgentVerb {
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
+                | Self::VaultCodeExport
+                | Self::VaultCodeOriginAuthorityGet
+                | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeOriginPublications
+                | Self::VaultCodeCheckoutBind
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2039,6 +2147,10 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarOccurrences
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
@@ -2121,6 +2233,9 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::VaultTasksLinearMapping
+                | Self::VaultTasksLinearMappingEdit
+                | Self::VaultTasksLinearProvenance
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
@@ -2195,6 +2310,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultArtifactsBodyCommits
                 | Self::VaultClaimsSeed
+                | Self::VaultTasksLinearProvenance
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -2212,6 +2328,7 @@ impl AgentVerb {
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultCommit
+                | Self::VaultCalendarOccurrences
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
@@ -2255,6 +2372,15 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::TasksWave
                 | Self::VaultFanoutLaunch
+                | Self::SelfBudget
+                | Self::SelfBudgetLand
+                | Self::VaultBudgetsLeaseOpen
+                | Self::VaultBudgetsLease
+                | Self::VaultBudgetsLeaseTopUp
+                | Self::VaultBudgetsHold
+                | Self::VaultBudgetsHoldResume
+                | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsSettlements
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -2307,6 +2433,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultAuthorityHistoryExport
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -2418,6 +2546,11 @@ impl AgentVerb {
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
+                | Self::VaultCodeExport
+                | Self::VaultCodeOriginAuthorityGet
+                | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeOriginPublications
+                | Self::VaultCodeCheckoutBind
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2554,6 +2687,9 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultWritesPending
@@ -2620,6 +2756,9 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::VaultTasksLinearMapping
+                | Self::VaultTasksLinearMappingEdit
+                | Self::VaultTasksLinearProvenance
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
@@ -2653,6 +2792,10 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::SelfBudgetLand
+                | Self::VaultBudgetsLeaseOpen
+                | Self::VaultBudgetsLeaseTopUp
+                | Self::VaultBudgetsHoldResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -2687,6 +2830,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -2762,6 +2906,9 @@ impl AgentVerb {
                 | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
+                | Self::VaultCodeExport
+                | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeCheckoutBind
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
                 | Self::VaultWorkspaceEstablish
@@ -2840,6 +2987,9 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
@@ -2885,6 +3035,7 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
+                | Self::VaultTasksLinearMappingEdit
                 | Self::SelfRunAttach
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -2955,6 +3106,15 @@ impl AgentVerb {
             Self::TasksCreate => &["spec", "label", "assignee", "intent_key", "brief", "ttl"],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
+            Self::SelfBudget => &["spec"],
+            Self::SelfBudgetLand => &["spec"],
+            Self::VaultBudgetsLeaseOpen => &["spec"],
+            Self::VaultBudgetsLease => &["spec"],
+            Self::VaultBudgetsLeaseTopUp => &["spec"],
+            Self::VaultBudgetsHold => &["spec"],
+            Self::VaultBudgetsHoldResume => &["spec"],
+            Self::VaultBudgetsLocal => &["spec"],
+            Self::VaultBudgetsSettlements => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -3013,6 +3173,8 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => &["spec"],
             Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultAuthorityHistoryExport => &[],
+            Self::VaultAuthorityHistoryImport => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -3124,6 +3286,11 @@ impl AgentVerb {
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
+            Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeOriginAuthorityGet => &["spec"],
+            Self::VaultCodeOriginAuthoritySet => &["spec"],
+            Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -3261,6 +3428,10 @@ impl AgentVerb {
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
+            Self::VaultCalendarCreate => &["spec"],
+            Self::VaultCalendarIcsImport => &["spec"],
+            Self::VaultCalendarOccurrences => &["spec"],
+            Self::VaultCalendarInstancesMove => &["spec"],
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
@@ -3343,6 +3514,9 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::VaultTasksLinearMapping => &["spec"],
+            Self::VaultTasksLinearMappingEdit => &["spec"],
+            Self::VaultTasksLinearProvenance => &["spec"],
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
@@ -3387,6 +3561,15 @@ impl AgentVerb {
             Self::TasksCreate => &["spec"],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
+            Self::SelfBudget => &["spec"],
+            Self::SelfBudgetLand => &["spec"],
+            Self::VaultBudgetsLeaseOpen => &["spec"],
+            Self::VaultBudgetsLease => &["spec"],
+            Self::VaultBudgetsLeaseTopUp => &["spec"],
+            Self::VaultBudgetsHold => &["spec"],
+            Self::VaultBudgetsHoldResume => &["spec"],
+            Self::VaultBudgetsLocal => &["spec"],
+            Self::VaultBudgetsSettlements => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -3445,6 +3628,8 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => &["spec"],
             Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultAuthorityHistoryExport => &[],
+            Self::VaultAuthorityHistoryImport => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -3556,6 +3741,11 @@ impl AgentVerb {
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
+            Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeOriginAuthorityGet => &["spec"],
+            Self::VaultCodeOriginAuthoritySet => &["spec"],
+            Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -3693,6 +3883,10 @@ impl AgentVerb {
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
+            Self::VaultCalendarCreate => &["spec"],
+            Self::VaultCalendarIcsImport => &["spec"],
+            Self::VaultCalendarOccurrences => &["spec"],
+            Self::VaultCalendarInstancesMove => &["spec"],
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
@@ -3775,6 +3969,9 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::VaultTasksLinearMapping => &["spec"],
+            Self::VaultTasksLinearMappingEdit => &["spec"],
+            Self::VaultTasksLinearProvenance => &["spec"],
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
@@ -3869,6 +4066,33 @@ impl AgentVerb {
             }
             Self::VaultFanoutLaunch => {
                 "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."
+            }
+            Self::SelfBudget => {
+                "The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."
+            }
+            Self::SelfBudgetLand => {
+                "The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."
+            }
+            Self::VaultBudgetsLeaseOpen => {
+                "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."
+            }
+            Self::VaultBudgetsLease => {
+                "The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."
+            }
+            Self::VaultBudgetsLeaseTopUp => {
+                "The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap."
+            }
+            Self::VaultBudgetsHold => {
+                "The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume."
+            }
+            Self::VaultBudgetsHoldResume => {
+                "The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion."
+            }
+            Self::VaultBudgetsLocal => {
+                "The owner observes a device-local runner budget counter without creating it, including absence after an owner restore."
+            }
+            Self::VaultBudgetsSettlements => {
+                "The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."
             }
             Self::VaultFanoutResume => {
                 "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
@@ -4039,6 +4263,12 @@ impl AgentVerb {
             }
             Self::VaultAuthorityAudit => {
                 "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."
+            }
+            Self::VaultAuthorityHistoryExport => {
+                "Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves."
+            }
+            Self::VaultAuthorityHistoryImport => {
+                "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
@@ -4350,6 +4580,21 @@ impl AgentVerb {
             }
             Self::VaultCodeRepoDiff => {
                 "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it."
+            }
+            Self::VaultCodeExport => {
+                "Export one already-finalized and reviewed document revision through the existing origin publication protocol."
+            }
+            Self::VaultCodeOriginAuthorityGet => {
+                "Read one served origin authority and this host identity under the owner credential."
+            }
+            Self::VaultCodeOriginAuthoritySet => {
+                "Cut over one existing served origin under the owner proof and expected authority epoch."
+            }
+            Self::VaultCodeOriginPublications => {
+                "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."
+            }
+            Self::VaultCodeCheckoutBind => {
+                "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."
@@ -4704,6 +4949,18 @@ impl AgentVerb {
             Self::VaultBookingPageToken => {
                 "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."
             }
+            Self::VaultCalendarCreate => {
+                "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."
+            }
+            Self::VaultCalendarIcsImport => {
+                "The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."
+            }
+            Self::VaultCalendarOccurrences => {
+                "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."
+            }
+            Self::VaultCalendarInstancesMove => {
+                "The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."
+            }
             Self::VaultCalendarRead => {
                 "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."
             }
@@ -4943,6 +5200,15 @@ impl AgentVerb {
             }
             Self::VaultNotesDefaults => {
                 "One NOTE's overrides and the extraction, context and retention defaults its gates read after them."
+            }
+            Self::VaultTasksLinearMapping => {
+                "One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."
+            }
+            Self::VaultTasksLinearMappingEdit => {
+                "Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."
+            }
+            Self::VaultTasksLinearProvenance => {
+                "One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."
             }
             Self::SelfRunAttach => {
                 "Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls."

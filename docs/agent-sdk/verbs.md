@@ -34,6 +34,15 @@ both bindings and their export-census tests in one change.
 - `tasks.create`
 - `tasks.wave`
 - `vault.fanout.launch`
+- `self.budget`
+- `self.budget.land`
+- `vault.budgets.lease.open`
+- `vault.budgets.lease`
+- `vault.budgets.lease.top_up`
+- `vault.budgets.hold`
+- `vault.budgets.hold.resume`
+- `vault.budgets.local`
+- `vault.budgets.settlements`
 - `vault.fanout.resume`
 - `vault.fanout.resume_as`
 - `vault.fanout.ack`
@@ -92,6 +101,8 @@ both bindings and their export-census tests in one change.
 - `vault.packs.setup.answer`
 - `vault.packs.setup.verify`
 - `vault.authority.audit`
+- `vault.authority.history.export`
+- `vault.authority.history.import`
 - `vault.mesh.path_receipts`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
@@ -203,6 +214,11 @@ both bindings and their export-census tests in one change.
 - `vault.code.blame`
 - `vault.code.proposal_view`
 - `vault.code.repo_diff`
+- `vault.code.export`
+- `vault.code.origin.authority.get`
+- `vault.code.origin.authority.set`
+- `vault.code.origin.publications`
+- `vault.code.checkout.bind`
 - `vault.artifacts.export`
 - `vault.agents.create`
 - `vault.agents.get`
@@ -300,6 +316,10 @@ both bindings and their export-census tests in one change.
 - `vault.claims.retract`
 - `vault.forget`
 - `vault.booking.page_token`
+- `vault.calendar.create`
+- `vault.calendar.ics.import`
+- `vault.calendar.occurrences`
+- `vault.calendar.instances.move`
 - `vault.calendar.read`
 - `vault.calendar.search`
 - `vault.calendar.freebusy`
@@ -382,6 +402,9 @@ both bindings and their export-census tests in one change.
 - `vault.notes.lifecycle`
 - `vault.notes.set_overrides`
 - `vault.notes.defaults`
+- `vault.tasks.linear.mapping`
+- `vault.tasks.linear.mapping.edit`
+- `vault.tasks.linear.provenance`
 - `self.run.attach`
 - `self.folds.describe`
 - `self.history`
