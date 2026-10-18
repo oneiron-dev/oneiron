@@ -205,7 +205,7 @@ impl OffRecordSession<'_> {
             .vault
             .memory(actor.entity_ref(), actor.actor_class())
             .with_host_origin(origin);
-        let encode = |value: Result<serde_json::Value, serde_json::Error>| {
+        let encode = |value: std::result::Result<serde_json::Value, serde_json::Error>| {
             value.map_err(|_| MemoryError::bad_request(format!("{} answer encoding failed", verb.as_str())))
         };
         let decode = |what: &str| MemoryError::bad_request(format!("{} input is not {what}", verb.as_str()));
