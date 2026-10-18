@@ -536,6 +536,8 @@ export class Oneiron {
       measure_search: (input: Facade.ResearchSearchWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchMeasureSearch(input) as Facade.ExperimentNode),
       /** Records a node's held-out evidence, once; only the promotion basis reads it. */
       measure_held_out: (input: Facade.ResearchHeldOutWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchMeasureHeldOut(input) as Facade.ExperimentNode),
+      /** The owner scores one arm of a bound claim-authoring campaign on one split under its bound config; the blind taste questions go through the host's decision ladder, and the report is returned, not stored. */
+      evaluate_split: (input: Facade.CampaignSplitWire): Facade.CampaignSplitReport => this.#call(() => this.#client.vaultResearchEvaluateSplit(input) as Facade.CampaignSplitReport),
       /** Marks a node buggy: it stays as evidence and takes debug children. */
       mark_invalid: (input: Facade.ResearchInvalidWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchMarkInvalid(input) as Facade.ExperimentNode),
       /** Stops exploring a branch for a stated cause; its attempts, claims and outputs stay. A stop names the caller. */

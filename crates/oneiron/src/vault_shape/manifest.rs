@@ -7,10 +7,12 @@
 //! owner's word.
 use super::seed::hex;
 use super::{ShapeChange, ShapeItemClass, ShapePlanItem, ShapeRow, ShapeTarget, invalid};
+use crate::channel_identity::channel_identity_send_holder_in_txn;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::gate::manifest_authenticity::manifest_is_quarantined;
 use crate::{EntityId, Vault};
+use std::collections::BTreeMap;
 
 /// A manifest body's bytes, from hex.
 fn manifest_bytes(body: &str) -> Option<Vec<u8>> {
@@ -33,33 +35,59 @@ pub(super) fn manifest_as_stored(body: &str) -> Option<String> {
 impl Vault {
     /// Marks each manifest create or update in `items` Receipted when,
     /// written in plan order on the vault as it stands, it narrows the
-    /// resolved policy on every axis. The rest stay Widening.
-    pub(super) fn classify_shape_manifests(&self, items: &mut [ShapePlanItem]) -> Result<()> {
+    /// resolved policy on every axis. The rest stay Widening. Returns
+    /// whether each of `senders` may send once every manifest change is in
+    /// place (ARCH-0070 reach); None when the plan changes no manifest, or
+    /// one of its changes would not land.
+    pub(super) fn classify_shape_manifests(
+        &self,
+        items: &mut [ShapePlanItem],
+        senders: &[EntityId],
+    ) -> Result<Option<BTreeMap<EntityId, bool>>> {
         let mut at = Vec::new();
         let mut installs = Vec::new();
+        let mut retires = Vec::new();
+        let mut whole = true;
         for (index, item) in items.iter().enumerate() {
-            if let (
-                ShapeChange::Create | ShapeChange::Update,
-                ShapeTarget::Manifest { manifest_ref },
-                Some(ShapeRow::Manifest { body, .. }),
-            ) = (&item.change, &item.target, &item.after)
-                && let (Ok(id), Some(bytes)) =
-                    (EntityId::from_hex(manifest_ref), manifest_bytes(body))
-            {
-                at.push(index);
-                installs.push((id, bytes));
+            let ShapeTarget::Manifest { manifest_ref } = &item.target else {
+                continue;
+            };
+            let id = EntityId::from_hex(manifest_ref).ok();
+            let bytes = match &item.after {
+                Some(ShapeRow::Manifest { body, .. }) => manifest_bytes(body),
+                _ => None,
+            };
+            match (&item.change, id, bytes) {
+                (ShapeChange::Retire, Some(id), _) => retires.push(id),
+                (ShapeChange::Create | ShapeChange::Update, Some(id), Some(bytes)) => {
+                    at.push(index);
+                    installs.push((id, bytes));
+                }
+                _ => whole = false,
             }
         }
-        if installs.is_empty() {
-            return Ok(());
+        if installs.is_empty() && retires.is_empty() {
+            return Ok(None);
         }
-        let steps = self.manifest_installs_narrow(&installs, crate::unix_seconds_now())?;
+        let read = |txn: &heed::RoTxn<'_>| -> Result<BTreeMap<EntityId, bool>> {
+            let mut sends = BTreeMap::new();
+            for id in senders {
+                if let Some((_, may_send)) =
+                    channel_identity_send_holder_in_txn(&self.store, txn, id)?
+                {
+                    sends.insert(*id, may_send);
+                }
+            }
+            Ok(sends)
+        };
+        let (steps, sends) =
+            self.project_manifest_changes(&installs, &retires, crate::unix_seconds_now(), read)?;
         for (index, narrows) in at.into_iter().zip(steps) {
             if narrows {
                 items[index].class = ShapeItemClass::Receipted;
             }
         }
-        Ok(())
+        Ok(sends.filter(|_| whole))
     }
 
     /// Installs the manifest a row declares, as `owner`. Bytes the owner
