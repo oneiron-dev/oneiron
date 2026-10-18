@@ -8,6 +8,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, TimeRange, Vault};
 
@@ -60,6 +61,7 @@ impl Vault {
     /// Blend the mean VAD trajectory, goal velocity and engagement with equal weight.
     /// VAD is normalized to the unit interval; high arousal alone is not judged adverse.
     /// All three signal families are required. Repeating identical evidence is a no-op.
+    /// Every VAD turn is read; past `limits.state_vad_turns` the vault asks.
     pub fn derive_state_index(
         &self,
         subject: &EntityId,
@@ -80,14 +82,13 @@ impl Vault {
         evidence: &StateIndexEvidence,
         at: u64,
     ) -> Result<EntityId> {
-        if evidence.vad_turns.is_empty() || evidence.vad_turns.len() > 256 {
-            return Err(Error::InvalidClaimBody(
-                "state index needs 1..=256 VAD turns",
-            ));
+        if evidence.vad_turns.is_empty() {
+            return Err(Error::InvalidClaimBody("state index needs a VAD turn"));
         }
         let mut turns = evidence.vad_turns.clone();
         turns.sort();
         turns.dedup();
+        let _ = self.measure_limit(EngineLimit::StateVadTurns, turns.len() as u64);
         let mut mean = Vad::NEUTRAL;
         let mut count = 0.0_f32;
         for turn in &turns {

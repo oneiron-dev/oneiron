@@ -147,6 +147,11 @@ both bindings and their export-census tests in one change.
 - `vault.embedding_spaces.probes.list`
 - `vault.embedding_spaces.probes.put`
 - `vault.embedding_spaces.probes.delete`
+- `vault.gate.policy.get`
+- `vault.gate.policy.put`
+- `vault.gate.policy.propose`
+- `vault.gate.checker.get`
+- `vault.gate.checker.set`
 - `vault.settings.learning`
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
@@ -154,6 +159,8 @@ both bindings and their export-census tests in one change.
 - `vault.widen_proposals`
 - `vault.widen_proposals.approve`
 - `vault.widen_proposals.decline`
+- `vault.craft_candidates`
+- `vault.craft_candidates.answer`
 - `vault.settings.wake_policy.set`
 - `vault.settings.inference_defaults`
 - `vault.settings.inference_defaults.replace`
@@ -319,6 +326,10 @@ both bindings and their export-census tests in one change.
 - `connector.outbound.schedule`
 - `vault.notes.create`
 - `vault.notes.from_entity`
+- `vault.notes.read`
+- `vault.notes.history`
+- `vault.notes.editor.bind`
+- `vault.notes.editor.close`
 - `vault.notes.edit`
 - `vault.notes.seal`
 - `vault.notes.lifecycle`

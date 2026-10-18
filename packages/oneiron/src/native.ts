@@ -171,6 +171,11 @@ vaultEmbeddingSpacesMoveAbandon(input: unknown): unknown
 vaultEmbeddingSpacesProbesList(input: unknown): unknown
 vaultEmbeddingSpacesProbesPut(input: unknown): unknown
 vaultEmbeddingSpacesProbesDelete(input: unknown): unknown
+vaultGatePolicyGet(input: unknown): unknown
+vaultGatePolicyPut(input: unknown): unknown
+vaultGatePolicyPropose(input: unknown): unknown
+vaultGateCheckerGet(input: unknown): unknown
+vaultGateCheckerSet(input: unknown): unknown
 vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
@@ -178,6 +183,8 @@ vaultSecretsLiftHistory(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
 vaultWidenProposalsApprove(input: unknown): unknown
 vaultWidenProposalsDecline(input: unknown): unknown
+vaultCraftCandidates(input: unknown): unknown
+vaultCraftCandidatesAnswer(input: unknown): unknown
 vaultSettingsWakePolicySet(input: unknown): unknown
 vaultSettingsInferenceDefaults(input: unknown): unknown
 vaultSettingsInferenceDefaultsReplace(input: unknown): unknown
@@ -343,6 +350,10 @@ vaultClaimsSeed(input: unknown): unknown
 connectorOutboundSchedule(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
+vaultNotesRead(input: unknown): unknown
+vaultNotesHistory(input: unknown): unknown
+vaultNotesEditorBind(input: unknown): unknown
+vaultNotesEditorClose(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown
 vaultNotesSeal(requestJson: string): string
 vaultNotesLifecycle(requestJson: string): string

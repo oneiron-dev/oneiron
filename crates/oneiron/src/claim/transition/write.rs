@@ -55,7 +55,9 @@ fn content_id(hash: [u8; 32]) -> Result<EntityId> {
     EntityId::from_bytes(hash[..16].try_into().map_err(|_| invalid())?).map_err(|_| invalid())
 }
 
-/// Stage one event and its complete, chained handoff in the caller's writer.
+/// Stage one event and its chained handoff in the caller's writer. The
+/// handoff carries only the new event, a one-transition delta on the prior
+/// packet's heads; the whole history is the chain's union.
 ///
 /// The caller has already authenticated `actor`/`actor_class`, authorized this
 /// particular kind at its typed verb, and enforced its Gate policy. This
@@ -144,14 +146,17 @@ pub(crate) fn stage_machine_claim_transition(
         return Err(invalid());
     }
     // A trusted pin is local host custody, not merely a packet copied from
-    // the peer. Verify its signature and DAG, then independently compare every
-    // referenced transition hash and parent to verified resident controls.
+    // the peer. Verify its signature and its delta's closure over the heads
+    // of the verified packet before it, then independently compare every
+    // transition hash and parent of the chain's union to verified resident
+    // controls.
     let prior_pin = ClaimHistoryHandoffPin {
         vault_id: &vault_id,
         genesis_hash: &vault_id,
         expected_signer: &prior.signer,
         scope: &prior.scope,
         previous_handoff_hash: prior.previous_handoff_hash,
+        previous_heads: rows.previous_heads(),
         challenge: &prior.challenge,
     };
     if !matches!(
@@ -160,7 +165,7 @@ pub(crate) fn stage_machine_claim_transition(
     ) {
         return Err(invalid());
     }
-    if prior.transitions.len() != rows.events.len() {
+    if rows.transitions.len() != rows.events.len() {
         return Err(incomplete());
     }
     let mut seen = BTreeSet::new();
@@ -172,12 +177,7 @@ pub(crate) fn stage_machine_claim_transition(
             event.predecessors.clone()
         };
         predecessors.sort_unstable();
-        if !prior
-            .transitions
-            .iter()
-            .any(|row| row.hash == hash && row.predecessors == predecessors)
-            || !seen.insert(hash)
-        {
+        if rows.transitions.get(&hash) != Some(&predecessors) || !seen.insert(hash) {
             return Err(incomplete());
         }
     }
@@ -256,14 +256,24 @@ pub(crate) fn stage_machine_claim_transition(
     .map_err(|_| invalid())?;
     let projected = project_machine_claim(&result);
 
+    // The delta is the new event alone. Its heads are the prior heads it
+    // does not consume, plus itself: the event consumes every prior tip.
+    let mut heads: BTreeSet<_> = prior.heads.iter().copied().collect();
+    for consumed in &prior_tips {
+        heads.remove(consumed);
+    }
+    heads.insert(event_hash);
     let mut handoff = ClaimHistoryHandoff {
         kind: HandoffKind::Handoff,
         vault_id,
         genesis_hash: vault_id,
         scope: prior.scope.clone(),
         births: prior.births.clone(),
-        transitions: prior.transitions.clone(),
-        heads: vec![event_hash],
+        transitions: vec![ClaimTransition {
+            hash: event_hash,
+            predecessors: prior_tips,
+        }],
+        heads: heads.into_iter().collect(),
         authority_head,
         previous_handoff_hash: Some(prior_hash),
         nonce: [0; 32],
@@ -271,11 +281,6 @@ pub(crate) fn stage_machine_claim_transition(
         signer: issuer.public_key(),
         signature: [0; 64],
     };
-    handoff.transitions.push(ClaimTransition {
-        hash: event_hash,
-        predecessors: prior_tips,
-    });
-    handoff.transitions.sort_unstable_by_key(|row| row.hash);
     rand_core::OsRng.fill_bytes(&mut handoff.nonce);
     rand_core::OsRng.fill_bytes(&mut handoff.challenge);
     handoff.signature = issuer.sign_claim_handoff(&handoff.transcript().map_err(|_| invalid())?);
@@ -288,6 +293,7 @@ pub(crate) fn stage_machine_claim_transition(
         expected_signer: &signer,
         scope: &handoff.scope,
         previous_handoff_hash: Some(prior_hash),
+        previous_heads: &prior.heads,
         challenge: &handoff.challenge,
     };
     if !matches!(

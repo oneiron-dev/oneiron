@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 381 code-mode rows (361 host rows, 20 run rows), 1388 declarations.
-// Replies: 328 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 393 code-mode rows (372 host rows, 21 run rows), 1437 declarations.
+// Replies: 339 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 81; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -128,7 +128,7 @@ declare namespace Sdk {
   type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary; reach?: ShapePlanReach };
   type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] };
   type MentionProvenance = { turn: string; message: string; start: number; end: number };
-  type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null };
+  type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null; from_project?: string | null; to_project?: string | null };
   type WitnessReceipt = { turn_short_id: string; message_short_ids: string[]; receipt_ref: string; turn?: RecordRef | null; messages?: RecordRef[] };
   type MessagePersonReceipt = { room: string; receipt: WitnessReceipt };
   type GrantAskScope = { kind: "messages"; space_ref: string } | { kind: "summaries"; space_ref: string } | { kind: "relationship_claims"; space_ref: string } | { kind: "companion_profile"; facet_ref?: string | null };
@@ -500,8 +500,14 @@ declare namespace Sdk {
   type ResidenceModeName = "opened" | "all";
   type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
   type ResidenceModeChanged = { mode: ResidenceModeName; retained: string[]; unsynced: string[]; pruned_items: number };
-  type ResidenceOpenRequest = { machine: EntityId; window: string; item: EntityId };
-  type ResidenceOpened = { item: EntityId; window: string; residence: string; bytes: number };
+  type NoteReadSpan = { start: number; end: number };
+  type ResidenceOpenRequest = { machine: EntityId; window: string; item: EntityId; reason?: string | null; spans?: NoteReadSpan[] };
+  type NoteReadSource = "local" | "home";
+  type NoteVersion = { note: string; head: string; frontier: number[] };
+  type NoteAnchor = { note: string; head: string; cursor: number[] };
+  type NoteAnchoredSpan = { start: NoteAnchor; end: NoteAnchor };
+  type NoteReadView = { version: NoteVersion; markdown: string; title?: string | null; spans: NoteAnchoredSpan[]; source: NoteReadSource };
+  type ResidenceOpened = { item: EntityId; window: string; residence: string; bytes: number; source: NoteReadSource; note?: NoteReadView | null };
   type ResidenceMachineRequest = { machine: EntityId };
   type ResidenceIndexEntry = { entity_id: string; title?: string | null; learned_at: number };
   type ResidenceIndexWindowView = { window: string; items: ResidenceIndexEntry[] };
@@ -677,6 +683,33 @@ declare namespace Sdk {
   type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; family: EntityId; targets?: EntityId[]; author: string };
   type EmbeddingSpaceProbeDeleteRequest = { id: string };
   type EmbeddingSpaceProbeDeleted = { ok: boolean };
+  type PolicyManifestRead = { manifest_ref?: string | null };
+  type PolicyCriticality = "normal" | "critical";
+  type PolicySensitivity = "normal" | "sensitive";
+  type PolicyAxes = { criticality?: PolicyCriticality | null; sensitivity?: PolicySensitivity | null };
+  type PolicyRule = { prefix: string; exact?: boolean; axes: PolicyAxes };
+  type PolicyCeiling = "auto" | "proposed";
+  type ActorCeiling = { actor_class: string; actor_ref?: string | null; ceiling: PolicyCeiling };
+  type PolicySource = "user_stated" | "observed" | "inferred" | "generated" | "imported" | "tool_output";
+  type SensitivityName = "public" | "private" | "internal" | "sensitive" | "restricted";
+  type SensitivityBand = number | SensitivityName;
+  type SourceTrustRow = { actor_ref?: string | null; max_auto_sensitivity?: SensitivityBand | null; auto?: boolean | null; receipted?: boolean; warned?: boolean };
+  type SourceTrust = SourceTrustRow | SourceTrustRow[] | boolean | SensitivityBand;
+  type PolicySignature = { alg: string; key_id?: string | null; sig: string };
+  type PolicyManifest = { schema_version: string; pack_id: string; pack_version: string; min_engine_version: string; defaults: PolicyAxes; rules: PolicyRule[]; actor_ceilings: ActorCeiling[]; source_trust?: Record<string, SourceTrust>; signature?: PolicySignature | null; signatures?: PolicySignature[]; auto_checker?: string | null };
+  type PolicyManifestView = { manifest_ref: string; body_hash: string; trusted: boolean; quarantined: boolean; manifest: PolicyManifest };
+  type PolicyManifestsView = { default_manifest_ref: string; read_frontier_hash: string; manifests: PolicyManifestView[] };
+  type PolicyManifestPut = { manifest_ref?: string | null; expected_body_hash?: string | null; manifest: PolicyManifest };
+  type PolicyManifestReceipt = { manifest: PolicyManifestView; approval: PolicyCeiling; receipt_ref: string; read_frontier_hash: string };
+  type PolicyManifestPropose = { manifest: PolicyManifest };
+  type ModelId = string;
+  type ModelSlot = "llm" | "embedder" | "oneironer";
+  type ConfidenceBand = "low" | "medium" | "high" | "certain";
+  type VerdictMode = "shadow" | "enforce";
+  type VerdictBinding = { model: ModelId; slot: ModelSlot; floor: ConfidenceBand; mode: VerdictMode };
+  type GateCheckerView = { binding?: VerdictBinding | null };
+  type GateCheckerSet = { binding: VerdictBinding };
+  type GateCheckerReceipt = { binding: VerdictBinding; receipt_ref: string };
   type LearningSettingsRequest = { key?: string | null };
   type LearningSettingSpecView = { key: string; min: number; max: number; seed: number; value: number };
   type LearningSettingMode = "seed" | "pin";
@@ -705,6 +738,12 @@ declare namespace Sdk {
   type WidenProposalView = { proposal_id: string; state: WidenProposalState; parent_attempt: string; board_attempt?: string | null; target_kind: string; target: string; parent_context: unknown; requested_context: unknown; widened_parent_context: unknown; recorded_at: number; landed_attempt?: string | null; declined_by?: string | null; declined_at?: number | null };
   type WidenProposalsView = { proposals: WidenProposalView[] };
   type WidenProposalAnswer = { proposal_id: string };
+  type CraftCandidatesRequest = { resident?: string | null };
+  type CraftCandidateView = { candidate_id: string; content_hash: string; resident: string; predicate: string; text: string; attempt: string; proposed_at: number };
+  type CraftCandidatesView = { candidates: CraftCandidateView[] };
+  type CraftVerdict = "approved" | "rejected";
+  type CraftCandidateAnswer = { candidate_id: string; content_hash: string; verdict: CraftVerdict };
+  type CraftVerdictView = { candidate_id: string; verdict: CraftVerdict; verdict_id: string; receipt_ref: string; decided_at: number };
   type WakePolicySetRequest = { policy: unknown; idempotency_key: string };
   type PolicyActionOutcome = { outcome: unknown };
   type InferenceDefaultsReplaceRequest = { defaults: unknown; idempotency_key: string };
@@ -866,7 +905,7 @@ declare namespace Sdk {
   type TaskAskLaunchHold = { launch_ref: EntityId; plan_digest: string; surface_ref: string; denied: boolean };
   type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[]; launch?: TaskAskLaunchHold | null };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait };
@@ -1006,7 +1045,6 @@ declare namespace Sdk {
   type SpentKind = "window" | "credit";
   type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[] } } | "ServerError" | "Timeout" | "StreamCut";
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
-  type ModelId = string;
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
   type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure };
@@ -1067,7 +1105,8 @@ declare namespace Sdk {
   type MutationIntent = "preview" | "explicit_mutation";
   type ConnectorCallRequest = { name: string; tool: string; arguments?: unknown; mutation?: MutationIntent };
   type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null };
-  type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[] } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] };
+  type ConnectorQuestion = { key: string; message: string; requested_schema: unknown };
+  type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[] } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; expires_at_ms: number; reasons?: string[] };
   type ConnectorSchemaRequest = { name: string; tool: string };
   type ConnectorSchemaReply = { source: string; foreign: boolean; input_schema?: unknown | null; destructive?: boolean | null; reasons?: string[] };
   type ConnectorCallStatusRequest = { call_ref: string };
@@ -1331,13 +1370,19 @@ declare namespace Sdk {
   type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
   type CreateNoteRequest = { kind: string; markdown: string };
   type CreateNoteFromEntityRequest = { source_ref: string; kind: string };
-  type NoteAnchor = { note: string; head: string; cursor: number[] };
-  type NoteVersion = { note: string; head: string; frontier: number[] };
+  type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] };
+  type NoteAccessRequest = { note_ref: string; reason?: string | null };
+  type NoteAuthorship = { operation: string; actor: string; actor_class: string; grant?: string | null; command_hash: number[] };
+  type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean };
+  type NoteEditorBinding = { binding: string; note: NoteReadView };
+  type NoteEditorCloseRequest = { binding: string };
+  type NoteEditorClosed = { closed: boolean };
   type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
   type EditNoteRequest = { note_ref: string; edit: NoteEdit };
   type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
   type NoteRefRequest = { note_ref: string };
-  type NoteSeal = { note: string; document: string; frontier: number[]; sealed_by: string; sealed_at: number };
+  type NoteActor = string;
+  type NoteSeal = { note: string; document: string; frontier: number[]; sealed_by: NoteActor; sealed_at: number };
   type NoteLifecycleStatus = "active" | "sealed" | "archived" | "tombstoned";
   type NoteLifecycleView = { status: NoteLifecycleStatus; seal?: NoteSeal | null };
   type ExtractionDefault = "allowed" | "after_seal" | "private_strategy_only" | "disabled";
@@ -1347,6 +1392,9 @@ declare namespace Sdk {
   type SetNoteOverridesRequest = { note_ref: string; overrides?: NoteOverrides };
   type NoteKindDescriptor = { pack: string; kind: string; extraction: ExtractionDefault; context: ContextDefault; retention: RetentionDefault; archive_after_days?: number | null };
   type NoteDefaultsView = { overrides: NoteOverrides; defaults: NoteKindDescriptor };
+  type ConnectorAnswerAction = "accept" | "decline" | "cancel";
+  type ConnectorQuestionAnswer = { key: string; action: ConnectorAnswerAction; content?: unknown | null };
+  type ConnectorAnswerRequest = { handle: string; answers: ConnectorQuestionAnswer[] };
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
   type MemorySearchOutput = { results: MemorySearchHit[] };
@@ -1374,7 +1422,8 @@ declare namespace Sdk {
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
-  type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: unknown | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null };
+  type CommReach = "parent" | "subtree" | "project" | "vault";
+  type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: unknown | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null };
   type AgentSpawnKind = "agent_spawn";
   type LaunchStatement = { agent_count: number; expected: ExpectedSpend; unit: LeaseUnit; cap_units?: number | null; available_units?: number | null; hard: boolean; reserved_units: number; scope?: SpendScopeId | null; parent_scope?: SpendScopeId | null; stated_at: number };
   type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string };
@@ -1433,6 +1482,7 @@ declare function can(input: Sdk.TaskCanAskRequest): Promise<Sdk.TaskAskPreflight
 /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
 declare function cancel(input: Sdk.TaskRequest): Promise<Sdk.TaskCancelReceipt | StoredResult>;
 declare const connector: { readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<Sdk.ConnectorCallReply | StoredResult> } } & {
+  answer(input: Sdk.ConnectorAnswerRequest): Promise<Sdk.ConnectorCallReply | StoredResult>;
   /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
   call(input: Sdk.ConnectorCallRequest): Promise<Sdk.ConnectorCallReply | StoredResult>;
   /** Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it. */
@@ -1843,6 +1893,11 @@ declare const vault: Sdk.VaultHost & {
     /** Every courtesy delete ask this vault sent, with its delivery status, for the owner. */
     sent(input: Sdk.EmptyRequest): Promise<Sdk.CourtesyDeleteSent[] | StoredResult>;
   };
+  /** The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins. */
+  craft_candidates: ((input: Sdk.CraftCandidatesRequest) => Promise<Sdk.CraftCandidatesView | StoredResult>) & {
+    /** The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first. */
+    answer(input: Sdk.CraftCandidateAnswer): Promise<Sdk.CraftVerdictView | StoredResult>;
+  };
   critic: {
     /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
     review(input: Sdk.CriticReviewSubmit): Promise<Sdk.CriticReviewOutcome | StoredResult>;
@@ -1928,6 +1983,22 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
   forget(input: Sdk.ForgetRequest): Promise<Sdk.CommitReceipt[] | StoredResult>;
+  gate: {
+    checker: {
+      /** The owner reads the calibrated checker verdict role from the vault model manifest. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.GateCheckerView | StoredResult>;
+      /** The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings. */
+      set(input: Sdk.GateCheckerSet): Promise<Sdk.GateCheckerReceipt | StoredResult>;
+    };
+    policy: {
+      /** The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions. */
+      get(input: Sdk.PolicyManifestRead): Promise<Sdk.PolicyManifestsView | StoredResult>;
+      /** Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert. */
+      propose(input: Sdk.PolicyManifestPropose): Promise<Sdk.PolicyManifestReceipt | StoredResult>;
+      /** The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
+      put(input: Sdk.PolicyManifestPut): Promise<Sdk.PolicyManifestReceipt | StoredResult>;
+    };
+  };
   /** Reads one entity as a typed view, or none when absent or withheld; the receipt says which. */
   get(input: Sdk.EntityRequest): Promise<Sdk.ScopedReadResult<Sdk.EntityView | null> | StoredResult>;
   graph: {
@@ -2029,10 +2100,20 @@ declare const vault: Sdk.VaultHost & {
     defaults(input: Sdk.NoteRefRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
     /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
     edit(input: Sdk.EditNoteRequest): Promise<Sdk.NoteEditOutcome | StoredResult>;
+    editor: {
+      /** Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves. */
+      bind(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteEditorBinding | null> | StoredResult>;
+      /** Closes one live NOTE editor held by this caller; a binding id alone grants no authority. */
+      close(input: Sdk.NoteEditorCloseRequest): Promise<Sdk.NoteEditorClosed | StoredResult>;
+    };
     /** Creates a NOTE of a registered kind from an existing entity. */
     from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
+    /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
+    history(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteHistoryView | null> | StoredResult>;
     /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
     lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.NoteLifecycleView | StoredResult>;
+    /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
+    read(input: Sdk.NoteReadRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteReadView | null> | StoredResult>;
     /** Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays. */
     seal(input: Sdk.NoteRefRequest): Promise<Sdk.NoteSeal | StoredResult>;
     /** Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check. */
@@ -2154,7 +2235,7 @@ declare const vault: Sdk.VaultHost & {
     index(input: Sdk.ResidenceMachineRequest): Promise<Sdk.ResidenceIndex | StoredResult>;
     /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
     mode(input: Sdk.ResidenceModeRequest): Promise<Sdk.ResidenceModeChanged | StoredResult>;
-    /** Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home. */
+    /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. */
     open(input: Sdk.ResidenceOpenRequest): Promise<Sdk.ResidenceOpened | StoredResult>;
     /** Drops the opened-item caches one of the owner's machines last touched before a time. */
     prune(input: Sdk.ResidencePruneRequest): Promise<Sdk.ResidencePruned | StoredResult>;

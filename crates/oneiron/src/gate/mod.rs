@@ -42,11 +42,14 @@ mod grants;
 mod hosted_tts_policy;
 mod input;
 pub(crate) mod mail_policy;
+mod message_address;
+pub(crate) use message_address::message_address_refusal;
 mod operational_policy;
 mod owner_answer;
 mod owner_policy_mutation;
 mod pack_install_policy;
 mod policy_upgrade;
+pub mod policy_manifest_doors;
 pub(crate) mod policy_values;
 #[cfg(test)]
 pub(crate) use policy_upgrade::ConsentRegate;

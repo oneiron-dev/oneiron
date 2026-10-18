@@ -342,6 +342,9 @@ pub struct WholeVaultImportReceipt {
 }
 
 impl WholeVaultDocument {
+    /// Every entity row of the document, section by section. The import
+    /// reads its rows from the row index instead (FIX 3678).
+    #[cfg(test)]
     pub(crate) fn entities(&self) -> impl Iterator<Item = &ExportEntity> {
         self.evidence_ledger
             .entities

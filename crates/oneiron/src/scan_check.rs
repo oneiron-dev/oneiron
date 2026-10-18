@@ -25,7 +25,8 @@ use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::{Callback, ManifestDbs, Rows, active_write_txn_depth};
 
 /// Rows one engine scan reads past which it asks whether everything is
-/// okay: ten times the count each of the origin scans once refused at.
+/// okay: ten times the count each of the origin scans once refused at. A
+/// scan with a default of its own asks at the count it once cut short at.
 pub const DEFAULT_SCAN_CHECK_THRESHOLD: u64 = 1_000_000;
 
 /// Device-local threshold row of one scan. Key: the scan's tag.
@@ -137,11 +138,28 @@ pub enum EngineScan {
     /// The Dreamer prefilter's skip and round receipt rows a receipt query
     /// walks.
     PrefilterReceiptRows,
+    /// One MACHINE claim's handoff chain, packet by packet, which each read
+    /// of its whole history walks.
+    MachineHandoffChain,
+    /// One MACHINE claim's target index: the ids of its birth, transitions
+    /// and handoffs.
+    MachineHistoryTargetRows,
+    /// One claim's incident edges of every kind, one way, which a claim-VAD
+    /// consolidation or clear reads.
+    ClaimVadIncidentEdges,
+    /// The retrieval run ledger a newest-runs read walks, provisional rows
+    /// included.
+    RetrievalRunRows,
+    /// The call receipt ledger a served MCP-refusal detector pass walks
+    /// before its time and kind filters.
+    CallReceiptRows,
+    /// One durable run's blocked-report lineage rows.
+    BlockedRunReports,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 48] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -184,6 +202,12 @@ impl EngineScan {
         Self::PredicateClaimRows,
         Self::VaultEdgeRows,
         Self::PrefilterReceiptRows,
+        Self::MachineHandoffChain,
+        Self::MachineHistoryTargetRows,
+        Self::ClaimVadIncidentEdges,
+        Self::RetrievalRunRows,
+        Self::CallReceiptRows,
+        Self::BlockedRunReports,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -240,6 +264,24 @@ impl EngineScan {
             Self::PredicateClaimRows => "predicate_claim_rows",
             Self::VaultEdgeRows => "vault_edge_rows",
             Self::PrefilterReceiptRows => "prefilter_receipt_rows",
+            Self::MachineHandoffChain => "machine_handoff_chain",
+            Self::MachineHistoryTargetRows => "machine_history_target_rows",
+            Self::ClaimVadIncidentEdges => "claim_vad_incident_edges",
+            Self::RetrievalRunRows => "retrieval_run_rows",
+            Self::CallReceiptRows => "call_receipt_rows",
+            Self::BlockedRunReports => "blocked_run_reports",
+        }
+    }
+
+    /// The threshold the scan asks past while no row is set: the count it
+    /// once cut its read short at, or the engine-wide default.
+    const fn default_threshold(self) -> u64 {
+        match self {
+            Self::ClaimVadIncidentEdges => 100_000,
+            Self::RetrievalRunRows => 1024,
+            Self::CallReceiptRows => 8192,
+            Self::BlockedRunReports => 128,
+            _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
 
@@ -287,6 +329,12 @@ impl EngineScan {
             Self::PredicateClaimRows => 67,
             Self::VaultEdgeRows => 68,
             Self::PrefilterReceiptRows => 69,
+            Self::MachineHandoffChain => 70,
+            Self::MachineHistoryTargetRows => 71,
+            Self::ClaimVadIncidentEdges => 72,
+            Self::RetrievalRunRows => 73,
+            Self::CallReceiptRows => 74,
+            Self::BlockedRunReports => 75,
         }]
     }
 }
@@ -319,7 +367,7 @@ impl ScanCheck {
 fn threshold_in_txn(store: &impl ManifestDbs, txn: &RoTxn<'_>, scan: EngineScan) -> Result<u64> {
     Ok(POLICY
         .get(store, txn, &scan.tag())?
-        .unwrap_or(DEFAULT_SCAN_CHECK_THRESHOLD))
+        .unwrap_or(scan.default_threshold()))
 }
 
 /// One scan's rows, counted against its threshold row.

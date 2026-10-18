@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 318 facade rows, 1279 declarations.
-Inputs: 275 of 318 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 275 of 318 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 73; unread shapes: 0.
+Census: 329 facade rows, 1324 declarations.
+Inputs: 286 of 329 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 286 of 329 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -542,6 +542,8 @@ class MessagePersonRequest(TypedDict):
     pr: str
     text: str
     mention: NotRequired[MentionProvenance | None]
+    from_project: NotRequired[str | None]
+    to_project: NotRequired[str | None]
 class WitnessReceipt(TypedDict):
     turn_short_id: str
     message_short_ids: list[str]
@@ -2538,15 +2540,40 @@ class ResidenceModeChanged(TypedDict):
     retained: list[str]
     unsynced: list[str]
     pruned_items: int
+class NoteReadSpan(TypedDict):
+    start: int
+    end: int
 class ResidenceOpenRequest(TypedDict):
     machine: EntityId
     window: str
     item: EntityId
+    reason: NotRequired[str | None]
+    spans: NotRequired[list[NoteReadSpan]]
+NoteReadSource = Literal["local", "home"]
+class NoteVersion(TypedDict):
+    note: str
+    head: str
+    frontier: list[int]
+class NoteAnchor(TypedDict):
+    note: str
+    head: str
+    cursor: list[int]
+class NoteAnchoredSpan(TypedDict):
+    start: NoteAnchor
+    end: NoteAnchor
+class NoteReadView(TypedDict):
+    version: NoteVersion
+    markdown: str
+    title: NotRequired[str | None]
+    spans: list[NoteAnchoredSpan]
+    source: NoteReadSource
 class ResidenceOpened(TypedDict):
     item: EntityId
     window: str
     residence: str
     bytes: int
+    source: NoteReadSource
+    note: NotRequired[NoteReadView | None]
 class ResidenceMachineRequest(TypedDict):
     machine: EntityId
 class ResidenceIndexEntry(TypedDict):
@@ -3427,6 +3454,85 @@ class EmbeddingSpaceProbeDeleteRequest(TypedDict):
     id: str
 class EmbeddingSpaceProbeDeleted(TypedDict):
     ok: bool
+class PolicyManifestRead(TypedDict):
+    manifest_ref: NotRequired[str | None]
+PolicyCriticality = Literal["normal", "critical"]
+PolicySensitivity = Literal["normal", "sensitive"]
+class PolicyAxes(TypedDict):
+    criticality: NotRequired[PolicyCriticality | None]
+    sensitivity: NotRequired[PolicySensitivity | None]
+class PolicyRule(TypedDict):
+    prefix: str
+    exact: NotRequired[bool]
+    axes: PolicyAxes
+PolicyCeiling = Literal["auto", "proposed"]
+class ActorCeiling(TypedDict):
+    actor_class: str
+    actor_ref: NotRequired[str | None]
+    ceiling: PolicyCeiling
+PolicySource = Literal["user_stated", "observed", "inferred", "generated", "imported", "tool_output"]
+SensitivityName = Literal["public", "private", "internal", "sensitive", "restricted"]
+SensitivityBand = int | SensitivityName
+class SourceTrustRow(TypedDict):
+    actor_ref: NotRequired[str | None]
+    max_auto_sensitivity: NotRequired[SensitivityBand | None]
+    auto: NotRequired[bool | None]
+    receipted: NotRequired[bool]
+    warned: NotRequired[bool]
+SourceTrust = SourceTrustRow | list[SourceTrustRow] | bool | SensitivityBand
+class PolicySignature(TypedDict):
+    alg: str
+    key_id: NotRequired[str | None]
+    sig: str
+class PolicyManifest(TypedDict):
+    schema_version: str
+    pack_id: str
+    pack_version: str
+    min_engine_version: str
+    defaults: PolicyAxes
+    rules: list[PolicyRule]
+    actor_ceilings: list[ActorCeiling]
+    source_trust: NotRequired[dict[str, SourceTrust]]
+    signature: NotRequired[PolicySignature | None]
+    signatures: NotRequired[list[PolicySignature]]
+    auto_checker: NotRequired[str | None]
+class PolicyManifestView(TypedDict):
+    manifest_ref: str
+    body_hash: str
+    trusted: bool
+    quarantined: bool
+    manifest: PolicyManifest
+class PolicyManifestsView(TypedDict):
+    default_manifest_ref: str
+    read_frontier_hash: str
+    manifests: list[PolicyManifestView]
+class PolicyManifestPut(TypedDict):
+    manifest_ref: NotRequired[str | None]
+    expected_body_hash: NotRequired[str | None]
+    manifest: PolicyManifest
+class PolicyManifestReceipt(TypedDict):
+    manifest: PolicyManifestView
+    approval: PolicyCeiling
+    receipt_ref: str
+    read_frontier_hash: str
+class PolicyManifestPropose(TypedDict):
+    manifest: PolicyManifest
+ModelId = str
+ModelSlot = Literal["llm", "embedder", "oneironer"]
+ConfidenceBand = Literal["low", "medium", "high", "certain"]
+VerdictMode = Literal["shadow", "enforce"]
+class VerdictBinding(TypedDict):
+    model: ModelId
+    slot: ModelSlot
+    floor: ConfidenceBand
+    mode: VerdictMode
+class GateCheckerView(TypedDict):
+    binding: NotRequired[VerdictBinding | None]
+class GateCheckerSet(TypedDict):
+    binding: VerdictBinding
+class GateCheckerReceipt(TypedDict):
+    binding: VerdictBinding
+    receipt_ref: str
 class LearningSettingsRequest(TypedDict):
     key: NotRequired[str | None]
 class LearningSettingSpecView(TypedDict):
@@ -3561,6 +3667,29 @@ class WidenProposalsView(TypedDict):
     proposals: list[WidenProposalView]
 class WidenProposalAnswer(TypedDict):
     proposal_id: str
+class CraftCandidatesRequest(TypedDict):
+    resident: NotRequired[str | None]
+class CraftCandidateView(TypedDict):
+    candidate_id: str
+    content_hash: str
+    resident: str
+    predicate: str
+    text: str
+    attempt: str
+    proposed_at: int
+class CraftCandidatesView(TypedDict):
+    candidates: list[CraftCandidateView]
+CraftVerdict = Literal["approved", "rejected"]
+class CraftCandidateAnswer(TypedDict):
+    candidate_id: str
+    content_hash: str
+    verdict: CraftVerdict
+class CraftVerdictView(TypedDict):
+    candidate_id: str
+    verdict: CraftVerdict
+    verdict_id: str
+    receipt_ref: str
+    decided_at: int
 class WakePolicySetRequest(TypedDict):
     policy: Any
     idempotency_key: str
@@ -4350,7 +4479,7 @@ class TaskAskReceipt(TypedDict):
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
@@ -5095,7 +5224,6 @@ class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
 RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice
 LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input"]
-ModelId = str
 class UnsupportedCapability(TypedDict):
     capability: LlmCapability
     model: NotRequired[ModelId | None]
@@ -5399,6 +5527,10 @@ class ConnectorToolResult(TypedDict):
     structured_content: NotRequired[Any | None]
     is_error: bool
     rpc_error: NotRequired[Any | None]
+class ConnectorQuestion(TypedDict):
+    key: str
+    message: str
+    requested_schema: Any
 class ConnectorCallReplyDelivered(TypedDict):
     outcome: Literal["delivered"]
     result: NotRequired[ConnectorToolResult | None]
@@ -5416,7 +5548,15 @@ class ConnectorCallReplyPendingDelivery(TypedDict):
     outcome: Literal["pending_delivery"]
     call_ref: NotRequired[str | None]
     reasons: list[str]
-ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery
+class ConnectorCallReplyAwaitingInput(TypedDict):
+    outcome: Literal["awaiting_input"]
+    handle: str
+    source: str
+    foreign: bool
+    questions: list[ConnectorQuestion]
+    expires_at_ms: int
+    reasons: NotRequired[list[str]]
+ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
 class ConnectorSchemaRequest(TypedDict):
     name: str
     tool: str
@@ -6721,14 +6861,32 @@ class CreateNoteRequest(TypedDict):
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str
-class NoteAnchor(TypedDict):
-    note: str
-    head: str
-    cursor: list[int]
-class NoteVersion(TypedDict):
-    note: str
-    head: str
-    frontier: list[int]
+class NoteReadRequest(TypedDict):
+    note_ref: str
+    reason: NotRequired[str | None]
+    version: NotRequired[NoteVersion | None]
+    spans: NotRequired[list[NoteReadSpan]]
+class NoteAccessRequest(TypedDict):
+    note_ref: str
+    reason: NotRequired[str | None]
+class NoteAuthorship(TypedDict):
+    operation: str
+    actor: str
+    actor_class: str
+    grant: NotRequired[str | None]
+    command_hash: list[int]
+class NoteHistoryView(TypedDict):
+    version: NoteVersion
+    operations: list[NoteAuthorship]
+    shallow_since: list[int]
+    complete: bool
+class NoteEditorBinding(TypedDict):
+    binding: str
+    note: NoteReadView
+class NoteEditorCloseRequest(TypedDict):
+    binding: str
+class NoteEditorClosed(TypedDict):
+    closed: bool
 class NoteEditReplaceSpan(TypedDict):
     kind: Literal["replace_span"]
     start: NoteAnchor
@@ -6769,11 +6927,12 @@ class NoteEditOutcomeReviewRequired(TypedDict):
 NoteEditOutcome = NoteEditOutcomeEdited | NoteEditOutcomeRewriteFork | NoteEditOutcomeProposedFork | NoteEditOutcomeReviewRequired
 class NoteRefRequest(TypedDict):
     note_ref: str
+NoteActor = str
 class NoteSeal(TypedDict):
     note: str
     document: str
     frontier: list[int]
-    sealed_by: str
+    sealed_by: NoteActor
     sealed_at: int
 NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
 class NoteLifecycleView(TypedDict):

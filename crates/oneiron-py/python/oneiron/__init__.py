@@ -552,6 +552,9 @@ class Oneiron:
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs":
             return Oneiron._VaultEmbeddingSpacesVerbs(self._client)
         @property
+        def gate(self) -> "Oneiron._VaultGateVerbs":
+            return Oneiron._VaultGateVerbs(self._client)
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
         @property
@@ -560,6 +563,9 @@ class Oneiron:
         @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs":
             return Oneiron._VaultWidenProposalsVerbs(self._client)
+        @property
+        def craft_candidates(self) -> "Oneiron._VaultCraftCandidatesVerbs":
+            return Oneiron._VaultCraftCandidatesVerbs(self._client)
         @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs":
             return Oneiron._VaultLensesVerbs(self._client)
@@ -998,7 +1004,7 @@ class Oneiron:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
             return json.loads(_translate(lambda: self._client.vault_residence_mode(json.dumps(spec))))
         def open(self, spec):
-            """Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."""
+            """Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."""
             return json.loads(_translate(lambda: self._client.vault_residence_open(json.dumps(spec))))
         def index(self, spec):
             """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
@@ -1147,6 +1153,36 @@ class Oneiron:
         def delete(self, spec):
             """Removes one stored embedding space probe by its id."""
             return json.loads(_translate(lambda: self._client.vault_embedding_spaces_probes_delete(json.dumps(spec))))
+    class _VaultGateVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def policy(self) -> "Oneiron._VaultGatePolicyVerbs":
+            return Oneiron._VaultGatePolicyVerbs(self._client)
+        @property
+        def checker(self) -> "Oneiron._VaultGateCheckerVerbs":
+            return Oneiron._VaultGateCheckerVerbs(self._client)
+    class _VaultGatePolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."""
+            return json.loads(_translate(lambda: self._client.vault_gate_policy_get(json.dumps(spec))))
+        def put(self, spec):
+            """The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."""
+            return json.loads(_translate(lambda: self._client.vault_gate_policy_put(json.dumps(spec))))
+        def propose(self, spec):
+            """Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert."""
+            return json.loads(_translate(lambda: self._client.vault_gate_policy_propose(json.dumps(spec))))
+    class _VaultGateCheckerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads the calibrated checker verdict role from the vault model manifest."""
+            return json.loads(_translate(lambda: self._client.vault_gate_checker_get(json.dumps({} if spec is None else spec))))
+        def set(self, spec):
+            """The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."""
+            return json.loads(_translate(lambda: self._client.vault_gate_checker_set(json.dumps(spec))))
     class _VaultSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1204,6 +1240,15 @@ class Oneiron:
         def decline(self, spec):
             """The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."""
             return json.loads(_translate(lambda: self._client.vault_widen_proposals_decline(json.dumps(spec))))
+    class _VaultCraftCandidatesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins."""
+            return json.loads(_translate(lambda: self._client.vault_craft_candidates(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first."""
+            return json.loads(_translate(lambda: self._client.vault_craft_candidates_answer(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1718,6 +1763,15 @@ class Oneiron:
         def from_entity(self, input: dict[str, Any]) -> Any:
             """Creates a NOTE of a registered kind from an existing entity."""
             return json.loads(_translate(lambda: self._client.vault_notes_from_entity(json.dumps(input, allow_nan=False))))
+        def read(self, input: dict[str, Any]) -> Any:
+            """Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."""
+            return json.loads(_translate(lambda: self._client.vault_notes_read(json.dumps(input, allow_nan=False))))
+        def history(self, input: dict[str, Any]) -> Any:
+            """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
+            return json.loads(_translate(lambda: self._client.vault_notes_history(json.dumps(input, allow_nan=False))))
+        @property
+        def editor(self) -> "Oneiron._VaultNotesEditorVerbs":
+            return Oneiron._VaultNotesEditorVerbs(self._client)
         def edit(self, input: dict[str, Any]) -> Any:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
             return json.loads(_translate(lambda: self._client.vault_notes_edit(json.dumps(input, allow_nan=False))))
@@ -1733,6 +1787,15 @@ class Oneiron:
         def defaults(self, request: dict[str, Any]) -> dict[str, Any]:
             """One NOTE's overrides and the defaults its gates read after them."""
             return json.loads(_translate(lambda: self._client.vault_notes_defaults(json.dumps(request, allow_nan=False))))
+    class _VaultNotesEditorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
+            return json.loads(_translate(lambda: self._client.vault_notes_editor_bind(json.dumps(spec))))
+        def close(self, spec):
+            """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
+            return json.loads(_translate(lambda: self._client.vault_notes_editor_close(json.dumps(spec))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -46,6 +46,7 @@ mod connector_admission_routes;
 mod connector_consent_routes;
 mod connector_subscription_routes;
 pub(super) mod cooperative_deletion_routes;
+mod craft_candidate_routes;
 mod decision_ask_routes;
 mod desktop_takeover_routes;
 mod diary_routes;
@@ -74,6 +75,7 @@ mod secret_use_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
 mod steer_routes;
+mod training_swap_routes;
 mod vault_key_routes;
 mod weave_routes;
 mod widen_proposal_routes;
@@ -135,6 +137,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(learning_setting_routes::routes())
         .merge(model_setting_routes::routes())
         .merge(widen_proposal_routes::routes())
+        .merge(craft_candidate_routes::routes())
         .merge(pad_routes::routes())
         .merge(legal_hold_routes::routes())
         .merge(guest_routes::routes())
@@ -158,6 +161,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(secret_found_routes::routes())
         .merge(secret_lift_routes::routes())
         .merge(steer_routes::routes())
+        .merge(training_swap_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }

@@ -145,6 +145,11 @@ pub enum AgentVerb {
     VaultEmbeddingSpacesProbesList,
     VaultEmbeddingSpacesProbesPut,
     VaultEmbeddingSpacesProbesDelete,
+    VaultGatePolicyGet,
+    VaultGatePolicyPut,
+    VaultGatePolicyPropose,
+    VaultGateCheckerGet,
+    VaultGateCheckerSet,
     VaultSettingsLearning,
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
@@ -152,6 +157,8 @@ pub enum AgentVerb {
     VaultWidenProposals,
     VaultWidenProposalsApprove,
     VaultWidenProposalsDecline,
+    VaultCraftCandidates,
+    VaultCraftCandidatesAnswer,
     VaultSettingsWakePolicySet,
     VaultSettingsInferenceDefaults,
     VaultSettingsInferenceDefaultsReplace,
@@ -357,6 +364,10 @@ pub enum AgentVerb {
     ConnectorOutboundSchedule,
     VaultNotesCreate,
     VaultNotesFromEntity,
+    VaultNotesRead,
+    VaultNotesHistory,
+    VaultNotesEditorBind,
+    VaultNotesEditorClose,
     VaultNotesEdit,
     VaultNotesSeal,
     VaultNotesLifecycle,
@@ -509,6 +520,11 @@ impl AgentVerb {
         Self::VaultEmbeddingSpacesProbesList,
         Self::VaultEmbeddingSpacesProbesPut,
         Self::VaultEmbeddingSpacesProbesDelete,
+        Self::VaultGatePolicyGet,
+        Self::VaultGatePolicyPut,
+        Self::VaultGatePolicyPropose,
+        Self::VaultGateCheckerGet,
+        Self::VaultGateCheckerSet,
         Self::VaultSettingsLearning,
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
@@ -516,6 +532,8 @@ impl AgentVerb {
         Self::VaultWidenProposals,
         Self::VaultWidenProposalsApprove,
         Self::VaultWidenProposalsDecline,
+        Self::VaultCraftCandidates,
+        Self::VaultCraftCandidatesAnswer,
         Self::VaultSettingsWakePolicySet,
         Self::VaultSettingsInferenceDefaults,
         Self::VaultSettingsInferenceDefaultsReplace,
@@ -721,6 +739,10 @@ impl AgentVerb {
         Self::ConnectorOutboundSchedule,
         Self::VaultNotesCreate,
         Self::VaultNotesFromEntity,
+        Self::VaultNotesRead,
+        Self::VaultNotesHistory,
+        Self::VaultNotesEditorBind,
+        Self::VaultNotesEditorClose,
         Self::VaultNotesEdit,
         Self::VaultNotesSeal,
         Self::VaultNotesLifecycle,
@@ -878,6 +900,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => "vault.embedding_spaces.probes.list",
             Self::VaultEmbeddingSpacesProbesPut => "vault.embedding_spaces.probes.put",
             Self::VaultEmbeddingSpacesProbesDelete => "vault.embedding_spaces.probes.delete",
+            Self::VaultGatePolicyGet => "vault.gate.policy.get",
+            Self::VaultGatePolicyPut => "vault.gate.policy.put",
+            Self::VaultGatePolicyPropose => "vault.gate.policy.propose",
+            Self::VaultGateCheckerGet => "vault.gate.checker.get",
+            Self::VaultGateCheckerSet => "vault.gate.checker.set",
             Self::VaultSettingsLearning => "vault.settings.learning",
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
@@ -885,6 +912,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => "vault.widen_proposals",
             Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
             Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
+            Self::VaultCraftCandidates => "vault.craft_candidates",
+            Self::VaultCraftCandidatesAnswer => "vault.craft_candidates.answer",
             Self::VaultSettingsWakePolicySet => "vault.settings.wake_policy.set",
             Self::VaultSettingsInferenceDefaults => "vault.settings.inference_defaults",
             Self::VaultSettingsInferenceDefaultsReplace => {
@@ -1092,6 +1121,10 @@ impl AgentVerb {
             Self::ConnectorOutboundSchedule => "connector.outbound.schedule",
             Self::VaultNotesCreate => "vault.notes.create",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
+            Self::VaultNotesRead => "vault.notes.read",
+            Self::VaultNotesHistory => "vault.notes.history",
+            Self::VaultNotesEditorBind => "vault.notes.editor.bind",
+            Self::VaultNotesEditorClose => "vault.notes.editor.close",
             Self::VaultNotesEdit => "vault.notes.edit",
             Self::VaultNotesSeal => "vault.notes.seal",
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
@@ -1243,6 +1276,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultGatePolicyGet
+                | Self::VaultGatePolicyPut
+                | Self::VaultGatePolicyPropose
+                | Self::VaultGateCheckerGet
+                | Self::VaultGateCheckerSet
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -1250,6 +1288,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidates
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -1415,6 +1455,10 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesRead
+                | Self::VaultNotesHistory
+                | Self::VaultNotesEditorBind
+                | Self::VaultNotesEditorClose
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
@@ -1614,6 +1658,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultGatePolicyGet
+                | Self::VaultGatePolicyPut
+                | Self::VaultGatePolicyPropose
+                | Self::VaultGateCheckerGet
+                | Self::VaultGateCheckerSet
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -1621,6 +1670,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidates
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -1786,6 +1837,10 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesRead
+                | Self::VaultNotesHistory
+                | Self::VaultNotesEditorBind
+                | Self::VaultNotesEditorClose
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
@@ -1873,6 +1928,10 @@ impl AgentVerb {
                 | Self::VaultRefsLinks
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultNotesRead
+                | Self::VaultNotesHistory
+                | Self::VaultNotesEditorBind
+                | Self::VaultNotesEditorClose
         )
     }
     pub const fn requires_unscoped(self) -> bool {
@@ -2011,6 +2070,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultGatePolicyGet
+                | Self::VaultGatePolicyPut
+                | Self::VaultGatePolicyPropose
+                | Self::VaultGateCheckerGet
+                | Self::VaultGateCheckerSet
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -2018,6 +2082,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidates
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -2322,11 +2388,15 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesMoveAbandon
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultGatePolicyPut
+                | Self::VaultGatePolicyPropose
+                | Self::VaultGateCheckerSet
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
@@ -2454,6 +2524,7 @@ impl AgentVerb {
             Self::Cancel
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
+                | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -2622,6 +2693,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => &[],
             Self::VaultEmbeddingSpacesProbesPut => &["spec"],
             Self::VaultEmbeddingSpacesProbesDelete => &["spec"],
+            Self::VaultGatePolicyGet => &["spec"],
+            Self::VaultGatePolicyPut => &["spec"],
+            Self::VaultGatePolicyPropose => &["spec"],
+            Self::VaultGateCheckerGet => &["spec"],
+            Self::VaultGateCheckerSet => &["spec"],
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
@@ -2629,6 +2705,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
+            Self::VaultCraftCandidates => &["spec"],
+            Self::VaultCraftCandidatesAnswer => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
@@ -2834,6 +2912,10 @@ impl AgentVerb {
             Self::ConnectorOutboundSchedule => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
+            Self::VaultNotesRead => &["spec"],
+            Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesEditorBind => &["spec"],
+            Self::VaultNotesEditorClose => &["spec"],
             Self::VaultNotesEdit => &["spec"],
             Self::VaultNotesSeal => &["spec"],
             Self::VaultNotesLifecycle => &["spec"],
@@ -2987,6 +3069,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => &[],
             Self::VaultEmbeddingSpacesProbesPut => &["spec"],
             Self::VaultEmbeddingSpacesProbesDelete => &["spec"],
+            Self::VaultGatePolicyGet => &["spec"],
+            Self::VaultGatePolicyPut => &["spec"],
+            Self::VaultGatePolicyPropose => &["spec"],
+            Self::VaultGateCheckerGet => &["spec"],
+            Self::VaultGateCheckerSet => &["spec"],
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
@@ -2994,6 +3081,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
+            Self::VaultCraftCandidates => &["spec"],
+            Self::VaultCraftCandidatesAnswer => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
@@ -3199,6 +3288,10 @@ impl AgentVerb {
             Self::ConnectorOutboundSchedule => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
+            Self::VaultNotesRead => &["spec"],
+            Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesEditorBind => &["spec"],
+            Self::VaultNotesEditorClose => &["spec"],
             Self::VaultNotesEdit => &["spec"],
             Self::VaultNotesSeal => &["spec"],
             Self::VaultNotesLifecycle => &["spec"],
@@ -3485,7 +3578,7 @@ impl AgentVerb {
                 "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."
             }
             Self::VaultResidenceOpen => {
-                "Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."
+                "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."
             }
             Self::VaultResidenceIndex => {
                 "The thin index one of the owner's machines holds, window by window: what exists, never a body."
@@ -3609,6 +3702,21 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesDelete => {
                 "Removes one stored embedding space probe by its id."
             }
+            Self::VaultGatePolicyGet => {
+                "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."
+            }
+            Self::VaultGatePolicyPut => {
+                "The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."
+            }
+            Self::VaultGatePolicyPropose => {
+                "Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert."
+            }
+            Self::VaultGateCheckerGet => {
+                "The owner reads the calibrated checker verdict role from the vault model manifest."
+            }
+            Self::VaultGateCheckerSet => {
+                "The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."
+            }
             Self::VaultSettingsLearning => {
                 "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."
             }
@@ -3629,6 +3737,12 @@ impl AgentVerb {
             }
             Self::VaultWidenProposalsDecline => {
                 "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."
+            }
+            Self::VaultCraftCandidates => {
+                "The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins."
+            }
+            Self::VaultCraftCandidatesAnswer => {
+                "The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first."
             }
             Self::VaultSettingsWakePolicySet => {
                 "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof."
@@ -4176,6 +4290,18 @@ impl AgentVerb {
             }
             Self::VaultNotesFromEntity => {
                 "Creates a NOTE of a registered kind from an existing entity."
+            }
+            Self::VaultNotesRead => {
+                "Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."
+            }
+            Self::VaultNotesHistory => {
+                "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."
+            }
+            Self::VaultNotesEditorBind => {
+                "Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."
+            }
+            Self::VaultNotesEditorClose => {
+                "Closes one live NOTE editor held by this caller; a binding id alone grants no authority."
             }
             Self::VaultNotesEdit => {
                 "Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."

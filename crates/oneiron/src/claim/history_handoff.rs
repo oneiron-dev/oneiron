@@ -1,9 +1,18 @@
-//! Bounded, canonical, signed transfer of one scoped machine-claim history.
+//! Bounded, canonical, signed transfer of one scoped machine-claim history,
+//! one delta at a time.
 //!
 //! This is an untrusted wire packet, not an authority roster or an import door.
-//! The host must pin genesis, signer, scope, predecessor and challenge, and
-//! independently prove the signer was a live owner at the named authority
-//! frontier and that the packet contains *all* scoped births/transitions.
+//! Packets form a chain: each names the exact previous packet by its content
+//! hash and carries only the transitions new since that packet. Every packet
+//! repeats the claim's one birth anchor, which is a DAG root only in the
+//! genesis packet; a later packet's roots are the previous packet's heads,
+//! which the host pins from that verified packet, never from the incoming one.
+//! The bounds below bound one packet, so a claim's lifecycle has no cap and
+//! storage grows with its transitions, not their square.
+//! The host must pin genesis, signer, scope, predecessor, its heads and
+//! challenge, and independently prove the signer was a live owner at the named
+//! authority frontier and that the chain carries *all* scoped births and
+//! transitions.
 
 use std::collections::BTreeSet;
 
@@ -16,6 +25,7 @@ pub const CLAIM_HISTORY_HANDOFF_VERSION: u8 = 1;
 /// The leading byte of a re-root carry: the handoff layout, so the byte is in
 /// both the transcript and the content hash.
 pub const CLAIM_HISTORY_CARRY_VERSION: u8 = 2;
+// Per-packet codec bounds: they bound one delta, never a claim's history.
 const MAX_SCOPE: usize = 4096;
 const MAX_BIRTHS: usize = 1024;
 const MAX_TRANSITIONS: usize = 4096;
@@ -30,7 +40,8 @@ pub struct ClaimBirth {
 }
 
 /// One exact transition and its complete predecessor set. Predecessors name
-/// birth digests or other transition hashes, not floating entity IDs.
+/// the packet's roots (the birth digests at genesis, the previous packet's
+/// heads after it) or transitions of the same delta, not floating entity IDs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimTransition {
     pub hash: [u8; 32],
@@ -57,11 +68,17 @@ pub struct ClaimHistoryHandoff {
     pub vault_id: [u8; 32],
     pub genesis_hash: [u8; 32],
     pub scope: Vec<u8>,
+    /// The claim's birth anchor, repeated unchanged in every packet of the
+    /// chain. A DAG root only in the genesis packet; after it, identity only.
     pub births: Vec<ClaimBirth>,
+    /// Only the transitions new in this packet: its delta on the previous
+    /// packet. A carry's delta is empty.
     pub transitions: Vec<ClaimTransition>,
-    /// Exact maximal hashes of the birth/transition DAG.
+    /// Exact maximal hashes of the whole history after this delta: each root
+    /// the delta does not consume, and each of its own unconsumed transitions.
     pub heads: Vec<[u8; 32]>,
     pub authority_head: [u8; 32],
+    /// Content hash of the exact previous packet; `None` only at genesis.
     pub previous_handoff_hash: Option<[u8; 32]>,
     pub nonce: [u8; 32],
     pub challenge: [u8; 32],
@@ -89,12 +106,17 @@ pub struct ClaimHistoryHandoffPin<'a> {
     pub expected_signer: &'a AuthorityKey,
     pub scope: &'a [u8],
     pub previous_handoff_hash: Option<[u8; 32]>,
+    /// Heads of the exact previous packet, the delta's roots: empty at
+    /// genesis. The host reads them from that verified packet or from its own
+    /// stored pin, never from the packet under test.
+    pub previous_heads: &'a [[u8; 32]],
     pub challenge: &'a [u8; 32],
 }
 
 /// Host callback verdict. `OwnerAndComplete` requires independently checked
 /// causal owner standing at `authority_head` AND completeness of scoped births,
-/// signed rows, transitions and parent closure. A copied roster is not proof.
+/// signed rows, transitions and parent closure across the whole chain. A
+/// copied roster is not proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandoffStanding {
     OwnerAndComplete,
@@ -366,62 +388,67 @@ impl Cursor<'_> {
     }
 }
 
-/// Pure, fail-closed verifier. The callback MUST independently establish:
-/// (1) causal host-owner standing at `authority_head` from local signed log
-/// parents (not a packet roster); (2) exact, complete scoped birth IDs and
-/// canonical row digests; (3) transition hash/predecessor closure and heads.
-/// It can return `MissingParents` if its local authority/claim history is not
-/// yet complete. No timestamp, network identity, or packet-asserted roster
-/// grants authority here. This method never mutates a store.
-pub fn verify_claim_history_handoff(
+/// How one packet's delta closes over its roots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeltaClosure {
+    /// Every transition reduces from the roots and the heads are exact.
+    Closed,
+    /// A predecessor is neither a root nor a transition of this delta.
+    MissingParents,
+    /// A duplicate, a transition that repeats a root, a cycle or wrong heads.
+    Invalid,
+}
+
+/// The closure of `packet`'s delta over its roots R: the birth digests at
+/// genesis (`previous_heads` must then be empty), else `previous_heads`, the
+/// heads of the exact previous packet. With D the delta's transition hashes,
+/// P their predecessors and U = R ∪ D: D is duplicate-free and disjoint from
+/// R, every predecessor set is nonempty and canonical, P ⊆ U, D reduces
+/// topologically from R, and the heads are exactly U \ P, so a previous head
+/// the delta does not consume stays a head. Pure: it reads this packet only.
+pub(crate) fn handoff_delta_closure(
     packet: &ClaimHistoryHandoff,
-    pin: &ClaimHistoryHandoffPin<'_>,
-    standing: impl FnOnce(&ClaimHistoryHandoff) -> HandoffStanding,
-) -> HandoffVerification {
-    if packet.check_shape().is_err() {
-        return HandoffVerification::Refused(HandoffRefusal::InvalidPacket);
-    }
-    if packet.vault_id != *pin.vault_id
-        || packet.genesis_hash != *pin.genesis_hash
-        || packet.signer != *pin.expected_signer
-        || packet.scope.as_slice() != pin.scope
-        || packet.previous_handoff_hash != pin.previous_handoff_hash
-        || packet.challenge != *pin.challenge
+    previous_heads: &[[u8; 32]],
+) -> DeltaClosure {
+    let (roots, listed): (BTreeSet<[u8; 32]>, usize) = match packet.previous_handoff_hash {
+        None if previous_heads.is_empty() => (
+            packet.births.iter().map(|b| b.digest).collect(),
+            packet.births.len(),
+        ),
+        None => return DeltaClosure::Invalid,
+        // After genesis the birth anchor is identity, not a node: it never
+        // comes back as a head.
+        Some(_) => (
+            previous_heads.iter().copied().collect(),
+            previous_heads.len(),
+        ),
+    };
+    let delta: BTreeSet<[u8; 32]> = packet.transitions.iter().map(|t| t.hash).collect();
+    if roots.is_empty()
+        || roots.len() != listed
+        || delta.len() != packet.transitions.len()
+        || !delta.is_disjoint(&roots)
+        || packet
+            .transitions
+            .iter()
+            .any(|t| t.predecessors.is_empty() || !sorted_unique(&t.predecessors))
     {
-        return HandoffVerification::Refused(HandoffRefusal::PinMismatch);
+        return DeltaClosure::Invalid;
     }
-    let Ok(transcript) = packet.transcript() else {
-        return HandoffVerification::Refused(HandoffRefusal::InvalidPacket);
-    };
-    let signature = AuthoritySignature {
-        suite: packet.signer.suite(),
-        public_key: packet.signer.clone(),
-        signature: packet.signature.to_vec(),
-    };
-    if !verify_authority_signature(&signature, &transcript) {
-        return HandoffVerification::Refused(HandoffRefusal::BadSignature);
-    }
-    let all: BTreeSet<_> = packet
-        .births
-        .iter()
-        .map(|b| b.digest)
-        .chain(packet.transitions.iter().map(|t| t.hash))
-        .collect();
-    if all.len() != packet.births.len() + packet.transitions.len() {
-        return HandoffVerification::Refused(HandoffRefusal::InvalidClosure);
-    }
-    let predecessor_set: BTreeSet<_> = packet
+    let all: BTreeSet<[u8; 32]> = roots.union(&delta).copied().collect();
+    let predecessor_set: BTreeSet<[u8; 32]> = packet
         .transitions
         .iter()
         .flat_map(|t| t.predecessors.iter().copied())
         .collect();
     if !predecessor_set.is_subset(&all) {
-        return HandoffVerification::MissingParents;
+        return DeltaClosure::MissingParents;
     }
     // An edge must not point to itself or to a cycle. Every node must reach
-    // some declared head. A topological reduction proves acyclicity.
-    let mut seen: BTreeSet<[u8; 32]> = packet.births.iter().map(|b| b.digest).collect();
-    let mut remaining: BTreeSet<_> = packet.transitions.iter().map(|t| t.hash).collect();
+    // some declared head. A topological reduction from the roots proves
+    // acyclicity.
+    let mut seen = roots;
+    let mut remaining = delta;
     loop {
         let ready: Vec<_> = packet
             .transitions
@@ -446,7 +473,56 @@ pub fn verify_claim_history_handoff(
             .collect::<Vec<_>>()
             != packet.heads
     {
-        return HandoffVerification::Refused(HandoffRefusal::InvalidClosure);
+        return DeltaClosure::Invalid;
+    }
+    DeltaClosure::Closed
+}
+
+/// Pure, fail-closed verifier of one packet of a chain. The callback MUST
+/// independently establish: (1) causal host-owner standing at
+/// `authority_head` from local signed log parents (not a packet roster);
+/// (2) exact, complete scoped birth IDs and canonical row digests; (3) that
+/// the chain behind this packet is present and closed, so the pinned previous
+/// heads and this delta together name the whole history.
+/// It can return `MissingParents` if its local authority/claim history is not
+/// yet complete. No timestamp, network identity, or packet-asserted roster
+/// grants authority here. This method never mutates a store.
+pub fn verify_claim_history_handoff(
+    packet: &ClaimHistoryHandoff,
+    pin: &ClaimHistoryHandoffPin<'_>,
+    standing: impl FnOnce(&ClaimHistoryHandoff) -> HandoffStanding,
+) -> HandoffVerification {
+    if packet.check_shape().is_err() {
+        return HandoffVerification::Refused(HandoffRefusal::InvalidPacket);
+    }
+    if packet.vault_id != *pin.vault_id
+        || packet.genesis_hash != *pin.genesis_hash
+        || packet.signer != *pin.expected_signer
+        || packet.scope.as_slice() != pin.scope
+        || packet.previous_handoff_hash != pin.previous_handoff_hash
+        || pin.previous_handoff_hash.is_none() != pin.previous_heads.is_empty()
+        || !sorted_unique(pin.previous_heads)
+        || packet.challenge != *pin.challenge
+    {
+        return HandoffVerification::Refused(HandoffRefusal::PinMismatch);
+    }
+    let Ok(transcript) = packet.transcript() else {
+        return HandoffVerification::Refused(HandoffRefusal::InvalidPacket);
+    };
+    let signature = AuthoritySignature {
+        suite: packet.signer.suite(),
+        public_key: packet.signer.clone(),
+        signature: packet.signature.to_vec(),
+    };
+    if !verify_authority_signature(&signature, &transcript) {
+        return HandoffVerification::Refused(HandoffRefusal::BadSignature);
+    }
+    match handoff_delta_closure(packet, pin.previous_heads) {
+        DeltaClosure::Closed => {}
+        DeltaClosure::MissingParents => return HandoffVerification::MissingParents,
+        DeltaClosure::Invalid => {
+            return HandoffVerification::Refused(HandoffRefusal::InvalidClosure);
+        }
     }
     match standing(packet) {
         HandoffStanding::OwnerAndComplete => match packet.content_hash() {

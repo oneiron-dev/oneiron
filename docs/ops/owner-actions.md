@@ -988,6 +988,30 @@ to you as a `rubric_recheck` ask in your digest. `POST /v1/owner/coach/judge-ask
 drops it for good and asks the case again, as a `rubric_regrade` A/B ask in a later digest, which
 you pick like any other.
 
+## Swap in a trained model
+
+When you say yes to a Coach offer to train a custom model, the run trains, is scored on its
+held-out cases, and then waits for a separate choice: a trained model never swaps in by itself.
+Once a run is scored and its checks allow a swap (no exact-hash overlap with the held-out cases,
+passing export checks, a passing held-out verdict under the plan's harness), the Coach asks each
+owner in their conversation with it: "Swap in the trained model" or "Keep the current model".
+The question names the starting and returned checkpoints with their load-set hashes, the
+harness, the export checks, the overlaps and the held-out metrics, and reads the paired
+comparison with the current model as unknown, since nothing measured it yet. Doing nothing keeps
+the current model, and only your own answer settles it. Embedder runs are not asked: their swap
+re-embeds through a space move.
+
+`POST /v1/owner/coach/training-runs/view` with `{"run"}` shows a run: its state, evaluation,
+export checks and overlaps, every swap receipt, every swap question and `serving`. `POST
+/v1/owner/coach/training-runs/swap` with `{"run", "choice": {"kind": "evaluated"}, "expected":
+{"spec", "checkpoint"}}` swaps in the result you viewed, named by the `spec` and `checkpoint`
+hashes the view showed; a result that moved since is refused as changed. `{"kind":
+"explicit_override", "reason"}` binds a returned checkpoint whose checks failed, with your reason
+on its receipt. Either answer closes the run's other open questions.
+
+No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
+with the custody pin a loader would load.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the
@@ -1403,7 +1427,10 @@ A running server holds the frame of each card `vault.lenses.default`, `vault.wea
   A model round-trip action goes back to the agent that rendered the card, as that agent's next
   turn: it answers `202 {"queued", "callbackId"}`, and the agent decides what to do with it. The
   same credential, card and key answer the same callback. A card a person's view or a system job
-  rendered answers `409`.
+  rendered answers `409`. A tool action whose verb acts on a live run acts for the run that
+  rendered the card, through your credential's attachment to it, and names no `liveRun`: attach
+  that credential to the run first. A card no run rendered, or a run your credential is not
+  attached to, answers `live_run_unavailable`.
 - `DELETE /v1/core/lens-frames/{card_id}` closes the card; an unknown card answers `NOT_FOUND`.
 
 ## Widen proposals
@@ -1429,6 +1456,23 @@ The commands open a stopped vault. A running server answers the same at
 input over the facade and MCP. Each answer shows the parent and board attempts, the target, the
 three context descriptors (never their content), when it was raised, and how it settled. Only the
 owner of the board's TASK may answer one.
+
+## Craft candidates
+
+A resident's dreaming may propose craft notes about itself: a **lesson** (`actor.lesson`) or a
+**failure mode** (`actor.failure_mode`). Each note waits as a Proposed candidate on a card in its
+agent inbox, and nothing treats it as learned until you answer it. The card shows the note's
+words, the dreaming it came from, and a content hash. Your answer names that hash, so you answer
+the note you read. Approving it makes the note the resident's learned craft; rejecting it sets
+only this note aside, and a later dreaming may propose the same words again. Either verdict is
+written as its own row that replaces the candidate, with a gate receipt. Answering again with the
+same verdict returns the first one; the opposite verdict is refused.
+
+A running server lists them at `GET /v1/owner/craft-candidates[?resident=HEX32]`, and answers at
+`POST /v1/owner/craft-candidates/answer` with
+`{"candidate_id", "content_hash", "verdict": "approved"|"rejected"}`. The host verbs
+`vault.craft_candidates` and `vault.craft_candidates.answer` take the same input over the facade
+and MCP.
 
 ## Legal holds
 

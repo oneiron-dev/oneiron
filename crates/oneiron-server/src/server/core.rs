@@ -102,6 +102,8 @@ pub struct SyncServer {
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
     /// The lens frames held for the cards this server rendered (OF-181), charged to `retained`.
     pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
+    /// Live NOTE editors explicitly bound by their own principals.
+    pub(crate) note_editors: super::NoteEditors,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -112,6 +114,11 @@ pub struct SyncServer {
     /// The live agent runs a harness may act for over HTTP (OF-181): each
     /// runner's lease proof, its attached credential and its guard.
     pub(crate) live_runs: Arc<super::LiveRuns>,
+    /// The questions connectors asked mid-call, live for their callers
+    /// (ONE-2510): every connector host this server builds keeps them here,
+    /// and `connector.answer` reads them.
+    pub(crate) connector_elicitations:
+        Arc<crate::connector_elicitation::ConnectorElicitationRegistry>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -386,6 +393,7 @@ impl SyncServer {
         // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
         super::desktop_seats::clear_stale_asks(&vault);
         Ok(Self {
+            note_editors: super::NoteEditors::default(),
             lens_frames,
             retained,
             presence,
@@ -420,6 +428,7 @@ impl SyncServer {
             mcp_code_host: None,
             reader_runner,
             live_runs,
+            connector_elicitations: Arc::default(),
             browser_guest: None,
             desktop_guest: None,
             desktop_seats: Arc::default(),

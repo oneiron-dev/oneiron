@@ -71,6 +71,15 @@ impl NoteKind {
     }
 }
 
+mod reads;
+pub use reads::{
+    NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest, NoteEditorClosed,
+    NoteHistoryView, NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView,
+};
+#[cfg(feature = "sync")]
+mod residence_read;
+#[cfg(feature = "sync")]
+pub(crate) use residence_read::opened_note_view;
 mod archive_read;
 pub(crate) mod documents;
 pub(crate) mod erase;
@@ -93,10 +102,16 @@ pub use kinds::{
 };
 pub use lifecycle::{NoteLifecycleStatus, NoteLifecycleView, NoteRefRequest, NoteSeal};
 mod overrides;
-pub(crate) use lifecycle::{note_sealed_in_txn, seal_note_in_txn};
+pub(crate) use lifecycle::{erase_seal_actor_in_txn, note_sealed_in_txn, seal_note_in_txn};
 pub(crate) use overrides::note_defaults_in_txn;
 pub use overrides::{NoteDefaultsView, NoteOverrides, SetNoteOverridesRequest};
-pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};
+pub use proposals::{
+    ACTOR_ERASE_PENDING_NOTE_FORK, NoteActor, NoteFork, NoteLandingReceipt, NoteReviewBundle,
+    NoteVerdict, PendingNoteForkErase,
+};
+pub(crate) use proposals::{
+    erase_fork_actor_in_txn, erase_proposal_actor_in_txn, erase_receipt_actor_in_txn,
+};
 pub use tombstone_review::NoteTombstoneProposal;
 pub(crate) use tombstone_review::{
     decline_tombstone, open_tombstone_proposals_in_txn, review_note_tombstones, tombstone_accepted,
@@ -492,6 +507,7 @@ pub(crate) fn note_side_text_in_txn(
 
 mod document_store;
 mod folder_source;
+pub(crate) use folder_source::erase_folder_source_actor_in_txn;
 pub use folder_source::{
     FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource, FolderSourceFile,
 };

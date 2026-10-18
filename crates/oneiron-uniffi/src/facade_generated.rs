@@ -706,6 +706,31 @@ export_facade! {
     let output = client.vault_embedding_spaces_probes_delete(&input)?;
     crate::codec::lift_record("vault.embedding_spaces.probes.delete", &output)
 };
+"vault.gate.policy.get" => fn vault_gate_policy_get(&self, input: PolicyManifestRead) -> PolicyManifestsView = |client| {
+    let input: oneiron::policy_manifest_doors::PolicyManifestRead = crate::codec::lower_record("vault.gate.policy.get", input)?;
+    let output = client.vault_gate_policy_get(&input)?;
+    crate::codec::lift_record("vault.gate.policy.get", &output)
+};
+"vault.gate.policy.put" => fn vault_gate_policy_put(&self, input: PolicyManifestPut) -> PolicyManifestReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::PolicyManifestPut = crate::codec::lower_record("vault.gate.policy.put", input)?;
+    let output = client.vault_gate_policy_put(&input)?;
+    crate::codec::lift_record("vault.gate.policy.put", &output)
+};
+"vault.gate.policy.propose" => fn vault_gate_policy_propose(&self, input: PolicyManifestPropose) -> PolicyManifestReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::PolicyManifestPropose = crate::codec::lower_record("vault.gate.policy.propose", input)?;
+    let output = client.vault_gate_policy_propose(&input)?;
+    crate::codec::lift_record("vault.gate.policy.propose", &output)
+};
+"vault.gate.checker.get" => fn vault_gate_checker_get(&self) -> GateCheckerView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.gate.checker.get")?;
+    let output = client.vault_gate_checker_get(&input)?;
+    crate::codec::lift_record("vault.gate.checker.get", &output)
+};
+"vault.gate.checker.set" => fn vault_gate_checker_set(&self, input: GateCheckerSet) -> GateCheckerReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::GateCheckerSet = crate::codec::lower_record("vault.gate.checker.set", input)?;
+    let output = client.vault_gate_checker_set(&input)?;
+    crate::codec::lift_record("vault.gate.checker.set", &output)
+};
 "vault.settings.learning" => fn vault_settings_learning(&self, input: LearningSettingsRequest) -> LearningSettingsView = |client| {
     let input: oneiron::learning_setting_doors::LearningSettingsRequest = crate::codec::lower_record("vault.settings.learning", input)?;
     let output = client.vault_settings_learning(&input)?;
@@ -740,6 +765,16 @@ export_facade! {
     let input: oneiron::agent_dispatch::widen_doors::WidenProposalAnswer = crate::codec::lower_record("vault.widen_proposals.decline", input)?;
     let output = client.vault_widen_proposals_decline(&input)?;
     crate::codec::lift_record("vault.widen_proposals.decline", &output)
+};
+"vault.craft_candidates" => fn vault_craft_candidates(&self, input: CraftCandidatesRequest) -> CraftCandidatesView = |client| {
+    let input: oneiron::actor_claims::CraftCandidatesRequest = crate::codec::lower_record("vault.craft_candidates", input)?;
+    let output = client.vault_craft_candidates(&input)?;
+    crate::codec::lift_record("vault.craft_candidates", &output)
+};
+"vault.craft_candidates.answer" => fn vault_craft_candidates_answer(&self, input: CraftCandidateAnswer) -> CraftVerdictView = |client| {
+    let input: oneiron::actor_claims::CraftCandidateAnswer = crate::codec::lower_record("vault.craft_candidates.answer", input)?;
+    let output = client.vault_craft_candidates_answer(&input)?;
+    crate::codec::lift_record("vault.craft_candidates.answer", &output)
 };
 "vault.settings.wake_policy.set" => fn vault_settings_wake_policy_set(&self, input: WakePolicySetRequest) -> PolicyActionOutcome = |client| {
     let input: oneiron::policy_setting_doors::WakePolicySetRequest = crate::codec::lower_record("vault.settings.wake_policy.set", input)?;
@@ -1565,6 +1600,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::CreateNoteFromEntityRequest = crate::codec::lower_record("vault.notes.from_entity", input)?;
     let output = client.vault_notes_from_entity(&input)?;
     Lift::lift(output)
+};
+"vault.notes.read" => fn vault_notes_read(&self, input: NoteReadRequest) -> ScopedReadResultOptionalNoteReadView = |client| {
+    let input: oneiron::note::NoteReadRequest = crate::codec::lower_record("vault.notes.read", input)?;
+    let output = client.vault_notes_read(&input)?;
+    crate::codec::lift_record("vault.notes.read", &output)
+};
+"vault.notes.history" => fn vault_notes_history(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteHistoryView = |client| {
+    let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.history", input)?;
+    let output = client.vault_notes_history(&input)?;
+    crate::codec::lift_record("vault.notes.history", &output)
+};
+"vault.notes.editor.bind" => fn vault_notes_editor_bind(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteEditorBinding = |client| {
+    let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.editor.bind", input)?;
+    let output = client.vault_notes_editor_bind(&input)?;
+    crate::codec::lift_record("vault.notes.editor.bind", &output)
+};
+"vault.notes.editor.close" => fn vault_notes_editor_close(&self, input: NoteEditorCloseRequest) -> NoteEditorClosed = |client| {
+    let input: oneiron::note::NoteEditorCloseRequest = crate::codec::lower_record("vault.notes.editor.close", input)?;
+    let output = client.vault_notes_editor_close(&input)?;
+    crate::codec::lift_record("vault.notes.editor.close", &output)
 };
 "vault.notes.edit" => fn vault_notes_edit(&self, input: EditNoteRequest) -> NoteEditOutcome = |client| {
     let input: oneiron::task_verb::sdk::EditNoteRequest = crate::codec::lower_record("vault.notes.edit", input)?;

@@ -82,6 +82,14 @@ pub(super) fn spawn_request(call: &SelfAgentSpawnCall) -> Result<Value> {
                 None => Value::Nil,
             },
         ),
+        // FIX 1380: the comm reach asked for; another reach is another
+        // request.
+        (
+            "comm",
+            call.context
+                .comm
+                .map_or(Value::Nil, |comm| Value::from(comm.as_str())),
+        ),
     ]))
 }
 

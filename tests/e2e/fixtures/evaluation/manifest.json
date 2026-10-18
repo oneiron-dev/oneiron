@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "area": "evaluation",
+  "assets": [
+    {
+      "id": "evaluation-contracts",
+      "path": "contracts.json",
+      "source": {
+        "uri": "fixture-spec:oneiron-e2e-evaluation-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "93da1d117ba122c65353bd30089cb329db484c787e4a8b79a52b3fbe71d694af",
+      "expectedFacts": {
+        "scope": "contract smoke; all eight IDs blocked on typed public prerequisites",
+        "qaTruthFixture": "shared-observatory-note",
+        "noGeneratedOperationGold": true
+      },
+      "scenarios": [
+        "EVALUATION-01",
+        "EVALUATION-02",
+        "EVALUATION-03",
+        "EVALUATION-04",
+        "EVALUATION-05",
+        "EVALUATION-06",
+        "EVALUATION-07",
+        "EVALUATION-08"
+      ],
+      "requires": []
+    },
+    {
+      "id": "evaluation-edit-source",
+      "path": "edit-source.ts",
+      "source": {
+        "uri": "fixture-spec:oneiron-e2e-evaluation-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "808445fdeecdd878d00c88ef9486daba5cd4b391787bb947219d0c6f5adaad76",
+      "expectedFacts": {
+        "function": "status",
+        "returns": "draft"
+      },
+      "scenarios": [
+        "EVALUATION-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "evaluation-edit-expected",
+      "path": "edit-expected.ts",
+      "source": {
+        "uri": "fixture-spec:oneiron-e2e-evaluation-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "84b3f825aeb242fd4f0b1e52942dda0dca6e457cdc753b54e2f18def65424778",
+      "expectedFacts": {
+        "function": "status",
+        "returns": "ready",
+        "sameBudgetForBothArms": true
+      },
+      "scenarios": [
+        "EVALUATION-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "evaluation-context-value",
+      "path": "context-value.txt",
+      "source": {
+        "uri": "fixture-spec:oneiron-e2e-evaluation-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "0bdb26d4532b7b28a000a10be32a0ab3e0c7f9b8a14420b16adabbe3b734117c",
+      "expectedFacts": {
+        "bytes": 11553,
+        "sha256": "0bdb26d4532b7b28a000a10be32a0ab3e0c7f9b8a14420b16adabbe3b734117c",
+        "exactUtf8": true,
+        "normalizationForbidden": true
+      },
+      "scenarios": [
+        "EVALUATION-07"
+      ],
+      "requires": []
+    }
+  ]
+}

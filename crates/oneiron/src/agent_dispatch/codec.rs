@@ -16,7 +16,7 @@ use crate::write_envelope::WriteActor;
 use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
-    KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_LAUNCH,
+    KEY_COMM, KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_LAUNCH,
     KEY_OBJECTIVES, KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET, KEY_PROJECT_REF,
     KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_REF, KEY_TEAM,
     TARGET_CUSTOM, TARGET_SYSTEM,
@@ -185,6 +185,8 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
             Value::Array(rows.iter().map(|row| Value::from(row.as_str())).collect()),
         ));
     }
+    // FIX 1380: the comm reach is required, so every dispatch carries one.
+    entries.push((Value::from(KEY_COMM), Value::from(input.comm.as_str())));
     Ok(Value::Map(entries))
 }
 
@@ -236,6 +238,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut team = None;
     let mut plan = None;
     let mut objectives = None;
+    let mut comm = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -476,6 +479,13 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
             KEY_OBJECTIVES => {
                 objectives = Some(decode_objectives(value)?);
             }
+            KEY_COMM => {
+                comm = Some(value.as_str().and_then(super::CommReach::parse).ok_or(
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "comm must be one of parent|subtree|project|vault",
+                    )),
+                )?);
+            }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
@@ -496,6 +506,9 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         definition.ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             "missing required agent dispatch input key definition",
         )))?;
+    let comm = comm.ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+        "missing required agent dispatch input key comm",
+    )))?;
 
     // Cross-field target invariant (mirrors `resolve_scope` in agent_def.rs):
     // the id/preset key is present iff the target discriminant selects it.
@@ -546,6 +559,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         team,
         plan,
         objectives,
+        comm,
     })
 }
 

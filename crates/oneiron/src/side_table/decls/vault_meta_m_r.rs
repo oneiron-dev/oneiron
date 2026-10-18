@@ -61,7 +61,8 @@ side_tables! {
     /// FIX 2419). Key: id16(note).
     NOTE_ARCHIVE_READ: VaultMeta b"note_archive_read:v1:" Named;
     /// Recorded NOTE fork awaiting review/decision. Key: id16(fork head).
-    NOTE_FORK: VaultMeta b"note_fork:v1:" Named;
+    NOTE_FORK: VaultMeta b"note_fork:v1:" Named
+        => crate::note::erase_fork_actor_in_txn;
     /// A NOTE's current head document id and head-move sequence number. Key: id16.
     NOTE_HEAD: VaultMeta b"note_head:v1:" Raw;
     /// Marker: one row per head document a NOTE's text plane ever held (for erasure completeness).
@@ -75,12 +76,15 @@ side_tables! {
     NOTE_OVERRIDE: VaultMeta b"note_override:v1:" Named;
     /// Review bundle grouping several fork proposals under one shared explainer. Key: id16(bundle
     /// id).
-    NOTE_PROPOSAL_BUNDLE: VaultMeta b"note_proposal:v1:" Named;
+    NOTE_PROPOSAL_BUNDLE: VaultMeta b"note_proposal:v1:" Named
+        => crate::note::erase_proposal_actor_in_txn;
     /// Durable head-move (merge/switch/reject) receipt. Key: id16(receipt id).
-    NOTE_RECEIPT: VaultMeta b"note_receipt:v1:" Named;
+    NOTE_RECEIPT: VaultMeta b"note_receipt:v1:" Named
+        => crate::note::erase_receipt_actor_in_txn;
     /// A NOTE's seal: the head document and frontier it froze, its sealer and time (ARCH-0032
     /// lifecycle). Key: id16(note).
-    NOTE_SEAL: VaultMeta b"note_seal:v1:" Named;
+    NOTE_SEAL: VaultMeta b"note_seal:v1:" Named
+        => crate::note::erase_seal_actor_in_txn;
     /// A NOTE tombstone the monthly review proposed for the owner: the archive it holds for, and
     /// when the owner declined it, if they did (OF-073, FIX 2419). Key: id16(note).
     NOTE_TOMBSTONE_PROPOSAL: VaultMeta b"note_tombstone:v1:" Named;
@@ -169,7 +173,8 @@ side_tables! {
     ORIGIN_MIRROR_TARGET: VaultMeta b"origin:mirror_target:v1:" Named;
     /// Durable journal row for one origin ref-publication attempt, across its
     /// Prepared/Published/Failed/Conflicted lifecycle. Key: id16.
-    ORIGIN_PUBLICATION_RECORD: VaultMeta b"origin:publication:v1:" Named;
+    ORIGIN_PUBLICATION_RECORD: VaultMeta b"origin:publication:v1:" Named
+        => crate::origin::publication::erase_publication_actor_in_txn;
     /// Producer receipt pinning the exact encoded admission/outcome evidence claim body for one
     /// receive-pack operation. Key: id16.
     ORIGIN_RECEIVE_PACK_EVIDENCE: VaultMeta b"origin:receive_pack_evidence:v1:" Raw;

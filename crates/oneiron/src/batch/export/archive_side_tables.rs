@@ -24,10 +24,12 @@
 //! records first, then indexes, then heads. An identical live row is unchanged;
 //! any other refuses the import.
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Seek};
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
+use super::archive_index::{ArchiveIndex, IndexedArchive, Loc, Tag};
 use super::document_import::parse_id;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -813,40 +815,52 @@ pub(crate) fn archive_side_rows_in_txn(
 
 /// Validates an archive's side rows: each reads back through its table's key
 /// type and codec in the very form the exporter writes, no row repeats, and the
-/// record and every carrier it names are entities the archive holds (`ids`).
-/// `files` reads a file a row names.
-pub(crate) fn validate_side_rows(
-    rows: &[ArchiveSideRow],
-    ids: &BTreeSet<EntityId>,
-    files: &mut dyn FnMut(&ExportBodyFile) -> Result<Vec<u8>>,
+/// record and every carrier it names are entities the archive holds. Each row
+/// is read from the import's row index alone (FIX 3678), which keeps its place
+/// under its family and stored key.
+pub(crate) fn validate_side_rows<R: Read + Seek>(
+    archive: &mut IndexedArchive<'_, R>,
 ) -> Result<()> {
-    let mut stored = Vec::with_capacity(rows.len());
-    let mut seen = BTreeSet::new();
-    for row in rows {
-        let bytes = row.stored(files)?;
+    let mut files = |file: &ExportBodyFile| file.read(&archive.files);
+    let mut rows = archive.spool.rows(super::ArchiveRecordKind::SideTable);
+    while let Some((loc, row)) = rows.next_parsed::<ArchiveSideRow>(&archive.spool)? {
+        let bytes = row.stored(&mut files)?;
         let again = bytes
             .portable()?
             .ok_or_else(|| invalid("side row does not read back through its table"))?
             .0;
-        if again != *row {
+        if again != row {
             return Err(invalid("side row is not in the form its exporter writes"));
         }
-        if !seen.insert((row.family, bytes.key.clone())) {
+        let key = side_key(row.family, &bytes.key);
+        if !archive.index.insert(Tag::Side, &key, &loc.encode())? {
             return Err(invalid("side row appears twice"));
         }
-        stored.push(bytes);
+        if matches!(
+            row.family,
+            ArchiveSideFamily::LfsObject
+                | ArchiveSideFamily::LfsOwnerRef
+                | ArchiveSideFamily::LfsChunkMark
+                | ArchiveSideFamily::CodebaseFork
+        ) {
+            archive.index.put(Tag::SideContext, &key, &bytes.value)?;
+        }
     }
-    let context = SideContext::of(
-        stored
-            .iter()
-            .map(|row| (row.family, row.key.as_slice(), row.value.as_slice())),
-    );
-    for row in &stored {
+    let context = side_context(&archive.index)?;
+    let mut after: Option<Vec<u8>> = None;
+    while let Some((key, value)) = archive.index.next(Tag::Side, &[], after.as_deref())? {
+        let row = archive
+            .spool
+            .parse::<ArchiveSideRow>(Loc::decode(&value)?)?
+            .stored(&mut files)?;
         let held = match context.travel(row.family, &row.key, &row.value)? {
             Travel::With(owner, carriers) => {
-                row.owner == Some(owner)
-                    && ids.contains(&owner)
-                    && carriers.iter().all(|id| ids.contains(id))
+                let mut held = row.owner == Some(owner)
+                    && archive.index.contains(Tag::Entity, owner.as_bytes())?;
+                for id in &carriers {
+                    held = held && archive.index.contains(Tag::Entity, id.as_bytes())?;
+                }
+                held
             }
             Travel::Vault => row.owner.is_none(),
             Travel::Broken(_) | Travel::Orphan => false,
@@ -856,34 +870,32 @@ pub(crate) fn validate_side_rows(
                 "side row names a record or carrier the archive does not hold",
             ));
         }
+        after = Some(key);
     }
     Ok(())
 }
 
 /// Restores an archive's side rows in the import's write transaction, once its
-/// entities are in: each family's records, then its indexes, then its heads.
+/// entities are in: each family's records, then its indexes, then its heads, in
+/// the order the import's row index keeps them (FIX 3678), one at a time.
 /// A row whose record or carrier is not live here refuses the import; an
 /// identical live row is unchanged, and any other live row under its key
 /// refuses the import, never overwritten. Returns the rows written and those
 /// already here.
-pub(crate) fn restore_side_rows_in_txn(
+pub(crate) fn restore_side_rows_in_txn<R: Read + Seek>(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    rows: &[ArchiveSideRow],
-    files: &mut dyn FnMut(&ExportBodyFile) -> Result<Vec<u8>>,
+    archive: &IndexedArchive<'_, R>,
 ) -> Result<(usize, usize)> {
-    let mut stored = rows
-        .iter()
-        .map(|row| row.stored(files))
-        .collect::<Result<Vec<_>>>()?;
-    stored.sort_by(|a, b| (a.family, &a.key).cmp(&(b.family, &b.key)));
-    let context = SideContext::of(
-        stored
-            .iter()
-            .map(|row| (row.family, row.key.as_slice(), row.value.as_slice())),
-    );
+    let mut files = |file: &ExportBodyFile| file.read(&archive.files);
+    let context = side_context(&archive.index)?;
     let (mut restored, mut unchanged) = (0, 0);
-    for row in &stored {
+    let mut after: Option<Vec<u8>> = None;
+    while let Some((key, value)) = archive.index.next(Tag::Side, &[], after.as_deref())? {
+        let row = archive
+            .spool
+            .parse::<ArchiveSideRow>(Loc::decode(&value)?)?
+            .stored(&mut files)?;
         let named: Vec<EntityId> = match context.travel(row.family, &row.key, &row.value)? {
             Travel::With(owner, carriers) => std::iter::once(owner).chain(carriers).collect(),
             Travel::Vault => Vec::new(),
@@ -907,8 +919,43 @@ pub(crate) fn restore_side_rows_in_txn(
                 restored += 1;
             }
         }
+        after = Some(key);
     }
     Ok((restored, unchanged))
+}
+
+/// A side row's key in the import's row index: its family, then its stored
+/// key, so the index keeps the restore order.
+fn side_key(family: ArchiveSideFamily, key: &[u8]) -> Vec<u8> {
+    let mut indexed = Vec::with_capacity(1 + key.len());
+    indexed.push(family as u8);
+    indexed.extend_from_slice(key);
+    indexed
+}
+
+/// The owner context of the side rows the import's row index holds, read from
+/// the rows it keeps for it.
+fn side_context(index: &ArchiveIndex<'_>) -> Result<SideContext> {
+    let mut failed = None;
+    let context = SideContext::of(
+        index
+            .entries(Tag::SideContext)?
+            .map_while(|entry| match entry {
+                Ok(entry) => Some(entry),
+                Err(error) => {
+                    failed = Some(error);
+                    None
+                }
+            })
+            .filter_map(|(key, value)| {
+                let family = *key.first()?;
+                let family = ArchiveSideFamily::ALL
+                    .into_iter()
+                    .find(|known| *known as u8 == family)?;
+                Some((family, key.get(1..)?, value))
+            }),
+    );
+    failed.map_or(Ok(context), Err)
 }
 
 /// Where a row goes: with an entity and the carriers it names, broken (its

@@ -54,6 +54,8 @@ pub(crate) use source_tree::export_source_tree;
 
 mod vault_bundles;
 
+pub(crate) use vault_bundles::agent_bundle;
+#[cfg(test)]
 pub(crate) use vault_bundles::populate_agent_bundles;
 
 mod pack_archive;

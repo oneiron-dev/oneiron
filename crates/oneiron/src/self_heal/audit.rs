@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use crate::learning::TypeRef;
 use crate::learning_setting::{AUDIT_RATE, setting_value_in_txn};
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -128,11 +129,12 @@ fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
 }
 
+/// A non-objective seal reference: nonempty, without controls. Its length is
+/// measured at admission against `limits.seal_reference_bytes`; any length is
+/// kept whole.
 fn reference(value: &str) -> Result<()> {
-    if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
-        return Err(invalid(
-            "a seal reference is 1..=256 bytes without controls",
-        ));
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return Err(invalid("a seal reference is nonempty without controls"));
     }
     Ok(())
 }
@@ -250,6 +252,7 @@ impl Vault {
             "a confession requires the attempt's executor revision",
         ))?;
         reference(&executor)?;
+        let _ = self.measure_limit(EngineLimit::SealReferenceBytes, executor.len() as u64);
         let mut receipt = SealedAttemptReceipt {
             confession: confession.clone(),
             executor,
@@ -318,6 +321,10 @@ impl Vault {
         now: u64,
     ) -> Result<SealedAttemptReceipt> {
         reference(&outcome.judge_revision)?;
+        let _ = self.measure_limit(
+            EngineLimit::SealReferenceBytes,
+            outcome.judge_revision.len() as u64,
+        );
         self.with_write_txn_grouped(|txn| {
             let mut receipt = SEALS
                 .get(&self.store, txn, attempt.as_bytes())?
@@ -349,6 +356,10 @@ impl Vault {
             let mut seen = BTreeSet::new();
             for finding in &outcome.findings {
                 reference(&finding.evidence_ref)?;
+                let _ = self.measure_limit(
+                    EngineLimit::SealReferenceBytes,
+                    finding.evidence_ref.len() as u64,
+                );
                 if !expected.contains(finding.objective.as_str())
                     || !seen.insert(finding.objective.as_str())
                 {
