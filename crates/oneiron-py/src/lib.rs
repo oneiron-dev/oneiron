@@ -5329,6 +5329,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_notes_author_take(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.author_take")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.author_take", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_notes_from_entity(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.notes.from_entity")?;
         let output = py

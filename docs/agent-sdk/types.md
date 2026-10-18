@@ -2438,6 +2438,8 @@ class Oneiron:
     class _VaultNotesVerbs:
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
+        def author_take(self, input: Facade.AuthorTakeRequest) -> Facade.EntityRefReceipt:
+            """Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."""
         def from_entity(self, input: Facade.CreateNoteFromEntityRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind from an existing entity."""
         def read(self, input: Facade.NoteReadRequest) -> Facade.ScopedReadResult[Facade.NoteReadView | None]:

@@ -2936,6 +2936,11 @@ export_facade! {
     let output = client.vault_notes_create(&input)?;
     Lift::lift(output)
 };
+"vault.notes.author_take" => fn vault_notes_author_take(&self, input: AuthorTakeRequest) -> EntityRefReceipt = |client| {
+    let input: oneiron::task_verb::sdk::AuthorTakeRequest = crate::codec::lower_record("vault.notes.author_take", input)?;
+    let output = client.vault_notes_author_take(&input)?;
+    Lift::lift(output)
+};
 "vault.notes.from_entity" => fn vault_notes_from_entity(&self, input: CreateNoteFromEntityRequest) -> EntityRefReceipt = |client| {
     let input: oneiron::task_verb::sdk::CreateNoteFromEntityRequest = crate::codec::lower_record("vault.notes.from_entity", input)?;
     let output = client.vault_notes_from_entity(&input)?;

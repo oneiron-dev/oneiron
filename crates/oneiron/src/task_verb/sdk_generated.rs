@@ -3331,6 +3331,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<CreateNoteRequest>(),
             ),
             (
+                "vault.notes.author_take",
+                crate::code_run::vault_read::request_schema::<AuthorTakeRequest>(),
+            ),
+            (
                 "vault.notes.from_entity",
                 crate::code_run::vault_read::request_schema::<CreateNoteFromEntityRequest>(),
             ),
@@ -3816,6 +3820,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.summaries.proposals.merge",
     "vault.summaries.proposals.switch",
     "vault.summaries.proposals.reject",
+    "vault.notes.author_take",
     "vault.notes.read",
     "vault.notes.history",
     "vault.notes.fork",
@@ -4588,6 +4593,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.summaries.proposals.reject" => crate::code_run::vault_read::request_schema::<
             crate::scope_summary::SummaryProposalView,
         >(),
+        "vault.notes.author_take" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
+        }
         "vault.notes.read" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>,
         >(),
@@ -8826,6 +8834,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.author_take" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.from_entity" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11136,6 +11151,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.create" => {
             let _input: CreateNoteRequest = decode(value.clone())?;
         }
+        "vault.notes.author_take" => {
+            let _input: AuthorTakeRequest = decode(value.clone())?;
+        }
         "vault.notes.from_entity" => {
             let _input: CreateNoteFromEntityRequest = decode(value.clone())?;
         }
@@ -12282,6 +12300,7 @@ pub fn invoke(
             encode(vault_summaries_proposals_reject(memory, decode(value)?)?)
         }
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
+        "vault.notes.author_take" => encode(vault_notes_author_take(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.read" => encode(vault_notes_read(memory, decode(value)?)?),
         "vault.notes.history" => encode(vault_notes_history(memory, decode(value)?)?),
@@ -17589,6 +17608,18 @@ pub fn vault_notes_create(
     let landed = memory.create_note(&input.kind, &input.markdown)?;
     crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
     Ok(landed)
+}
+pub fn vault_notes_author_take(
+    memory: &Memory<'_>,
+    input: AuthorTakeRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.author_take",
+        &input,
+        &["/target/subject", "/target/claim"],
+    )?;
+    memory_requests::author_take(memory, input)
 }
 pub fn vault_notes_from_entity(
     memory: &Memory<'_>,

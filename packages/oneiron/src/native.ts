@@ -617,6 +617,7 @@ vaultSummariesProposalsMerge(input: unknown): unknown
 vaultSummariesProposalsSwitch(input: unknown): unknown
 vaultSummariesProposalsReject(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
+vaultNotesAuthorTake(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown

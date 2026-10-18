@@ -593,6 +593,7 @@ both bindings and their export-census tests in one change.
 - `vault.summaries.proposals.switch`
 - `vault.summaries.proposals.reject`
 - `vault.notes.create`
+- `vault.notes.author_take`
 - `vault.notes.from_entity`
 - `vault.notes.read`
 - `vault.notes.history`

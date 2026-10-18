@@ -1550,6 +1550,7 @@ fn mcp_agent_verb_input(
         "vault.summaries.proposals.switch" => a.spec.clone().ok_or_else(invalid),
         "vault.summaries.proposals.reject" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.author_take" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.from_entity" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.read" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.history" => a.spec.clone().ok_or_else(invalid),
@@ -3450,6 +3451,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.author_take" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.from_entity" => {
@@ -12793,6 +12797,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::CreateNoteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_notes_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.author_take" => {
+            let input: oneiron::task_verb::sdk::AuthorTakeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_author_take(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
