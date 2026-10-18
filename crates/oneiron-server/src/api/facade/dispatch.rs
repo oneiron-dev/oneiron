@@ -6088,6 +6088,30 @@ async fn vault_code_oplog(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_code_model_heal_count(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.model_heal_count")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.model_heal_count", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.model_heal_count", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_code_model_heal_count(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_code_repo_diff(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12130,6 +12154,7 @@ pub(crate) async fn call_verb(
         "vault.code.symbols.release" => vault_code_symbols_release(server, call, input).await,
         "vault.code.proposal_submit" => vault_code_proposal_submit(server, call, input).await,
         "vault.code.oplog" => vault_code_oplog(server, call, input).await,
+        "vault.code.model_heal_count" => vault_code_model_heal_count(server, call, input).await,
         "vault.code.repo_diff" => vault_code_repo_diff(server, call, input).await,
         "vault.code.export" => vault_code_export(server, call, input).await,
         "vault.code.origin.authority.get" => {

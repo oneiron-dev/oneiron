@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 561 code-mode rows (540 host rows, 21 run rows), 1973 declarations.
-// Replies: 494 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 562 code-mode rows (541 host rows, 21 run rows), 1975 declarations.
+// Replies: 495 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1102,6 +1102,8 @@ declare namespace Sdk {
   type CodeMutationState = "prepared" | "applied" | "failed";
   type CodeMutationEntry = { repo_ref: string; seq: number; operation_kind: string; operation_subject?: string | null; actor?: EntityId | null; session?: EntityId | null; started_at_ms: number; finished_at_ms?: number | null; pre_action_fork_hash: string; expected_post_action_fork_hash?: string | null; status: CodeMutationState; failure?: string | null };
   type CodeMutationLog = { repo: EntityId; entries: CodeMutationEntry[] };
+  type CodeRunModelHealCountRequest = { model_id: string };
+  type CodeRunModelHealCountView = { model_id: string; healed_turns: number };
   type CodeTreeRequest = { revision_ref?: string | null; repo?: string | null; snapshot_ref?: string | null };
   type CodeRepoDiffRequest = { before: CodeTreeRequest; after: CodeTreeRequest };
   type CodeFileChange = "added" | "removed" | "modified" | "renamed";
@@ -2538,6 +2540,8 @@ declare const vault: Sdk.VaultHost & {
       /** Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move. */
       stage(input: Sdk.MergeQueueBatchRequest): Promise<Sdk.MergeQueueBatchView | StoredResult>;
     };
+    /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
+    model_heal_count(input: Sdk.CodeRunModelHealCountRequest): Promise<Sdk.CodeRunModelHealCountView | StoredResult>;
     /** Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal. */
     oplog(input: Sdk.CodeRepoRequest): Promise<Sdk.CodeMutationLog | StoredResult>;
     origin: {

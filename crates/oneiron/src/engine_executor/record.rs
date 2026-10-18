@@ -407,6 +407,8 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.inference_defaults.replace" => Ok(SelfEffect::InferenceDefaultsReplace),
         // A summary not yet made parks its call on its job's task.
         "summarize" => Ok(SelfEffect::Summarize),
+        // A held `connector.call` parks on the call's ref (FIX 4380).
+        "self.verbs.call" => Ok(SelfEffect::AgentVerb),
         _ => Err(Error::CorruptedIndex("executor replay durable wait effect").into()),
     }
 }

@@ -4130,6 +4130,20 @@
       "host_door_lists": true
     },
     {
+      "name": "vault.code.model_heal_count",
+      "description": "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy.",
+      "input": "crate::memory::code_run_doors::CodeRunModelHealCountRequest",
+      "output": "crate::memory::code_run_doors::CodeRunModelHealCountView",
+      "call": "memory.code_run_model_heal_count_as(&memory.embedded_owner(\"vault.code.model_heal_count\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.repo_diff",
       "description": "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it.",
       "input": "crate::code_document::CodeRepoDiffRequest",
