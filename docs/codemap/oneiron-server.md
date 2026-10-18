@@ -177,7 +177,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/checkout_doors.rs` | src | s | 8 crate-vis | — | One credential-backed CHECKOUT door for HTTP, MCP and the generated SDK |
 | `src/api/facade/claim_settle_doors.rs` | src | s | 2 crate-vis | — | The host doors of one proposed claim's review and settlement (DOOR-115): `vault.claims.review` and… |
 | `src/api/facade/cleanup_doors.rs` | src | s | 2 crate-vis | — | Archive cleanup and evidence-backed re-mention, under the owner's own proof |
-| `src/api/facade/code_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137) |
+| `src/api/facade/code_doors.rs` | src | s | 11 crate-vis | — | Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137) |
 | `src/api/facade/code_run_doors.rs` | src | s | 1 crate-vis | — | The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093) |
 | `src/api/facade/code_wait_doors.rs` | src | s | 2 crate-vis | — | Credential-bound host projections of the typed code consent wait doors (DOOR-079): answer one exact sealed… |
 | `src/api/facade/codebase_doors.rs` | src | s | 4 crate-vis | — | Credential-bound host projections of the typed code snapshot doors (DOOR-118) |
@@ -206,7 +206,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/gate_policy_doors.rs` | src | s | 4 crate-vis | — | Owner policy and checker host doors |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 11 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | XL | 126 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
+| `src/api/facade/host_doors.rs` | src | XL | 128 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/hub_doors.rs` | src | m | 17 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/learning_doors.rs` | src | s | 2 crate-vis | — | Read-only measured-learning doors under the vault owner's existing proof |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
@@ -219,6 +220,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/off_record_doors.rs` | src | m | 9 crate-vis | — | The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06) |
 | `src/api/facade/origin_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
 | `src/api/facade/owner_binding.rs` | src | s | 3 crate-vis | — | WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy… |
+| `src/api/facade/persona_doors.rs` | src | s | 4 crate-vis | — | Profile request answers and mode-A copy edits under the owner's own proof |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
 | `src/api/facade/project_card_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's project-card tap (OF-501): `vault.projects.confirm` |
 | `src/api/facade/reaction_doors.rs` | src | s | 2 crate-vis | — | The host door of `vault.messages.react` (OF-181) |
@@ -365,6 +367,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/weave_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/weave`: the owner's doors to the weave lens (OF-499) |
 | `src/api/owner_routes/widen_proposal_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/widen-proposals`: the owner lists the context-widen proposals agents raised, and approves or… |
 | `src/api/owner_routes/wire_health_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/wire-health`: the health check past a threshold (OF-520) |
+| `src/api/owner_routes/world_privacy_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/worlds/privacy`: a holder answers the world-privacy requests agents raised (FIX 4480) |
 | `src/api/packs/defaults.rs` | src | s | 1 crate-vis | — | Explicit default restores and on-demand imports from the pinned library |
 | `src/api/packs/mod.rs` | src | s | 1 crate-vis | — | Served pack operations, including explicit default skill imports |
 | `src/api/pairing.rs` | src | m | 14 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
