@@ -934,6 +934,18 @@ export class Oneiron {
     esign: {
       /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
       create: (input: Facade.EsignCreateRequest): Facade.EsignDraftView => this.#call(() => this.#client.vaultEsignCreate(input) as Facade.EsignDraftView),
+      /** Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail. */
+      get: (input: Facade.EsignGetRequest): Facade.EsignDocumentView => this.#call(() => this.#client.vaultEsignGet(input) as Facade.EsignDocumentView),
+      links: {
+        /** The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient. */
+        issue: (input: Facade.EsignLinksIssueRequest): Facade.EsignLinksView => this.#call(() => this.#client.vaultEsignLinksIssue(input) as Facade.EsignLinksView),
+      },
+      /** Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope. */
+      send_for_signature: (input: Facade.EsignDispatchRequest): Facade.EsignDispatchView => this.#call(() => this.#client.vaultEsignSendForSignature(input) as Facade.EsignDispatchView),
+      /** Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller. */
+      remind: (input: Facade.EsignDispatchRequest): Facade.EsignDispatchView => this.#call(() => this.#client.vaultEsignRemind(input) as Facade.EsignDispatchView),
+      /** Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller. */
+      void: (input: Facade.EsignVoidRequest): Facade.EsignDispatchView => this.#call(() => this.#client.vaultEsignVoid(input) as Facade.EsignDispatchView),
     },
     /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
     batch: (input: Facade.CoreBatchWriteInput): Facade.CoreBatchWriteReceipt => this.#call(() => this.#client.vaultBatch(input) as Facade.CoreBatchWriteReceipt),
