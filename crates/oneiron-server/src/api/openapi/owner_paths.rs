@@ -48,6 +48,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/browsers/stream",
+        summary: "The run browser's front tab as server-sent events while the owner watches or holds it, as the desktop stream sends its display: state, frame, error, ended and refused events, and tabs when the browser's tabs change.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/cleanup",
         summary: "Cleanup review.",
         row: None,
@@ -98,6 +104,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/coach/judge-asks/pick",
         summary: "The caller's pick on an ask their digest delivered, a final label in the judged skill's anchor.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/coach/judge-asks/regrade",
+        summary: "The caller's re-grade of a pick a judge rubric edit left waiting: kept, or its case asked again.",
         row: None,
     },
     OwnerRoute {

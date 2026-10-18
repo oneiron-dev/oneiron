@@ -24,6 +24,7 @@ use oneiron::dispatch_byoa::{decode_byoa_exhaust, parse_byoa_result_ref};
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::dreamer_runner::maintenance::CoachLiveSlice;
 use oneiron::learning::honesty::HONESTY_AXIS;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, ProviderPin,
     TypedDecision,
@@ -36,8 +37,8 @@ use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
     AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
-    SkillOptimizeDecisions, SkillReplayPair, judge_incumbent, register_held_out_replay_scorer,
-    skill_edit_goal,
+    SkillOptimizeDecisions, SkillReplayPair, judge_incumbent, judge_rubric,
+    register_held_out_replay_scorer, skill_edit_goal,
 };
 use oneiron::skill_reliability::{SkillReliabilityPosterior, effective_skill_outcome};
 use oneiron::{EntityId, Error, ModelId, Result, Vault};
@@ -86,7 +87,7 @@ const CONFIGURED_JUDGES_UNASKED_INCUMBENT: bool = true;
 const WORDING: &[(&str, &str)] = &[
     (
         "score",
-        "How well do these instructions carry out the skill's task on these replays? Answer from 0 to 1.",
+        "How well do these instructions carry out the skill's task on these replays, judged by the state's judge rubric when it gives one? Answer from 0 to 1.",
     ),
     (
         "structural",
@@ -484,7 +485,9 @@ impl HeldOutReplayNotes for ServeReplayJudge {
 
     /// Each reserved receipt's task and response, cut to share the state;
     /// never its status, verdict or success. The goal's own words ride
-    /// beside them when the skill's goal joins a project that states them.
+    /// beside them when the skill's goal joins a project that states them,
+    /// and the judge's rubric (the active shared `judge` skill's text) when
+    /// one is in force, so an edit of it changes what every case is judged by.
     fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<Value> {
         let receipts = case.held_out_receipts;
         let bytes = (MAX_REPLAY_TEXT / receipts.len().max(1) / 2).max(MIN_REPLAY_TEXT);
@@ -500,6 +503,14 @@ impl HeldOutReplayNotes for ServeReplayJudge {
         });
         if let Some(goal) = self.goal_brief(&case.skill)? {
             state["goal"] = goal;
+        }
+        if let Some(rubric) = judge_rubric(&self.vault)? {
+            // Read whole; past its `[limits]` row it asks whether all is well.
+            self.vault.measure_limit(
+                EngineLimit::JudgeRubricBytes,
+                u64::try_from(rubric.text.len()).unwrap_or(u64::MAX),
+            );
+            state["judge_rubric"] = json!(rubric.text);
         }
         Ok(state)
     }

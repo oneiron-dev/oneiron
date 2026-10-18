@@ -213,6 +213,8 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_WORLD_PRIVACY => super::world_privacy::decode_world_privacy(entries),
         OP_KIND_WORLD_KEY_WRAPS => super::world_key_wraps::decode_world_key_wraps(entries),
         OP_KIND_OWNER_HANDOVER => super::owner_handover::decode_owner_handover(entries),
+        OP_KIND_RESIDENCE_DIRECTIVE => super::residence::decode_residence_directive(entries),
+        OP_KIND_RESIDENCE_RESULT => super::residence::decode_residence_result(entries),
         _ => Err(invalid_authority()),
     }
 }

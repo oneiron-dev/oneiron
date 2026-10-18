@@ -37,6 +37,7 @@ use crate::store::Store;
 use crate::write_envelope::WriteActor;
 
 use super::ceiling::{PolicyApprovalCeiling, PolicyCriticality};
+use super::coach_offer_reach::OfferQuestionPermit;
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::decision::{GateDecision, GateReasonCode};
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
@@ -212,6 +213,26 @@ pub(crate) fn check_witness_message_ceiling<'a>(
     body: &'a [u8],
     policy: &PolicyManifestResolution,
 ) -> Result<WitnessMessageAuthorization<'a>> {
+    check_witness_message_ceiling_with_permit(store, txn, actor, envelope, body, policy, None)
+}
+
+/// [`check_witness_message_ceiling`] for a MESSAGE that may carry the Coach's
+/// offer-question permit (`coach_offer_reach`). The permit is one more way
+/// past the System-author floor, never past the envelope bind or the policy
+/// verdict.
+///
+/// # Errors
+///
+/// As [`check_witness_message_ceiling`].
+pub(crate) fn check_witness_message_ceiling_with_permit<'a>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    envelope: &WitnessMessageEnvelope<'_>,
+    body: &'a [u8],
+    policy: &PolicyManifestResolution,
+    permit: Option<&OfferQuestionPermit>,
+) -> Result<WitnessMessageAuthorization<'a>> {
     let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, txn, actor);
     let mut input = witness_message_gate_input(actor, agent_definition_ceiling);
     input.foreign_agent_ceiling = super::foreign_agent::resolve(store, txn, actor)?;
@@ -222,13 +243,18 @@ pub(crate) fn check_witness_message_ceiling<'a>(
     // a policy verdict, and a bootstrap vault with no manifest must not become
     // the way to write a forged `system` row. When a manifest IS loaded the
     // policy verdict runs on top and can only narrow the answer.
-    let decision =
-        match witness_message_floor_denial(envelope, actor, policy, agent_definition_ceiling, body)
-        {
-            Some(reason_code) => GateDecision::deny(reason_code),
-            None if policy.enforces_write_gate() => policy.evaluate_gate(&input),
-            None => GateDecision::allow(),
-        };
+    let decision = match witness_message_floor_denial(
+        envelope,
+        actor,
+        policy,
+        agent_definition_ceiling,
+        body,
+        permit,
+    ) {
+        Some(reason_code) => GateDecision::deny(reason_code),
+        None if policy.enforces_write_gate() => policy.evaluate_gate(&input),
+        None => GateDecision::allow(),
+    };
     store.diagnostics.gate.record_decision(&decision);
     enforce_gate_decision(decision)?;
 
@@ -273,19 +299,31 @@ fn witness_message_gate_input(
 }
 
 /// The manifest-independent floor: envelope validity, the staged-bytes bind,
-/// and author authority. `None` means the floor is clear.
+/// and author authority. `None` means the floor is clear. A `system` row
+/// passes on its writer's exact Auto row, or on the Coach's offer-question
+/// permit for exactly these bytes (`coach_offer_reach`).
 fn witness_message_floor_denial(
     envelope: &WitnessMessageEnvelope<'_>,
     actor: WriteActor,
     policy: &PolicyManifestResolution,
     agent_definition_ceiling: Option<PolicyApprovalCeiling>,
     body: &[u8],
+    permit: Option<&OfferQuestionPermit>,
 ) -> Option<GateReasonCode> {
     if let Some(reason_code) = witness_message_envelope_denial(envelope, body) {
         return Some(reason_code);
     }
     if envelope.author == WITNESS_AUTHOR_SYSTEM
         && !system_author_authorized(actor, policy, agent_definition_ceiling)
+        && !permit.is_some_and(|permit| {
+            super::coach_offer_reach::offer_question_authorized(
+                permit,
+                actor,
+                body,
+                policy,
+                agent_definition_ceiling,
+            )
+        })
     {
         return Some(GateReasonCode::DenyWitnessMessageAuthorNotAuthorized);
     }
