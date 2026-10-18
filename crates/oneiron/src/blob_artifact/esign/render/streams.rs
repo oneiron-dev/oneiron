@@ -1,6 +1,17 @@
 //! Exact, budgeted decoding for PDF content and structural streams.
 use super::*;
 
+/// A stream's bytes as preparation reads them: an unfiltered stream whole (no
+/// codec runs, so no bound applies), a filtered one exactly decoded under the
+/// per-stream bound [`STREAM_DECODE_BYTES`].
+pub(super) fn decoded(stream: &Stream) -> Result<Vec<u8>> {
+    if stream.dict.has(b"Filter") {
+        decode_stream(stream, STREAM_DECODE_BYTES)
+    } else {
+        Ok(stream.content.clone())
+    }
+}
+
 // lopdf's Flate helper deliberately accepts truncated data/checksum errors.
 // Preparation must not turn recovered partial content into a signed original.
 // Reuse the existing native flate2 decoder and require an actual stream end.

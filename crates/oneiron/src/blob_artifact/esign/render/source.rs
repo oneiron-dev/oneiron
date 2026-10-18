@@ -1,5 +1,5 @@
 //! Static page-tree and resource-graph admission and copying.
-use super::streams::decode_stream;
+use super::streams::decoded;
 use super::*;
 
 pub(super) fn resolved<'a>(doc: &'a Document, object: &'a Object) -> Result<&'a Object> {
@@ -43,19 +43,16 @@ pub(super) fn pdf_box(doc: &Document, value: &Object) -> Result<[f64; 4]> {
 }
 
 // Scan even unreachable and nested dictionaries before discarding anything.
+// The walk keeps its own stack, so every object the file holds is scanned,
+// however many and however deep lopdf's parser let them nest.
 pub(super) fn reject_signatures(doc: &Document) -> Result<()> {
-    let mut stack: Vec<_> = doc.objects.values().map(|v| (v, 0)).collect();
-    let mut nodes = 0;
-    while let Some((value, depth)) = stack.pop() {
-        nodes += 1;
-        if nodes > MAX_NODES || depth > 64 {
-            return Err(PdfPreparationError::Limit);
-        }
+    let mut stack: Vec<_> = doc.objects.values().collect();
+    while let Some(value) = stack.pop() {
         let dict = match value {
             Object::Dictionary(d) => d,
             Object::Stream(s) => &s.dict,
             Object::Array(a) => {
-                stack.extend(a.iter().map(|v| (v, depth + 1)));
+                stack.extend(a.iter());
                 continue;
             }
             _ => continue,
@@ -74,7 +71,7 @@ pub(super) fn reject_signatures(doc: &Document) -> Result<()> {
         {
             return Err(PdfPreparationError::AlreadySigned);
         }
-        stack.extend(dict.iter().map(|(_, v)| (v, depth + 1)));
+        stack.extend(dict.iter().map(|(_, v)| v));
     }
     Ok(())
 }
@@ -86,7 +83,9 @@ pub(super) fn pages<'a>(
     out: &mut Vec<BTreeMap<&'static [u8], &'a Object>>,
     depth: usize,
 ) -> Result<()> {
-    if depth > 64 || seen.len() >= MAX_OBJECTS || !seen.insert(id) {
+    // A node met twice is a cycle. The depth guard bounds this recursion,
+    // not the pages: a page tree of fanout two holds 2^64 pages at it.
+    if depth > 64 || !seen.insert(id) {
         return Err(PdfPreparationError::MalformedPdf);
     }
     let node = doc.get_dictionary(id)?;
@@ -113,9 +112,6 @@ pub(super) fn pages<'a>(
             }
         }
         Some(b"Page") => {
-            if out.len() >= MAX_PAGES {
-                return Err(PdfPreparationError::Limit);
-            }
             for key in [
                 b"Contents".as_slice(),
                 b"Annots",
@@ -138,32 +134,22 @@ pub(super) fn pages<'a>(
 
 // Copy only the static visual graph into a fresh document, never catalog,
 // annotation, form, metadata, action or attachment graphs. Cycles fail closed.
+// Each indirect object is copied once, however many pages share it, so the
+// copy grows with the source and is never budgeted (Rule 5).
 pub(super) struct VisualCopy<'a> {
     pub(super) source: &'a Document,
     pub(super) ids: BTreeMap<ObjectId, ObjectId>,
     pub(super) active: BTreeSet<ObjectId>,
-    pub(super) nodes: usize,
-    pub(super) bytes: usize,
 }
 impl VisualCopy<'_> {
-    fn charge(&mut self, bytes: usize) -> Result<()> {
-        self.bytes = self
-            .bytes
-            .checked_add(bytes)
-            .ok_or(PdfPreparationError::Limit)?;
-        if self.bytes > MAX_OUTPUT {
-            return Err(PdfPreparationError::Limit);
-        }
-        Ok(())
-    }
     pub(super) fn copy(
         &mut self,
         out: &mut Document,
         value: &Object,
         depth: usize,
     ) -> Result<Object> {
-        self.nodes += 1;
-        if self.nodes > MAX_NODES || depth > 64 {
+        // Bounds this recursion's stack, not the graph's size.
+        if depth > 64 {
             return Err(PdfPreparationError::Limit);
         }
         Ok(match value {
@@ -193,13 +179,6 @@ impl VisualCopy<'_> {
             ),
             Object::Dictionary(dict) => self.dictionary(out, dict, depth)?.into(),
             Object::Stream(stream) => {
-                self.bytes = self
-                    .bytes
-                    .checked_add(stream.content.len())
-                    .ok_or(PdfPreparationError::Limit)?;
-                if self.bytes > MAX_OUTPUT {
-                    return Err(PdfPreparationError::Limit);
-                }
                 if stream.dict.has(b"F") {
                     return Err(PdfPreparationError::UnsupportedPdf);
                 }
@@ -208,31 +187,14 @@ impl VisualCopy<'_> {
                 if name(self.source, &stream.dict, b"Subtype")? == Some(b"Form")
                     || stream.dict.has(b"PatternType")
                 {
-                    let mut decoded = Vec::new();
-                    page_content(self.source, value, &mut decoded, 0, &mut 0)?;
-                    self.bytes = self
-                        .bytes
-                        .checked_add(decoded.len())
-                        .ok_or(PdfPreparationError::Limit)?;
-                    if self.bytes > MAX_OUTPUT {
-                        return Err(PdfPreparationError::Limit);
-                    }
-                    check_content(&decoded)?;
+                    let mut content = decoded(stream)?;
+                    content.push(b'\n');
+                    check_content(&content)?;
                 }
                 Object::Stream(Stream::new(
                     self.dictionary(out, &stream.dict, depth)?,
                     stream.content.clone(),
                 ))
-            }
-            Object::String(bytes, _) | Object::Name(bytes) => {
-                self.bytes = self
-                    .bytes
-                    .checked_add(bytes.len())
-                    .ok_or(PdfPreparationError::Limit)?;
-                if self.bytes > MAX_OUTPUT {
-                    return Err(PdfPreparationError::Limit);
-                }
-                value.clone()
             }
             _ => value.clone(),
         })
@@ -249,7 +211,6 @@ impl VisualCopy<'_> {
         let resources = resolved(self.source, value)?.as_dict()?;
         let mut copied = Dictionary::new();
         for (kind, members) in resources {
-            self.charge(kind.len())?;
             if kind == b"ProcSet" {
                 copied.set(kind.clone(), self.copy(out, members, depth + 1)?);
                 continue;
@@ -268,7 +229,6 @@ impl VisualCopy<'_> {
             }
             let mut map = Dictionary::new();
             for (key, object) in resolved(self.source, members)?.as_dict()? {
-                self.charge(key.len())?;
                 if kind == b"XObject" {
                     let stream = resolved(self.source, object)?.as_stream()?;
                     if !matches!(
@@ -340,17 +300,14 @@ impl VisualCopy<'_> {
         }
         let mut copied = Dictionary::new();
         for (key, value) in dict {
-            self.charge(key.len())?;
             if !matches!(key.as_slice(), b"Length" | b"Metadata" | b"PieceInfo") {
                 let object = if key == b"Resources" {
                     self.resources(out, value, depth + 1)?.into()
                 } else if key == b"CharProcs" {
                     let mut glyphs = Dictionary::new();
                     for (name, glyph) in resolved(self.source, value)?.as_dict()? {
-                        self.charge(name.len())?;
                         let mut content = Vec::new();
-                        page_content(self.source, glyph, &mut content, 0, &mut 0)?;
-                        self.charge(content.len())?;
+                        glyph_content(self.source, glyph, &mut content, 0)?;
                         check_content(&content)?;
                         glyphs.set(name.clone(), self.copy(out, glyph, depth + 1)?);
                     }
@@ -364,41 +321,72 @@ impl VisualCopy<'_> {
         Ok(copied)
     }
 }
-pub(super) fn page_content(
-    doc: &Document,
-    value: &Object,
-    bytes: &mut Vec<u8>,
-    depth: usize,
-    nodes: &mut usize,
-) -> Result<()> {
-    *nodes += 1;
-    if depth > 32 || *nodes > MAX_NODES {
+/// A Type 3 glyph's content: its stream, or the streams an array of them
+/// names, each decoded under its own bound.
+fn glyph_content(doc: &Document, value: &Object, bytes: &mut Vec<u8>, depth: usize) -> Result<()> {
+    // Bounds this recursion's stack, not the content's size.
+    if depth > 32 {
         return Err(PdfPreparationError::Limit);
     }
     match resolved(doc, value)? {
         Object::Array(values) => {
             for v in values {
-                page_content(doc, v, bytes, depth + 1, nodes)?;
+                glyph_content(doc, v, bytes, depth + 1)?;
             }
         }
         Object::Stream(stream) => {
             if stream.dict.has(b"F") {
                 return Err(PdfPreparationError::UnsupportedPdf);
             }
-            bytes.extend(decode_stream(
-                stream,
-                MAX_INPUT.saturating_sub(bytes.len()),
-            )?);
+            bytes.extend(decoded(stream)?);
             bytes.push(b'\n');
-            if bytes.len() > MAX_INPUT {
-                return Err(PdfPreparationError::Limit);
-            }
         }
         _ => return Err(PdfPreparationError::MalformedPdf),
     }
     Ok(())
 }
-pub(super) fn check_content(bytes: &[u8]) -> Result<()> {
+
+/// The page contents admitted so far, each by the streams it names in order:
+/// content that many pages share is decoded and checked once.
+#[derive(Default)]
+pub(super) struct PageContents(BTreeSet<Vec<ObjectId>>);
+impl PageContents {
+    /// Admits a page's `/Contents` (a stream or an array of streams, ISO
+    /// 32000-1 section 7.7.3.3, Table 30) and returns its streams, in order.
+    /// Each stream decodes under its own bound, and the page's streams are
+    /// checked as the one stream a reader concatenates them into. A page
+    /// that names one stream twice is refused: it is not content a writer
+    /// emits, and it would decode that stream again for each naming.
+    pub(super) fn admit(&mut self, doc: &Document, value: &Object) -> Result<Vec<ObjectId>> {
+        let stream = |value: &Object| -> Result<ObjectId> {
+            match doc.dereference(value)? {
+                (Some(id), Object::Stream(stream)) if !stream.dict.has(b"F") => Ok(id),
+                (Some(_), Object::Stream(_)) => Err(PdfPreparationError::UnsupportedPdf),
+                _ => Err(PdfPreparationError::MalformedPdf),
+            }
+        };
+        let streams = match doc.dereference(value)? {
+            (_, Object::Array(values)) => values.iter().map(stream).collect::<Result<Vec<_>>>()?,
+            _ => vec![stream(value)?],
+        };
+        if self.0.contains(&streams) {
+            return Ok(streams);
+        }
+        let mut named = BTreeSet::new();
+        if !streams.iter().all(|id| named.insert(*id)) {
+            return Err(PdfPreparationError::UnsupportedPdf);
+        }
+        let mut content = Vec::new();
+        for id in &streams {
+            content.extend(decoded(doc.get_object(*id)?.as_stream()?)?);
+            content.push(b'\n');
+        }
+        check_content(&content)?;
+        self.0.insert(streams.clone());
+        Ok(streams)
+    }
+}
+fn check_content(bytes: &[u8]) -> Result<()> {
     reject_inline_images(bytes)?;
     let content = Content::decode_strict(bytes)?;
     let (mut graphics, mut marked, mut text) = (0i32, 0i32, false);

@@ -272,6 +272,7 @@ impl LimitsConfig {
             contribution_judge_task_bytes,
             contribution_judge_answer_bytes,
             callable_nest_depth,
+            esign_pdf_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -354,6 +355,7 @@ impl LimitsConfig {
                 contribution_judge_answer_bytes,
             ),
             (EngineLimit::CallableNestDepth, callable_nest_depth),
+            (EngineLimit::EsignPdfBytes, esign_pdf_bytes),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -497,4 +499,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) contribution_judge_task_bytes: Option<u64>,
     pub(super) contribution_judge_answer_bytes: Option<u64>,
     pub(super) callable_nest_depth: Option<u64>,
+    pub(super) esign_pdf_bytes: Option<u64>,
 }

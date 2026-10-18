@@ -25,15 +25,10 @@ pub(super) fn decode_event(body: &ClaimBody) -> Result<EsignEventRow> {
     };
     let row: EsignEventRow =
         serde_json::from_slice(bytes).map_err(|_| invalid("event payload schema"))?;
+    // The actor and its user agent are kept whole, however long (Rule 5).
     if row.event.predicate() != body.predicate
         || row.actor.actor.is_empty()
-        || row.actor.actor.len() > 4096
         || row.actor.ip.as_ref().is_some_and(|v| v.len() > 256)
-        || row
-            .actor
-            .user_agent
-            .as_ref()
-            .is_some_and(|v| v.len() > 4096)
         || body.approval != ClaimApprovalStatus::Auto
         || body.lifecycle != ClaimLifecycleStatus::Active
         || body.stale

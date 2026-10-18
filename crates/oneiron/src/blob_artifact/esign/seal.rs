@@ -13,6 +13,7 @@ use super::{
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, CompleteAttempt, SetAttemptResult,
 };
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
@@ -135,8 +136,10 @@ impl Vault {
                     .ok_or(Error::EntityNotFound)?;
                 originals.push((metadata, bytes));
             }
+            // Every signature raster the fields show, each decoded once and
+            // under its decoder's own bounds; no budget over them all refuses
+            // a seal (Rule 5).
             let mut images = BTreeMap::new();
-            let mut image_bytes = 0usize;
             for value in state.signatures.values() {
                 if let FieldValue::Signature { image_ref } = &value.value {
                     if images.contains_key(image_ref) {
@@ -164,10 +167,6 @@ impl Vault {
                         image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
                             .map_err(|_| invalid("stored signature image"))?
                             .to_rgba8();
-                    image_bytes = image_bytes.saturating_add(image.as_raw().len());
-                    if image_bytes > 64 * 1024 * 1024 {
-                        return Err(invalid("signature raster budget").into());
-                    }
                     images.insert(
                         image_ref.clone(),
                         SignatureRaster {
@@ -194,6 +193,13 @@ impl Vault {
                     signature_images: &images,
                 },
             )?;
+            // The seal holds the item whole, however large: past the `[limits]
+            // esign_pdf_bytes` row it asks whether everything is okay, and
+            // seals it anyway (OF-520).
+            self.measure_limit(
+                EngineLimit::EsignPdfBytes,
+                original.len().max(prepared.bytes.len()) as u64,
+            );
             let operation_id = format!(
                 "esign:{}:{}:{index}",
                 document.to_hex(),

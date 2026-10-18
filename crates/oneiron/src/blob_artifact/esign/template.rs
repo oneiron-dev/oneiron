@@ -12,7 +12,9 @@ mod tests;
 type Result<T> = std::result::Result<T, ContentTemplateError>;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ContentTemplateError {
-    #[error("template resource limit")]
+    /// Past a structural or codec bound: markup nested deeper than the
+    /// renderer's recursion takes, or a PDF past the writer's offset width.
+    #[error("template nesting or codec limit")]
     Limit,
     #[error("missing or invalid repo merge field")]
     MergeField,
@@ -77,13 +79,10 @@ pub fn prepare_content(
     pack: &FieldGeographyPack,
     item: u32,
 ) -> Result<PreparedContent> {
+    // An upload of any size is inspected whole (Rule 5); only the PDF codec's
+    // and format's bounds refuse it.
     let (bytes, generated_from_template) = match source {
-        ContentSource::Upload(bytes) => {
-            if bytes.len() > 16 * 1024 * 1024 {
-                return Err(ContentTemplateError::Limit);
-            }
-            (bytes.to_vec(), false)
-        }
+        ContentSource::Upload(bytes) => (bytes.to_vec(), false),
         ContentSource::Template {
             template,
             merge_fields,

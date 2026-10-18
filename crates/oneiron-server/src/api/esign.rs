@@ -70,10 +70,11 @@ async fn action(
     };
     // Proxy forwarding headers are not an authenticated IP source. Do not
     // copy attacker-supplied X-Forwarded-For into the legal audit trail.
+    // The user agent is kept whole, however long (Rule 5): the header's own
+    // bound is the HTTP codec's.
     let ua = headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
-        .filter(|v| v.len() <= 1024)
         .map(str::to_owned);
     let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
@@ -173,7 +174,6 @@ async fn pdf(
     let ua = headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
-        .filter(|v| v.len() <= 1024)
         .map(str::to_owned);
     match server
         .vault
