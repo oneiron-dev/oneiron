@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 383 facade rows, 1417 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 351.
+// UniFFI census: 385 facade rows, 1427 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 353.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -11677,6 +11677,138 @@ pub struct WidenProposalsView {
 pub struct WidenProposalAnswer {
     #[serde(rename = "proposal_id")]
     pub proposal_id: String,
+}
+
+/// `oneiron::memory::claims::settle::ClaimProposalReviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimProposalReviewRequest {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+}
+
+/// `oneiron::memory::claims::settle::ClaimProposalReview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ClaimProposalReview {
+    #[serde(rename = "review_id")]
+    pub review_id: String,
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "claim")]
+    pub claim: WireClaimView,
+    #[serde(
+        rename = "opener_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opener_ref: Option<String>,
+    #[serde(
+        rename = "pending_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pending_ref: Option<String>,
+}
+
+/// `oneiron::memory::claims::settle::ClaimSettleDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ClaimSettleDecision {
+    #[serde(rename = "approve")]
+    Approve,
+    #[serde(rename = "reject")]
+    Reject,
+}
+
+/// `oneiron::memory::claims::settle::ClaimSettleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimSettleRequest {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "review_id")]
+    pub review_id: String,
+    #[serde(rename = "decision")]
+    pub decision: ClaimSettleDecision,
+}
+
+/// `oneiron::memory::claims::settle::ClaimSettlementVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ClaimSettlementVerdict {
+    #[serde(rename = "landed")]
+    Landed,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// `oneiron::memory::claims::settle::ClaimChangeVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ClaimChangeVerdict {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "verdict")]
+    pub verdict: ClaimSettlementVerdict,
+}
+
+/// `oneiron::memory::claims::settle::ClaimSettlementAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ClaimSettlementAnswer {
+    #[serde(rename = "word")]
+    Word {
+        #[serde(rename = "person_ref")]
+        person_ref: String,
+    },
+}
+
+/// `oneiron::memory::claims::settle::ClaimSettlementReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ClaimSettlementReason {
+    #[serde(rename = "gate.claim.settle.approved")]
+    OwnerApproved,
+    #[serde(rename = "gate.claim.settle.declined")]
+    OwnerDeclined,
+}
+
+/// `oneiron::memory::claims::settle::ClaimSettlementRevert`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ClaimSettlementRevert {
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+}
+
+/// `oneiron::memory::claims::settle::ClaimSettlement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ClaimSettlement {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "review_id")]
+    pub review_id: String,
+    #[serde(rename = "changes")]
+    pub changes: Vec<ClaimChangeVerdict>,
+    #[serde(rename = "verdict")]
+    pub verdict: ClaimSettlementVerdict,
+    #[serde(rename = "answered_by")]
+    pub answered_by: ClaimSettlementAnswer,
+    #[serde(rename = "reason")]
+    pub reason: ClaimSettlementReason,
+    #[serde(rename = "summary")]
+    pub summary: String,
+    #[serde(
+        rename = "tray_receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tray_receipt_ref: Option<String>,
+    #[serde(rename = "revert", default, skip_serializing_if = "Option::is_none")]
+    pub revert: Option<ClaimSettlementRevert>,
+    #[serde(rename = "claim")]
+    pub claim: WireClaimView,
+    #[serde(rename = "settled_at")]
+    pub settled_at: u64,
 }
 
 /// `oneiron::actor_claims::candidate::CraftCandidatesRequest`.

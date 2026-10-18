@@ -175,6 +175,8 @@ pub enum AgentVerb {
     VaultWidenProposals,
     VaultWidenProposalsApprove,
     VaultWidenProposalsDecline,
+    VaultClaimsReview,
+    VaultClaimsSettle,
     VaultCraftCandidates,
     VaultCraftCandidatesAnswer,
     VaultSettingsWakePolicySet,
@@ -604,6 +606,8 @@ impl AgentVerb {
         Self::VaultWidenProposals,
         Self::VaultWidenProposalsApprove,
         Self::VaultWidenProposalsDecline,
+        Self::VaultClaimsReview,
+        Self::VaultClaimsSettle,
         Self::VaultCraftCandidates,
         Self::VaultCraftCandidatesAnswer,
         Self::VaultSettingsWakePolicySet,
@@ -1038,6 +1042,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => "vault.widen_proposals",
             Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
             Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
+            Self::VaultClaimsReview => "vault.claims.review",
+            Self::VaultClaimsSettle => "vault.claims.settle",
             Self::VaultCraftCandidates => "vault.craft_candidates",
             Self::VaultCraftCandidatesAnswer => "vault.craft_candidates.answer",
             Self::VaultSettingsWakePolicySet => "vault.settings.wake_policy.set",
@@ -1472,6 +1478,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultClaimsReview
+                | Self::VaultClaimsSettle
                 | Self::VaultCraftCandidates
                 | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
@@ -1908,6 +1916,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultClaimsReview
+                | Self::VaultClaimsSettle
                 | Self::VaultCraftCandidates
                 | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
@@ -2382,6 +2392,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultClaimsReview
+                | Self::VaultClaimsSettle
                 | Self::VaultCraftCandidates
                 | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
@@ -2738,6 +2750,7 @@ impl AgentVerb {
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultClaimsSettle
                 | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -3085,6 +3098,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
+            Self::VaultClaimsReview => &["spec"],
+            Self::VaultClaimsSettle => &["spec"],
             Self::VaultCraftCandidates => &["spec"],
             Self::VaultCraftCandidatesAnswer => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
@@ -3515,6 +3530,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
+            Self::VaultClaimsReview => &["spec"],
+            Self::VaultClaimsSettle => &["spec"],
             Self::VaultCraftCandidates => &["spec"],
             Self::VaultCraftCandidatesAnswer => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
@@ -4259,6 +4276,12 @@ impl AgentVerb {
             }
             Self::VaultWidenProposalsDecline => {
                 "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."
+            }
+            Self::VaultClaimsReview => {
+                "The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content."
+            }
+            Self::VaultClaimsSettle => {
+                "The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused."
             }
             Self::VaultCraftCandidates => {
                 "The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins."
