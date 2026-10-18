@@ -112,6 +112,16 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::AgentDefinitionDisabled => ApiError::bad_request(error.to_string(), None),
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
         ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
+        // FIX 2222: a host credential where no host acts as a person.
+        ErrorKind::HostActionRequiresSupportGrant => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: Some("support_grant".to_owned()),
+            },
+            [
+                "Ask the customer for a support grant; the operator's own admin commands (status, backup, restore, repair, move) need none.",
+            ],
+        ),
         ErrorKind::WorkCompanionRequired => ApiError::new(
             error.to_string(),
             ApiErrorDetails::Forbidden {

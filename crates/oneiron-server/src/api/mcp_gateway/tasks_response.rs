@@ -366,6 +366,10 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
     gateway
 }
 
+/// The stable MCP kind of the typed refusal a host credential gets where no
+/// host acts as a person (FIX 2222); its code is -32020, as every refusal's.
+const MCP_HOST_ACTION_REFUSED: &str = "host_action_requires_support_grant";
+
 pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> McpGatewayError {
     // ONE-1936: a stale write-verb target gets its own stable kind, not the
     // generic engine_error bucket, and carries the current head as data. The
@@ -387,6 +391,9 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
         }
         ErrorKind::EntityNotFound => {
             McpGatewayError::new(-32004, "entity_not_found", error.to_string())
+        }
+        ErrorKind::HostActionRequiresSupportGrant => {
+            McpGatewayError::new(-32020, MCP_HOST_ACTION_REFUSED, error.to_string())
         }
         _ => McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}")),
     }
@@ -410,6 +417,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
         | oneiron::memory::MEMORY_CODE_BUDGET_SPENT
         | oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED
+        | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,
@@ -422,6 +430,9 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // OF-123: an effect whose person is not settled yet keeps its name
         // too, so an agent reads it as `error.data.error_code`, not prose.
         oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => Some("identity_unsettled"),
+        // FIX 2222: one stable kind for the typed host refusal, whichever
+        // door reported it.
+        oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => Some(MCP_HOST_ACTION_REFUSED),
         _ => None,
     };
     if let Some(kind) = kind {
