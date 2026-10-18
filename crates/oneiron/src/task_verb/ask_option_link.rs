@@ -212,6 +212,9 @@ impl Memory<'_> {
         ask: TaskAskHandle,
         friend: EntityId,
     ) -> MemoryResult<TaskAskOptionLink> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_ask_option_link(ask, friend);
+        }
         self.with_verified_actor_write_txn(|txn| {
             let group = ask_record::read_group(self.vault(), txn, ask.group_ref)?
                 .ok_or_else(|| MemoryError::bad_request("unknown ask"))?;
@@ -325,12 +328,32 @@ impl Vault {
     }
 
     /// The bearer explicitly selects source refs disclosed on its page; an
-    /// answer cannot silently claim to have cited a required source.
+    /// answer cannot silently claim to have cited a required source. The
+    /// answer waits its turn in the vault's task-work line (Rule 5) under the
+    /// recipient whose word the bearer gives, read before the wait.
     pub fn answer_ask_option_link_with_sources(
         &self,
         token: &str,
         option: &TaskAskOptionId,
         source_refs: &BTreeSet<ConsultPayloadRef>,
+    ) -> MemoryResult<TaskAskAnswer> {
+        let digest = token_digest(token)?;
+        let caller = {
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+            read_row(self, &txn, &digest)?.friend
+        };
+        let turn = self.admit_task_work_blocking(caller);
+        self.answer_ask_option_link_with_sources_in_turn(token, option, source_refs, &turn)
+    }
+
+    /// [`Self::answer_ask_option_link_with_sources`] on the task-work turn
+    /// its caller already holds: every check reads the link again here.
+    pub fn answer_ask_option_link_with_sources_in_turn(
+        &self,
+        token: &str,
+        option: &TaskAskOptionId,
+        source_refs: &BTreeSet<ConsultPayloadRef>,
+        _turn: &crate::work_line::TaskWorkTurn,
     ) -> MemoryResult<TaskAskAnswer> {
         let digest = token_digest(token)?;
         let mut txn = self.store.env.write_txn()?;
