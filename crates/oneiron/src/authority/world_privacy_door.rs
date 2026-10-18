@@ -396,7 +396,7 @@ impl Vault {
                     self.enroll_bootstrap_in_txn(&mut txn, issuer, actor, &request, yours)?;
                     txn.commit()?;
                     #[cfg(feature = "sync")]
-                    self.reseal_after_machine_admission()?;
+                    self.after_machine_admission();
                 } else {
                     drop((fold, txn));
                     self.set_machine_role(

@@ -616,6 +616,7 @@ pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
         SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value()?)?),
         SecretsCommand::Revoke(args) => revoke_secret(*args),
         SecretsCommand::Reveal(args) => reveal_secret(*args),
+        SecretsCommand::Rewrap(args) => emit(&rewrap_secret(*args)?),
         SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value()?)?),
     }
 }
@@ -669,11 +670,14 @@ fn register_secret(args: SecretRegisterArgs, value: &[u8]) -> anyhow::Result<sec
             }
         })
         .collect();
+    let plan = secrets::custody_plan(args.holder, args.recipients)?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_vault(&config, "POST /v1/owner/secrets/register --data -")?;
     let owner = local_owner(&vault)?;
-    let registered = vault.register_secret_as_owner(
+    // This command is an in-process call on this machine.
+    let registered = vault.register_secret_with_custody(
         &owner,
+        oneiron::authority::ActSurface::ThisInstall,
         &OwnerSecretRegistration {
             name: &args.name,
             class: match args.class {
@@ -691,18 +695,49 @@ fn register_secret(args: SecretRegisterArgs, value: &[u8]) -> anyhow::Result<sec
             }),
             value,
         },
+        &plan,
         vault.now_recorded_at(),
     )?;
     Ok(registered.into())
 }
 
-fn rotate_secret(args: SecretRotateArgs, value: &[u8]) -> anyhow::Result<secrets::Rotated> {
+fn rotate_secret(
+    args: SecretRotateArgs,
+    value: &[u8],
+) -> anyhow::Result<secrets::CustodyRotated> {
+    let plan = secrets::custody_plan(args.holder, args.recipients)?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_vault(&config, "POST /v1/owner/secrets/rotate --data -")?;
     let owner = local_owner(&vault)?;
-    Ok(vault
-        .rotate_secret_as_owner(&owner, &args.name, value, vault.now_recorded_at())?
-        .into())
+    let rotated = vault.rotate_secret_with_custody(
+        &owner,
+        oneiron::authority::ActSurface::ThisInstall,
+        &args.name,
+        value,
+        &plan,
+        vault.now_recorded_at(),
+    )?;
+    Ok(secrets::CustodyRotated {
+        receipt: rotated.rotation.map(secrets::Rotated::from),
+        custody: rotated.custody.into(),
+    })
+}
+
+/// Seals a portable secret again to the installs named, through the engine
+/// door `POST /v1/owner/secrets/rewrap` uses, as the local owner (WILL L04
+/// row 04). It reads nothing from stdin.
+fn rewrap_secret(args: crate::cli::SecretRewrapArgs) -> anyhow::Result<secrets::CustodyReply> {
+    let plan = secrets::custody_plan(args.holder, args.recipients)?;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "POST /v1/owner/secrets/rewrap --data -")?;
+    let owner = local_owner(&vault)?;
+    Ok(secrets::rewrap(
+        &vault,
+        &owner,
+        oneiron::authority::ActSurface::ThisInstall,
+        &args.name,
+        &plan,
+    )?)
 }
 
 /// Revokes a secret through the engine door `POST /v1/owner/secrets/revoke`
@@ -711,7 +746,12 @@ pub fn revoke_secret(args: crate::cli::SecretRevokeArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_vault(&config, "POST /v1/owner/secrets/revoke --data -")?;
     let owner = local_owner(&vault)?;
-    emit(&secrets::revoke(&vault, &owner, &args.name)?)
+    emit(&secrets::revoke(
+        &vault,
+        &owner,
+        oneiron::authority::ActSurface::ThisInstall,
+        &args.name,
+    )?)
 }
 
 /// Reads a secret's value through the engine door `POST /v1/owner/secrets/reveal`
@@ -756,18 +796,22 @@ fn raw_stdout() -> io::Result<std::fs::File> {
     Ok(std::fs::File::from(owned))
 }
 
-/// Signs a portable secret's current custody transition with the owner
-/// anchor of the recovery kit read from stdin (OF-422), through the engine
-/// door `Vault::sign_custody_with_anchor`, as the local owner. `kit` is one
-/// recovery code per line, after the kit passphrase on the first line when
+/// Pushes a portable secret's current custody transition, signed with the
+/// owner anchor of the recovery kit read from stdin, to the installs named
+/// (OF-422, CALLS CUSTODY_KIT_PUSH), through the engine door
+/// `Vault::sign_custody_with_anchor`, as the local owner: the owner's kit is
+/// his authority; the install carries no act, so the engine takes it only
+/// from an install with no live machine profile. `kit` is one recovery code
+/// per line, after the kit passphrase on the first line when
 /// `--with-passphrase` says the kit has one. The kit and the seed it rebuilds
 /// stay in this process, and every buffer that holds them is wiped on drop;
-/// no route takes them, since no owner route is a this-machine-only channel.
+/// no route takes them.
 fn sign_with_anchor(
     args: crate::cli::SecretAnchorSignArgs,
     kit: &[u8],
 ) -> anyhow::Result<secrets::AnchorSigned> {
     use oneiron::recovery::{KitPassphrase, KitPiece, KitSecretKind, restore_kit};
+    let recipients = secrets::custody_plan(None, args.recipients)?.recipients;
     let text = std::str::from_utf8(kit)
         .map_err(|_| anyhow::anyhow!("the recovery kit on stdin is not UTF-8"))?;
     let mut lines = text
@@ -802,13 +846,12 @@ fn sign_with_anchor(
     )
     .map_err(|error| anyhow::anyhow!("the recovery kit did not open: {error}"))?;
     let seed = oneiron::world_keys::RecoveryRootSeed::from_restored_kit(restored)?;
-    // This command is an in-process call on this machine.
     Ok(secrets::sign_with_anchor(
         &vault,
         &owner,
-        oneiron::authority::EditOrigin::ThisMachine,
         &seed,
         &args.name,
+        &recipients,
     )?)
 }
 

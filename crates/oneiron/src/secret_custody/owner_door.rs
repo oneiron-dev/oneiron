@@ -8,17 +8,29 @@
 //! refused. The floor stays the vault's. It is resolved in the transaction
 //! that stores the value, and the owner proof is rechecked there too, so a
 //! request queued behind a revoked slip or a removed owner stores nothing.
+//!
+//! A portable secret is registered as a custody register request (WILL L04
+//! row 04): its holder, this install unless the owner names another, stores
+//! it and signs its transition to the recipients he permits, in this commit
+//! when this install is the holder. A record that stays on its device, or an
+//! install that carries no owner act, registers here alone, and the receipt
+//! says so.
 
 use std::fmt;
 
 use zeroize::Zeroize;
 
-use super::doors::register_secret_in_txn;
+use super::control::{ActiveChange, CustodyKeptHere, CustodyPlan, Material, SecretCustodyWork};
+use super::doors::{
+    refuse_bindings_wider_than_live_floor, register_generation_in_txn, register_secret_in_txn,
+};
+use super::transition::custody_portable;
 use super::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor,
     SecretCustodyRecord, SecretCustodyStatus,
 };
 use crate::Vault;
+use crate::authority::{ActSurface, CustodyChange};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
@@ -102,11 +114,43 @@ pub struct SecretRegistered {
     pub manifest_ref: String,
     /// The paths the manifest entry declares.
     pub declared_paths: Vec<String>,
+    /// The custody register request recorded for the owner's machines, or
+    /// why the record stays on this install. Until its holder enacts it,
+    /// the record is the holder's to store, not this install's.
+    pub custody: SecretCustodyWork,
 }
 
 impl Vault {
     /// Registers a secret on the vault owner's behalf, rechecking the owner
-    /// proof in the transaction that stores the value.
+    /// proof in the transaction that stores the value: this install the
+    /// holder, and the recipient a portable record is sealed to
+    /// ([`Vault::register_secret_with_custody`] with the default plan).
+    ///
+    /// # Errors
+    /// Those of [`Vault::register_secret_with_custody`].
+    pub fn register_secret_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        request: &OwnerSecretRegistration<'_>,
+        at: u64,
+    ) -> Result<SecretRegistered> {
+        self.register_secret_with_custody(
+            owner,
+            ActSurface::ThisInstall,
+            request,
+            &CustodyPlan::default(),
+            at,
+        )
+    }
+
+    /// Registers a secret on the vault owner's behalf, rechecking the owner
+    /// proof in the transaction that stores the value. A portable one is a
+    /// custody register request: the holder `plan` names, this install by
+    /// default, stores it and seals it to the recipients `plan` permits,
+    /// itself alone by default. When this install is the holder it does so
+    /// in this commit; any other holder gets the record sealed to its key
+    /// as the request's protected input. `surface` is audit only. The
+    /// install key loads before the writer, and a load that fails refuses.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof belongs to
@@ -118,11 +162,15 @@ impl Vault {
     /// [`SecretError::SecretNameInUse`] for a live name.
     /// [`SecretError::InvalidSecretCustodyBody`] for an empty name or value, a
     /// binding above the rung, or one effector bound twice. The manifest read's
-    /// own errors, from [`Vault::origin_secret_manifest`].
-    pub fn register_secret_as_owner(
+    /// own errors, from [`Vault::origin_secret_manifest`]. For a portable
+    /// record, a holder or recipient that is no live linked install with an
+    /// importable key, and a refusal of this install as holder.
+    pub fn register_secret_with_custody(
         &self,
         owner: &AuthenticatedOwner,
+        surface: ActSurface,
         request: &OwnerSecretRegistration<'_>,
+        plan: &CustodyPlan,
         at: u64,
     ) -> Result<SecretRegistered> {
         if request.value.is_empty() {
@@ -144,9 +192,9 @@ impl Vault {
         }
 
         let id = self.store.clock.entity_id()?;
-        // The install key signs a portable record's transition in the writer
-        // below; a host with no keystore signs none, and the record stays here.
-        let _ = self.load_install_signing_if_minted();
+        // The install key signs a portable record's request and transition
+        // in the writer below; a key that fails to load refuses here.
+        self.load_install_signing_if_minted()?;
         let mut wtxn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &wtxn)?;
         if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
@@ -187,17 +235,37 @@ impl Vault {
                 .unwrap_or_default(),
             policy_floor_snapshot: floor,
         });
-        register_secret_in_txn(self, &mut wtxn, &id, &mut rec.0)?;
-        // OF-422: a portable record leaves this device only as the owner's
-        // signed transition, written with the record.
-        let transition = super::write_custody_transition_in_txn(self, &mut wtxn, id, &rec.0, at)?;
+        let custody = if custody_portable(&rec.0) {
+            rec.0.rotation_generation = register_generation_in_txn(&self.store, &wtxn, request.name)?;
+            refuse_bindings_wider_than_live_floor(&self.store, &wtxn, &rec.0)?;
+            let recorded = self.record_custody_change_in_txn(
+                &mut wtxn,
+                owner,
+                surface,
+                ActiveChange {
+                    change: CustodyChange::Register,
+                    id,
+                    generation: rec.0.rotation_generation,
+                    plan,
+                    material: Material::Record(&rec.0),
+                    sealed: None,
+                    seen: None,
+                    permits: None,
+                },
+                at,
+            )?;
+            // An install that carries no owner act keeps the record here,
+            // and the receipt says so.
+            if recorded.custody.kept_here.is_some() {
+                register_secret_in_txn(self, &mut wtxn, &id, &mut rec.0)?;
+            }
+            recorded.custody
+        } else {
+            register_secret_in_txn(self, &mut wtxn, &id, &mut rec.0)?;
+            SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal)
+        };
         wtxn.commit()?;
-        #[cfg(feature = "sync")]
-        if transition.is_some() {
-            self.refresh_custody_in_live_windows();
-        }
-        #[cfg(not(feature = "sync"))]
-        let _ = transition;
+        self.mirror_custody_change(&custody);
         let rec = &rec.0;
         Ok(SecretRegistered {
             secret_id: id,
@@ -209,6 +277,7 @@ impl Vault {
             bindings: rec.bindings.clone(),
             manifest_ref: rec.manifest_ref.clone(),
             declared_paths: rec.declared_paths.clone(),
+            custody,
         })
     }
 }

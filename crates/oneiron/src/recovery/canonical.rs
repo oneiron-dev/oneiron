@@ -668,6 +668,12 @@ pub(crate) fn capture_canonical_window_within(
         snapshot.room_facts.push(CanonicalRoomFact { key, row });
     }
     for (key, carrier) in binary_rows_within(doc, "custody", budget)? {
+        // A custody change's protected input rides the map as its own
+        // `input:` row while its holder has not answered (WILL L04 row 04):
+        // relay, never content, so no image keeps it.
+        if key.starts_with("input:") {
+            continue;
+        }
         snapshot
             .custody_transitions
             .push(CanonicalCustodyTransition {

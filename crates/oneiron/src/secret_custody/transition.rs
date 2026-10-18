@@ -1,15 +1,19 @@
 //! OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential
-//! syncs again, but only as an owner-signed custody transition.
+//! syncs again, but only as a custody transition the owner's act stands
+//! behind.
 //!
 //! The custody record stays sealed from every replicated door, as before: a
 //! peer's custody body proves nothing about who wrote it. What travels
 //! instead is a transition: the record at one generation with its value taken
-//! out, the value sealed to each machine mine here, and a signature by a
-//! machine mine here under the pinned root, or by the pinned root's owner
-//! anchor. A receiver judges the signer against its own folded roster as it
-//! stands at receipt, and writes the record through the local custody door
-//! only when its own machine opens the value. A host that is not one of the
-//! owner's machines holds the transition unread and forwards it.
+//! out, the value sealed to each recipient the owner permitted, and the
+//! signature of the install that enacted it. A transition names the admitted
+//! custody request it enacts (WILL L04 row 04, CALLS CUSTODY_PAYLOAD): the
+//! request's named executor signed it, its generation, input and permits are
+//! the request's, and a receiver checks exactly that against its own fold,
+//! in the transaction that writes the record. A receiver writes the record
+//! through the local custody door only when its own machine opens the value.
+//! An install that was not permitted holds the transition unread and
+//! forwards it.
 //!
 //! A device-bound, cross-vault or "this device only" record never makes one:
 //! that material stays on the device that holds it.
@@ -19,12 +23,15 @@ mod payload;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron_crypto::HybridPublicKey;
 
-use self::payload::{MAX_RECIPIENTS, MAX_TRANSITION_BYTES, seal_value, status_byte, unsigned};
+use self::payload::{MAX_RECIPIENTS, MAX_TRANSITION_BYTES, ValueBinding, seal_value, status_byte, unsigned};
 use super::codec::encode_secret_custody_body;
 use super::doors::bind_synced_name_in_txn;
 use super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
 use crate::Vault;
-use crate::authority::AuthorityFold;
+use crate::authority::{
+    AuthorityEntryHash, AuthorityFold, CustodyChange, CustodyRecipientPermit, OwnerWorkBody,
+    OwnerWorkOutcome, owner_act_signer_admits,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -35,7 +42,51 @@ use crate::side_table::{self, HexId, Raw, SideTable};
 const TRANSITIONS: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SECRET_CUSTODY_TRANSITION);
 
-/// One owner-signed transition of a portable credential.
+/// What a custody transition proves (CALLS CUSTODY_PAYLOAD).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyPayload {
+    /// The artifact names the admitted custody request it enacts and the
+    /// digest of that request's encrypted input, and carries the request's
+    /// permits; each value envelope binds the request, the status and the
+    /// recipient's profile entry and key. A receiver admits it only on that
+    /// causal evidence: the request counted in its fold, signed for by the
+    /// request's named executor, with exactly its generation, input and
+    /// permits. A bare hash, or a bare enacted result, is not enough.
+    RequestBoundOct1,
+}
+
+const CUSTODY_PAYLOAD: CustodyPayload = CustodyPayload::RequestBoundOct1;
+
+/// Whether ordinary custody control ever signs with the owner's recovery
+/// seed (CALLS CUSTODY_ORDINARY_CONTROL_SEED).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyOrdinaryControlSeed {
+    /// Never: register, rotate, rewrap and revoke are each a request a live
+    /// linked install carries and its holder enacts, the recorder being its
+    /// own holder when nobody else holds the secret. The recovery ceremony
+    /// keeps its own seed proof, and no origin is authority anywhere.
+    Never,
+}
+
+const CUSTODY_ORDINARY_CONTROL_SEED: CustodyOrdinaryControlSeed = CustodyOrdinaryControlSeed::Never;
+
+/// The one push the owner's recovery kit still signs (CALLS CUSTODY_KIT_PUSH,
+/// Engine ruling 10-19 08:0x).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyKitPush {
+    /// The owner's kit is his authority; the install carries no act. Only an
+    /// install with no live machine profile in the vault, which can carry no
+    /// owner act and so cannot be any request's holder, pushes the portable
+    /// record it holds with the anchor of the root this vault pins, to the
+    /// recipients he names. Every other install takes the explicit-holder
+    /// path, and a receiver admits an anchor signature only on a transition
+    /// that names no request and no input.
+    UnprofiledInstallOnly,
+}
+
+const CUSTODY_KIT_PUSH: CustodyKitPush = CustodyKitPush::UnprofiledInstallOnly;
+
+/// One custody transition of a portable credential.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct CustodyTransition {
     /// The custody record's id.
@@ -45,10 +96,17 @@ pub(crate) struct CustodyTransition {
     pub(crate) status: SecretCustodyStatus,
     /// Unix seconds at signing.
     pub(crate) signed_at: u64,
+    /// The entry hash of the admitted custody request this transition
+    /// enacts; zero for the owner's kit push (CALLS CUSTODY_KIT_PUSH).
+    pub(crate) request: AuthorityEntryHash,
+    /// The digest of the encrypted input the request names; `None` for a
+    /// rewrap, a revoke and a kit push.
+    pub(crate) input: Option<[u8; 32]>,
     /// The record in the body codec, its value taken out.
     body: Vec<u8>,
-    /// The value sealed to each recipient machine; none once revoked.
-    sealed: Vec<(EntityId, Vec<u8>)>,
+    /// The value sealed to each permitted recipient, with its permit,
+    /// ascending by machine; none once revoked.
+    sealed: Vec<(CustodyRecipientPermit, Vec<u8>)>,
     /// The Ed25519 key that signed.
     pub(crate) signer: [u8; 32],
     signature: [u8; 64],
@@ -73,130 +131,124 @@ pub(crate) fn custody_portable(record: &SecretCustodyRecord) -> bool {
     record.class == CustodyClass::CustodyPortable && !record.device_only
 }
 
-/// Whether `signer` signs for the owner under `fold`: the pinned root's owner
-/// anchor, or a machine mine under the pin.
-fn owner_signer(fold: &AuthorityFold, signer: &[u8; 32]) -> bool {
-    fold.pinned_root
-        .as_ref()
-        .is_some_and(|root| root.anchor_key == *signer)
-        || fold.mine_machine_by_key(signer).is_some()
+/// What a transition enacts: the request's entry hash (zero for a kit push),
+/// the digest of its input, and each permit with the key it seals to.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Enactment<'a> {
+    pub(crate) request: AuthorityEntryHash,
+    pub(crate) input: Option<[u8; 32]>,
+    pub(crate) permits: &'a [(CustodyRecipientPermit, HybridPublicKey)],
 }
 
-/// Signs the transition of record `id` as it stands in `record`, with
-/// `signing`, this machine's install key or the owner anchor, its value
-/// sealed to every machine mine under `fold`'s pin. `None` when the record
-/// must stay here: it is not portable, the vault has no authority genesis,
-/// `signing` is neither the pinned root's anchor nor a machine mine under the
-/// pin, or the record is live but an admitted revoke names its id, which no
-/// carrier brings back (WILL L04 row 04).
+/// Signs the transition of record `id` as it stands in `record` with
+/// `signing`, its value sealed to each permit of `enactment`, at `signed_at`.
+/// A live record is sealed to 1 to 64 permits, a revoked one to none.
+///
+/// # Errors
+/// The vault has no authority genesis; the record may not leave its device;
+/// it is live but an admitted revoke names its id, which nothing brings
+/// back; the permits do not fit its status; the transition outgrows one
+/// carrier.
 pub(crate) fn sign_custody_transition(
     fold: &AuthorityFold,
     signing: &SigningKey,
     id: EntityId,
     record: &SecretCustodyRecord,
+    enactment: Enactment<'_>,
     signed_at: u64,
-) -> Result<Option<CustodyTransition>> {
-    let signer = signing.verifying_key().to_bytes();
+) -> Result<CustodyTransition> {
     let Some(vault_id) = fold.vault_id else {
-        return Ok(None);
+        return Err(refused("this vault has no authority genesis to sign for"));
     };
-    if !custody_portable(record)
-        || !owner_signer(fold, &signer)
-        || (record.status != SecretCustodyStatus::Revoked && fold.custody_revoked(&id))
-    {
-        return Ok(None);
+    let revoked = record.status == SecretCustodyStatus::Revoked;
+    if !custody_portable(record) {
+        return Err(refused("this secret stays on its device"));
+    }
+    if !revoked && fold.custody_revoked(&id) {
+        return Err(refused("an admitted revoke ended this secret"));
+    }
+    if revoked != enactment.permits.is_empty() || enactment.permits.len() > MAX_RECIPIENTS {
+        return Err(refused(
+            "a live secret is sealed to 1 to 64 permitted recipients, a revoked one to none",
+        ));
     }
     let mut bare = record.clone();
-    bare.value_bytes = Vec::new();
+    zeroize::Zeroize::zeroize(&mut bare.value_bytes);
     let body = encode_secret_custody_body(&bare)?;
-    let mut sealed = Vec::new();
-    if record.status != SecretCustodyStatus::Revoked {
-        for (machine, public) in seal_recipients(fold) {
-            let envelope = seal_value(
-                &vault_id,
-                id,
-                record.rotation_generation,
-                machine,
-                &public,
-                &record.value_bytes,
-            )?;
-            sealed.push((machine, envelope));
-        }
-        if sealed.is_empty() || sealed.len() > MAX_RECIPIENTS {
-            return Ok(None);
-        }
+    let binding = ValueBinding {
+        id,
+        generation: record.rotation_generation,
+        status: record.status,
+        request: enactment.request,
+    };
+    let mut sealed = Vec::with_capacity(enactment.permits.len());
+    for (permit, public) in enactment.permits {
+        let envelope = seal_value(&vault_id, &binding, permit, public, &record.value_bytes)?;
+        sealed.push((*permit, envelope));
     }
+    sealed.sort_unstable_by_key(|(permit, _)| permit.machine);
     let mut transition = CustodyTransition {
         id,
         generation: record.rotation_generation,
         status: record.status,
         signed_at,
+        request: enactment.request,
+        input: enactment.input,
         body,
         sealed,
-        signer,
+        signer: signing.verifying_key().to_bytes(),
         signature: [0; 64],
     };
     transition.signature = signing.sign(&transition.transcript(&vault_id)).to_bytes();
     if transition.encode().len() > MAX_TRANSITION_BYTES {
-        return Ok(None);
+        return Err(refused("the custody transition outgrows one carrier"));
     }
-    Ok(Some(transition))
+    Ok(transition)
 }
 
-/// The machines a transition seals its value to under `fold`: each machine
-/// mine under the pin whose encryption key imports.
-fn seal_recipients(fold: &AuthorityFold) -> Vec<(EntityId, HybridPublicKey)> {
-    fold.machines
-        .keys()
-        .filter_map(|machine| {
-            let trusted = fold.trusted_machine(*machine)?;
-            // A profile whose key does not import could open nothing.
-            let public = HybridPublicKey::from_bytes(&trusted.profile.encryption_key.key).ok()?;
-            Some((*machine, public))
-        })
-        .collect()
+/// The second a new transition of record `id` is signed at: `at`, or just
+/// after the transition held at the same generation and status, which it
+/// then replaces.
+fn signed_after_held_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    record: &SecretCustodyRecord,
+    at: u64,
+) -> Result<u64> {
+    let order = (record.rotation_generation, status_rank(record.status));
+    Ok(TRANSITIONS
+        .get(&vault.store, txn, &HexId(id))?
+        .and_then(|held| CustodyTransition::decode(&held).ok())
+        .filter(|held| held.order() == order)
+        .map_or(at, |held| at.max(held.signed_at.saturating_add(1))))
 }
 
-/// Signs and stores, in the door's own write transaction, the transition of
-/// record `id` as `record` now stands. Nothing is written when the record must
-/// stay here: it is not portable, this install has no machine key loaded, or
-/// it is not a machine mine under a pinned root. Returns the transition
-/// written.
+/// Signs, with this install's key, and stores in the executor's own write
+/// transaction the transition of record `id` as `record` now stands, for
+/// `enactment`'s request. A transition is never optional here: no install
+/// key, or any reason [`sign_custody_transition`] refuses, refuses the
+/// transaction. Returns the transition written.
 pub(crate) fn write_custody_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: EntityId,
     record: &SecretCustodyRecord,
+    enactment: Enactment<'_>,
     at: u64,
-) -> Result<Option<CustodyTransition>> {
-    if !custody_portable(record) {
-        return Ok(None);
-    }
-    let Some(machine) = crate::identity::read_machine_id_in_txn(vault, wtxn)? else {
-        return Ok(None);
-    };
-    let Ok(Some(signing)) = crate::identity::read_machine_signing_key_in_txn(vault, wtxn) else {
-        return Ok(None);
-    };
+) -> Result<CustodyTransition> {
+    let signing = crate::identity::read_machine_signing_key_in_txn(vault, wtxn)?
+        .ok_or_else(|| refused("this install has no install key to sign the custody transition"))?;
     let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-    let mine = fold.pinned_root.is_some()
-        && fold.trusted_machine(machine).is_some_and(|trusted| {
-            trusted.profile.machine_key == signing.verifying_key().to_bytes()
-        });
-    if !mine {
-        return Ok(None);
-    }
-    let Some(transition) = sign_custody_transition(&fold, &signing, id, record, at)? else {
-        return Ok(None);
-    };
+    let signed_at = signed_after_held_in_txn(vault, wtxn, id, record, at)?;
+    let transition = sign_custody_transition(&fold, &signing, id, record, enactment, signed_at)?;
     TRANSITIONS.put(&vault.store, wtxn, &HexId(id), &transition.encode())?;
-    Ok(Some(transition))
+    Ok(transition)
 }
 
 /// Keeps `transition` as this vault's latest of its record when it supersedes
-/// the one held. A machine that took a peer's transition can then seal it
-/// again for a machine the roster gains, and drop the carrier it supersedes
-/// from the window that carrier rides. Returns whether it kept it.
+/// the one held, so this vault relays it, and drops the carrier it
+/// supersedes from the window that carrier rides. Returns whether it kept it.
 pub(crate) fn remember_custody_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -214,54 +266,33 @@ pub(crate) fn remember_custody_transition_in_txn(
     Ok(true)
 }
 
-/// Seals again, in `wtxn`, the latest transition of each portable record this
-/// vault holds whose value a machine now mine under the pin cannot open: the
-/// record at the same generation and status, its value sealed to every
-/// machine mine now, signed at `at` and never before the transition it
-/// replaces. A machine with no record writes it; one that holds the record
-/// finds it stale. Nothing is signed when this install is not a machine mine
-/// under the pin. Returns the transitions written.
-pub(crate) fn reseal_custody_transitions_in_txn(
+/// The record id and record, value out, of the latest live transition this
+/// vault holds under `name`: what an install the value was never sealed to
+/// knows of a portable secret. Revoked ones are left out.
+pub(crate) fn transition_named_in_txn(
     vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    at: u64,
-) -> Result<Vec<CustodyTransition>> {
-    let mine: Vec<EntityId> = {
-        let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-        seal_recipients(&fold)
-            .into_iter()
-            .map(|(machine, _)| machine)
-            .collect()
-    };
-    let mut due = Vec::new();
-    for (_, carrier) in TRANSITIONS.scan(&vault.store, wtxn)? {
-        let Ok(held) = CustodyTransition::decode(&carrier) else {
+    txn: &heed::RoTxn<'_>,
+    name: &str,
+) -> Result<Option<(EntityId, SecretCustodyRecord)>> {
+    let mut found: Option<(CustodyTransition, SecretCustodyRecord)> = None;
+    for (_, carrier) in TRANSITIONS.scan(&vault.store, txn)? {
+        let Ok(transition) = CustodyTransition::decode(&carrier) else {
             continue;
         };
-        if held.status != SecretCustodyStatus::Revoked
-            && mine
-                .iter()
-                .any(|machine| !held.sealed.iter().any(|(to, _)| to == machine))
-        {
-            due.push(held);
-        }
-    }
-    let mut written = Vec::new();
-    for held in due {
-        let Some(record) = super::read_secret_custody_in_txn(&vault.store, wtxn, &held.id)? else {
+        let Ok(record) = transition.record() else {
             continue;
         };
-        if (record.rotation_generation, status_rank(record.status)) != held.order() {
+        if record.name != name || transition.status == SecretCustodyStatus::Revoked {
             continue;
         }
-        let signed_at = at.max(held.signed_at.saturating_add(1));
-        if let Some(transition) =
-            write_custody_transition_in_txn(vault, wtxn, held.id, &record, signed_at)?
+        if found
+            .as_ref()
+            .is_none_or(|(held, _)| transition.order() > held.order())
         {
-            written.push(transition);
+            found = Some((transition, record));
         }
     }
-    Ok(written)
+    Ok(found.map(|(transition, record)| (transition.id, record)))
 }
 
 /// Every transition this vault holds, by record id.
@@ -282,7 +313,7 @@ impl CustodyTransition {
     }
 
     /// Whether this carrier replaces `other`, of the same record: a later
-    /// [`Self::order`], or the same one signed later, as a re-seal is. Two
+    /// [`Self::order`], or the same one signed later, as a rewrap is. Two
     /// carriers signed in the same second settle on the greater bytes, the
     /// same on every machine.
     pub(crate) fn supersedes(&self, other: &Self) -> bool {
@@ -293,45 +324,133 @@ impl CustodyTransition {
     }
 
     /// Whether this transition stands under `fold` as it is now: whole
-    /// ([`Self::verify_signed`]) and signed by a machine mine under the pin,
-    /// or by the pinned root's owner anchor.
+    /// ([`Self::verify_signed`]) and enacting an admitted custody request
+    /// its named executor signed for (CALLS CUSTODY_PAYLOAD), or the owner's
+    /// kit push (CALLS CUSTODY_KIT_PUSH).
     pub(crate) fn verify(&self, fold: &AuthorityFold) -> Result<()> {
         self.verify_signed(&fold.vault_id.ok_or_else(unsigned)?)?;
-        if !owner_signer(fold, &self.signer) {
+        let admitted = if self.request == [0; 32] {
+            kit_push_admits(fold, self)
+        } else {
+            request_admits(fold, self)
+        };
+        if !admitted {
             return Err(unsigned());
         }
         Ok(())
     }
 }
 
+/// The causal evidence a request-bound transition stands on (CALLS
+/// CUSTODY_PAYLOAD): its request counts in `fold` and is not refused, targets
+/// its record, approves its generation and names its input; its status is
+/// the change's; it is sealed under exactly the request's permits; and the
+/// request's named executor, a live linked install, signed it. Whether a
+/// recipient is mine is never asked: the owner permitted it.
+fn request_admits(fold: &AuthorityFold, transition: &CustodyTransition) -> bool {
+    match CUSTODY_PAYLOAD {
+        CustodyPayload::RequestBoundOct1 => {
+            let Some(request) = fold.counted_owner_work_request(&transition.request) else {
+                return false;
+            };
+            let OwnerWorkBody::Custody {
+                change,
+                generation,
+                input,
+                recipients,
+                ..
+            } = &request.work
+            else {
+                return false;
+            };
+            let status = match change {
+                CustodyChange::Revoke => transition.status == SecretCustodyStatus::Revoked,
+                CustodyChange::Register | CustodyChange::Rotate => {
+                    transition.status == SecretCustodyStatus::Active
+                }
+                CustodyChange::Rewrap => transition.status != SecretCustodyStatus::Revoked,
+            };
+            let refused = fold
+                .owner_work_result(&transition.request)
+                .is_some_and(|answer| matches!(answer.outcome, OwnerWorkOutcome::Refused { .. }));
+            request.act.target == transition.id
+                && *generation == transition.generation
+                && *input == transition.input
+                && status
+                && !refused
+                && transition.permits().eq(recipients.iter())
+                && owner_act_signer_admits(
+                    fold.machine(request.executor),
+                    &fold.roster,
+                    &transition.signer,
+                )
+        }
+    }
+}
+
+/// The one transition the owner's kit signs (CALLS CUSTODY_KIT_PUSH): it
+/// names no request and no input, and the anchor of the root this vault pins
+/// signed it.
+fn kit_push_admits(fold: &AuthorityFold, transition: &CustodyTransition) -> bool {
+    match CUSTODY_KIT_PUSH {
+        CustodyKitPush::UnprofiledInstallOnly => {
+            transition.input.is_none()
+                && fold
+                    .pinned_root
+                    .as_ref()
+                    .is_some_and(|root| root.anchor_key == transition.signer)
+        }
+    }
+}
+
+/// Whether this install may push with the owner's kit (CALLS
+/// CUSTODY_KIT_PUSH): it has no live machine profile in the vault, so it
+/// carries no owner act and holds for no request. Ordinary control never
+/// reaches the seed (CALLS CUSTODY_ORDINARY_CONTROL_SEED).
+fn kit_push_allowed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+) -> Result<bool> {
+    match (CUSTODY_ORDINARY_CONTROL_SEED, CUSTODY_KIT_PUSH) {
+        (CustodyOrdinaryControlSeed::Never, CustodyKitPush::UnprofiledInstallOnly) => {
+            let Some(machine) = crate::identity::read_machine_id_in_txn(vault, txn)? else {
+                return Ok(true);
+            };
+            Ok(fold.machine(machine).is_none_or(|folded| {
+                folded.chains().any(|(_, chain)| chain.removed)
+                    || !folded.chains().any(|(_, chain)| chain.is_live())
+            }))
+        }
+    }
+}
+
 impl Vault {
-    /// Signs the current transition of the portable record `secret_ref` names
-    /// with the owner anchor of `seed`, the recovery root this vault pins: the
-    /// owner's door for an install that cannot sign as one of the owner's
-    /// machines (ARCH-0069: a transition comes from the owner anchor or from a
-    /// live machine mine under the pin). The record keeps its generation,
-    /// status and value; the value is sealed to every machine mine now.
-    /// Returns whether it wrote one: none for a record that stays here (device
-    /// bound, cross-vault or "this device only") or a value no machine mine
-    /// here could open.
+    /// Pushes the current transition of the portable record `secret_ref`
+    /// names, signed with the owner anchor of `seed`, the recovery root this
+    /// vault pins, its value sealed to `recipients`, each a live linked
+    /// install with an importable key (CALLS CUSTODY_KIT_PUSH): the owner's
+    /// kit is his authority; the install carries no act. Only an install with
+    /// no live machine profile may push, so ordinary control never signs
+    /// with the seed (CALLS CUSTODY_ORDINARY_CONTROL_SEED); any other install
+    /// rewraps the record as its own holder ([`Vault::rewrap_secret_as_owner`]).
+    /// No origin is asked: the kit is the proof. The record keeps its
+    /// generation, status and value.
     ///
     /// # Errors
-    /// A remote origin; a proof that is no longer the live vault owner's; a
-    /// seed whose root is not the root this vault pins; a name no record
-    /// holds; storage errors.
+    /// This install has a live machine profile; a proof that is no longer
+    /// the live vault owner's; a seed whose root is not the root this vault
+    /// pins; a name no record holds; a recipient that is no live linked
+    /// install with an importable key, or none or more than 64 of them; the
+    /// refusals of [`sign_custody_transition`]; storage errors.
     pub fn sign_custody_with_anchor(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
-        origin: crate::authority::EditOrigin,
         seed: &crate::world_keys::RecoveryRootSeed,
         secret_ref: &str,
+        recipients: &[EntityId],
         at: u64,
     ) -> Result<bool> {
-        if !matches!(origin, crate::authority::EditOrigin::ThisMachine) {
-            return Err(Error::InvalidConfig(
-                "a remote request never signs with the owner anchor".into(),
-            ));
-        }
         let vault_id = {
             let rtxn = self.store.env.read_txn()?;
             self.authority_view_readonly_in_txn(&rtxn)?
@@ -344,6 +463,14 @@ impl Vault {
         let transition = self.with_write_txn(|wtxn| {
             owner.revalidate_as_vault_owner_in_txn(self, wtxn)?;
             let fold = self.authority_view_readonly_in_txn(wtxn)?;
+            if !kit_push_allowed_in_txn(self, wtxn, &fold)? {
+                return Err(Error::InvalidConfig(
+                    "this install has a live machine profile, so it carries the owner's act: \
+                     rewrap the secret with this install as its holder (`oneiron secrets \
+                     rewrap`); the kit pushes only from an install with no profile"
+                        .into(),
+                ));
+            }
             if fold.vault_id != Some(vault_id)
                 || fold
                     .pinned_root
@@ -364,18 +491,29 @@ impl Vault {
             let Some(record) = super::read_secret_custody_in_txn(&self.store, wtxn, &id)? else {
                 return Ok(None);
             };
-            // A transition of the same generation and status is replaced, so
-            // this one is signed after it.
-            let order = (record.rotation_generation, status_rank(record.status));
-            let signed_at = TRANSITIONS
-                .get(&self.store, wtxn, &HexId(id))?
-                .and_then(|held| CustodyTransition::decode(&held).ok())
-                .filter(|held| held.order() == order)
-                .map_or(at, |held| at.max(held.signed_at.saturating_add(1)));
-            let Some(transition) = sign_custody_transition(&fold, &anchor, id, &record, signed_at)?
-            else {
-                return Ok(None);
+            let record = WipedRecord(record);
+            let permits = super::control::permits::permits_for(&fold, recipients).map_err(|machine| {
+                Error::InvalidConfig(format!(
+                    "recipient {} is not a linked install with an importable encryption key; \
+                     nothing was written",
+                    machine.to_hex()
+                ))
+            })?;
+            let keyed = super::control::permits::permitted_keys(&fold, &permits)
+                .ok_or_else(|| refused("a recipient's key changed"))?;
+            let keyed = if record.0.status == SecretCustodyStatus::Revoked {
+                Vec::new()
+            } else {
+                keyed
             };
+            let enactment = Enactment {
+                request: [0; 32],
+                input: None,
+                permits: &keyed,
+            };
+            let signed_at = signed_after_held_in_txn(self, wtxn, id, &record.0, at)?;
+            let transition =
+                sign_custody_transition(&fold, &anchor, id, &record.0, enactment, signed_at)?;
             Ok(remember_custody_transition_in_txn(self, wtxn, &transition)?.then_some(transition))
         })?;
         #[cfg(feature = "sync")]
@@ -383,6 +521,15 @@ impl Vault {
             self.refresh_custody_in_live_windows();
         }
         Ok(transition.is_some())
+    }
+}
+
+/// A record whose value is wiped when it drops, on every path.
+struct WipedRecord(SecretCustodyRecord);
+
+impl Drop for WipedRecord {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0.value_bytes);
     }
 }
 
@@ -403,12 +550,17 @@ pub(crate) enum CustodyApplied {
     /// refused: a held portable record and its leases were revoked here, and
     /// nothing the transition carries is written or kept (WILL L04 row 04).
     Refused,
+    /// The transition does not stand on this transaction's fold (CALLS
+    /// CUSTODY_PAYLOAD): nothing it carries is written or kept.
+    Unadmitted,
 }
 
 /// Writes a verified `transition` into this vault's custody, with `value` the
-/// one this machine opened from it. A generation never goes back, a revoked
-/// record never comes back, and a record this vault keeps local never takes a
-/// peer's transition. A revocation also revokes the record's leases here.
+/// one this machine opened from it. The transition is checked again against
+/// this transaction's own fold first. A generation never goes back, a
+/// revoked record never comes back, and a record this vault keeps local
+/// never takes a peer's transition. A revocation also revokes the record's
+/// leases here.
 ///
 /// An admitted revoke of the id in this transaction's fold is terminal (CALLS
 /// CUSTODY_CONCURRENT_ACTIVE): a live transition of it is refused, and a held
@@ -425,6 +577,12 @@ pub(crate) fn apply_custody_transition_in_txn(
     {
         super::control::settle_revoked_in_txn(vault, wtxn, &transition.id, at)?;
         return Ok(CustodyApplied::Refused);
+    }
+    if transition
+        .verify(&vault.authority_view_readonly_in_txn(wtxn)?)
+        .is_err()
+    {
+        return Ok(CustodyApplied::Unadmitted);
     }
     let mut record = transition.record()?;
     let held = super::read_secret_custody_in_txn(&vault.store, wtxn, &transition.id)?.map(|held| {
@@ -477,4 +635,10 @@ pub(crate) fn apply_custody_transition_in_txn(
 /// generation.
 fn status_rank(status: SecretCustodyStatus) -> u8 {
     status_byte(status)
+}
+
+fn refused(reason: &'static str) -> Error {
+    Error::InvalidConfig(format!(
+        "custody transition not signed: {reason}; nothing was written"
+    ))
 }

@@ -4,10 +4,12 @@
 //! A binding names the effector that may use the secret, the most exposed
 //! rung it may use it at, and what it grants. The owner proof is rechecked in
 //! the transaction that stores the binding, and the binding may sit no higher
-//! than the class's live floor. A portable record's new bindings reach the
-//! owner's other machines as a signed custody transition, as a rotation's
-//! do. The Gate record keeps the handle, the effector, the rung and the
-//! scopes, never the value.
+//! than the class's live floor. A binding changes this install's record
+//! alone: a portable record's new bindings reach the machines the owner
+//! permits with its next rotation or rewrap, whose transition carries the
+//! record as it then stands (WILL L04 row 04). A record an admitted revoke
+//! ended takes no binding. The Gate record keeps the handle, the effector,
+//! the rung and the scopes, never the value.
 
 use zeroize::Zeroize;
 
@@ -15,8 +17,8 @@ use super::super::doors::{
     put_secret_custody_in_txn, read_secret_custody_in_txn, refuse_bindings_wider_than_live_floor,
     resolve_secret_ref_in_txn,
 };
+use super::super::control::refuse_revoked_use_in_txn;
 use super::super::reveal::RevealTarget;
-use super::super::transition::write_custody_transition_in_txn;
 use super::super::types::{
     CustodyTier, SECRET_SCOPE_READ, SecretBinding, SecretCustodyRecord, SecretCustodyStatus,
 };
@@ -95,7 +97,6 @@ impl Vault {
                 "a binding names its effector, at most 256 bytes",
             )));
         }
-        let _ = self.load_install_signing_if_minted();
         let mut wtxn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &wtxn)?;
         if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
@@ -108,6 +109,7 @@ impl Vault {
             read_secret_custody_in_txn(&self.store, &wtxn, &id)?.ok_or_else(|| unknown(&handle))?,
         );
         let rec = &mut held.0;
+        refuse_revoked_use_in_txn(self, &wtxn, &id, rec.class, &handle)?;
         if rec.status != SecretCustodyStatus::Active {
             return Err(not_active(&handle));
         }
@@ -122,7 +124,6 @@ impl Vault {
         }
         refuse_bindings_wider_than_live_floor(&self.store, &wtxn, rec)?;
         put_secret_custody_in_txn(self, &mut wtxn, &id, rec, at)?;
-        let transition = write_custody_transition_in_txn(self, &mut wtxn, id, rec, at)?;
         let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
         let record = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
@@ -159,12 +160,6 @@ impl Vault {
             receipt: decision_id,
         };
         wtxn.commit()?;
-        #[cfg(feature = "sync")]
-        if transition.is_some() {
-            self.refresh_custody_in_live_windows();
-        }
-        #[cfg(not(feature = "sync"))]
-        let _ = transition;
         Ok(bound)
     }
 }

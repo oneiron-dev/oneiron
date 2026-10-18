@@ -417,10 +417,15 @@ pub enum SecretsCommand {
     /// stdout exactly as held, the receipt to stderr. Reads nothing from
     /// stdin.
     Reveal(Box<SecretRevealArgs>),
-    /// Sign a portable secret's current custody transition with your owner
-    /// anchor, for an install that cannot sign as one of your machines. Reads
-    /// your recovery kit from stdin, one recovery code per line; the kit
-    /// never leaves this process, so the vault must be stopped.
+    /// Seal a portable secret again, same generation, to the installs you
+    /// name: how a machine you link later gets it, since linking alone
+    /// permits nobody. Reads nothing from stdin.
+    Rewrap(Box<SecretRewrapArgs>),
+    /// Push a portable secret's current custody transition, signed with
+    /// your owner anchor, to the installs you name, from an install with no
+    /// live machine profile (any other rewraps it as its holder). Reads your
+    /// recovery kit from stdin, one recovery code per line; the kit never
+    /// leaves this process, so the vault must be stopped.
     AnchorSign(Box<SecretAnchorSignArgs>),
 }
 
@@ -468,6 +473,16 @@ pub struct SecretRegisterArgs {
     #[arg(long = "ref", default_value = "refs/heads/main")]
     pub git_ref: String,
 
+    /// The install that holds a portable secret and registers it, as 32
+    /// hex; this install when absent.
+    #[arg(long)]
+    pub holder: Option<String>,
+
+    /// An install permitted to hold a portable secret's value, as 32 hex.
+    /// Repeat for more; the holder alone when none is given.
+    #[arg(long = "recipient", value_name = "MACHINE")]
+    pub recipients: Vec<String>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }
@@ -477,6 +492,35 @@ pub struct SecretRotateArgs {
     /// The secret's custody name.
     #[arg(long)]
     pub name: String,
+
+    /// The install that holds a portable secret and rotates it, as 32 hex;
+    /// this install when absent.
+    #[arg(long)]
+    pub holder: Option<String>,
+
+    /// An install permitted to hold the new value, as 32 hex. Repeat for
+    /// more; the secret's live permits when none is given.
+    #[arg(long = "recipient", value_name = "MACHINE")]
+    pub recipients: Vec<String>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SecretRewrapArgs {
+    /// The secret's custody name.
+    #[arg(long)]
+    pub name: String,
+
+    /// The install that holds the secret, as 32 hex; this install when
+    /// absent.
+    #[arg(long)]
+    pub holder: Option<String>,
+
+    /// An install permitted to hold the value, as 32 hex. Repeat for more.
+    #[arg(long = "recipient", value_name = "MACHINE", required = true)]
+    pub recipients: Vec<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,
@@ -520,6 +564,10 @@ pub struct SecretAnchorSignArgs {
     /// passphrase, and one recovery code then opens it.
     #[arg(long)]
     pub with_passphrase: bool,
+
+    /// An install the value is sealed to, as 32 hex. Repeat for more.
+    #[arg(long = "recipient", value_name = "MACHINE", required = true)]
+    pub recipients: Vec<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,

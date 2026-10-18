@@ -59,6 +59,22 @@ impl AuthorityFold {
         }
     }
 
+    /// The secret's live custody requests, each with its entry hash: what
+    /// its next request replaces, the permits a rotate keeps, and the request
+    /// a surface's resent protected input already names.
+    pub(crate) fn custody_heads(
+        &self,
+        secret: EntityId,
+    ) -> Vec<(AuthorityEntryHash, &OwnerWorkRequest)> {
+        self.owner_work
+            .heads
+            .get(&(OwnerWorkKind::Custody, secret))
+            .into_iter()
+            .flatten()
+            .filter_map(|hash| self.owner_work_request(hash).map(|request| (*hash, request)))
+            .collect()
+    }
+
     /// Whether an admitted custody revoke names `secret`: terminal for it
     /// here (CALLS CUSTODY_CONCURRENT_ACTIVE). It reads admitted history,
     /// not this install's removal race: a revoke only narrows, and once

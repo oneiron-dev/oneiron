@@ -3,7 +3,7 @@
 //! happened. One keyspace ([`SEALED_PAD_GRANT_STORAGE`]):
 //!
 //! - `q:<machine>:<key digest>`: an admission this vault queued for the home
-//!   (`reseal_after_machine_admission`), no secret. Queued until a home took
+//!   (`after_machine_admission`), no secret. Queued until a home took
 //!   it, then kept as asked, so a later admission does not ask again. A vault
 //!   that keeps generations itself takes it at once.
 //! - `g:<generation>:<machine>:<key digest>`: the home's custody of one grant

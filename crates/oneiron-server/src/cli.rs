@@ -35,7 +35,9 @@ pub use owner_args::{
     EmbeddingSpaceProbePutArgs, EmbeddingSpaceProbesCommand, EmbeddingSpacesCommand,
     SecretAnchorSignArgs,
 };
-pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs};
+pub use owner_args::{
+    GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs, SecretRewrapArgs,
+};
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,

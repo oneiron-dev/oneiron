@@ -336,22 +336,6 @@ impl SyncConnection {
                                     )));
                                 }
                             }
-                            // A machine those rows made mine gets each portable
-                            // credential's value sealed to it again (OF-422).
-                            let vault = std::sync::Arc::clone(manager.vault());
-                            match tokio::task::spawn_blocking(move || vault.reseal_custody_for_roster()).await {
-                                Ok(Ok(_)) => {}
-                                Ok(Err(error)) => {
-                                    let _ = events.send(SyncEvent::Error(format!(
-                                        "Custody re-seal failed: {error}"
-                                    )));
-                                }
-                                Err(error) => {
-                                    let _ = events.send(SyncEvent::Error(format!(
-                                        "Custody re-seal stopped: {error}"
-                                    )));
-                                }
-                            }
                             // The vault's sealed bundle: erase's rewrite of every
                             // kept pad, then the slot's take and upload (FIX 922).
                             match crate::sync::client::relay_sealed_bundle(&manager, &config).await {

@@ -299,29 +299,21 @@ impl Vault {
         Ok(request.expect("closure ran on Ok"))
     }
 
-    /// Seals the portable credentials again for the roster a committed
-    /// machine admission changed (FIX 1780), outside its writer. The
-    /// admission stands whatever happens here: a failure is returned as a
-    /// re-seal after a committed admission, never a rollback. A sync lane's
-    /// upkeep re-seal runs again later; nothing else retries it.
-    ///
-    /// First it queues the admitted machine for the home, for an old reader
-    /// to grant it each kept sealed pad object (FIX 4271). A queue that fails
-    /// is logged, never returned: the machine's own sweep asks again.
+    /// What a committed machine admission leaves to do outside its writer:
+    /// it queues the admitted machine for the home, for an old reader to
+    /// grant it each kept sealed pad object (FIX 4271). A queue that fails is
+    /// logged, never returned: the machine's own sweep asks again. No
+    /// portable credential is sealed to the machine on its admission: linking
+    /// alone is not the owner's consent, and a machine gets a secret only
+    /// from a rewrap he records (CALLS CUSTODY_PERMITS, WILL L04 row 04).
     #[cfg(feature = "sync")]
-    pub(super) fn reseal_after_machine_admission(&self) -> Result<()> {
+    pub(super) fn after_machine_admission(&self) {
         if let Err(error) = self.queue_sealed_bundle_pad_admissions() {
             tracing::warn!(
                 error = %error,
                 "queueing a machine admission for sealed pad access failed; its sweep asks again"
             );
         }
-        self.reseal_custody_for_roster().map(drop).map_err(|error| {
-            crate::error::Error::sync_engine(
-                crate::error::SyncEngineContext::CustodyResealAfterMachineAdmission,
-                error,
-            )
-        })
     }
 
     /// The host's own node: [`Self::ensure_serving_install_profile`] as a

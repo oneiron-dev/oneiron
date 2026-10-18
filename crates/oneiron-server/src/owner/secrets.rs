@@ -3,15 +3,25 @@
 //! when a repository declares the name. Rotation is a vault update the owner
 //! starts; the next lease materializes the new value, and exhaust built with
 //! the old one reads as stale at its next publish or export check.
+//!
+//! A portable secret's register, rotate, rewrap and revoke are custody
+//! requests on the shared owner-work log (WILL L04 row 04): each names the
+//! holder that does it, this install unless the body names another, and the
+//! installs the owner permits to hold its bytes. Every reply carries the
+//! request's receipt as it stands, why a change stayed on this install, and
+//! that delivery to his other machines is unknown: no machine acknowledges.
 
 use axum::body::{Body, Bytes, HttpBody as _};
 use base64::Engine as _;
 use futures_util::StreamExt as _;
+use oneiron::authority::ActSurface;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::secret_custody::{
-    CustodyClass, CustodyTier, ManifestSource, OwnerSecretRegistration, RequestedBinding,
-    SECRET_NAME_MAX_BYTES, SecretRegistered,
+    CustodyClass, CustodyKeptHere, CustodyPlan, CustodyTier, ManifestSource,
+    OwnerSecretRegistration, RequestedBinding, SECRET_NAME_MAX_BYTES, SecretCustodyWork,
+    SecretRegistered,
 };
+use oneiron::world_keys::{OwnerWorkReceipt, OwnerWorkUnassigned};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use zeroize::{Zeroize, Zeroizing};
@@ -38,6 +48,7 @@ pub(crate) struct RotateSecret {
     /// The secret's custody name.
     name: String,
     value: Zeroizing<Vec<u8>>,
+    plan: CustodyPlan,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +60,30 @@ struct RotateFields<'a> {
     /// Base64 needs no escapes, so a value carrying one is refused.
     #[serde(borrow)]
     value_base64: &'a RawValue,
+    /// The install that holds the secret and rotates it, as 32 hex; this
+    /// install when absent.
+    #[serde(default)]
+    holder: Option<String>,
+    /// The installs permitted to hold the new value, as 32 hex each; the
+    /// secret's live permits when empty.
+    #[serde(default)]
+    recipients: Vec<String>,
+}
+
+/// The holder and recipients a body names, as machine ids.
+pub(crate) fn custody_plan(
+    holder: Option<String>,
+    recipients: Vec<String>,
+) -> OwnerResult<CustodyPlan> {
+    Ok(CustodyPlan {
+        holder: holder
+            .map(|holder| super::entity_id("holder", &holder))
+            .transpose()?,
+        recipients: recipients
+            .iter()
+            .map(|machine| super::entity_id("recipients", machine))
+            .collect::<OwnerResult<_>>()?,
+    })
 }
 
 impl RotateSecret {
@@ -63,6 +98,7 @@ impl RotateSecret {
         Ok(Self {
             name: secret_name(fields.name)?,
             value,
+            plan: custody_plan(fields.holder, fields.recipients)?,
         })
     }
 }
@@ -107,6 +143,7 @@ pub(crate) struct RegisterSecret {
     bindings: Vec<RequestedBinding>,
     manifest: Option<ManifestSource>,
     value: Zeroizing<Vec<u8>>,
+    plan: CustodyPlan,
 }
 
 #[derive(Deserialize)]
@@ -126,6 +163,13 @@ struct RegisterFields<'a> {
     /// Raw, as in [`RotateFields`].
     #[serde(borrow)]
     value_base64: &'a RawValue,
+    /// A portable secret's holder, as 32 hex; this install when absent.
+    #[serde(default)]
+    holder: Option<String>,
+    /// The installs permitted to hold a portable secret, as 32 hex each;
+    /// its holder alone when empty.
+    #[serde(default)]
+    recipients: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -201,6 +245,7 @@ impl RegisterSecret {
             bindings,
             manifest: fields.manifest.map(ManifestFields::source).transpose()?,
             value,
+            plan: custody_plan(fields.holder, fields.recipients)?,
         })
     }
 }
@@ -314,6 +359,44 @@ pub(crate) mod wiped {
     }
 }
 
+/// What a custody change recorded for the owner's other machines,
+/// value-free (WILL L04 row 04).
+#[derive(Debug, Serialize)]
+pub(crate) struct CustodyReply {
+    /// The custody request's shared receipt; absent when nothing was
+    /// recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) work: Option<OwnerWorkReceipt>,
+    /// Why the change stayed on this install.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) kept_here: Option<&'static str>,
+    /// `unknown` once a request is recorded, since no machine acknowledges
+    /// a transition; `not_sent` when the change stayed here.
+    pub(crate) delivery: &'static str,
+    /// The words a surface shows.
+    pub(crate) said: &'static str,
+}
+
+impl From<SecretCustodyWork> for CustodyReply {
+    fn from(custody: SecretCustodyWork) -> Self {
+        Self {
+            said: custody.text(),
+            kept_here: custody.kept_here.map(CustodyKeptHere::as_str),
+            delivery: custody.delivery.as_str(),
+            work: custody.work,
+        }
+    }
+}
+
+/// A rotation or revoke's reply: the receipt this install wrote, when it
+/// wrote one, and what the custody request says.
+#[derive(Debug, Serialize)]
+pub(crate) struct CustodyRotated {
+    #[serde(flatten)]
+    pub(crate) receipt: Option<Rotated>,
+    pub(crate) custody: CustodyReply,
+}
+
 /// What the rotation or revoke changed: the generation moved, never the
 /// value. `kind` is the receipt's own (`rotated` or `revoked`, FIX 1753), so
 /// a revoke reads as one without its route.
@@ -340,6 +423,7 @@ pub(crate) struct Registered {
     pub(crate) bindings: Vec<RegisteredBinding>,
     pub(crate) manifest_ref: String,
     pub(crate) declared_paths: Vec<String>,
+    pub(crate) custody: CustodyReply,
 }
 
 /// A stored binding, its rung on the wire's 0–2 grade.
@@ -353,10 +437,12 @@ pub(crate) struct RegisteredBinding {
 pub(crate) fn register(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     request: &RegisterSecret,
 ) -> OwnerResult<Registered> {
-    let registered = vault.register_secret_as_owner(
+    let registered = vault.register_secret_with_custody(
         owner,
+        surface,
         &OwnerSecretRegistration {
             name: &request.name,
             class: request.class,
@@ -366,6 +452,7 @@ pub(crate) fn register(
             manifest: request.manifest.clone(),
             value: &request.value,
         },
+        &request.plan,
         vault.now_recorded_at(),
     )?;
     Ok(registered.into())
@@ -391,6 +478,7 @@ impl From<SecretRegistered> for Registered {
                 .collect(),
             manifest_ref: registered.manifest_ref,
             declared_paths: registered.declared_paths,
+            custody: registered.custody.into(),
         }
     }
 }
@@ -398,16 +486,21 @@ impl From<SecretRegistered> for Registered {
 pub(crate) fn rotate(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     request: &RotateSecret,
-) -> OwnerResult<Rotated> {
-    Ok(vault
-        .rotate_secret_as_owner(
-            owner,
-            &request.name,
-            &request.value,
-            vault.now_recorded_at(),
-        )?
-        .into())
+) -> OwnerResult<CustodyRotated> {
+    let rotated = vault.rotate_secret_with_custody(
+        owner,
+        surface,
+        &request.name,
+        &request.value,
+        &request.plan,
+        vault.now_recorded_at(),
+    )?;
+    Ok(CustodyRotated {
+        receipt: rotated.rotation.map(Rotated::from),
+        custody: rotated.custody.into(),
+    })
 }
 
 impl From<oneiron::secret_rotation::RotationReceipt> for Rotated {
@@ -441,46 +534,83 @@ pub(crate) async fn read_revoke(body: Body) -> OwnerResult<String> {
 /// and every lease over it is revoked, stamped on the vault clock as a
 /// rotation is. The receipt reads as a rotation's does, with
 /// `from_generation` equal to `to_generation` (nothing replaced the value)
-/// and `kind: "revoked"`.
+/// and `kind: "revoked"`, beside the custody revoke request carried for the
+/// owner's other machines from `surface` (audit only). With none recorded
+/// the reply says the revoke was not carried to them from here.
 pub(crate) fn revoke(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     name: &str,
-) -> OwnerResult<Rotated> {
-    // Audit only (mesh contract §2): the route passes its own surface once
-    // its adapter returns the custody work receipt too.
-    let surface = oneiron::authority::ActSurface::ThisInstall;
+) -> OwnerResult<CustodyRotated> {
+    let revoked = vault.revoke_secret_as_owner(owner, surface, name, vault.now_recorded_at())?;
+    let custody = match revoked.work {
+        Some(work) => CustodyReply {
+            said: work
+                .unassigned
+                .map_or_else(|| work.status.text(), OwnerWorkUnassigned::text),
+            kept_here: None,
+            delivery: if work.request.is_some() {
+                "unknown"
+            } else {
+                "not_sent"
+            },
+            work: Some(work),
+        },
+        None => CustodyReply {
+            work: None,
+            kept_here: Some("not_carried"),
+            delivery: "not_sent",
+            said: "revoked here only: it stays on its device, or this install carries no act \
+                   to your other machines; revoke it again from a linked install",
+        },
+    };
+    Ok(CustodyRotated {
+        receipt: Some(revoked.rotation.into()),
+        custody,
+    })
+}
+
+/// Seals a portable secret again to the installs `plan` permits, by its
+/// holder (WILL L04 row 04): how a machine linked later gets it, since
+/// linking alone permits nobody.
+pub(crate) fn rewrap(
+    vault: &oneiron::Vault,
+    owner: &AuthenticatedOwner,
+    surface: ActSurface,
+    name: &str,
+    plan: &CustodyPlan,
+) -> OwnerResult<CustodyReply> {
     Ok(vault
-        .revoke_secret_as_owner(owner, surface, name, vault.now_recorded_at())?
-        .rotation
+        .rewrap_secret_as_owner(owner, surface, name, plan, vault.now_recorded_at())?
         .into())
 }
 
-/// What signing a secret's custody with the owner anchor did (OF-422).
+/// What the owner's kit push of a secret's custody did (OF-422).
 #[derive(Debug, Serialize)]
 pub(crate) struct AnchorSigned {
     pub(crate) name: String,
-    /// Whether a transition was written. None is, for a record that stays
-    /// on its device (device bound, cross-vault or "this device only"), or a
-    /// value no machine of the owner's here can open.
+    /// Whether a transition was written. None is for a record that stays on
+    /// its device (device bound, cross-vault or "this device only").
     pub(crate) signed: bool,
 }
 
-/// Signs the current custody transition of the portable secret `name` with
-/// the owner anchor of `seed`, the recovery root this vault pins (OF-422):
-/// the owner's door for an install that cannot sign as one of the owner's
-/// machines. The record keeps its generation, status and value. The engine
-/// refuses any origin but this machine, so no route reaches it; the seed is
-/// the caller's to wipe.
+/// Pushes the current custody transition of the portable secret `name`,
+/// signed with the owner anchor of `seed`, the recovery root this vault
+/// pins, to the installs `recipients` names (CALLS CUSTODY_KIT_PUSH): the
+/// owner's kit is his authority; the install carries no act. The engine
+/// takes it only from an install with no live machine profile; any other
+/// rewraps the secret as its holder. The record keeps its generation,
+/// status and value. No route takes a kit; the seed is the caller's to wipe.
 pub(crate) fn sign_with_anchor(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
-    origin: oneiron::authority::EditOrigin,
     seed: &oneiron::world_keys::RecoveryRootSeed,
     name: &str,
+    recipients: &[oneiron::EntityId],
 ) -> OwnerResult<AnchorSigned> {
     let signed =
-        vault.sign_custody_with_anchor(owner, origin, seed, name, vault.now_recorded_at())?;
+        vault.sign_custody_with_anchor(owner, seed, name, recipients, vault.now_recorded_at())?;
     Ok(AnchorSigned {
         name: name.to_owned(),
         signed,
