@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use super::OwnerWorkReceipt;
+use super::{OWNER_WORK_NO_EXECUTOR, OwnerWorkReceipt, OwnerWorkUnassigned};
 use crate::authority::{
     ActSurface, AuthorityFold, AuthorityKey, AuthorityOp, MAX_PARENTS, OwnerAct, OwnerWorkBody,
     OwnerWorkKind, OwnerWorkRequest, WrapRecipient, authority_entry_hash, invalid_authority,
@@ -11,7 +11,9 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::world_keys::bundle::bundle_publish_executor;
 use crate::world_keys::recipients;
+use crate::world_keys::root_work::root_work_executor;
 use crate::{EntityId, TimeRange, Vault};
 
 /// This install cannot carry the owner's act: it has no machine identity or
@@ -36,20 +38,26 @@ fn parent_bound(named: usize) -> Error {
 }
 
 /// The install pinned to do an act's work (CALLS OWNER_WORK_EXECUTOR), or
-/// `None` when none can (CALLS OWNER_WORK_NO_EXECUTOR). One executor, read
-/// from `fold` alone: no election, no expiry and no clock takeover; only a
-/// new owner act names another. `recorder` is not named while another can
-/// do the work: an install that could do it all does it in the act's own
-/// commit. It names itself only when it alone holds the key the work needs
-/// (FIX 4634).
+/// why none can (CALLS OWNER_WORK_NO_EXECUTOR). One executor, read from
+/// `fold` alone: no election, no expiry and no clock takeover; only a new
+/// owner act names another. For key work `recorder` is not named while
+/// another can do the work: an install that could do it all does it in the
+/// act's own commit. It names itself only when it alone holds the key the
+/// work needs (FIX 4634). A root change names its target exactly (CALLS
+/// ROOT_WORK_EXECUTOR); a bundle publication the lowest install that holds
+/// every key the bundle seals (CALLS BUNDLE_PUBLISH_EXECUTOR).
 pub(crate) fn owner_work_executor(
     fold: &AuthorityFold,
     kind: OwnerWorkKind,
     target: EntityId,
     recorder: EntityId,
-) -> Option<EntityId> {
+) -> std::result::Result<EntityId, OwnerWorkUnassigned> {
     match kind {
-        OwnerWorkKind::WorldKey => world_key_executor(fold, target, recorder),
+        OwnerWorkKind::WorldKey => {
+            world_key_executor(fold, target, recorder).ok_or(OWNER_WORK_NO_EXECUTOR)
+        }
+        OwnerWorkKind::Root => root_work_executor(fold, target, recorder),
+        OwnerWorkKind::PublishBundle => bundle_publish_executor(fold, target),
     }
 }
 
@@ -130,8 +138,9 @@ impl Vault {
             return Err(no_carrier());
         }
         let kind = work.kind();
-        let Some(executor) = owner_work_executor(&fold, kind, target, machine) else {
-            return Ok(OwnerWorkReceipt::unassigned(kind, target));
+        let executor = match owner_work_executor(&fold, kind, target, machine) {
+            Ok(executor) => executor,
+            Err(why) => return Ok(OwnerWorkReceipt::unassigned(kind, target, why)),
         };
         let request = OwnerWorkRequest {
             carrier: machine,

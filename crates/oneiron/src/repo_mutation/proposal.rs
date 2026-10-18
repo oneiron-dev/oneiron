@@ -31,11 +31,11 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 pub(super) mod actor_erase;
-pub mod settlement;
-mod review;
 mod guards;
-use guards::validate_conflict_in_txn;
+mod review;
+pub mod settlement;
 pub(super) use guards::require_repo_artifact_in_txn;
+use guards::validate_conflict_in_txn;
 
 /// Durable per-operation code proposal. Key: id16.
 pub(super) const PROPOSAL: SideTable<EntityId, RepoProposal, crate::side_table::Named> =
@@ -216,9 +216,9 @@ impl RepoProposal {
             RepoProposalStatus::Applied | RepoProposalStatus::Approved => {
                 ClaimApprovalStatus::Approved
             }
-            RepoProposalStatus::Proposed | RepoProposalStatus::Failed | RepoProposalStatus::Rejected => {
-                ClaimApprovalStatus::Proposed
-            }
+            RepoProposalStatus::Proposed
+            | RepoProposalStatus::Failed
+            | RepoProposalStatus::Rejected => ClaimApprovalStatus::Proposed,
         }
     }
     pub(super) fn eligible(&self) -> Result<bool> {
@@ -263,12 +263,21 @@ impl Vault {
         let actor = request.actor_id;
         let repository_ref = request.repo_ref.clone();
         let session = request.session_id;
-        let sources = [request.op_provenance.turn, request.op_provenance.activity,
-            request.op_provenance.intent, request.op_provenance.substrate_ref];
+        let sources = [
+            request.op_provenance.turn,
+            request.op_provenance.activity,
+            request.op_provenance.intent,
+            request.op_provenance.substrate_ref,
+        ];
         self.propose_repo_mutation_checked(request, catalog, |txn| {
             guards::require_repo_artifact_in_txn(self, txn, repository, &repository_ref)?;
             if let Some(session) = session {
-                guards::require_entity_kind(self, txn, session, crate::registry::ENTITY_TYPE_SESSION)?;
+                guards::require_entity_kind(
+                    self,
+                    txn,
+                    session,
+                    crate::registry::ENTITY_TYPE_SESSION,
+                )?;
             }
             for id in sources.into_iter().flatten() {
                 if !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &id)? {
@@ -721,8 +730,7 @@ pub(super) fn validate_conflict(
     proposal: &RepoProposal,
     root: &std::path::Path,
 ) -> Result<()> {
-    let RepoProposalOperation::ResolveConflictFile { branch_name, .. } = &proposal.operation
-    else {
+    let RepoProposalOperation::ResolveConflictFile { branch_name, .. } = &proposal.operation else {
         return Ok(());
     };
     let txn = vault.store.env.read_txn()?;

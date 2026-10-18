@@ -202,16 +202,18 @@ fn grant_names_act(
         )
 }
 
-/// Policy hook (CALLS "FIX 4480 agent tighten Grant line", open): whether
-/// `grant` names `world` as the target of its act: its worlds axis lists the
-/// world explicitly. A grant over every world names none, as a grant over
-/// every verb names no act.
+/// Policy hook (CALLS "FIX 4480 agent tighten Grant line", accepted with the
+/// Engine's amendment of 10-19 05:0x): whether `grant` names `world` as the
+/// target of its act. Its worlds axis covers the world the way every Grant
+/// axis covers its targets ([`crate::federation::ScopeAxis::contains`]): an
+/// explicit name and the grammar's all-worlds form both count, since a
+/// tighten only lowers exposure. The verbs axis stays explicit
+/// ([`grant_names_act`]): a grant over every verb still names no act.
 fn grant_names_world(grant: &crate::federation::FederationGrant, world: EntityId) -> bool {
-    matches!(
-        &grant.authority_scope.worlds,
-        crate::federation::ScopeAxis::Some(_)
-            if grant.authority_scope.worlds.contains(&crate::federation::ScopeId(world))
-    )
+    grant
+        .authority_scope
+        .worlds
+        .contains(&crate::federation::ScopeId(world))
 }
 
 /// What this replica holds of an agent act's Grant.
@@ -315,8 +317,8 @@ impl crate::Vault {
     /// The live Grant of `agent` that names a tighten of `world`'s settings
     /// now (FIX 4480), when one does: a FEDERATION_GRANT row whose member is
     /// the agent, that confers now, lists [`WORLD_PRIVACY_TIGHTEN_VERB`] among
-    /// its verbs and `world` among its worlds. The first such row, in id
-    /// order.
+    /// its verbs, and whose worlds axis covers `world` (by name, or as all
+    /// worlds). The first such row, in id order.
     pub(crate) fn agent_world_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

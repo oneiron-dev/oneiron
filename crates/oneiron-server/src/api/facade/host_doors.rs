@@ -81,6 +81,7 @@ pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
+pub(crate) use super::run_review_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -89,6 +90,8 @@ pub(crate) use super::coreference_doors::*;
 // The owner's subject-bound feedback and report doors, likewise.
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::feedback_doors::*;
+pub(crate) use super::goal_optimize_doors::*;
+pub(crate) use super::guest_document_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 pub(crate) use super::identity_topology_doors::*;
@@ -97,6 +100,7 @@ pub(crate) use super::skill_doors::*;
 pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
+pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::persona_doors::*;
@@ -104,6 +108,7 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;
 // The share doors past create (OF-491), likewise.
@@ -134,9 +139,9 @@ pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::consent_doors::*;
-pub(crate) use super::graduation_doors::*;
 pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
+pub(crate) use super::graduation_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::checkout_doors::*;
@@ -165,8 +170,9 @@ pub(crate) use super::critic_review_doors::*;
 pub(crate) use super::affect_doors::*;
 pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
-pub(crate) use super::research_doors::*;
 pub(crate) use super::coach_offer_doors::*;
+pub(crate) use super::eval_doors::*;
+pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
@@ -185,9 +191,11 @@ pub(crate) use super::code_run_doors::*;
 pub(crate) use super::code_wait_doors::*;
 // The owner's hook regeneration due, record and adopt doors (DOOR-077), likewise.
 pub(crate) use super::hook_regen_doors::*;
+pub(crate) use super::host_trigger_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
+pub(crate) use super::lens_selection_doors::*;
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
 pub(crate) use crate::api::context_board::{vault_explain_gate, vault_explain_memory};
@@ -1087,15 +1095,21 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.booking.constraint_turn" => {
-            crate::api::host_action::require_host_owner_act(server, auth)
-                .map(drop)
-                .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
-        }
+        "vault.booking.constraint_turn"
+        | "vault.booking.availability"
+        | "vault.booking.book"
+        | "vault.booking.reschedule"
+        | "vault.booking.cancel" => crate::api::host_action::require_host_owner_act(server, auth)
+            .map(drop)
+            .map_err(|error| super::FacadeApiError::from(error).into_memory_error()),
         "ai.steps.submit"
         | "ai.steps.receipt"
         | "vault.runs.step"
         | "vault.runs.checkpoint"
+        | "vault.runs.review"
+        | "vault.runs.settle"
+        | "vault.runs.settlement"
+        | "vault.revert_run"
         | "ai.reply"
         | "calendar.connector.configure"
         | "calendar.connector.get"
@@ -1156,6 +1170,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.permissions.approve"
         | "vault.skills.optimize.start"
         | "vault.skills.optimize.result"
+        | "vault.projects.goal.intake.complete"
+        | "vault.projects.goal.get"
+        | "vault.skills.optimize.propose"
+        | "vault.skills.optimize.measure"
+        | "vault.skills.optimize.score"
+        | "vault.skills.optimize.admit"
+        | "vault.skills.optimize.goal.get"
+        | "vault.skills.optimize.goal.bind"
+        | "vault.skills.optimize.preferences.get"
+        | "vault.skills.optimize.preferences.set"
+        | "vault.skills.optimize.tradeoff_asks"
+        | "vault.skills.optimize.tradeoff_asks.pick"
         | "vault.skills.governance.get"
         | "vault.skills.governance.set"
         | "vault.skills.pack_receipt"
@@ -1163,6 +1189,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.outcomes.get"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
+        | "vault.packs.hooks.grant.set"
+        | "vault.packs.hooks.grant.get"
         | "vault.packs.hooks.qualify"
         | "vault.connectors.subscriptions.put"
         | "vault.connectors.subscriptions.list"
@@ -1171,6 +1199,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.authority.history.export"
         | "vault.authority.history.import"
         | "vault.mesh.path_receipts"
+        | "host.compact"
+        | "host.wake"
+        | "host.budget.hit"
         | "vault.hooks.replay"
         | "vault.hooks.regen.due"
         | "vault.hooks.regen.get"
@@ -1183,6 +1214,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.setup.verify"
         | "vault.authority.handoff_alarms"
         | "vault.authority.handoff_alarms.acknowledge"
+        | "vault.records.erase_sweep"
         | "vault.cleanup.run"
         | "vault.entities.mention"
         | "vault.legal_holds.place"
@@ -1207,6 +1239,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.weights.get"
         | "vault.retrieval.weights.configure"
         | "vault.affect.claims.consolidate"
+        | "vault.affect.coping.record"
+        | "vault.affect.coping.update"
+        | "vault.affect.coping.aggregate"
+        | "vault.affect.wellness.policy.get"
+        | "vault.affect.wellness.policy.configure"
+        | "vault.affect.wellness.derive"
+        | "vault.affect.wellness.get"
         | "vault.slim.policy"
         | "vault.slim.state"
         | "vault.slim.resume_step"
@@ -1342,6 +1381,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.federation.connect.disconnect"
         | "vault.federation.connect.export"
         | "vault.federation.connect.rejoin"
+        | "vault.guests.share"
+        | "vault.guests.reshare"
         | "vault.guests.revoke"
         | "vault.guests.mint_slip"
         | "vault.support_grants.mint"
@@ -1369,6 +1410,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.research.create_child"
         | "vault.evals.inventory"
         | "vault.evals.cohorts.setup"
+        | "vault.evals.author_now"
+        | "vault.evals.authoring.result"
+        | "vault.evals.families"
+        | "vault.evals.families.assign"
+        | "vault.evals.cases"
+        | "vault.evals.cases.record"
+        | "vault.evals.cohorts"
+        | "vault.evals.cohorts.open"
+        | "vault.evals.exposure"
+        | "vault.evals.sufficiency"
+        | "vault.evals.labels.blocked"
+        | "vault.evals.labels.pick"
         | "vault.coach.training_offers"
         | "vault.coach.training_offers.get"
         | "vault.coach.training_offers.trigger"
@@ -1500,6 +1553,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "self.off_record.execute" => {
             super::off_record_doors::off_record_admits(server, auth, verb)
         }
+        "vault.guests.export_envelope" => {
+            super::guest_document_doors::guest_document_reader(server, auth).map(drop)
+        }
+        "execute_code" => super::foreign_code_doors::foreign_code_admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" => artifact_asker(server, auth).map(drop),
@@ -1508,6 +1565,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.asks.climb"
         | "self.decisions.asks"
         | "vault.fanout.resume_as" => super::decision_ask_doors::holder(auth, verb).map(drop),
+        "fetch" | "crawl" => super::facade_actor(server, auth)
+            .map(drop)
+            .map_err(super::FacadeApiError::into_memory_error),
         "ai.verdict" => asking(auth, server).map(drop),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)

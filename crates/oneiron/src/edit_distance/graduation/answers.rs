@@ -252,9 +252,9 @@ fn answer_graduation_offer_in_txn(
                     "this scope's graduation offer is already held; there is nothing to decline",
                 )));
             }
-            let backoffs = super::threshold_policy::graduation_policy_in_txn(
-                &vault.store, &*wtxn, scope,
-            )?.snooze_backoff_seconds;
+            let backoffs =
+                super::threshold_policy::graduation_policy_in_txn(&vault.store, &*wtxn, scope)?
+                    .snooze_backoff_seconds;
             append_answer_in_txn(vault, wtxn, scope, answer.as_str(), at)?;
             crate::consent_graduation::reset_ramp_streak_in_txn(vault, wtxn, scope, at)?;
             let next = match answer {
@@ -366,8 +366,11 @@ fn append_answer_in_txn(
         at,
         after_seq: vault.read_identity_topology_seq_in_txn(&*wtxn)?,
         snooze_backoff_seconds: super::threshold_policy::graduation_policy_in_txn(
-            &vault.store, &*wtxn, scope,
-        )?.snooze_backoff_seconds,
+            &vault.store,
+            &*wtxn,
+            scope,
+        )?
+        .snooze_backoff_seconds,
     };
     let key = (scope.key(), vault.store.clock.entity_id()?);
     ANSWER.put(&vault.store, wtxn, &key, &row)?;

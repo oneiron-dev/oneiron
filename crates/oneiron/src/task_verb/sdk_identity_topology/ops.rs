@@ -135,7 +135,7 @@ pub fn resolve_identity_proposal_as_owner(vault: &Vault, owner: &AuthenticatedOw
     let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
     let write = owner_write(vault, &txn, owner, ClaimApprovalStatus::Approved)?;
     let seal = owner_seal(owner).with_seen(Some(input.seen));
-    let (_, event, applied) = vault.resolve_identity_proposal_with_event_in_txn(
+    let (_, event, applied) = vault.resolve_identity_proposal_with_applied_in_txn(
         &mut txn, &input.proposal, ruling, &write, &seal, vault.now_recorded_at())?;
     let result = IdentityProposalResolutionResult {
         receipt: event_receipt(vault, &txn, event)?,

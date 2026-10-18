@@ -1,4 +1,4 @@
-//! Typed booking-page discovery and calendar occupancy inputs.
+//! Typed booking-page discovery, public lifecycle calls and calendar occupancy inputs.
 use serde::{Deserialize, Serialize};
 
 use crate::calendar::{CalendarRangeDto, CalendarSel};
@@ -14,6 +14,46 @@ pub struct BookingPageTokenRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BookingPageTokenResponse {
     pub page_token: String,
+}
+
+/// Public availability, using the canonical booking operation envelope.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BookingAvailabilityRequest {
+    Availability {
+        page_token: String,
+        input: crate::booking::agent_api::BookingAvailabilityInput,
+    },
+}
+
+/// The full two-stage book flow, not an implicit confirmation.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BookingBookRequest {
+    Book {
+        page_token: String,
+        input: crate::booking::agent_api::BookingBookInput,
+    },
+}
+
+/// A move proves authority with this booking's reschedule token only.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BookingRescheduleRequest {
+    Reschedule {
+        page_token: String,
+        input: crate::booking::agent_api::BookingRescheduleInput,
+    },
+}
+
+/// A cancellation proves authority with this booking's cancel token only.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BookingCancelRequest {
+    Cancel {
+        page_token: String,
+        input: crate::booking::agent_api::BookingCancelInput,
+    },
 }
 
 /// Source-redacted occupancy over an inclusive UTC-seconds window.

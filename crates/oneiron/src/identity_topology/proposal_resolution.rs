@@ -388,12 +388,13 @@ impl Vault {
         seal: &TopologySeal,
         now: u64,
     ) -> Result<(ProposalOutcome, EntityId)> {
-        self.resolve_identity_proposal_with_event_in_txn(wtxn, proposal, ruling, write, seal, now)
-            .map(|(outcome, event, _)| (outcome, event))
+        self.resolve_identity_proposal_with_applied_in_txn(wtxn, proposal, ruling, write, seal, now)
+            .map(|(outcome, resolution, _)| (outcome, resolution))
     }
 
-    /// The same ruling with its approved op's event for typed callers and undo.
-    pub(crate) fn resolve_identity_proposal_with_event_in_txn(
+    /// The ordinary ruling plus the actual op it applied, for a run's undo
+    /// currency. Both ids come from the ruling, never from author or time.
+    pub(crate) fn resolve_identity_proposal_with_applied_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         proposal: &EntityId,
@@ -442,7 +443,7 @@ impl Vault {
 
         let scope = self.proposal_scope_in_txn(&*wtxn, &record, &proposed_op)?;
         let proposer_evidence = record.evidence.as_ref();
-        let (outcome, amended_body, applied_event) = match (&ruling, amended) {
+        let (outcome, amended_body, applied) = match (&ruling, amended) {
             (ProposalRuling::Reject, _) => (ProposalOutcome::Rejected, None, None),
             (ProposalRuling::Approve, _) => {
                 let applied = self.apply_resolved_identity_op_in_txn(
@@ -512,7 +513,7 @@ impl Vault {
                 "identity proposal resolution must be effective",
             ));
         };
-        Ok((outcome, event_id, applied_event))
+        Ok((outcome, event_id, applied))
     }
 
     /// Applies the op a ruling approved, under `Approved` consent — the
@@ -549,11 +550,17 @@ impl Vault {
             }
             _ => op.clone(),
         };
-        match self.apply_identity_topology_op_resolved_in_txn(wtxn, &op, &applied_write, seal, now)? {
+        match self.apply_identity_topology_op_resolved_in_txn(
+            wtxn,
+            &op,
+            &applied_write,
+            seal,
+            now,
+        )? {
             IdentityOpOutcome::Applied { event, .. } => Ok(event),
-            IdentityOpOutcome::Parked { .. } | IdentityOpOutcome::Noop => {
-                Err(Error::InvariantViolation("approved identity op must apply"))
-            }
+            _ => Err(Error::InvariantViolation(
+                "an approved topology ruling must apply",
+            )),
         }
     }
 

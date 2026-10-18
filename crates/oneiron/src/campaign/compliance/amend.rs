@@ -28,7 +28,9 @@ const NOTICE: SideTable<[u8; 4], String, Raw> =
 // ---------------------------------------------------------------------------
 
 /// What an amendment does to the pack's strictness.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum ComplianceAmendmentClass {
     /// Provably stricter: rows added, dials tightened, nothing relaxed.
     Tightening,
@@ -201,9 +203,8 @@ fn apply_compliance_amendment(
     proposed: CompliancePack,
 ) -> Result<ComplianceAmendmentOutcome> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let (_, outcome) = apply_compliance_amendment_in_txn(
-        &vault.store, &mut wtxn, proposer, &proposed, true,
-    )?;
+    let (_, outcome) =
+        apply_compliance_amendment_in_txn(&vault.store, &mut wtxn, proposer, &proposed, true)?;
     wtxn.commit()?;
     Ok(outcome)
 }
@@ -244,9 +245,7 @@ pub fn stamp_compliance_amendment(
     proposal_hash: [u8; 32],
 ) -> Result<CompliancePack> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let pending = stamp_compliance_amendment_in_txn(
-        &vault.store, &mut wtxn, owner, proposal_hash,
-    )?;
+    let pending = stamp_compliance_amendment_in_txn(&vault.store, &mut wtxn, owner, proposal_hash)?;
     wtxn.commit()?;
     Ok(pending)
 }
@@ -266,7 +265,9 @@ fn matching_pending_in_txn(
     let pending = pending_compliance_pack_in_txn(store, txn)?
         .ok_or_else(|| invalid_pack("no amendment is awaiting an owner stamp"))?;
     if compliance_proposal_hash(&pending)? != proposal_hash {
-        return Err(invalid_pack("owner stamp does not bind the staged rows and version"));
+        return Err(invalid_pack(
+            "owner stamp does not bind the staged rows and version",
+        ));
     }
     Ok(pending)
 }
@@ -281,7 +282,11 @@ pub(super) fn stamp_compliance_amendment_in_txn(
     let current = active_compliance_pack_in_txn(store, wtxn)?;
     classify_compliance_amendment(&current, &pending)?;
     activate_compliance_pack(
-        store, wtxn, &pending, ComplianceAmendmentClass::LooseningOrAmbiguous, &owner.to_hex(),
+        store,
+        wtxn,
+        &pending,
+        ComplianceAmendmentClass::LooseningOrAmbiguous,
+        &owner.to_hex(),
     )?;
     PENDING.delete(store, wtxn, &())?;
     Ok(pending)
