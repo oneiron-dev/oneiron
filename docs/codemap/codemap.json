@@ -62709,7 +62709,7 @@
      "path": "src/facade/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 1
      }
     },
