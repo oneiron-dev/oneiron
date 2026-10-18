@@ -108,6 +108,12 @@ pub enum EngineLimit {
     /// Stored cells one workbook import writes into a live office body,
     /// every sheet together. Past it the workbook is imported whole.
     ImportXlsxLiveCells,
+    /// Bytes of one foreign pack script run's typed output. Past it the
+    /// output is read whole, up to the sandbox's own file bound.
+    PackScriptOutputBytes,
+    /// Inbound events, verbs or connector events one foreign pack script run
+    /// emits, whichever is most. Past it every row is served.
+    PackScriptOutputRows,
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
@@ -133,7 +139,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 32] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -158,6 +164,8 @@ impl EngineLimit {
         Self::SignatureDecodeBytes,
         Self::PptxCommentPatches,
         Self::ImportXlsxLiveCells,
+        Self::PackScriptOutputBytes,
+        Self::PackScriptOutputRows,
         Self::JudgeRubricBytes,
         Self::JudgeInstructionsBytes,
         Self::JudgeReplayTextBytes,
@@ -193,6 +201,8 @@ impl EngineLimit {
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
             Self::PptxCommentPatches => "limits.pptx_comment_patches",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
+            Self::PackScriptOutputBytes => "limits.pack_script_output_bytes",
+            Self::PackScriptOutputRows => "limits.pack_script_output_rows",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
             Self::JudgeInstructionsBytes => "limits.judge_instructions_bytes",
             Self::JudgeReplayTextBytes => "limits.judge_replay_text_bytes",
@@ -230,6 +240,8 @@ impl EngineLimit {
             Self::SignatureDecodeBytes => 1 << 30,
             Self::PptxCommentPatches => 10_000,
             Self::ImportXlsxLiveCells => 200_000,
+            Self::PackScriptOutputBytes => 64 << 10,
+            Self::PackScriptOutputRows => 16,
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,

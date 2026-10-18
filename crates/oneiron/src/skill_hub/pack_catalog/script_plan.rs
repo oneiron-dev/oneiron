@@ -9,7 +9,6 @@ use crate::code_sandbox::SandboxProposalWrite;
 use crate::{Result, skill_hub::HubFile};
 
 const OUTPUT_PATH: &str = "/mnt/workspace/adapter-output.json";
-const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_GRANT_PRELUDE_BYTES: usize = 128 * 1024;
 
 fn shape<T>(result: oneiron_sandbox_contract::Result<T>) -> Result<T> {
@@ -49,7 +48,12 @@ impl ScriptExecutionPlan {
         }
         let script_index =
             script_index.ok_or_else(|| invalid("declared adapter script is absent"))?;
-        let output = ScriptOutputContract::new()?;
+        // The output may take what the workspace has left, up to the
+        // sandbox's own file bound. The `[limits]` row a run asks past is
+        // measured at launch, never here (Rule 5).
+        let output = ScriptOutputContract::new(oneiron_sandbox_contract::MAX_FILE_BYTES.min(
+            oneiron_sandbox_contract::MAX_WORKSPACE_BYTES.saturating_sub(snapshot.total_bytes()),
+        ))?;
         let reserved_shape = shape(snapshot.with_output(&output.reservation))?;
         let program = shape(ProgramBudget::new(MAX_GRANT_PRELUDE_BYTES))?;
         shape(program.qualify_source(source.files()[script_index].content.len()))?;
@@ -113,11 +117,11 @@ struct ScriptOutputContract {
     reservation: OutputReservation,
 }
 impl ScriptOutputContract {
-    fn new() -> Result<Self> {
+    fn new(max_bytes: usize) -> Result<Self> {
         Ok(Self {
             reservation: shape(OutputReservation::new(
                 shape(WorkspacePath::parse(OUTPUT_PATH))?,
-                MAX_OUTPUT_BYTES,
+                max_bytes,
             ))?,
         })
     }
@@ -146,5 +150,5 @@ impl ScriptOutputContract {
 /// Protocol conformance uses the same output contract as the pack plan.
 #[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
 pub(crate) fn script_output_bytes(write: &SandboxProposalWrite) -> Result<Vec<u8>> {
-    ScriptOutputContract::new()?.bytes(write)
+    ScriptOutputContract::new(oneiron_sandbox_contract::MAX_FILE_BYTES)?.bytes(write)
 }
