@@ -17,6 +17,7 @@ use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::{Listed, credential_listing, off_runtime_listing, refused};
 use crate::auth::CoreAuth;
+use crate::lens_frames::CardOwner;
 use crate::server::SyncServer;
 
 /// `vault.weave.link.wrong`: a live person labels a link in their own
@@ -155,10 +156,13 @@ fn owner_lens(
 /// narrative route, as a card whose frame this server holds for the
 /// credential's events on it. A person reads the person lens, an agent its
 /// own; the owner lens is `POST /v1/owner/weave/lens`. The step spends on
-/// the caller's own line.
+/// the caller's own line. A run-held render (`owner`, FIX 2612) holds its
+/// card for its creating run and subscription, replacing the card that run
+/// last rendered for it; any other holds it unowned.
 pub(crate) async fn vault_weave_lens(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    owner: Option<CardOwner>,
     input: WeaveReportRequest,
 ) -> Listed<LensFrameCard> {
     const VERB: &str = "vault.weave.lens";
@@ -172,16 +176,17 @@ pub(crate) async fn vault_weave_lens(
             ));
         }
     };
-    crate::ai_host::render_live_weave_lens_listing(
-        server,
-        crate::ai_host::WeaveLensCaller::Credential {
-            auth: auth.clone(),
-            actor,
-            class,
-        },
-        input,
-    )
-    .await
+    let caller = crate::ai_host::WeaveLensCaller::Credential {
+        auth: auth.clone(),
+        actor,
+        class,
+    };
+    match owner {
+        Some(owner) => {
+            crate::ai_host::render_live_weave_lens_for_run(server, caller, input, owner).await
+        }
+        None => crate::ai_host::render_live_weave_lens_listing(server, caller, input).await,
+    }
 }
 
 /// `vault.weave.digest` on this server: one of the credential's saved

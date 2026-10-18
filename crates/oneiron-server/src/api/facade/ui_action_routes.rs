@@ -46,6 +46,7 @@ use super::{FacadeApiError, facade_actor, facade_input, facade_json};
 use crate::ai_host::LensCallback;
 use crate::api::credential_memory;
 use crate::auth::{CoreAuth, CoreScope};
+use crate::lens_frames::CardOwner;
 use crate::server::SyncServer;
 
 pub(crate) fn routes() -> Router<Arc<SyncServer>> {
@@ -57,10 +58,13 @@ pub(crate) fn routes() -> Router<Arc<SyncServer>> {
 /// `vault.lenses.default` on this server: the default lens read under the
 /// credential's own key at its locality, lowered once for the whole atom
 /// kit, its frame held for the card's events before the answer leaves.
-/// Beside it, the rows its reads listed.
+/// Beside it, the rows its reads listed. A run-held render (`owner`, FIX
+/// 2612) holds its card for its creating run and subscription, replacing
+/// the card that run last rendered for it; any other holds it unowned.
 pub(crate) async fn vault_lenses_default(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    owner: Option<CardOwner>,
     input: LensDefaultRequest,
 ) -> (MemoryResult<ScopedReadResult<LensFrameCard>>, Vec<EntityId>) {
     let (actor, class) = match facade_actor(auth) {
@@ -85,9 +89,19 @@ pub(crate) async fn vault_lenses_default(
     };
     let answer = rendered.and_then(|ScopedReadResult { value, receipt }| {
         let (frame, card) = value.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
-        server
-            .lens_frames
-            .record(auth, frame, card.render.clone())?;
+        match owner {
+            Some(owner) => {
+                server.lens_frames.replace_for_subscription(
+                    auth,
+                    frame,
+                    card.render.clone(),
+                    owner,
+                )?;
+            }
+            None => server
+                .lens_frames
+                .record(auth, frame, card.render.clone())?,
+        }
         Ok(ScopedReadResult {
             value: card,
             receipt,

@@ -34,6 +34,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use oneiron::EntityId;
 use oneiron::claim::CallerLocality;
 use oneiron::lens::{
     GeneratedUiRender, GeneratedUiStateSnapshot, LensHostBackingRef, LensRenderFrame, LensRenderId,
@@ -65,16 +66,31 @@ pub(crate) struct HeldCard {
 /// live subscription it renders for. Host-only: it is never part of a
 /// render or an answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "L07-A's live lens renderer builds it with its run (FIX 2612)"
-)]
 pub(crate) struct CardOwner {
     /// The creating run's id, as its host names it.
     pub(crate) creator_run: String,
     /// The live subscription the card renders for; `None` for a one-off
     /// render, which no re-render replaces.
     pub(crate) subscription: Option<String>,
+}
+
+impl CardOwner {
+    /// The owner of the card a run-held render of `verb` for `request` holds
+    /// (OF-181, FIX 2612 (a)): `run`, the executor run the host handed the
+    /// door the call came through, by its `to_hex()`, the name its
+    /// retirement closes its cards by; and the request's own subscription,
+    /// `lens:<verb>:<digest>`, the digest BLAKE3 of the request's canonical
+    /// JSON (object keys sorted at every depth). The same run rendering the
+    /// same request again replaces its card, however its keys were ordered.
+    pub(crate) fn run_request(run: EntityId, verb: &str, request: &serde_json::Value) -> Self {
+        Self {
+            creator_run: run.to_hex(),
+            subscription: Some(format!(
+                "lens:{verb}:{}",
+                oneiron::receipt::call_json_digest(request)
+            )),
+        }
+    }
 }
 
 /// Whose card a frame is: the credential's idempotency principal, where it
@@ -148,10 +164,6 @@ impl LensFrameStore {
     /// other card the same caller holds from the same run for the same
     /// subscription. A card the retained line cannot hold replaces nothing,
     /// so the last good card stays. Answers how many cards it replaced.
-    #[allow(
-        dead_code,
-        reason = "L07-A's live lens renderer calls it with its run (FIX 2612)"
-    )]
     pub(crate) fn replace_for_subscription(
         &self,
         auth: &CoreAuth,

@@ -1264,8 +1264,13 @@ async fn vault_weave_lens(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.weave.lens", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.weave.lens", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_weave_lens(server, auth, facade_input(hooks.args.clone())?).await;
+    let (output, listed) = super::host_doors::vault_weave_lens(
+        server,
+        auth,
+        call.lens_owner(),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -3545,9 +3550,13 @@ async fn vault_lenses_default(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.lenses.default", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.lenses.default", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_lenses_default(server, auth, facade_input(hooks.args.clone())?)
-            .await;
+    let (output, listed) = super::host_doors::vault_lenses_default(
+        server,
+        auth,
+        call.lens_owner(),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
