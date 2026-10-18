@@ -2491,6 +2491,11 @@ export_facade! {
     let output = client.vault_search_hybrid(&input)?;
     crate::codec::lift_record("vault.search.hybrid", &output)
 };
+"vault.search.temporal" => fn vault_search_temporal(&self, input: TemporalSearchRequest) -> ScopedReadResultTemporalSearchResult = |client| {
+    let input: oneiron::memory::TemporalSearchRequest = crate::codec::lower_record("vault.search.temporal", input)?;
+    let output = client.vault_search_temporal(&input)?;
+    crate::codec::lift_record("vault.search.temporal", &output)
+};
 "vault.search.bm25" => fn vault_search_bm25(&self, query: String, limit: u32) -> LexicalHits = |client| {
     let input: oneiron::task_verb::sdk::QueryBm25Request = (query, limit).lower()?;
     let output = client.vault_search_bm25(&input)?;

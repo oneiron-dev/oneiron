@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 613 facade rows, 2289 declarations.
-Inputs: 561 of 613 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 544 of 613 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 614 facade rows, 2295 declarations.
+Inputs: 562 of 614 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 545 of 614 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -9666,6 +9666,34 @@ class HybridSearchHit(TypedDict):
     score: float
     access_factor: NotRequired[float | None]
     components: list[RetrievalScoreComponent]
+TemporalAnchorMode = Literal["occurred", "learned", "both", "auto"]
+class TemporalSearchRange(TypedDict):
+    start: int
+    end: int
+class TemporalSearchRequest(TypedDict):
+    start: int
+    end: int
+    sigma_secs: int
+    anchor_mode: NotRequired[TemporalAnchorMode]
+    learned_start: NotRequired[int | None]
+    learned_end: NotRequired[int | None]
+    adaptive: NotRequired[bool]
+    occurred_range: NotRequired[TemporalSearchRange | None]
+    learned_range: NotRequired[TemporalSearchRange | None]
+    limit: int
+class TemporalSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+    occurred_start: int
+    occurred_end: int
+    learned_at: int
+class TemporalSearchReport(TypedDict):
+    sigma_secs: int
+    rounds: int
+class TemporalSearchResult(TypedDict):
+    hits: list[TemporalSearchHit]
+    widening: NotRequired[TemporalSearchReport | None]
 class QueryBm25Request(TypedDict):
     query: str
     limit: int
