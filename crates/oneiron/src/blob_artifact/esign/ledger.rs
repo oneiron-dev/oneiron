@@ -232,6 +232,11 @@ pub(super) fn append(
         ClaimLifecycleStatus::Active,
     )?;
     body.source = Some(ClaimSource::Observed);
+    // A document sent for a project keeps its trail in that project's
+    // audience; one sent for none stays at the reserved default.
+    if let Some(project) = state.document.project {
+        body.scope_project = project;
+    }
     vault.put_reserved_claim_in_txn(
         txn,
         &vault.new_entity_id()?,
@@ -265,7 +270,8 @@ impl Vault {
     /// versions are pinned before the first event; later send rechecks them.
     /// A document for a project needs the project live and, under
     /// [`PROJECT_MEMBERS_ONLY`], `actor` among its members or a live vault
-    /// owner.
+    /// owner. The overlay artifact and every event of its trail are then
+    /// scoped to that project's audience.
     pub fn create_esign_document(
         &self,
         document: EntityId,
@@ -316,6 +322,14 @@ impl Vault {
                 actor,
                 now,
             )?;
+            if let Some(project) = body.project {
+                crate::federation::record_scope::stamp_blob_project(
+                    &self.store,
+                    txn,
+                    document,
+                    project,
+                )?;
+            }
             Ok(())
         })
     }

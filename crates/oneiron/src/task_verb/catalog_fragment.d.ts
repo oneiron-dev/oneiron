@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 369 code-mode rows (349 host rows, 20 run rows), 1302 declarations.
-// Replies: 316 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 370 code-mode rows (350 host rows, 20 run rows), 1322 declarations.
+// Replies: 317 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -532,9 +532,10 @@ declare namespace Sdk {
   type CandidateRef = { config_ref: string; config_sha256: string };
   type PriorRung = "user" | "persona" | "global";
   type PriorSeed = { rung: PriorRung; alpha: number; beta: number; source_ref: string };
-  type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[] };
+  type ResearchExecution = { experimenter: EntityId; scorer: EntityId; referee?: EntityId | null; experiment_units: number; measure_units: number; confirm_units: number };
+  type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[]; execution?: ResearchExecution | null };
   type ResearchGoalPin = { goal_id: EntityId; revision: string; project?: [EntityId, EntityId] | null };
-  type ResearchBinding = { root: AttemptId; run_id: string; config: CampaignConfig; config_sha256: string; target: ResearchTarget; goal?: ResearchGoalPin | null; holder?: string | null; policy_digest: string; confirmation?: ResearchConfirmationSeat | null; share?: string | null; prior_ladder: PriorSeed[]; bound_at: number };
+  type ResearchBinding = { root: AttemptId; run_id: string; config: CampaignConfig; config_sha256: string; target: ResearchTarget; goal?: ResearchGoalPin | null; holder?: string | null; policy_digest: string; confirmation?: ResearchConfirmationSeat | null; share?: string | null; prior_ladder: PriorSeed[]; execution?: ResearchExecution | null; bound_at: number };
   type ForkKind = "variation" | "debug";
   type ResearchForkWire = { root: EntityId; parent: EntityId; child: EntityId; kind: ForkKind; candidate: CandidateRef };
   type ExperimentKind = "root" | "variation" | "debug" | "weave";
@@ -614,7 +615,7 @@ declare namespace Sdk {
   type CourtesyDeleteAskedWorld = { world: string; stale?: string | null; stale_epoch?: number | null };
   type CooperativeDeletionDispositionKind = "delete" | "redact" | "restrict_pending_review" | "retain_under_basis" | "legal_hold" | "decline";
   type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string };
-  type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null };
+  type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null };
   type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null };
   type InputKind = "text" | "image" | "audio";
   type EvidenceFloors = { floor: number; strong: number };
@@ -1115,6 +1116,19 @@ declare namespace Sdk {
   type HabitCheckinInput = { habit_ref: string; id?: string | null; data?: unknown | null; occurred_at: number; learned_at?: number | null };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
   type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
+  type DocumentKind = "document" | "template";
+  type EsignItem = { artifact_ref: string; original_version: number };
+  type RecipientRole = "signer" | "approver" | "viewer" | "cc";
+  type EsignRecipient = { id: string; email: string; name: string; role: RecipientRole; order: number; expires_at: number; principal_ref?: string | null; automated: boolean; natural_person?: string | null };
+  type FieldGeometry = { page: number; x_percent: number; y_percent: number; width_percent: number; height_percent: number };
+  type FieldMeta = { kind: "signature" } | { kind: "initials" } | { kind: "name" } | { kind: "email" } | { kind: "date" } | { kind: "text"; max_bytes: number } | { kind: "checkbox" } | { kind: "select"; options: string[] };
+  type EsignField = { id: string; item: number; recipient: string; required: boolean; geometry: FieldGeometry; meta: FieldMeta };
+  type EsignNoticeSwitches = { invite: boolean; pending: boolean; completed: boolean; rejection: boolean; void: boolean; expiry: boolean };
+  type EsignLifecycleRules = { expiry_after_seconds: number; first_reminder_after_seconds: number; repeat_reminder_every_seconds: number; reminder_cap_seconds: number; notices: EsignNoticeSwitches };
+  type EsignDocument = { schema_version: number; kind: DocumentKind; title: string; sequential: boolean; expires_at: number; items: EsignItem[]; recipients: EsignRecipient[]; fields: EsignField[]; full_trail_appendix: boolean; lifecycle?: EsignLifecycleRules | null; project?: EntityId | null };
+  type EsignCreateRequest = { document_ref: string; draft: EsignDocument };
+  type DocumentStatus = "draft" | "pending" | "completed" | "rejected" | "voided" | "expired";
+  type EsignDraftView = { document_ref: string; status: DocumentStatus; title: string; expires_at: number; project_ref?: string | null; recipients: string[]; fields: number };
   type CoreWriteTextField = { field: string; value: string };
   type ConversationCreateInput = { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreEntityWriteReceipt = { id: string; entity_type: number; learned_at: number; body: unknown };
@@ -1153,7 +1167,9 @@ declare namespace Sdk {
   type XlsxEdge = { style: string; color?: XlsxColor | null };
   type XlsxBorder = { left?: XlsxEdge | null; right?: XlsxEdge | null; top?: XlsxEdge | null; bottom?: XlsxEdge | null; diagonal?: XlsxEdge | null; diagonal_up?: boolean | null; diagonal_down?: boolean | null };
   type XlsxNumberFormat = { kind: "builtin"; id: number } | { kind: "code"; code: string };
-  type XlsxFormat = { base: number; font?: XlsxFont | null; fill?: XlsxFill | null; border?: XlsxBorder | null; number_format?: XlsxNumberFormat | null };
+  type XlsxAlignment = { horizontal?: string | null; vertical?: string | null; wrap_text?: boolean | null; shrink_to_fit?: boolean | null; indent?: number | null; rotation?: number | null; reading_order?: number | null };
+  type XlsxProtection = { locked?: boolean | null; hidden?: boolean | null };
+  type XlsxFormat = { base: number; cell_style?: string | null; font?: XlsxFont | null; fill?: XlsxFill | null; border?: XlsxBorder | null; number_format?: XlsxNumberFormat | null; alignment?: XlsxAlignment | null; protection?: XlsxProtection | null };
   type BodyFormat = { id: string; format: XlsxFormat };
   type XlsxBodyView = { date1904: boolean; sheets: XlsxSheetView[]; names: BodyName[]; styles: XlsxStyle[]; formats: BodyFormat[] };
   type NodeId = number;
@@ -1163,11 +1179,14 @@ declare namespace Sdk {
   type Digest = string;
   type StepAssetKind = "factual" | "illustration";
   type AssetRef = { artifact: string; version: number; hash: Digest; kind: StepAssetKind; description: string };
-  type ChartKind = "bar" | "line" | "pie";
-  type ChartSeries = { name: string; values: (number | null)[] };
+  type HeldMedia = { part: string; hash: Digest };
+  type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar";
+  type ChartSeries = { name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null };
+  type ChartSource = "workbook" | "literal" | "cached";
   type ConnectorPreset = "straight" | "elbow" | "curved";
   type ConnectorEnd = { node: NodeId; site: number };
-  type NodePayload = { picture: { image: AssetRef } } | { table: { header: string[]; rows: (string | null)[][] } } | { chart: { family: ChartKind; categories: string[]; series: ChartSeries[] } } | { connector: { preset: ConnectorPreset; start?: ConnectorEnd | null; end?: ConnectorEnd | null } };
+  type SmartArtNode = { text: string; level: number };
+  type NodePayload = { picture: { image: AssetRef } } | { held_picture: { media: HeldMedia } } | { table: { header: string[]; rows: (string | null)[][] } } | { chart: { family: ChartKind; categories: string[]; series: ChartSeries[]; source?: ChartSource } } | { connector: { preset?: ConnectorPreset | null; start?: ConnectorEnd | null; end?: ConnectorEnd | null } } | { smart_art: { nodes: SmartArtNode[] } } | { ole: { prog_id?: string | null; preview?: HeldMedia | null } } | { custom_geometry: { paths: number } };
   type Run = { text: string; bold?: boolean | null; italic?: boolean | null; size?: number | null; latin?: string | null };
   type Paragraph = { id: NodeId; level: number; runs: Run[] };
   type TextBody = { paragraphs: Paragraph[] };
@@ -1204,7 +1223,8 @@ declare namespace Sdk {
   type BundleVerdict = "landed" | "rejected" | "mixed" | "let_go";
   type ProposalSettlement = { verdict: BundleVerdict; at: number; reason?: string | null };
   type ProposalAsk = { ask: EntityId; forks: EntityId[]; at: number };
-  type OfficeBodyProposal = { header: ProposalHeader; members: ProposalMember[]; settlement?: ProposalSettlement | null; asks?: ProposalAsk[] };
+  type ProposalAskRefusal = { forks: EntityId[]; reason: string; at: number };
+  type OfficeBodyProposal = { header: ProposalHeader; members: ProposalMember[]; settlement?: ProposalSettlement | null; asks?: ProposalAsk[]; ask_refused?: ProposalAskRefusal | null };
   type SettleVerdict = "accept" | "reject";
   type ApproveScope = { this_actor: string } | { this_run_and_children: string } | { one_item: string };
   type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
@@ -1801,6 +1821,10 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
     retire(input: Sdk.EmbeddingSpaceRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
+  };
+  esign: {
+    /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
+    create(input: Sdk.EsignCreateRequest): Promise<Sdk.EsignDraftView | StoredResult>;
   };
   explain: {
     /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */

@@ -36,8 +36,8 @@ mod xlsx;
 pub(crate) use consent::MergeAdmission;
 pub use consent::{
     AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OFFICE_BODY_EDIT_CLASS,
-    OfficeBodyProposal, ProposalAsk, ProposalHeader, ProposalMember, ProposalSettleRequest,
-    ProposalSettlement, ReviewedFork, SettleVerdict,
+    OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader, ProposalMember,
+    ProposalSettleRequest, ProposalSettlement, ReviewedFork, SettleVerdict,
 };
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
@@ -591,7 +591,7 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<OfficeBodyDiff> {
         self.merge_office_body_fork_or_wait(artifact, fork, pins, actor)?
-            .map_err(|proposal| fork_waits(&proposal))
+            .map_err(|proposal| fork_waits(&proposal, None))
     }
 
     /// [`Self::merge_office_body_fork`], with the proposal a fork nothing
@@ -1105,9 +1105,14 @@ fn version_key(owner: &EntityId, number: u64) -> Vec<u8> {
 }
 
 /// The refusal of a fork nothing answers, which waits in `proposal`.
-pub(crate) fn fork_waits(proposal: &EntityId) -> Error {
+/// `refused` is the ask admission's refusal when no holder could be asked.
+pub(crate) fn fork_waits(proposal: &EntityId, refused: Option<&str>) -> Error {
+    let asked = match refused {
+        None => "so its holders are asked".to_owned(),
+        Some(reason) => format!("and asking its holders was refused: {reason}"),
+    };
     Error::InvalidConfig(format!(
-        "the fork waits in proposal {} for a person outside its opener's lineage; no grant covers it, so its holders are asked",
+        "the fork waits in proposal {} for a person outside its opener's lineage; no grant covers it, {asked}",
         proposal.to_hex()
     ))
 }

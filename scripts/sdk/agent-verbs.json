@@ -3489,6 +3489,7 @@
       "output": "crate::task_verb::sdk::AiOptions",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -4574,6 +4575,19 @@
       "input": "crate::blob_artifact::ArtifactCreateRequest",
       "output": "Option<crate::blob_artifact::ArtifactView>",
       "call": "memory.artifacts_create(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.esign.create",
+      "description": "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act.",
+      "refs": ["/document_ref", "/draft/items/*/artifact_ref"],
+      "input": "crate::blob_artifact::esign::EsignCreateRequest",
+      "output": "crate::blob_artifact::esign::EsignDraftView",
+      "call": "memory.esign_create(&input)?",
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {"spec": "$"},

@@ -62,6 +62,7 @@ use crate::ports::EntityStoreRead;
 mod driver;
 mod epoch;
 mod epoch_floor;
+mod epoch_intent;
 mod fold_words;
 mod folds;
 mod gate;

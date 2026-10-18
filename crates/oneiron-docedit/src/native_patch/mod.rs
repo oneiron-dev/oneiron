@@ -160,6 +160,16 @@ const CHART_TYPE: &str = "application/vnd.openxmlformats-officedocument.drawingm
 const XLSX_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
+/// A new embedded chart workbook for `dataset`, as chart creation writes
+/// one: row 1 holds the headers, then one row per dataset row, on one sheet.
+pub(crate) fn chart_workbook(
+    dataset: &Dataset,
+    sheet: &str,
+    limits: retained_opc::Limits,
+) -> Result<Vec<u8>, NativeRefusal> {
+    workbook::create(dataset, sheet, limits)
+}
+
 /// Apply one native edit as a single checked operation; on any refusal the
 /// package is left exactly as it was.
 pub fn native_patch(
