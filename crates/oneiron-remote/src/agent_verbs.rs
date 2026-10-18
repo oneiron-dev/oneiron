@@ -470,6 +470,30 @@ impl OneironClient {
                 "vault.residence.prune" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ResidencePruned,
                 >(client, verb, &input),
+                "vault.off_record.start" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordSessionView,
+                >(client, verb, &input),
+                "vault.off_record.status" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordSessionView,
+                >(client, verb, &input),
+                "vault.off_record.witness" => remote_agent_verb_output::<
+                    oneiron::memory::WitnessReceipt,
+                >(client, verb, &input),
+                "vault.off_record.discard" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordClosed,
+                >(client, verb, &input),
+                "vault.off_record.recall" => {
+                    remote_agent_verb_output::<oneiron::memory::MemoryPack>(client, verb, &input)
+                }
+                "vault.off_record.notes.create" => remote_agent_verb_output::<
+                    oneiron::memory::EntityRefReceipt,
+                >(client, verb, &input),
+                "vault.off_record.claims.upsert" => {
+                    remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
+                }
+                "self.off_record.execute" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordExecuted,
+                >(client, verb, &input),
                 "vault.records.erase_preview" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RecordErasePreview,
                 >(client, verb, &input),
@@ -1008,6 +1032,15 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.questions.refresh" => remote_agent_verb_output::<
                     Vec<oneiron::llm::decision::questions::AnswerRecord>,
+                >(client, verb, &input),
+                "vault.decisions.bands.read" => remote_agent_verb_output::<
+                    oneiron::llm::decision::LearnedBand,
+                >(client, verb, &input),
+                "vault.decisions.bands.learn" => remote_agent_verb_output::<
+                    oneiron::llm::decision::LearnedBand,
+                >(client, verb, &input),
+                "vault.decisions.bands.enforce" => remote_agent_verb_output::<
+                    oneiron::llm::decision::LearnedBand,
                 >(client, verb, &input),
                 "vault.decisions.asks.answer" => remote_agent_verb_output::<
                     oneiron::llm::decision::DecisionAsk,
@@ -3133,6 +3166,102 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.residence.prune", value)
+    }
+    pub fn vault_off_record_start(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordStartRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordSessionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.start", value)
+    }
+    pub fn vault_off_record_status(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordSessionRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordSessionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.status", value)
+    }
+    pub fn vault_off_record_witness(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordWitnessRequest,
+    ) -> Result<oneiron::memory::WitnessReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.witness", value)
+    }
+    pub fn vault_off_record_discard(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordSessionRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordClosed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.discard", value)
+    }
+    pub fn vault_off_record_recall(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordRecallRequest,
+    ) -> Result<oneiron::memory::MemoryPack, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.recall", value)
+    }
+    pub fn vault_off_record_notes_create(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordNoteRequest,
+    ) -> Result<oneiron::memory::EntityRefReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.notes.create", value)
+    }
+    pub fn vault_off_record_claims_upsert(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordClaimRequest,
+    ) -> Result<oneiron::memory::CommitReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.claims.upsert", value)
+    }
+    pub fn self_off_record_execute(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordExecuteRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordExecuted, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.off_record.execute", value)
     }
     pub fn vault_records_erase_preview(
         &self,
@@ -5283,6 +5412,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.questions.refresh", value)
+    }
+    pub fn vault_decisions_bands_read(
+        &self,
+        input: &oneiron::llm::decision::DecisionBandReadRequest,
+    ) -> Result<oneiron::llm::decision::LearnedBand, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.decisions.bands.read", value)
+    }
+    pub fn vault_decisions_bands_learn(
+        &self,
+        input: &oneiron::llm::decision::DecisionBandLearnRequest,
+    ) -> Result<oneiron::llm::decision::LearnedBand, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.decisions.bands.learn", value)
+    }
+    pub fn vault_decisions_bands_enforce(
+        &self,
+        input: &oneiron::llm::decision::DecisionBandEnforceRequest,
+    ) -> Result<oneiron::llm::decision::LearnedBand, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.decisions.bands.enforce", value)
     }
     pub fn vault_decisions_asks_answer(
         &self,

@@ -696,6 +696,46 @@ export_facade! {
     let output = client.vault_residence_prune(&input)?;
     crate::codec::lift_record("vault.residence.prune", &output)
 };
+"vault.off_record.start" => fn vault_off_record_start(&self, input: OffRecordStartRequest) -> OffRecordSessionView = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordStartRequest = crate::codec::lower_record("vault.off_record.start", input)?;
+    let output = client.vault_off_record_start(&input)?;
+    crate::codec::lift_record("vault.off_record.start", &output)
+};
+"vault.off_record.status" => fn vault_off_record_status(&self, input: OffRecordSessionRequest) -> OffRecordSessionView = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordSessionRequest = crate::codec::lower_record("vault.off_record.status", input)?;
+    let output = client.vault_off_record_status(&input)?;
+    crate::codec::lift_record("vault.off_record.status", &output)
+};
+"vault.off_record.witness" => fn vault_off_record_witness(&self, input: OffRecordWitnessRequest) -> WitnessReceipt = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordWitnessRequest = crate::codec::lower_record("vault.off_record.witness", input)?;
+    let output = client.vault_off_record_witness(&input)?;
+    Lift::lift(output)
+};
+"vault.off_record.discard" => fn vault_off_record_discard(&self, input: OffRecordSessionRequest) -> OffRecordClosed = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordSessionRequest = crate::codec::lower_record("vault.off_record.discard", input)?;
+    let output = client.vault_off_record_discard(&input)?;
+    crate::codec::lift_record("vault.off_record.discard", &output)
+};
+"vault.off_record.recall" => fn vault_off_record_recall(&self, input: OffRecordRecallRequest) -> MemoryPack = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRecallRequest = crate::codec::lower_record("vault.off_record.recall", input)?;
+    let output = client.vault_off_record_recall(&input)?;
+    Lift::lift(output)
+};
+"vault.off_record.notes.create" => fn vault_off_record_notes_create(&self, input: OffRecordNoteRequest) -> EntityRefReceipt = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordNoteRequest = crate::codec::lower_record("vault.off_record.notes.create", input)?;
+    let output = client.vault_off_record_notes_create(&input)?;
+    Lift::lift(output)
+};
+"vault.off_record.claims.upsert" => fn vault_off_record_claims_upsert(&self, input: OffRecordClaimRequest) -> CommitReceipt = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordClaimRequest = crate::codec::lower_record("vault.off_record.claims.upsert", input)?;
+    let output = client.vault_off_record_claims_upsert(&input)?;
+    Lift::lift(output)
+};
+"self.off_record.execute" => fn self_off_record_execute(&self, input: OffRecordExecuteRequest) -> OffRecordExecuted = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordExecuteRequest = crate::codec::lower_record("self.off_record.execute", input)?;
+    let output = client.self_off_record_execute(&input)?;
+    crate::codec::lift_record("self.off_record.execute", &output)
+};
 "vault.records.erase_preview" => fn vault_records_erase_preview(&self, input: RecordEraseRequest) -> RecordErasePreview = |client| {
     let input: oneiron::task_verb::sdk::RecordEraseRequest = crate::codec::lower_record("vault.records.erase_preview", input)?;
     let output = client.vault_records_erase_preview(&input)?;
@@ -1580,6 +1620,21 @@ export_facade! {
     let input: oneiron::receipt::QuestionRefreshRequest = crate::codec::lower_record("vault.questions.refresh", input)?;
     let output = client.vault_questions_refresh(&input)?;
     crate::codec::lift_record("vault.questions.refresh", &output)
+};
+"vault.decisions.bands.read" => fn vault_decisions_bands_read(&self, input: DecisionBandReadRequest) -> LearnedBand = |client| {
+    let input: oneiron::llm::decision::DecisionBandReadRequest = crate::codec::lower_record("vault.decisions.bands.read", input)?;
+    let output = client.vault_decisions_bands_read(&input)?;
+    crate::codec::lift_record("vault.decisions.bands.read", &output)
+};
+"vault.decisions.bands.learn" => fn vault_decisions_bands_learn(&self, input: DecisionBandLearnRequest) -> LearnedBand = |client| {
+    let input: oneiron::llm::decision::DecisionBandLearnRequest = crate::codec::lower_record("vault.decisions.bands.learn", input)?;
+    let output = client.vault_decisions_bands_learn(&input)?;
+    crate::codec::lift_record("vault.decisions.bands.learn", &output)
+};
+"vault.decisions.bands.enforce" => fn vault_decisions_bands_enforce(&self, input: DecisionBandEnforceRequest) -> LearnedBand = |client| {
+    let input: oneiron::llm::decision::DecisionBandEnforceRequest = crate::codec::lower_record("vault.decisions.bands.enforce", input)?;
+    let output = client.vault_decisions_bands_enforce(&input)?;
+    crate::codec::lift_record("vault.decisions.bands.enforce", &output)
 };
 "vault.decisions.asks.answer" => fn vault_decisions_asks_answer(&self, input: DecisionAskAnswerRequest) -> DecisionAsk = |client| {
     let input: oneiron::receipt::DecisionAskAnswerRequest = crate::codec::lower_record("vault.decisions.asks.answer", input)?;

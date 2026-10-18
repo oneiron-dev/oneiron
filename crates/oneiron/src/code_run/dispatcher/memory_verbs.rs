@@ -24,12 +24,15 @@ pub const SELF_MEMORY_SEARCH_MAX_RESULTS: usize = 16;
 impl HostSelfDispatcher<'_> {
     /// Effect-level off-record policy — the FIRST check on the session path.
     ///
-    /// While the bound room is off record, the four durable memory-write
-    /// verbs are refused before `write_envelope`, policy/gate evaluation,
-    /// transaction acquisition, decision append, ONE-1936's stale-target
-    /// guard, or any overlay/base mutation. Off-record is TALK-ONLY: a
-    /// durable write is not made acceptable by being made ephemeral, so the
-    /// answer is refusal, not redirection.
+    /// While the bound room is off record, the durable memory-write verbs
+    /// that would reach base are refused before `write_envelope`, policy/gate
+    /// evaluation, transaction acquisition, decision append, ONE-1936's
+    /// stale-target guard, or any overlay/base mutation. A claim put, a
+    /// fixture claim and a NOTE or claim verb forward are the exception the
+    /// Engine ruled for DOOR-127 (10-18, ARCH-0052 D1/D2): written through
+    /// the session's handle, they are ephemeral writes that stage in the
+    /// room's overlay, under its byte budget, and close drops them. Nothing
+    /// they write reaches base.
     ///
     /// The rejection is mode-scoped POLICY, never inferred from where a row
     /// would route: after the same live session flips `OnRecord` the ordinary
@@ -57,16 +60,12 @@ impl HostSelfDispatcher<'_> {
         match effect {
             // Delegation mints a synced TASK entity, so it lands on the
             // durable-record side of the talk-only line with the memory writes.
-            SelfEffect::MemoryPutClaim
-            | SelfEffect::MemorySupersedeClaim
+            SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
-            | SelfEffect::MemoryWriteFixture
             | SelfEffect::ReportBlocked
             | SelfEffect::InferenceDefaultsRead
             | SelfEffect::InferenceDefaultsReplace
             | SelfEffect::WakePolicyWrite
-            // The bound verb door runs against the canonical vault.
-            | SelfEffect::AgentVerb
             | SelfEffect::ConnectorAnswer
             | SelfEffect::AgentsSpawn
             | SelfEffect::AgentsPut
@@ -97,7 +96,16 @@ impl HostSelfDispatcher<'_> {
             // utterances ride the session's own route into the overlay, where
             // they evaporate with it. Refusing them here would make an
             // off-record room mute rather than private.
-            SelfEffect::MemorySearch
+            //
+            // DOOR-127: a claim put and a fixture claim stage in the room's
+            // overlay (`OffRecordSession::stage_session_claim`). A verb
+            // forward reaches `dispatch_agent_verb`, which writes a NOTE or a
+            // claim into the room and refuses every other verb, whose door
+            // runs against the canonical vault.
+            SelfEffect::MemoryPutClaim
+            | SelfEffect::MemoryWriteFixture
+            | SelfEffect::AgentVerb
+            | SelfEffect::MemorySearch
             | SelfEffect::Ask
             | SelfEffect::DestructiveFixture
             | SelfEffect::OutboundFixture

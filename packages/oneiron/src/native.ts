@@ -169,6 +169,14 @@ vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown
 vaultResidencePrune(input: unknown): unknown
+vaultOffRecordStart(input: unknown): unknown
+vaultOffRecordStatus(input: unknown): unknown
+vaultOffRecordWitness(input: unknown): unknown
+vaultOffRecordDiscard(input: unknown): unknown
+vaultOffRecordRecall(input: unknown): unknown
+vaultOffRecordNotesCreate(input: unknown): unknown
+vaultOffRecordClaimsUpsert(input: unknown): unknown
+selfOffRecordExecute(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
@@ -346,6 +354,9 @@ vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
 vaultQuestionsRefresh(input: unknown): unknown
+vaultDecisionsBandsRead(input: unknown): unknown
+vaultDecisionsBandsLearn(input: unknown): unknown
+vaultDecisionsBandsEnforce(input: unknown): unknown
 vaultDecisionsAsksAnswer(input: unknown): unknown
 vaultDecisionsAsksClimb(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown

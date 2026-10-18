@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 485 code-mode rows (464 host rows, 21 run rows), 1733 declarations.
-// Replies: 424 fully typed, 57 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 496 code-mode rows (475 host rows, 21 run rows), 1752 declarations.
+// Replies: 435 fully typed, 57 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 82; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -675,6 +675,22 @@ declare namespace Sdk {
   type ResidenceIndex = { windows: ResidenceIndexWindowView[] };
   type ResidencePruneRequest = { machine: EntityId; before: number };
   type ResidencePruned = { dropped: number };
+  type OffRecordEnterMode = "off_record" | "anonymous";
+  type OffRecordBackendClass = "local" | "remote_provider";
+  type OffRecordStartRequest = { session_ref: string; mode: OffRecordEnterMode; backend: OffRecordBackendClass };
+  type OffRecordMode = "off_record" | "on_record" | "anonymous";
+  type OffRecordSessionView = { session_ref: string; mode: OffRecordMode; backend: OffRecordBackendClass; entered_at: string; promoted_turns: string[]; closing: boolean };
+  type OffRecordSessionRequest = { session_ref: string };
+  type OffRecordWitnessRequest = { session_ref: string; turn: WitnessTurn; summary?: string | null };
+  type OffRecordClosed = { session_ref: string; turns_dropped: number; context_receipts_dropped: number; emit_receipts_dropped: number; emit_receipts_kept: number; promoted_turns_kept: number };
+  type OffRecordRecallRequest = { session_ref: string; query: string; limit: number };
+  type CreateNoteRequest = { kind: string; markdown: string };
+  type OffRecordNoteRequest = { session_ref: string; note: CreateNoteRequest };
+  type EntityRefReceipt = { entity_ref: string; id_hex: string; receipt_ref: string; record?: RecordRef | null };
+  type OffRecordClaimRequest = { session_ref: string; claim: ScopedClaimInput };
+  type OffRecordExecuteRequest = { session_ref: string; run_ref: string; task: string };
+  type OffRecordRunStatus = "complete" | "waiting" | "yielded" | "window_full";
+  type OffRecordExecuted = { run_ref: string; run_id: string; status: OffRecordRunStatus; next_step_seq?: number | null; steps_run: number; bridge_calls: number };
   type RecordEraseRequest = { record: EntityId };
   type EraseShare = { grant: string; recipient: string };
   type EraseHeldBytes = { content_hash: string; other_holders: string[] };
@@ -1287,6 +1303,11 @@ declare namespace Sdk {
   type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionRefreshRequest = { id: EntityId };
+  type DecisionBandReadRequest = { question: DecisionQuestion; reversibility: Reversibility; seed: DecisionBand };
+  type BandMode = "shadow" | "enforce";
+  type LearnedBand = { band: DecisionBand; version: number; mode: BandMode };
+  type DecisionBandLearnRequest = { question: DecisionQuestion; reversibility: Reversibility; band: DecisionBand; version: number };
+  type DecisionBandEnforceRequest = { question: DecisionQuestion; reversibility: Reversibility };
   type DecisionAskAnswerRequest = { seq: number; answer: DecisionAnswer };
   type AskPrior = { answer: DecisionAnswer; probability?: number | null; provider: ProviderPin; paired?: PairedReading | null; person?: PairedReading | null };
   type AskRole = { role: "responsible"; actor: string; project?: string | null } | { role: "board"; project: string } | { role: "owner" };
@@ -1415,7 +1436,6 @@ declare namespace Sdk {
   type TextIndexField = { field: string; value: string };
   type StructuralEdgeSpec = { edge_kind: string; target_ref: string; weight?: number | null };
   type StructuralPutInput = { id?: string | null; kind: string; body: unknown; text_fields?: TextIndexField[] | null; edges?: StructuralEdgeSpec[] | null; occurred_at: number; learned_at?: number | null };
-  type EntityRefReceipt = { entity_ref: string; id_hex: string; receipt_ref: string; record?: RecordRef | null };
   type HabitCheckinInput = { habit_ref: string; id?: string | null; data?: unknown | null; occurred_at: number; learned_at?: number | null };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
   type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
@@ -1640,7 +1660,6 @@ declare namespace Sdk {
   type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
   type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
   type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
-  type CreateNoteRequest = { kind: string; markdown: string };
   type CreateNoteFromEntityRequest = { source_ref: string; kind: string };
   type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] };
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
@@ -1968,6 +1987,10 @@ declare namespace self {
   };
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
   const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.MessagePersonReceipt | StoredResult>;
+  const off_record: {
+    /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+    execute(input: Sdk.OffRecordExecuteRequest): Promise<Sdk.OffRecordExecuted | StoredResult>;
+  };
   const run: {
     /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
     attach(input: Sdk.RunAttachRequest): Promise<Sdk.RunAttached | StoredResult>;
@@ -2345,6 +2368,14 @@ declare const vault: Sdk.VaultHost & {
       answer(input: Sdk.DecisionAskAnswerRequest): Promise<Sdk.DecisionAsk | StoredResult>;
       climb(input: Sdk.DecisionAskClimbRequest): Promise<Sdk.ResolvedRole | null | StoredResult>;
     };
+    bands: {
+      /** The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority. */
+      enforce(input: Sdk.DecisionBandEnforceRequest): Promise<Sdk.LearnedBand | StoredResult>;
+      /** The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility. */
+      learn(input: Sdk.DecisionBandLearnRequest): Promise<Sdk.LearnedBand | StoredResult>;
+      /** The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero. */
+      read(input: Sdk.DecisionBandReadRequest): Promise<Sdk.LearnedBand | StoredResult>;
+    };
   };
   /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
   delete(input: Sdk.SafeDeleteRequest): Promise<Sdk.DeleteReceipt | StoredResult>;
@@ -2571,6 +2602,26 @@ declare const vault: Sdk.VaultHost & {
     seal(input: Sdk.NoteRefRequest): Promise<Sdk.NoteSeal | StoredResult>;
     /** Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check. */
     set_overrides(input: Sdk.SetNoteOverridesRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
+  };
+  off_record: {
+    claims: {
+      /** The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+      upsert(input: Sdk.OffRecordClaimRequest): Promise<Sdk.CommitReceipt | StoredResult>;
+    };
+    /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+    discard(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordClosed | StoredResult>;
+    notes: {
+      /** The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+      create(input: Sdk.OffRecordNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
+    };
+    /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+    recall(input: Sdk.OffRecordRecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
+    /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+    start(input: Sdk.OffRecordStartRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
+    /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+    status(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
+    /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+    witness(input: Sdk.OffRecordWitnessRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
   };
   packs: {
     connector: {

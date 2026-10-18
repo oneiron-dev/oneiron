@@ -292,6 +292,10 @@ export class Oneiron {
       /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
       land: (input: Facade.BudgetLandRequest): Facade.PartialResultHold => this.#call(() => this.#client.selfBudgetLand(input) as Facade.PartialResultHold),
     }),
+    off_record: {
+      /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+      execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
+    },
     /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
     use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),
     skills: {
@@ -674,6 +678,26 @@ export class Oneiron {
       index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndex => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndex),
       /** Drops the opened-item caches one of the owner's machines last touched before a time. */
       prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruned => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruned),
+    },
+    off_record: {
+      /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+      start: (input: Facade.OffRecordStartRequest): Facade.OffRecordSessionView => this.#call(() => this.#client.vaultOffRecordStart(input) as Facade.OffRecordSessionView),
+      /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+      status: (input: Facade.OffRecordSessionRequest): Facade.OffRecordSessionView => this.#call(() => this.#client.vaultOffRecordStatus(input) as Facade.OffRecordSessionView),
+      /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+      witness: (input: Facade.OffRecordWitnessRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultOffRecordWitness(input) as Facade.WitnessReceipt),
+      /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+      discard: (input: Facade.OffRecordSessionRequest): Facade.OffRecordClosed => this.#call(() => this.#client.vaultOffRecordDiscard(input) as Facade.OffRecordClosed),
+      /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+      recall: (input: Facade.OffRecordRecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultOffRecordRecall(input) as Facade.MemoryPack),
+      notes: {
+        /** The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+        create: (input: Facade.OffRecordNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultOffRecordNotesCreate(input) as Facade.EntityRefReceipt),
+      },
+      claims: {
+        /** The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+        upsert: (input: Facade.OffRecordClaimRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultOffRecordClaimsUpsert(input) as Facade.CommitReceipt),
+      },
     },
     records: {
       /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
@@ -1119,6 +1143,14 @@ export class Oneiron {
       refresh: (input: Facade.QuestionRefreshRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsRefresh(input) as Facade.AnswerRecord[]),
     },
     decisions: {
+      bands: {
+        /** The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero. */
+        read: (input: Facade.DecisionBandReadRequest): Facade.LearnedBand => this.#call(() => this.#client.vaultDecisionsBandsRead(input) as Facade.LearnedBand),
+        /** The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility. */
+        learn: (input: Facade.DecisionBandLearnRequest): Facade.LearnedBand => this.#call(() => this.#client.vaultDecisionsBandsLearn(input) as Facade.LearnedBand),
+        /** The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority. */
+        enforce: (input: Facade.DecisionBandEnforceRequest): Facade.LearnedBand => this.#call(() => this.#client.vaultDecisionsBandsEnforce(input) as Facade.LearnedBand),
+      },
       asks: {
         answer: (input: Facade.DecisionAskAnswerRequest): Facade.DecisionAsk => this.#call(() => this.#client.vaultDecisionsAsksAnswer(input) as Facade.DecisionAsk),
         climb: (input: Facade.DecisionAskClimbRequest): Facade.ResolvedRole | null => this.#call(() => this.#client.vaultDecisionsAsksClimb(input) as Facade.ResolvedRole | null),

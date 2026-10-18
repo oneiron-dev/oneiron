@@ -72,6 +72,7 @@ pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
+pub(crate) use super::off_record_doors::*;
 pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
@@ -81,13 +82,14 @@ pub(crate) use super::graph_ask_doors::*;
 pub(crate) use super::share_doors::*;
 // The role-holder decision-ask doors (OF-493), likewise.
 pub(crate) use super::decision_ask_doors::*;
+pub(crate) use super::decision_band_doors::*;
 // The vault shape's apply door (ARCH-0070), likewise.
 pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
 pub(crate) use super::embedding_space_doors::*;
 // The owner's fan-out ruling doors (OF-393), likewise.
-pub(crate) use super::fanout_doors::*;
 pub(crate) use super::budget_doors::*;
+pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
@@ -1071,6 +1073,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.courtesy_delete.sent"
         | "vault.courtesy_delete.incoming"
         | "vault.courtesy_delete.answer"
+        | "vault.decisions.bands.read"
+        | "vault.decisions.bands.learn"
+        | "vault.decisions.bands.enforce"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"
@@ -1132,6 +1137,14 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
+        | "vault.off_record.start"
+        | "vault.off_record.status"
+        | "vault.off_record.witness"
+        | "vault.off_record.discard"
+        | "vault.off_record.recall"
+        | "vault.off_record.notes.create"
+        | "vault.off_record.claims.upsert"
+        | "self.off_record.execute"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
