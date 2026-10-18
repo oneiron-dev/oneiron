@@ -311,6 +311,10 @@ pub(crate) struct CoreAuth {
     /// `credential_memory` builds for this caller binds it, so a door acts
     /// inside the session its caller named (OF-063, FIX 1668).
     off_record_session: Option<String>,
+    /// The managed vault's owner, as its supervisor attested this one
+    /// request (`ManagedOwnerAction`, verified at managed ingress); `None`
+    /// for every other request ([`Self::as_managed_owner`]).
+    managed_owner: Option<oneiron::EntityId>,
 }
 
 impl CoreAuth {
@@ -348,6 +352,7 @@ impl CoreAuth {
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
             off_record_session: None,
+            managed_owner: None,
         }
     }
 
@@ -422,6 +427,7 @@ impl CoreAuth {
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
             off_record_session: None,
+            managed_owner: None,
         })
     }
 
@@ -441,6 +447,7 @@ impl CoreAuth {
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
             off_record_session: None,
+            managed_owner: None,
         }
     }
 
@@ -468,6 +475,30 @@ impl CoreAuth {
 
     pub(crate) fn verified_slip(&self) -> Option<&oneiron::authority::VerifiedSlip> {
         self.verified_slip.as_ref()
+    }
+
+    /// This request as the managed vault's owner `holder`, whom its
+    /// supervisor attested for this one request: that person's principal
+    /// and the human class, so the facade binds its writes to them. Its
+    /// scopes stay the host root's. It keeps no slip, since the host root's
+    /// binds no person's reads, so its reads run on the person's own lane;
+    /// the owner door still judges `holder` as the vault's live owner
+    /// (`api::facade::owner_authorship`).
+    pub(crate) fn as_managed_owner(mut self, holder: oneiron::EntityId) -> Self {
+        self.principal = holder.to_hex();
+        self.principal_ref = Some(holder.to_hex());
+        self.actor_class = Some("human".to_owned());
+        self.verified_slip = None;
+        self.invocation_slip = None;
+        self.instrument = None;
+        self.managed_owner = Some(holder);
+        self
+    }
+
+    /// The managed owner this request was attested as
+    /// ([`Self::as_managed_owner`]).
+    pub(crate) fn managed_owner(&self) -> Option<oneiron::EntityId> {
+        self.managed_owner
     }
 
     /// The instrument this request's slip was admitted on, for the work it
@@ -552,8 +583,13 @@ impl CoreAuth {
     /// bound to an identified holder. Identity is not a capability restriction.
     /// Org-bound, caveated, record/channel-bound and single-use slips are not.
     /// The explicit development hatch keeps its separate legacy predicate.
+    /// A managed vault's attested owner ([`Self::as_managed_owner`]) keeps the
+    /// host root's grade: the person is the vault's owner in person.
     pub(crate) fn is_owner_grade(&self) -> bool {
-        self.implicit_all_scopes && (self.verified_slip.is_some() || self.principal_ref.is_none())
+        self.implicit_all_scopes
+            && (self.verified_slip.is_some()
+                || self.principal_ref.is_none()
+                || self.managed_owner.is_some())
     }
 
     /// Reconnect matches the exact verified instrument and projected principal,
@@ -617,8 +653,19 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
             .extensions
             .get::<axum::extract::OriginalUri>()
             .map_or_else(|| parts.uri.path(), |uri| uri.0.path());
+        // Only managed ingress installs this, and only on a verified
+        // supervisor assertion.
+        let managed_owner = parts
+            .extensions
+            .get::<crate::managed::ManagedOwnerHolder>()
+            .filter(|_| server.managed_issuer.is_some())
+            .map(|holder| holder.0);
         Self::for_server_async(&parts.headers, server)
             .await
+            .map(|auth| match managed_owner {
+                Some(holder) => auth.as_managed_owner(holder),
+                None => auth,
+            })
             .map(|auth| {
                 auth.at(caller_locality(&parts.headers, &parts.extensions))
                     .at_invitee_door(path)
@@ -765,6 +812,7 @@ fn core_auth_for_live_claims(
         locality: CallerLocality::OffDevice,
         facets_owner_exempt: false,
         off_record_session: None,
+        managed_owner: None,
     })
 }
 

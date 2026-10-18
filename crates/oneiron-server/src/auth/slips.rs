@@ -240,6 +240,7 @@ impl CoreAuth {
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
             off_record_session: None,
+            managed_owner: None,
         })
     }
     /// An invitee's slip (FIX 1925) on the facade route of one of

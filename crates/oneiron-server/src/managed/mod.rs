@@ -44,7 +44,7 @@ pub use relay::{IROH_RELAY_REVISION, RelayConfig, run_relay};
 mod shed;
 pub(crate) use self::peer::UnixPeer;
 mod state_serve;
-pub(crate) use state_serve::ManagedWidenHolder;
+pub(crate) use state_serve::{ManagedOwnerHolder, ManagedWidenHolder};
 mod vault_gates;
 #[cfg(target_os = "linux")]
 mod vm_guest;

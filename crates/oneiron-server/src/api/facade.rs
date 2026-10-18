@@ -766,6 +766,12 @@ pub(super) fn owner_authorship(
     auth: &CoreAuth,
     server: &SyncServer,
 ) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
+    // A managed vault's owner, whom its supervisor attested for this one
+    // request (`ManagedOwnerAction`): no slip to bind, so the proof holds
+    // only while the person is the vault's live recorded owner.
+    if let Some(holder) = auth.managed_owner() {
+        return managed_owner_authorship(server, holder);
+    }
     let Some((principal, actor)) = auth
         .principal_ref()
         .and_then(|principal| Some((principal, oneiron::EntityId::from_hex(principal).ok()?)))
@@ -804,6 +810,31 @@ pub(super) fn owner_authorship(
         .bind_owner_credential(owner, slip.clone())
         .map(Some)
         .map_err(|_| refused())
+}
+
+/// [`owner_authorship`] for a managed vault's attested owner: the recorded
+/// owner `holder` names, while that owner is live; `None` for anyone else.
+fn managed_owner_authorship(
+    server: &SyncServer,
+    holder: EntityId,
+) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
+    let refused = || ApiError::forbidden_scope("owner");
+    let Some(owner) = server
+        .vault()
+        .authenticate_recorded_owner(
+            holder,
+            &holder.to_hex(),
+            oneiron::store::GateDecisionId::now(),
+        )
+        .map_err(|_| refused())?
+    else {
+        return Ok(None);
+    };
+    Ok(server
+        .vault()
+        .is_live_vault_owner(&owner)
+        .map_err(|_| refused())?
+        .then_some(owner))
 }
 
 /// The one verb whose direct request binds the requesting person's own
