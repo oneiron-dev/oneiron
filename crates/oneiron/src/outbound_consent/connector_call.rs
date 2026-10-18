@@ -285,6 +285,15 @@ pub(super) struct PendingConnectorCall {
     /// place of the route's own secret. Every pass presents it again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) credential: Option<EntityId>,
+    /// The code consent wait bound beside this hold (DOOR-079 1a), in the
+    /// writer that first kept it: only its owner's answer and the effect's
+    /// own gate settle the call then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) code_consent_wait: Option<EntityId>,
+    /// This pass's code consent context (`connector_call_code`); never
+    /// stored.
+    #[serde(skip)]
+    pub(super) code: Option<Box<super::connector_call_code::CodePass>>,
 }
 
 impl PendingConnectorCall {
@@ -409,7 +418,7 @@ fn held(reason: &str) -> Step {
     }
 }
 
-fn refused(reason: &str) -> Step {
+pub(super) fn refused(reason: &str) -> Step {
     Step::Refused {
         decision_ref: None,
         reasons: vec![reason.to_owned()],
@@ -431,7 +440,7 @@ impl Step {
 
 /// The call ref a host's identity fixes for one caller: the same caller's
 /// same logical call always names the same held row.
-fn connector_call_ref(
+pub(super) fn connector_call_ref(
     principal_ref: &str,
     invocation: ConnectorCallInvocation,
 ) -> Result<EntityId, IntentLedgerError> {
@@ -514,6 +523,8 @@ impl Vault {
             held_reasons: Vec::new(),
             owner_ask_seq: None,
             credential,
+            code_consent_wait: None,
+            code: None,
         };
         let Some(named) = named else {
             return self.drive_connector_call(None, None, pending, host);
@@ -526,11 +537,18 @@ impl Vault {
             PENDING_CALLS.get(&self.store, &txn, &call_ref)?
         };
         match held {
-            None => self.drive_connector_call(None, Some(call_ref), pending, host),
+            None => {
+                let pending = super::connector_call_code::with_code_pass(memory, pending);
+                let outcome = self.drive_connector_call(None, Some(call_ref), pending, host)?;
+                Ok(self.ask_code_consent_for_hold(memory, outcome))
+            }
             Some(held) if !held.same_call(&pending) => Ok(ConnectorCallOutcome::Refused {
                 decision_ref: None,
                 reasons: vec![CONNECTOR_CALL_INVOCATION_CONFLICT.to_owned()],
             }),
+            Some(held) if held.code_consent_wait.is_some() => {
+                self.resume_code_owned_connector_call(&call_ref, held, host, false)
+            }
             Some(held) => {
                 if let Some(settled) = &held.settled {
                     return Ok(settled.outcome());
@@ -569,6 +587,11 @@ impl Vault {
                 reasons: vec!["connector_call_not_held".to_owned()],
             });
         };
+        // A call a code consent wait owns settles that wait too, and an
+        // answered one runs only on its host's answered pass.
+        if pending.code_consent_wait.is_some() {
+            return self.resume_code_owned_connector_call(call_ref, pending, host, false);
+        }
         if let Some(settled) = &pending.settled {
             return Ok(settled.outcome());
         }
@@ -652,7 +675,7 @@ impl Vault {
     /// one when `None`). A terminal outcome of a call with a row keeps that
     /// row, settled, for the settler's acknowledgement; one with none
     /// writes nothing.
-    fn drive_connector_call<H: ConnectorCallHost>(
+    pub(super) fn drive_connector_call<H: ConnectorCallHost>(
         &self,
         call_ref: Option<EntityId>,
         new_ref: Option<EntityId>,
@@ -750,10 +773,16 @@ impl Vault {
                 decision_ref,
                 reasons,
             } => {
-                let call_ref = keep(call_ref, &pending)?;
+                // A hold for consent alone binds a code consent wait in the
+                // same writer, when the call came from a code run.
+                let (call_ref, code_owned) =
+                    self.keep_held_connector_call(call_ref.or(new_ref), &pending, &reasons)?;
                 // The hold is durable: ask the owner about it, once. The
-                // settler's pass repairs an ask that did not queue here.
-                if let Err(error) = self.queue_connector_call_owner_ask(&call_ref, &reasons) {
+                // settler's pass repairs an ask that did not queue here. A
+                // code consent wait asks its own question instead.
+                if !code_owned
+                    && let Err(error) = self.queue_connector_call_owner_ask(&call_ref, &reasons)
+                {
                     tracing::warn!(
                         call_ref = %call_ref.to_hex(),
                         %error,
@@ -885,6 +914,12 @@ impl Vault {
             Err(Error::InvalidConfig(_)) => return Ok(refused("connector_arguments_invalid")),
             Err(error) => return Err(error.into()),
         };
+        // A code consent pass sends only the frozen bytes its wait bound.
+        if let Some(stop) =
+            super::connector_call_code::before_send(pending, &prepared, grant_id, key_id)
+        {
+            return Ok(stop);
+        }
         let authority = OutboundBindingAuthority::for_vault(self)?;
         // A question the connector asks binds to this caller and grant.
         host.bind_caller(Some(ConnectorCallCaller {

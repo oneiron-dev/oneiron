@@ -258,7 +258,57 @@ pub enum ConsentReceipt {
         grant_ref: String,
         effect_digest: EffectDigest,
     },
+    /// A code consent wait settled (DOOR-079): its held effect delivered,
+    /// refused or of unknown delivery, closing the answer `links` names.
+    CodeWaitSettled {
+        decision_id: GateDecisionId,
+        links: CodeWaitReceiptLinks,
+        outcome: crate::code_run::CodeConsentSettleOutcome,
+    },
+    /// A code run consumed a settled wait's reply into its replay
+    /// (DOOR-079): it names the settlement it consumed.
+    CodeWaitConsumed {
+        decision_id: GateDecisionId,
+        links: CodeWaitReceiptLinks,
+    },
 }
+
+/// The joins one code consent wait receipt carries (DOOR-079): the wait,
+/// the person's word by reference, the receipt it follows and the digest of
+/// the immutable facts it closes. They project into the Gate record's
+/// `diff_handle` in one fixed 82-byte layout, so the record names the word
+/// without a field of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CodeWaitReceiptLinks {
+    pub wait_id: EntityId,
+    pub word_ref: Option<EntityId>,
+    pub prior_receipt: Option<GateDecisionId>,
+    pub facts_digest: [u8; 32],
+}
+
+impl CodeWaitReceiptLinks {
+    /// One kind byte, one presence-flag byte (bit 0 the word, bit 1 the
+    /// prior receipt), the wait, the word slot and the prior slot (zeros
+    /// when absent), then the facts digest: 82 bytes.
+    fn diff_handle(&self, kind: u8) -> Vec<u8> {
+        let mut handle = Vec::with_capacity(82);
+        handle.push(kind);
+        handle.push(
+            u8::from(self.word_ref.is_some()) | (u8::from(self.prior_receipt.is_some()) << 1),
+        );
+        handle.extend_from_slice(self.wait_id.as_bytes());
+        handle.extend_from_slice(self.word_ref.as_ref().map_or(&[0; 16], EntityId::as_bytes));
+        handle.extend_from_slice(&self.prior_receipt.map_or([0; 16], GateDecisionId::as_bytes));
+        handle.extend_from_slice(&self.facts_digest);
+        handle
+    }
+}
+
+/// The kind byte of a settled code wait's links: high nibble 1, low nibble
+/// the outcome's tag.
+const CODE_WAIT_SETTLED_KIND: u8 = 0x10;
+/// The kind byte of a consumed code wait's links.
+const CODE_WAIT_CONSUMED_KIND: u8 = 0x20;
 
 impl ConsentReceipt {
     /// The Gate decision this receipt was recorded under.
@@ -270,7 +320,9 @@ impl ConsentReceipt {
             | Self::Denied { decision_id, .. }
             | Self::Revoked { decision_id, .. }
             | Self::BypassCreated { decision_id, .. }
-            | Self::Bypassed { decision_id, .. } => *decision_id,
+            | Self::Bypassed { decision_id, .. }
+            | Self::CodeWaitSettled { decision_id, .. }
+            | Self::CodeWaitConsumed { decision_id, .. } => *decision_id,
         }
     }
 
@@ -284,6 +336,8 @@ impl ConsentReceipt {
             | Self::Bypassed { .. } => "approved",
             Self::Denied { .. } => "denied",
             Self::Revoked { .. } => "revoked",
+            Self::CodeWaitSettled { .. } => "settled",
+            Self::CodeWaitConsumed { .. } => "consumed",
         }
     }
 
@@ -304,6 +358,8 @@ impl ConsentReceipt {
             Self::Revoked { .. } => CONSENT_REASON_REVOKED,
             Self::BypassCreated { .. } => CONSENT_REASON_BYPASS_CREATED,
             Self::Bypassed { .. } => CONSENT_REASON_BYPASSED,
+            Self::CodeWaitSettled { .. } => CONSENT_REASON_CODE_WAIT_SETTLED,
+            Self::CodeWaitConsumed { .. } => CONSENT_REASON_CODE_WAIT_CONSUMED,
         }
     }
 
@@ -323,7 +379,9 @@ impl ConsentReceipt {
                 grant: ConsentGrant::ApproveOnce(_),
                 ..
             }
-            | Self::Denied { .. } => None,
+            | Self::Denied { .. }
+            | Self::CodeWaitSettled { .. }
+            | Self::CodeWaitConsumed { .. } => None,
         }
     }
 
@@ -358,6 +416,10 @@ impl ConsentReceipt {
             // A revoke names the row, not an op: the row ref IS the bound
             // digest, so the handle stays a digest rather than free text.
             Self::Revoked { grant_ref, .. } => grant_ref.as_bytes().to_vec(),
+            Self::CodeWaitSettled { links, outcome, .. } => {
+                links.diff_handle(CODE_WAIT_SETTLED_KIND | outcome.tag())
+            }
+            Self::CodeWaitConsumed { links, .. } => links.diff_handle(CODE_WAIT_CONSUMED_KIND),
         }
     }
 }
@@ -376,6 +438,10 @@ pub const CONSENT_REASON_REVOKED: &str = "gate.consent.revoked";
 pub const CONSENT_REASON_BYPASS_CREATED: &str = "gate.consent.bypass_created";
 /// Reason code for an act that ran under a live bypass grant.
 pub const CONSENT_REASON_BYPASSED: &str = "gate.consent.bypassed";
+/// Reason code for a code consent wait's settlement (DOOR-079).
+pub const CONSENT_REASON_CODE_WAIT_SETTLED: &str = "gate.consent.code_wait_settled";
+/// Reason code for a code run's consumption of a settled wait (DOOR-079).
+pub const CONSENT_REASON_CODE_WAIT_CONSUMED: &str = "gate.consent.code_wait_consumed";
 
 /// The pinned Gate `content_kind` for consent-registry decisions.
 pub const CONSENT_CONTENT_KIND: &str = "consent_grant";

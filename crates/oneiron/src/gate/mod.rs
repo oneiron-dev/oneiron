@@ -166,10 +166,11 @@ use self::dreamer_precommit::{
 };
 pub(crate) use self::effect::{
     ApprovalContext, ExternalEffectGovernance, check_external_effect_policy,
-    check_external_effect_policy_pair, counterparty_send_override_in_txn,
-    evaluate_external_effect_policy, external_effect_approval_digest,
-    hydrate_external_effect_contact, native_mail_cold_approval_digest,
-    record_external_effect_policy, record_held_external_effect_policy,
+    check_external_effect_policy_pair, code_wait_approval_digest,
+    counterparty_send_override_in_txn, evaluate_external_effect_policy,
+    external_effect_approval_digest, hydrate_external_effect_contact,
+    native_mail_cold_approval_digest, record_external_effect_policy,
+    record_held_external_effect_policy,
 };
 pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
