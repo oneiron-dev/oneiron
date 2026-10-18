@@ -4004,6 +4004,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn ai_voice_asr_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.asr.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.asr.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_asr_hypothesis(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.asr.hypothesis")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.asr.hypothesis", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_asr_finalize(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.asr.finalize")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.asr.finalize", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_asr_close(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.asr.close")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.asr.close", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_voice_start(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.voice.start")?;
         let output = py

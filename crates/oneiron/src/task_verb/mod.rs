@@ -276,6 +276,7 @@ mod recall_door;
 pub mod sdk;
 mod sdk_agents;
 mod sdk_anonymous_chat;
+mod sdk_asr;
 mod sdk_authority_history;
 mod sdk_calendar;
 mod sdk_campaign_split;
