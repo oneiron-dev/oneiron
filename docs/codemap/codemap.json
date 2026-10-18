@@ -11206,7 +11206,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CodeBlameView",
@@ -11223,7 +11223,7 @@
      "path": "src/code_document/verbs.rs",
      "purpose": "The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff between two tested states of one…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 2,
       "struct": 10
      }
@@ -32168,7 +32168,7 @@
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
       "crate-vis": 47,
-      "fn": 32,
+      "fn": 33,
       "struct": 2,
       "type": 1
      }
