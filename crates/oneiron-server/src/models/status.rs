@@ -13,6 +13,22 @@ pub struct ModelsStatus {
     pub configured: bool,
     pub providers: Vec<ProviderStatus>,
     pub seats: Vec<SeatStatus>,
+    /// The models the owner's other nodes offer (FIX 3229), as raw calls
+    /// reach them by id, in the live status only; none when the mesh
+    /// discovered none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub discovered: Vec<DiscoveredStatus>,
+}
+
+/// One model the mesh discovered: the node that offers it and its offer's
+/// live health, as a rung's.
+#[derive(Clone, Debug, Serialize)]
+pub struct DiscoveredStatus {
+    /// The id raw `/v1/llm` calls name it by.
+    pub model: String,
+    /// The machine id of the owner's node that offers it.
+    pub peer: String,
+    pub health: RungHealth,
 }
 
 impl ModelsStatus {
