@@ -134,7 +134,7 @@
      "purpose": "Durable request/response lifecycle",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -153,7 +153,7 @@
      "path": "src/access_grant/vault_doors.rs",
      "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7
      }
     },
@@ -36786,8 +36786,23 @@
      "path": "src/persona_snapshot/compile.rs",
      "purpose": "Tier-A clamp, row build, fingerprint, and Vault compile pass",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PersonaSnapshotCopyEditRequest",
+      "PersonaSnapshotCopyRequest",
+      "PersonaSnapshotTextEdit"
+     ],
+     "path": "src/persona_snapshot/copy.rs",
+     "purpose": "Owner edits to accepted mode-A copies, never to their source claims",
+     "surface": {
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -36797,6 +36812,7 @@
      "path": "src/persona_snapshot/export.rs",
      "purpose": "Owner-consented export, MemoryPack-lite and markdown renders, export-record persistence",
      "surface": {
+      "crate-vis": 1,
       "fn": 4
      }
     },
@@ -36809,7 +36825,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -51143,7 +51159,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 57,
+      "re-export": 58,
       "struct": 36
      }
     },
@@ -51576,7 +51592,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 748
+      "fn": 752
      }
     },
     {
@@ -51820,6 +51836,29 @@
       "enum": 2,
       "fn": 1,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionAccessRequestAnswer",
+      "CompanionAccessRequestAnswerRequest",
+      "CompanionAccessRequestAnswered",
+      "CompanionProfileRequestedScope",
+      "PersonaSnapshotExportedCopy",
+      "PersonaSnapshotMemoryPack",
+      "PersonaSnapshotMemoryPackRow",
+      "PersonaSnapshotPreview",
+      "PersonaSnapshotPreviewRequest",
+      "PersonaSnapshotPreviewRow"
+     ],
+     "path": "src/task_verb/sdk_persona.rs",
+     "purpose": "Typed owner doors for profile request answers and accepted persona copies",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 8
      }
     },
     {
@@ -58373,7 +58412,7 @@
      "purpose": "The content-free panic report a host installs before it opens a vault"
     },
     "persona_snapshot": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58779,7 +58818,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 173,
+     "files": 174,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58949,7 +58988,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3600,
+   "source_files": 3602,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67481,7 +67520,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 712
+      "fn": 716
      }
     },
     {
@@ -68530,7 +68569,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 713
+      "fn": 717
      }
     },
     {
@@ -71893,7 +71932,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 127
+      "crate-vis": 128
      }
     },
     {
@@ -72014,6 +72053,16 @@
      "purpose": "WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/persona_doors.rs",
+     "purpose": "Profile request answers and mode-A copy edits under the owner's own proof",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -79662,7 +79711,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 390,
+     "files": 391,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80091,7 +80140,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 731,
+   "source_files": 732,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80288,6 +80337,7 @@
       "AcceptConnect",
       "AcceptRescopeConnect",
       "AccessFactorPolicy",
+      "AccessRequestStatus",
       "AccessStatus",
       "ActExecution",
       "ActionBoundRequest",
@@ -80763,6 +80813,10 @@
       "CollectionAtom",
       "CommReach",
       "CommandOutput",
+      "CompanionAccessRequestAnswer",
+      "CompanionAccessRequestAnswerRequest",
+      "CompanionAccessRequestAnswered",
+      "CompanionProfileRequestedScope",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
       "CompanionSharingStored",
@@ -81768,6 +81822,15 @@
       "PersonKind",
       "PersonRequest",
       "PersonRow",
+      "PersonaSnapshotCopyEditRequest",
+      "PersonaSnapshotCopyRequest",
+      "PersonaSnapshotExportedCopy",
+      "PersonaSnapshotMemoryPack",
+      "PersonaSnapshotMemoryPackRow",
+      "PersonaSnapshotPreview",
+      "PersonaSnapshotPreviewRequest",
+      "PersonaSnapshotPreviewRow",
+      "PersonaSnapshotTextEdit",
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
@@ -82802,8 +82865,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 634,
-      "struct": 1879
+      "enum": 637,
+      "struct": 1890
      }
     },
     {
