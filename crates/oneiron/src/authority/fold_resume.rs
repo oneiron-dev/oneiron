@@ -282,9 +282,11 @@ impl Once {
 /// `merged` (the merge of every surviving state) as it was, given the confirms
 /// already in the log (which it joins): an agent enrollment, a fresh binding,
 /// a slip mint or consume, a critical-write confirm, a fresh federation
-/// confirm, a grant travel choice (it judges only its own grant's choices),
-/// an owner work request or result (each judges only its own work).
-/// A resumed fold and a fold past an adopted checkpoint take only these.
+/// confirm, a world settings edit (it judges only its own world's edits, FIX
+/// 4535), a grant travel choice (only its own grant's choices), a checkpoint
+/// policy choice (only the vault's choices), an owner work request or result
+/// (each judges only its own work). A resumed fold and a fold past an
+/// adopted checkpoint take only these.
 pub(super) fn admits_past(
     merged: &FoldState,
     entry: &AuthorityLogEntry,
@@ -312,7 +314,9 @@ pub(super) fn admits_past(
         AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipConsume { .. }
         | AuthorityOp::CriticalWriteConfirm(_)
+        | AuthorityOp::WorldPrivacy(_)
         | AuthorityOp::GrantTravelSet(_)
+        | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_) => true,
         AuthorityOp::FederationConfirm(action) => {
@@ -944,8 +948,11 @@ impl FoldBase {
         );
         if rows.missed.get()
             || fold.machines != once.fold.machines
-            || fold.worlds != once.fold.worlds
-            || fold.refused_world_edits != once.fold.refused_world_edits
+            || !super::world_privacy::worlds_unmoved_past(
+                &fold,
+                &once.fold,
+                chain.iter().map(|hash| (*hash, new_rows[hash])),
+            )
         {
             return None;
         }
@@ -965,9 +972,7 @@ impl FoldBase {
             observations.policy.stale_roster_window_secs,
             inputs.pin.as_ref(),
         );
-        if (!view.worlds.is_empty() || !view.grant_travel.is_empty())
-            && !super::install_fold::stale_chains(&view).is_empty()
-        {
+        if view.rests_on_counting() && !super::install_fold::stale_chains(&view).is_empty() {
             return None;
         }
         let chained: Vec<_> = chain.iter().map(|hash| (*hash, new_rows[hash])).collect();

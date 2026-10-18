@@ -7,12 +7,21 @@
 //! owner-root keys: the sole root when only one is eligible, else at least two
 //! distinct roots. Workers, agents and capability holders never vote, and
 //! several software keys never stand in for a hardware root.
+//!
+//! The owner may select the roots and quorum himself, on any host, Hosted
+//! included (mesh PR2c, §A 06, K06): a main-log choice carrying his act
+//! ([`CheckpointPolicySet`], folded by `checkpoint_choice`). While a choice of
+//! his counts, it is the policy in force; the posture's policy is the
+//! default when none does. A selected policy drops only the host-voter
+//! requirement: eligibility, the multi-root quorum, the configured floor,
+//! canonical order and hardware-when-eligible all stay. Each refusal names
+//! its rule ([`RecordError::CheckpointPolicyRefused`]).
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::error::Result;
+use crate::error::{Error, RecordError, Result};
 use crate::{HostingPrivacyPosture, Vault};
 
 /// Distinct roots a checkpoint needs once two or more roots are eligible.
@@ -21,6 +30,26 @@ pub const CHECKPOINT_MULTI_ROOT_QUORUM: usize = 2;
 pub const CHECKPOINT_CONFIGURED_QUORUM: usize = 0;
 /// When any eligible root is hardware-backed, one attesting root must be.
 pub const CHECKPOINT_HARDWARE_WHEN_ELIGIBLE: bool = true;
+
+/// Integrity: the roster holds no root the policy may name.
+const NO_ELIGIBLE_ROOTS: &str = "checkpoint policy has no eligible authorized roots";
+/// Integrity: the quorum is more distinct roots than the policy names.
+const QUORUM_EXCEEDS_ROOTS: &str = "checkpoint policy quorum exceeds eligible roots";
+/// Integrity: an owner's choice of several roots needs the multi-root
+/// quorum, and every choice the configured floor.
+const QUORUM_BELOW_FLOOR: &str = "checkpoint policy quorum is below the floor its roots need";
+/// Integrity: roots unsorted or repeated, or a zero or impossible quorum.
+const NOT_CANONICAL: &str = "checkpoint policy roots/quorum are not canonical";
+/// Authority: the owner named a key the roster does not hold as an eligible
+/// root (a live owner root, or the managed host root on a hosted vault).
+const ROOT_NOT_ELIGIBLE: &str = "checkpoint policy names a key that is not an eligible root";
+/// Integrity: a hardware requirement no chosen root can meet.
+const HARDWARE_UNNAMED: &str = "checkpoint policy requires a hardware root it does not name";
+
+/// A checkpoint policy refusal naming its rule.
+pub(super) fn policy_refused(reason: &'static str) -> Error {
+    Error::Record(RecordError::CheckpointPolicyRefused(reason))
+}
 
 /// The hosting mode a checkpoint policy was fixed under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +90,11 @@ pub struct CheckpointRootPolicy {
     pub quorum: u8,
     /// One attesting root must be hardware-backed.
     pub hardware: bool,
+    /// The owner selected these roots and this quorum (mesh PR2c): no host
+    /// root need attest. A posture policy's bytes omit it, so its digest is
+    /// what it was.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub owner_selected: bool,
 }
 
 fn host_root(device: &FoldedDevice) -> bool {
@@ -72,6 +106,13 @@ fn host_root(device: &FoldedDevice) -> bool {
 
 fn owner_root(device: &FoldedDevice) -> bool {
     device.roles & ROLE_OWNER != 0 && folded_device_can_authority_consent(device)
+}
+
+/// Policy hook (CALLS "mesh PR2c selectable roots"): the roots an owner's
+/// choice may name. A live owner root on any host, and on a hosted vault the
+/// managed host root as well, the one root its posture policy names today.
+fn selectable_root(device: &FoldedDevice, managed: bool) -> bool {
+    owner_root(device) || (managed && host_root(device))
 }
 
 impl CheckpointRootPolicy {
@@ -101,14 +142,14 @@ impl CheckpointRootPolicy {
             })
             .collect();
         let canon = match roots.len() {
-            0 => return Err(invalid_authority()),
+            0 => return Err(policy_refused(NO_ELIGIBLE_ROOTS)),
             1 => 1,
             _ if managed => 1,
             _ => CHECKPOINT_MULTI_ROOT_QUORUM,
         };
         let quorum = canon.max(configured);
         if quorum > roots.len() {
-            return Err(invalid_authority());
+            return Err(policy_refused(QUORUM_EXCEEDS_ROOTS));
         }
         Ok(Self {
             posture,
@@ -116,9 +157,81 @@ impl CheckpointRootPolicy {
                 && roots
                     .iter()
                     .any(|root| root.tier == AuthorityTier::Hardware),
-            quorum: u8::try_from(quorum).map_err(|_| invalid_authority())?,
+            quorum: u8::try_from(quorum).map_err(|_| policy_refused(NOT_CANONICAL))?,
             roots,
+            owner_selected: false,
         })
+    }
+
+    /// The policy the owner's `choice` fixes on `roster` under `posture`
+    /// (mesh PR2c), with `configured` as a quorum floor (0 for none). Each
+    /// chosen key the roster no longer holds as a selectable root drops out
+    /// (CALLS "mesh PR2c selectable roots"), and the rest must still meet the
+    /// quorum: there is no silent fallback to the posture's policy. Several
+    /// roots need the multi-root quorum on every host, the host-voter rule's
+    /// managed exception included, since an owner's choice has no host
+    /// voter.
+    pub fn from_choice(
+        roster: &BTreeMap<AuthorityKey, FoldedDevice>,
+        posture: HostingPrivacyPosture,
+        choice: &CheckpointRootChoice,
+        configured: usize,
+    ) -> Result<Self> {
+        choice
+            .validate()
+            .map_err(|_| policy_refused(NOT_CANONICAL))?;
+        let posture = CheckpointPosture::from(posture);
+        let managed = posture == CheckpointPosture::Managed;
+        let roots: Vec<CheckpointRoot> = choice
+            .roots
+            .iter()
+            .filter_map(|key| roster.get(key))
+            .filter(|device| selectable_root(device, managed))
+            .map(|device| CheckpointRoot {
+                key: device.key.clone(),
+                tier: device.tier,
+                host: host_root(device),
+            })
+            .collect();
+        let canon = match roots.len() {
+            0 => return Err(policy_refused(NO_ELIGIBLE_ROOTS)),
+            1 => 1,
+            _ => CHECKPOINT_MULTI_ROOT_QUORUM,
+        };
+        let quorum = usize::from(choice.quorum);
+        if quorum > roots.len() {
+            return Err(policy_refused(QUORUM_EXCEEDS_ROOTS));
+        }
+        if quorum < canon.max(configured) {
+            return Err(policy_refused(QUORUM_BELOW_FLOOR));
+        }
+        let hardware_named = roots
+            .iter()
+            .any(|root| root.tier == AuthorityTier::Hardware);
+        if choice.hardware && !hardware_named {
+            return Err(policy_refused(HARDWARE_UNNAMED));
+        }
+        Ok(Self {
+            posture,
+            hardware: choice.hardware || (CHECKPOINT_HARDWARE_WHEN_ELIGIBLE && hardware_named),
+            quorum: choice.quorum,
+            roots,
+            owner_selected: true,
+        })
+    }
+
+    /// [`Self::from_choice`] at the writer, which refuses a choice that names
+    /// any key that is not a selectable root now, rather than dropping it.
+    pub(super) fn from_choice_exactly(
+        roster: &BTreeMap<AuthorityKey, FoldedDevice>,
+        posture: HostingPrivacyPosture,
+        choice: &CheckpointRootChoice,
+    ) -> Result<Self> {
+        let policy = Self::from_choice(roster, posture, choice, CHECKPOINT_CONFIGURED_QUORUM)?;
+        if policy.roots.len() != choice.roots.len() {
+            return Err(policy_refused(ROOT_NOT_ELIGIBLE));
+        }
+        Ok(policy)
     }
 
     /// The root `key` names, when it is eligible.
@@ -127,19 +240,37 @@ impl CheckpointRootPolicy {
     }
 
     /// Whether distinct eligible roots `attested` reach this quorum: enough of
-    /// them, the host root in managed mode, and a hardware root when required.
+    /// them, the host root in managed mode unless the owner selected the
+    /// policy, and a hardware root when required.
     pub fn admits(&self, attested: &BTreeSet<AuthorityKey>) -> bool {
+        self.shortfall(attested).is_none()
+    }
+
+    /// What `attested` lacks to reach this policy, named; `None` when it
+    /// reaches it.
+    pub fn shortfall(&self, attested: &BTreeSet<AuthorityKey>) -> Option<&'static str> {
         let voters: Vec<&CheckpointRoot> = self
             .roots
             .iter()
             .filter(|root| attested.contains(&root.key))
             .collect();
-        voters.len() >= usize::from(self.quorum)
-            && (self.posture != CheckpointPosture::Managed || voters.iter().any(|root| root.host))
-            && (!self.hardware
-                || voters
-                    .iter()
-                    .any(|root| root.tier == AuthorityTier::Hardware))
+        if voters.len() < usize::from(self.quorum) {
+            return Some("checkpoint attestations lack the pinned quorum");
+        }
+        if self.posture == CheckpointPosture::Managed
+            && !self.owner_selected
+            && !voters.iter().any(|root| root.host)
+        {
+            return Some("checkpoint attestations lack the managed host root");
+        }
+        if self.hardware
+            && !voters
+                .iter()
+                .any(|root| root.tier == AuthorityTier::Hardware)
+        {
+            return Some("checkpoint attestations lack the required hardware root");
+        }
+        None
     }
 
     /// Canonical bytes: the roots ascending and unique, and a quorum they can meet.
@@ -149,7 +280,7 @@ impl CheckpointRootPolicy {
             || usize::from(self.quorum) > self.roots.len()
             || self.roots.windows(2).any(|pair| pair[0].key >= pair[1].key)
         {
-            return Err(invalid_authority());
+            return Err(policy_refused(NOT_CANONICAL));
         }
         rmp_serde::to_vec_named(self).map_err(|_| invalid_authority())
     }
@@ -163,17 +294,46 @@ impl CheckpointRootPolicy {
     }
 }
 
+/// The checkpoint root policy in force in `fold` under `posture`, on any
+/// host: the owner's selected roots and quorum while a choice of his counts
+/// there, else the policy the posture fixes (mesh PR2c). Image building,
+/// the adopted build, attestation and the pairing pin all read this one
+/// function, so none re-derives the posture's policy past his choice.
+pub(super) fn checkpoint_root_policy_of(
+    fold: &AuthorityFold,
+    posture: HostingPrivacyPosture,
+) -> Result<CheckpointRootPolicy> {
+    match fold.checkpoint_policy.selected() {
+        Some(choice) => CheckpointRootPolicy::from_choice(
+            &fold.roster,
+            posture,
+            choice,
+            CHECKPOINT_CONFIGURED_QUORUM,
+        ),
+        None => {
+            CheckpointRootPolicy::from_roster(&fold.roster, posture, CHECKPOINT_CONFIGURED_QUORUM)
+        }
+    }
+}
+
 impl Vault {
-    /// The checkpoint root policy this vault's own fold fixes, read in `txn`.
+    /// The checkpoint root policy in force in this vault's own fold, read in
+    /// `txn`: the owner's choice when one counts, else the posture's.
     pub fn checkpoint_root_policy_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<CheckpointRootPolicy> {
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
-        CheckpointRootPolicy::from_roster(
-            &fold.roster,
-            self.privacy_posture(),
-            CHECKPOINT_CONFIGURED_QUORUM,
-        )
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        checkpoint_root_policy_of(&fold, self.privacy_posture())
+    }
+
+    /// Whether `root` is an eligible root of the policy in force. A policy
+    /// the roster cannot fix refuses, naming its rule.
+    pub fn checkpoint_root_eligible(&self, root: &AuthorityKey) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self
+            .checkpoint_root_policy_in_txn(&txn)?
+            .root(root)
+            .is_some())
     }
 }

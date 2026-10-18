@@ -90,6 +90,7 @@ pub(super) fn apply_op(
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
         | AuthorityOp::GrantTravelSet(_)
+        | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::WorldKeyWraps(_) => {}

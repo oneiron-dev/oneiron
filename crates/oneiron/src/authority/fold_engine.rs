@@ -425,6 +425,7 @@ pub(super) fn fold_authority_log_once(
             refused_world_edits: BTreeSet::new(),
             grant_travel: BTreeMap::new(),
             refused_grant_travel: BTreeSet::new(),
+            checkpoint_policy: super::checkpoint_choice::FoldedCheckpointPolicy::default(),
             owner_work: super::owner_work::FoldedOwnerWork::default(),
             install: InstallBound::default(),
             counted_ancestor_pairs,

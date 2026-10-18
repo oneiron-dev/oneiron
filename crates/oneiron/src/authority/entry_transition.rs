@@ -130,6 +130,7 @@ pub(super) fn fold_entry_state(
             refused_world_edits: BTreeSet::new(),
             grant_travel: BTreeMap::new(),
             refused_grant_travel: BTreeSet::new(),
+            checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
@@ -186,6 +187,22 @@ pub(super) fn fold_entry_state(
     // signing chain alone: a grant has no world (FIX 2998).
     if let AuthorityOp::GrantTravelSet(set) = &entry.op {
         if let Err(issue) = super::grant_travel::apply_grant_travel(
+            &mut state,
+            entry,
+            set,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // The owner's checkpoint root policy choice is signed the same way, and
+    // stands on the signing chain alone (mesh PR2c).
+    if let AuthorityOp::CheckpointPolicySet(set) = &entry.op {
+        if let Err(issue) = super::checkpoint_choice::apply_checkpoint_policy(
             &mut state,
             entry,
             set,
@@ -412,14 +429,15 @@ fn residence_result_stands(
 }
 
 /// A row a sequence floor refuses only to restriction (Astra #1430): a world
-/// edit, a grant travel choice, or a machine revision. The roster rule reads
-/// each as a replica with no floor does; this install never counts what it
-/// grants.
+/// edit, a grant travel choice, a checkpoint policy choice, or a machine
+/// revision. The roster rule reads each as a replica with no floor does; this
+/// install never counts what it grants.
 pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     matches!(
         op,
         AuthorityOp::WorldPrivacy(_)
             | AuthorityOp::GrantTravelSet(_)
+            | AuthorityOp::CheckpointPolicySet(_)
             | AuthorityOp::MachineProfile(_)
     )
 }
@@ -521,6 +539,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ResidenceDirective(_)
         | AuthorityOp::ResidenceResult(_)
         | AuthorityOp::GrantTravelSet(_)
+        | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_) => false,
     }

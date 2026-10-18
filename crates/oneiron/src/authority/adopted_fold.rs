@@ -138,9 +138,7 @@ pub(super) fn fold_adopted_checkpoint_tail(
         window_secs,
         log.pin,
     );
-    if (!view.worlds.is_empty() || !view.grant_travel.is_empty())
-        && !super::install_fold::stale_chains(&view).is_empty()
-    {
+    if view.rests_on_counting() && !super::install_fold::stale_chains(&view).is_empty() {
         return Ok(whole());
     }
     let mut metas: BTreeMap<_, _> = image
@@ -483,8 +481,11 @@ fn settle_tail(
     );
     if rows.missed.get()
         || fold.machines != image.fold().machines
-        || fold.worlds != image.fold().worlds
-        || fold.refused_world_edits != image.fold().refused_world_edits
+        || !super::world_privacy::worlds_unmoved_past(
+            &fold,
+            image.fold(),
+            judged.iter().map(|(hash, entry)| (*hash, entry)),
+        )
         || approves_on_revoked_key(&fold, &judged, &states)
     {
         return Ok(None);
