@@ -2046,6 +2046,26 @@ export_facade! {
     let output = client.vault_consolidation_status(&input)?;
     Lift::lift(output)
 };
+"vault.consolidation.promote" => fn vault_consolidation_promote(&self, input: ConsolidationPromoteRequest) -> ConsolidationPromotion = |client| {
+    let input: oneiron::memory::consolidation::ConsolidationPromoteRequest = crate::codec::lower_record("vault.consolidation.promote", input)?;
+    let output = client.vault_consolidation_promote(&input)?;
+    crate::codec::lift_record("vault.consolidation.promote", &output)
+};
+"vault.consolidation.evidence" => fn vault_consolidation_evidence(&self, input: ConsolidationEvidenceRequest) -> ScopedReadResultConsolidationEvidenceSourceList = |client| {
+    let input: oneiron::memory::consolidation::ConsolidationEvidenceRequest = crate::codec::lower_record("vault.consolidation.evidence", input)?;
+    let output = client.vault_consolidation_evidence(&input)?;
+    crate::codec::lift_record("vault.consolidation.evidence", &output)
+};
+"vault.claims.vet" => fn vault_claims_vet(&self, input: ClaimSettleRequest) -> ClaimSettlement = |client| {
+    let input: oneiron::memory::ClaimSettleRequest = crate::codec::lower_record("vault.claims.vet", input)?;
+    let output = client.vault_claims_vet(&input)?;
+    crate::codec::lift_record("vault.claims.vet", &output)
+};
+"vault.claims.vetting" => fn vault_claims_vetting(&self, input: ClaimProposalReviewRequest) -> ClaimProposalReview = |client| {
+    let input: oneiron::memory::ClaimProposalReviewRequest = crate::codec::lower_record("vault.claims.vetting", input)?;
+    let output = client.vault_claims_vetting(&input)?;
+    crate::codec::lift_record("vault.claims.vetting", &output)
+};
 "vault.claims.seed" => fn vault_claims_seed(&self, input: ScopedCommitRequest) -> Vec<WireCommitOutcome> = |client| {
     let input: oneiron::memory::ScopedCommitRequest = crate::codec::lower_record("vault.claims.seed", input)?;
     let output = client.vault_claims_seed(&input)?;

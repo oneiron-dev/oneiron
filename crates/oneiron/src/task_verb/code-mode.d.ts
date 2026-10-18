@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 508 code-mode rows (487 host rows, 21 run rows), 1820 declarations.
-// Replies: 445 fully typed, 59 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 512 code-mode rows (491 host rows, 21 run rows), 1833 declarations.
+// Replies: 447 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 92; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1677,6 +1677,19 @@ declare namespace Sdk {
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
+  type CursorSpan = { start: number[]; end: number[] };
+  type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };
+  type GeneratedClaimInput = { claim_ref: string; predicate: string; subject_ref: string; value: unknown; confidence: number; scope: ClaimScope; sensitivity?: number | null; evidence_refs: EvidenceRef[]; claim_evidence_refs?: string[]; supersedes?: string | null; valid_from?: number | null; valid_to?: number | null };
+  type ConsolidationPromoteRequest = { job_ref: string; candidates: GeneratedClaimInput[] };
+  type ConsolidationRejection = { claim_ref: string; reason: string };
+  type PromotionEvidenceReason = "missing" | "not_evidence" | "not_surfaceable" | "unvetted_generated" | "unvetted_taint" | "generated_origin" | "pending_critical_confirmation" | "unsupported_turn_role";
+  type ConsolidationEvidenceHop = { kind: string; entity_ref: string; actor_ref?: string | null };
+  type ConsolidationMessageEvidence = { message_ref: string; start: number; end: number; revision: number[]; frontier?: number[] | null };
+  type ConsolidationEvidenceLocator = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: number[]; messages: ConsolidationMessageEvidence[] };
+  type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[] };
+  type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
+  type ConsolidationEvidenceRequest = { source_refs: string[] };
   type SelfHeldShape = "dedicated_address" | "dedicated_handle" | "shared_presence";
   type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet_ref?: EntityId | null } | { kind: "vault"; vault_id: number };
   type ChannelIdentityFulfillment = "api" | "manual" | "review";
@@ -2349,6 +2362,10 @@ declare const vault: Sdk.VaultHost & {
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
     upsert(input: Sdk.ScopedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
+    /** Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration. */
+    vet(input: Sdk.ClaimSettleRequest): Promise<Sdk.ClaimSettlement | StoredResult>;
+    /** Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle. */
+    vetting(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
   };
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
@@ -2411,6 +2428,10 @@ declare const vault: Sdk.VaultHost & {
   consolidation: {
     /** Enqueues one consolidation attempt and returns its durable job reference. */
     enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
+    /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
+    evidence(input: Sdk.ConsolidationEvidenceRequest): Promise<Sdk.ScopedReadResult<Sdk.ConsolidationEvidenceSource[]> | StoredResult>;
+    /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
+    promote(input: Sdk.ConsolidationPromoteRequest): Promise<Sdk.ConsolidationPromotion | StoredResult>;
     /** Reads the status of one consolidation attempt by its durable job reference. */
     status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.DreamerAttemptView | null | StoredResult>;
   };

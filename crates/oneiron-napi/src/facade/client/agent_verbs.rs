@@ -3940,6 +3940,39 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_consolidation_promote(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.promote", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_evidence(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.evidence", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_vet(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.vet", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_vetting(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.vetting", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_seed(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.seed", input)

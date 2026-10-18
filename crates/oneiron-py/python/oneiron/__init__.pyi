@@ -709,6 +709,10 @@ class Oneiron:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
+        def vet(self, spec: Facade.ClaimSettleRequest) -> Facade.ClaimSettlement:
+            """Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration."""
+        def vetting(self, spec: Facade.ClaimProposalReviewRequest) -> Facade.ClaimProposalReview:
+            """Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle."""
         def seed(self, input: Facade.ScopedCommitRequest) -> list[Facade.CommitOutcome]:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
     class _VaultExportVerbs:
@@ -1506,6 +1510,10 @@ class Oneiron:
             """Enqueues one consolidation attempt and returns its durable job reference."""
         def status(self, spec: Facade.ConsolidationStatusRequest) -> Facade.DreamerAttemptView | None:
             """Reads the status of one consolidation attempt by its durable job reference."""
+        def promote(self, spec: Facade.ConsolidationPromoteRequest) -> Facade.ConsolidationPromotion:
+            """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
+        def evidence(self, spec: Facade.ConsolidationEvidenceRequest) -> Facade.ScopedReadResult[list[Facade.ConsolidationEvidenceSource]]:
+            """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
     class _VaultChannelIdentitiesVerbs:
         def provision(self, spec: Facade.ChannelIdentityProvisionRequest) -> Facade.ChannelIdentityLifecycleReceipt:
             """Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate."""

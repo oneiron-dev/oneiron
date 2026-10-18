@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 450 facade rows, 1729 declarations.
-Inputs: 401 of 450 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 398 of 450 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 86; unread shapes: 0.
+Census: 454 facade rows, 1742 declarations.
+Inputs: 404 of 454 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 400 of 454 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 87; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -8308,6 +8308,82 @@ class DreamerAttemptView(TypedDict):
     last_error: NotRequired[str | None]
     created_at: int
     updated_at: int
+EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]
+class CursorSpan(TypedDict):
+    start: list[int]
+    end: list[int]
+class EvidenceRef(TypedDict):
+    kind: EvidenceKind
+    entity: str
+    doc: str
+    at: list[int]
+    span: NotRequired[CursorSpan | None]
+    quote_sha256: NotRequired[list[int] | None]
+class GeneratedClaimInput(TypedDict):
+    claim_ref: str
+    predicate: str
+    subject_ref: str
+    value: Any
+    confidence: float
+    scope: ClaimScope
+    sensitivity: NotRequired[int | None]
+    evidence_refs: list[EvidenceRef]
+    claim_evidence_refs: NotRequired[list[str]]
+    supersedes: NotRequired[str | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+class ConsolidationPromoteRequest(TypedDict):
+    job_ref: str
+    candidates: list[GeneratedClaimInput]
+class ConsolidationRejection(TypedDict):
+    claim_ref: str
+    reason: str
+PromotionEvidenceReason = Literal["missing", "not_evidence", "not_surfaceable", "unvetted_generated", "unvetted_taint", "generated_origin", "pending_critical_confirmation", "unsupported_turn_role"]
+class ConsolidationEvidenceHop(TypedDict):
+    kind: str
+    entity_ref: str
+    actor_ref: NotRequired[str | None]
+class ConsolidationMessageEvidence(TypedDict):
+    message_ref: str
+    start: int
+    end: int
+    revision: list[int]
+    frontier: NotRequired[list[int] | None]
+class ConsolidationEvidenceLocator(TypedDict):
+    source_ref: str
+    claim_ref: NotRequired[str | None]
+    byte_range: NotRequired[tuple[int, int] | None]
+    content_hash: list[int]
+    messages: list[ConsolidationMessageEvidence]
+class ConsolidationEvidenceSource(TypedDict):
+    source_ref: str
+    source: NotRequired[str | None]
+    approval: NotRequired[str | None]
+    lifecycle: NotRequired[str | None]
+    evidence_taint: NotRequired[str | None]
+    generated_origin: bool
+    writer_ref: NotRequired[str | None]
+    foreign_world_ref: NotRequired[str | None]
+    consolidation_eligible: bool
+    corroboration_eligible: bool
+    first_party_corroboration: bool
+    effector_evidence_eligible: bool
+    refusal: NotRequired[PromotionEvidenceReason | None]
+    source_refs: list[str]
+    evidence_refs: list[EvidenceRef]
+    source_meet: NotRequired[str | None]
+    chain: list[ConsolidationEvidenceHop]
+    locators: list[ConsolidationEvidenceLocator]
+class ConsolidationPromotion(TypedDict):
+    job_ref: str
+    landed: list[str]
+    pended: list[str]
+    held: list[str]
+    rejected: list[ConsolidationRejection]
+    input_evidence: list[ConsolidationEvidenceSource]
+    output_evidence: list[ConsolidationEvidenceSource]
+class ConsolidationEvidenceRequest(TypedDict):
+    source_refs: list[str]
 SelfHeldShape = Literal["dedicated_address", "dedicated_handle", "shared_presence"]
 class ChannelIdentityBindingActor(TypedDict):
     kind: Literal["actor"]

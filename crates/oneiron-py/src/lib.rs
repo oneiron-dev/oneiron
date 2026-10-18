@@ -3673,6 +3673,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_consolidation_promote(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.promote")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.promote", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_evidence(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.evidence")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.evidence", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_claims_vet(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.vet")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.claims.vet", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_claims_vetting(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.vetting")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.claims.vetting", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_claims_seed(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.claims.seed")?;
         let output = py

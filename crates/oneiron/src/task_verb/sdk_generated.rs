@@ -2319,6 +2319,28 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConsolidationStatusRequest>(),
             ),
             (
+                "vault.consolidation.promote",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::consolidation::ConsolidationPromoteRequest,
+                >(),
+            ),
+            (
+                "vault.consolidation.evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::consolidation::ConsolidationEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.claims.vet",
+                crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettleRequest>(),
+            ),
+            (
+                "vault.claims.vetting",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ClaimProposalReviewRequest,
+                >(),
+            ),
+            (
                 "vault.claims.seed",
                 crate::code_run::vault_read::request_schema::<crate::memory::ScopedCommitRequest>(),
             ),
@@ -2630,6 +2652,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
+    "vault.consolidation.promote",
+    "vault.claims.vet",
+    "vault.claims.vetting",
 ];
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
@@ -2693,6 +2718,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.decisions.bands.enforce" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
+        }
+        "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
+            crate::memory::consolidation::ConsolidationPromotion,
+        >(),
+        "vault.claims.vet" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        "vault.claims.vetting" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
         }
         _ => return None,
     })
@@ -5624,6 +5658,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consolidation.promote" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consolidation.evidence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.vet" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.vetting" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.seed" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -7367,6 +7429,20 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.status" => {
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
         }
+        "vault.consolidation.promote" => {
+            let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
+                decode(value.clone())?;
+        }
+        "vault.consolidation.evidence" => {
+            let _input: crate::memory::consolidation::ConsolidationEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.claims.vet" => {
+            let _input: crate::memory::ClaimSettleRequest = decode(value.clone())?;
+        }
+        "vault.claims.vetting" => {
+            let _input: crate::memory::ClaimProposalReviewRequest = decode(value.clone())?;
+        }
         "vault.claims.seed" => {
             let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
@@ -8185,6 +8261,14 @@ pub fn invoke(
             encode(vault_consolidation_enqueue(memory, decode(value)?)?)
         }
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
+        "vault.consolidation.promote" => {
+            encode(vault_consolidation_promote(memory, decode(value)?)?)
+        }
+        "vault.consolidation.evidence" => {
+            encode(vault_consolidation_evidence(memory, decode(value)?)?)
+        }
+        "vault.claims.vet" => encode(vault_claims_vet(memory, decode(value)?)?),
+        "vault.claims.vetting" => encode(vault_claims_vetting(memory, decode(value)?)?),
         "vault.claims.seed" => encode(vault_claims_seed(memory, decode(value)?)?),
         "vault.channel_identities.provision" => {
             encode(vault_channel_identities_provision(memory, decode(value)?)?)
@@ -12090,6 +12174,32 @@ pub fn vault_consolidation_status(
     input: ConsolidationStatusRequest,
 ) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
     memory_requests::dreamer_attempt_status(memory, input)
+}
+pub fn vault_consolidation_promote(
+    memory: &Memory<'_>,
+    input: crate::memory::consolidation::ConsolidationPromoteRequest,
+) -> MemoryResult<crate::memory::consolidation::ConsolidationPromotion> {
+    crate::task_verb::sdk::host_only(memory, "vault.consolidation.promote", &input)
+}
+pub fn vault_consolidation_evidence(
+    memory: &Memory<'_>,
+    input: crate::memory::consolidation::ConsolidationEvidenceRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<Vec<crate::memory::consolidation::ConsolidationEvidenceSource>>,
+> {
+    crate::task_verb::sdk::host_only(memory, "vault.consolidation.evidence", &input)
+}
+pub fn vault_claims_vet(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimSettleRequest,
+) -> MemoryResult<crate::memory::ClaimSettlement> {
+    crate::task_verb::sdk::host_only(memory, "vault.claims.vet", &input)
+}
+pub fn vault_claims_vetting(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimProposalReviewRequest,
+) -> MemoryResult<crate::memory::ClaimProposalReview> {
+    crate::task_verb::sdk::host_only(memory, "vault.claims.vetting", &input)
 }
 pub fn vault_claims_seed(
     memory: &Memory<'_>,

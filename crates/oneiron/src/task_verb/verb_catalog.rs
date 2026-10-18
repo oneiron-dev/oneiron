@@ -453,6 +453,10 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultConsolidationPromote,
+    VaultConsolidationEvidence,
+    VaultClaimsVet,
+    VaultClaimsVetting,
     VaultClaimsSeed,
     VaultChannelIdentitiesProvision,
     VaultChannelIdentitiesBind,
@@ -949,6 +953,10 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultConsolidationPromote,
+        Self::VaultConsolidationEvidence,
+        Self::VaultClaimsVet,
+        Self::VaultClaimsVetting,
         Self::VaultClaimsSeed,
         Self::VaultChannelIdentitiesProvision,
         Self::VaultChannelIdentitiesBind,
@@ -1452,6 +1460,10 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultConsolidationPromote => "vault.consolidation.promote",
+            Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
+            Self::VaultClaimsVet => "vault.claims.vet",
+            Self::VaultClaimsVetting => "vault.claims.vetting",
             Self::VaultClaimsSeed => "vault.claims.seed",
             Self::VaultChannelIdentitiesProvision => "vault.channel_identities.provision",
             Self::VaultChannelIdentitiesBind => "vault.channel_identities.bind",
@@ -1911,6 +1923,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationEvidence
+                | Self::VaultClaimsVet
+                | Self::VaultClaimsVetting
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -2414,6 +2430,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationEvidence
+                | Self::VaultClaimsVet
+                | Self::VaultClaimsVetting
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -2985,6 +3005,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationEvidence
+                | Self::VaultClaimsVet
+                | Self::VaultClaimsVetting
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
                 | Self::VaultChannelIdentitiesFulfill
@@ -3296,6 +3320,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
+                | Self::VaultConsolidationPromote
+                | Self::VaultClaimsVet
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -3804,6 +3830,10 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationEvidence => &["spec"],
+            Self::VaultClaimsVet => &["spec"],
+            Self::VaultClaimsVetting => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
             Self::VaultChannelIdentitiesProvision => &["spec"],
             Self::VaultChannelIdentitiesBind => &["spec"],
@@ -4301,6 +4331,10 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationEvidence => &["spec"],
+            Self::VaultClaimsVet => &["spec"],
+            Self::VaultClaimsVetting => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
             Self::VaultChannelIdentitiesProvision => &["spec"],
             Self::VaultChannelIdentitiesBind => &["spec"],
@@ -5600,6 +5634,18 @@ impl AgentVerb {
             }
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
+            }
+            Self::VaultConsolidationPromote => {
+                "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."
+            }
+            Self::VaultConsolidationEvidence => {
+                "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."
+            }
+            Self::VaultClaimsVet => {
+                "Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration."
+            }
+            Self::VaultClaimsVetting => {
+                "Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle."
             }
             Self::VaultClaimsSeed => {
                 "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."
