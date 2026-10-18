@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 316 facade rows, 1174 generated types.
+// UniFFI census: 316 facade rows, 1176 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 284.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -702,6 +702,47 @@ pub struct AgentHealthCoachAnswer {
     pub draft: Option<AgentHealthCoachDraft>,
 }
 
+/// `oneiron::dreamer_runner::maintenance::agent_health::apply::AgentHealthApplicationState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgentHealthApplicationState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "admitted")]
+    Admitted,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// `oneiron::dreamer_runner::maintenance::agent_health::apply::AgentHealthCoachApplication`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentHealthCoachApplication {
+    #[serde(rename = "by")]
+    pub by: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "instructions")]
+    pub instructions: String,
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "state")]
+    pub state: AgentHealthApplicationState,
+    #[serde(rename = "verdict", default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    #[serde(
+        rename = "disposition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disposition: Option<String>,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+}
+
 /// `oneiron::dreamer_runner::maintenance::agent_health::ask::AgentHealthCoachAsk`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -720,6 +761,12 @@ pub struct AgentHealthCoachAsk {
     pub attempt: String,
     #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<AgentHealthCoachAnswer>,
+    #[serde(
+        rename = "application",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub application: Option<AgentHealthCoachApplication>,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCard`.
