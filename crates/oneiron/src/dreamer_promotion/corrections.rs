@@ -13,6 +13,7 @@ use crate::claim::{ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, PREDICATE_CONF
 use crate::dreamer_consolidation::resources::{ConsolidationFence, RowRevision};
 use crate::dreamer_consolidation::{conflict_close_candidate, marker_ids as ids_at};
 use crate::edge::EdgeKind;
+use crate::registry::ENTITY_TYPE_CLAIM;
 
 /// Grants `replacement` when the policy allows it, returning the prior the
 /// grant closed. Anything else leaves it Proposed for the owner.

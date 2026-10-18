@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 551 code-mode rows (530 host rows, 21 run rows), 1959 declarations.
-// Replies: 486 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 560 code-mode rows (539 host rows, 21 run rows), 1994 declarations.
+// Replies: 493 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 93; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1456,6 +1456,28 @@ declare namespace Sdk {
   type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null };
   type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown };
   type AiAnswer = { model: string; parts: AiPart[]; usage: MediaUsage };
+  type VoiceRefOrigin = { kind: "captured"; consent_event_ref: string } | { kind: "designed"; vendor: string } | { kind: "generated" };
+  type VoiceBankClipInput = { register: string; media_type: string; audio: string; transcript: string };
+  type VoiceBankPackPutRequest = { voice_id: string; pack_id: string; origin: VoiceRefOrigin; clips: VoiceBankClipInput[] };
+  type VoiceBankPackReceipt = { voice_id: string; pack_id: string };
+  type VoiceConsentBasis = { ConversationalNotice: { notice: string } } | { VerbalOnRecording: { recording_ref: string; start_ms: number; end_ms: number; words: string } } | { SettingsToggle: { surface_ref: string } };
+  type VoiceConsentState = "granted" | "withdrawn";
+  type VoiceRenderConsentRequest = { voice_id: string; event_id: string; occurred_at: number; reach: ModelLocality; basis: VoiceConsentBasis; state: VoiceConsentState };
+  type VoiceVendorDeleteStatus = "deleted" | "no_clone_wire" | "delete_failed" | "absent";
+  type VoiceVendorEviction = { target: string; vendor_voice_id: string; vendor: VoiceVendorDeleteStatus };
+  type VoiceRenderConsentReceipt = { voice_id: string; state: VoiceConsentState; reach: ModelLocality; revision: string; evicted: VoiceVendorEviction[] };
+  type VoiceTargetProvisionRequest = { voice_id: string; target: string; include_generated?: boolean; language?: string | null };
+  type VoiceTargetReceipt = { voice_id: string; target: string; vendor_voice_id: string; cloned_at: number; revision: string };
+  type VoiceTargetEvictRequest = { voice_id: string; target: string };
+  type VoiceTargetEvictReceipt = { voice_id: string; target: string; evicted: boolean; vendor: VoiceVendorDeleteStatus };
+  type VoiceBankInspectRequest = { voice_id: string; target: string; include_generated?: boolean };
+  type VoiceIdentityView = { version: number; id: string; owner: string; pack_ids: string[] };
+  type VoiceClipSummary = { register: string; media_type: string; audio_bytes: number };
+  type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[] };
+  type VoiceRenderConsentView = { event_id: string; subject: string; recorded_by: string; occurred_at: number; reach: ModelLocality; basis: VoiceConsentBasis; state: VoiceConsentState; revision: string };
+  type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string };
+  type VoiceTargetInspection = { target: string; locality: ModelLocality; include_generated: boolean; current?: VoiceTargetCloneView | null };
+  type VoiceBankInspection = { voice_id: string; identity?: VoiceIdentityView | null; packs: VoicePackSummary[]; render_consent?: VoiceRenderConsentView | null; target: VoiceTargetInspection };
   type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed";
   type AiVideoTicket = { job: string; model: string; operation: AiOperation };
   type AiVideoJobRequest = { job: string };
@@ -1807,6 +1829,19 @@ declare namespace Sdk {
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
+  type CursorSpan = { start: number[]; end: number[] };
+  type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };
+  type GeneratedClaimInput = { claim_ref: string; predicate: string; subject_ref: string; value: unknown; confidence: number; scope: ClaimScope; sensitivity?: number | null; evidence_refs: EvidenceRef[]; claim_evidence_refs?: string[]; supersedes?: string | null; valid_from?: number | null; valid_to?: number | null };
+  type ConsolidationPromoteRequest = { job_ref: string; candidates: GeneratedClaimInput[] };
+  type ConsolidationRejection = { claim_ref: string; reason: string };
+  type PromotionEvidenceReason = "missing" | "not_evidence" | "not_surfaceable" | "unvetted_generated" | "unvetted_taint" | "generated_origin" | "pending_critical_confirmation" | "unsupported_turn_role";
+  type ConsolidationEvidenceHop = { kind: string; entity_ref: string; actor_ref?: string | null };
+  type ConsolidationMessageEvidence = { message_ref: string; start: number; end: number; revision: number[]; frontier?: number[] | null };
+  type ConsolidationEvidenceLocator = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: number[]; messages: ConsolidationMessageEvidence[] };
+  type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[] };
+  type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
+  type ConsolidationEvidenceRequest = { source_refs: string[] };
   type SignalExtractionRequest = { turn_refs: string[] };
   type SignalExtractionTicket = { job_refs: string[] };
   type SignalExtractionResultRequest = { job_ref: string };
@@ -2488,6 +2523,10 @@ declare const vault: Sdk.VaultHost & {
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
     upsert(input: Sdk.ScopedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
+    /** Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration. */
+    vet(input: Sdk.ClaimSettleRequest): Promise<Sdk.ClaimSettlement | StoredResult>;
+    /** Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle. */
+    vetting(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
   };
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
@@ -2576,6 +2615,10 @@ declare const vault: Sdk.VaultHost & {
   consolidation: {
     /** Enqueues one consolidation attempt and returns its durable job reference. */
     enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
+    /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
+    evidence(input: Sdk.ConsolidationEvidenceRequest): Promise<Sdk.ScopedReadResult<Sdk.ConsolidationEvidenceSource[]> | StoredResult>;
+    /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
+    promote(input: Sdk.ConsolidationPromoteRequest): Promise<Sdk.ConsolidationPromotion | StoredResult>;
     /** Reads the status of one consolidation attempt by its durable job reference. */
     status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.DreamerAttemptView | null | StoredResult>;
   };
@@ -3291,6 +3334,22 @@ declare const vault: Sdk.VaultHost & {
     tier: {
       /** The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern. */
       set(input: Sdk.TrustedContactTierRequest): Promise<Sdk.TrustedContactTierSet | StoredResult>;
+    };
+  };
+  voices: {
+    /** The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone. */
+    inspect(input: Sdk.VoiceBankInspectRequest): Promise<Sdk.VoiceBankInspection | StoredResult>;
+    packs: {
+      /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
+      put(input: Sdk.VoiceBankPackPutRequest): Promise<Sdk.VoiceBankPackReceipt | StoredResult>;
+    };
+    /** The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs. */
+    render_consent(input: Sdk.VoiceRenderConsentRequest): Promise<Sdk.VoiceRenderConsentReceipt | StoredResult>;
+    targets: {
+      /** The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay. */
+      evict(input: Sdk.VoiceTargetEvictRequest): Promise<Sdk.VoiceTargetEvictReceipt | StoredResult>;
+      /** The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call. */
+      provision(input: Sdk.VoiceTargetProvisionRequest): Promise<Sdk.VoiceTargetReceipt | StoredResult>;
     };
   };
   weave: {

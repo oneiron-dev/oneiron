@@ -62,6 +62,8 @@ pub(crate) use super::shared_member_doors::*;
 pub(crate) use super::shared_policy_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.
 pub(crate) use super::trusted_contact_doors::*;
+// The owner's voice-bank doors (DOOR-143) too.
+pub(crate) use super::voice_bank_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
@@ -133,6 +135,7 @@ pub(crate) use super::research_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+pub(crate) use super::consolidation_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
@@ -1113,6 +1116,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.memory.signal_extraction.result"
         | "vault.claims.review"
         | "vault.claims.settle"
+        | "vault.claims.vet"
+        | "vault.claims.vetting"
+        | "vault.consolidation.promote"
+        | "vault.consolidation.evidence"
         | "vault.settings.wake_policy.set"
         | "vault.agents.create"
         | "vault.agents.update"
@@ -1215,7 +1222,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.change"
         | "vault.notes.history_purge"
         | "vault.notes.history_purge_execute"
-        | "vault.notes.history_purge_receipts" => owner_proof(auth, server, verb).map(drop),
+        | "vault.notes.history_purge_receipts"
+        | "vault.voices.packs.put"
+        | "vault.voices.render_consent"
+        | "vault.voices.targets.provision"
+        | "vault.voices.targets.evict"
+        | "vault.voices.inspect" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

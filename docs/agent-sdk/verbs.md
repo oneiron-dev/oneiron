@@ -222,6 +222,8 @@ both bindings and their export-census tests in one change.
 - `vault.gate.policy.propose`
 - `vault.gate.checker.get`
 - `vault.gate.checker.set`
+- `vault.learning.read`
+- `vault.learning.projection`
 - `vault.settings.learning`
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
@@ -363,6 +365,11 @@ both bindings and their export-census tests in one change.
 - `ai.options`
 - `ai.image`
 - `ai.speech`
+- `vault.voices.packs.put`
+- `vault.voices.render_consent`
+- `vault.voices.targets.provision`
+- `vault.voices.targets.evict`
+- `vault.voices.inspect`
 - `ai.transcribe`
 - `ai.embed`
 - `ai.video`
@@ -451,6 +458,10 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.read`
 - `vault.consolidation.enqueue`
 - `vault.consolidation.status`
+- `vault.consolidation.promote`
+- `vault.consolidation.evidence`
+- `vault.claims.vet`
+- `vault.claims.vetting`
 - `vault.memory.signal_extraction`
 - `vault.memory.signal_extraction.result`
 - `vault.claims.seed`

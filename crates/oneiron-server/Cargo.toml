@@ -117,6 +117,9 @@ jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"]
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json", "multipart"] }
 thiserror = { workspace = true }
 utoipa = "5.5.0"
+# The `/v1/ai/voices` route bodies' schemas in the OpenAPI document
+# (DOOR-143), at the engine's own pin.
+schemars = "=0.8.22"
 # EMB-7/EMB-8 local embedder (ONE-1979/ONE-1980). Pinned exact: the quantise
 # path calls `candle_core::quantized::QTensor::quantize` and the Metal SDPA
 # branch calls `candle_nn::ops::sdpa`, both 0.11.0 public API, and a minor bump

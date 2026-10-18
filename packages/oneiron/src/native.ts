@@ -389,6 +389,11 @@ vaultReceiptsContext(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown
+vaultVoicesPacksPut(input: unknown): unknown
+vaultVoicesRenderConsent(input: unknown): unknown
+vaultVoicesTargetsProvision(input: unknown): unknown
+vaultVoicesTargetsEvict(input: unknown): unknown
+vaultVoicesInspect(input: unknown): unknown
 aiTranscribe(input: unknown): unknown
 aiEmbed(input: unknown): unknown
 aiVideo(input: unknown): unknown
@@ -477,6 +482,10 @@ vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultConsolidationPromote(input: unknown): unknown
+vaultConsolidationEvidence(input: unknown): unknown
+vaultClaimsVet(input: unknown): unknown
+vaultClaimsVetting(input: unknown): unknown
 vaultMemorySignalExtraction(input: unknown): unknown
 vaultMemorySignalExtractionResult(input: unknown): unknown
 vaultClaimsSeed(input: unknown): unknown
