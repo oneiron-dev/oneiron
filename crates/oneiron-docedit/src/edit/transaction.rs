@@ -168,7 +168,9 @@ impl StepTarget {
 }
 
 /// Declared local transform properties, in EMU and 60,000ths of a degree.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct StepXfrm {
     #[serde(default)]
