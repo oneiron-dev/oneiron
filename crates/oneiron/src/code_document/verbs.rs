@@ -1,7 +1,8 @@
 //! The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff
 //! between two tested states of one file, and `vault.code.blame`, blame by op
 //! over one. Every unit names the operations that wrote it, and every
-//! operation its actor, session, turn, activity, intent, model and effort.
+//! operation its actor, session, turn, activity, intent, model and effort. An
+//! erased actor reads as `erased` (FIX 3520).
 //! Text diff stays a derived rendering (`rendered`); birth text, which no
 //! operation wrote, carries no operation.
 
@@ -15,6 +16,7 @@ use crate::code_symbol::{
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
 use crate::memory::{Memory, MemoryResult};
+use crate::receipt::ERASED_CALL_IDENTITY;
 
 /// One tested state of a file: as the code revision `revision_ref` tested
 /// it, or, with no revision, the document's live head.
@@ -217,8 +219,13 @@ pub(super) fn operation_view(op: &CodeOpAttribution) -> CodeOperationView {
         operation_ref: op.operation.to_hex(),
         sequence: op.sequence,
         session_ref: op.session_id.to_hex(),
-        actor_ref: op.actor.entity_ref().to_hex(),
-        actor_class: op.actor.actor_class().gate_actor_class().to_owned(),
+        actor_ref: op.actor_ref(),
+        actor_class: op
+            .actor
+            .map_or(ERASED_CALL_IDENTITY, |actor| {
+                actor.actor_class().gate_actor_class()
+            })
+            .to_owned(),
         turn_ref: id(op.provenance.turn),
         activity_ref: id(op.provenance.activity),
         intent_ref: id(op.provenance.intent),
