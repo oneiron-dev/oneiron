@@ -6,16 +6,17 @@
 //! it. A row table counts when every row it held is still there (in place
 //! where its readers run rows in order) or gives way at its key to one that
 //! only restricts it, and each row added only restricts. Wait rows compare
-//! what they resolve, and source trust its folded slots. Every other field
-//! must be equal: the owner policy rows, a fold that depends on provenance,
-//! and any field added later. A narrowing the comparator cannot prove reads
-//! as a widening and waits for the owner.
+//! what they resolve, source trust its folded slots, and delegation grants
+//! what the gate admits by them. Every other field must be equal: the owner
+//! policy rows, a fold that depends on provenance, and any field added
+//! later. A narrowing the comparator cannot prove reads as a widening and
+//! waits for the owner.
 use super::{CommOptOutPosture, PolicyManifestResolution};
 use crate::EntityId;
 use crate::claim::ClaimSource;
 use crate::gate::ceiling::{
-    ActorCeiling, PolicyApprovalCeiling, PolicyAxes, PolicyCriticality, PolicyPack,
-    PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
+    ActorCeiling, DelegationFoldCache, DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes,
+    PolicyCriticality, PolicyPack, PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
 };
 use crate::gate::class_policy::{
     ActPolicyTable, ActPosture, ClassPolicyPrecedence, WaitPolicyTable, WaitResolution,
@@ -244,6 +245,36 @@ fn trust_narrows(before: &SourceTrustCeiling, after: &SourceTrustCeiling) -> boo
         && before.malformed_manifest_seen == after.malformed_manifest_seen
 }
 
+/// The actor a delegation grant ref admits at Auto: its record's binding,
+/// where its chain's ceiling is Auto. The gate holds anything else Pending.
+fn delegation_admits<'a>(
+    fold: &'a DelegationFoldCache,
+    grant_ref: &str,
+) -> Option<(&'a str, Option<&'a str>)> {
+    if fold.effective_ceiling(grant_ref) != Some(PolicyApprovalCeiling::Auto) {
+        return None;
+    }
+    match fold.records.get(grant_ref)? {
+        DelegationGrantRecord::Grant {
+            actor_class,
+            actor_ref,
+            ..
+        } => Some((actor_class.trim(), actor_ref.as_deref())),
+        DelegationGrantRecord::RevokeGrant { .. } => None,
+    }
+}
+
+/// Delegation grants on what the gate admits by them: each ref that admits
+/// after admitted before, bound to the same actor. A grant revoked, dropped,
+/// lowered or cut off by its parent only narrows; a new or rebound one can
+/// admit an actor the vault held Pending.
+fn delegation_narrows(before: &DelegationFoldCache, after: &DelegationFoldCache) -> bool {
+    after.records.keys().all(|grant_ref| {
+        delegation_admits(after, grant_ref)
+            .is_none_or(|bound| delegation_admits(before, grant_ref) == Some(bound))
+    })
+}
+
 /// A new scoped grant that grants nothing: it carries a budget and no read
 /// effector, so no read, effect or note door admits by it and no read
 /// fallback moves. A matching one can only veto a coach offer.
@@ -417,6 +448,7 @@ pub(crate) fn manifest_resolution_narrows(
     axis!(act_policy, act_rows_narrow);
     axis!(wait_policy, wait_rows_narrow);
     axis!(source_trust, trust_narrows);
+    axis!(delegation_fold, delegation_narrows);
     axis!(scoped_grants, |b, a| adds_only(b, a, grant_narrows));
     axis!(budget_policy, budget_rows_narrow);
     axis!(native_mail_policy, |b, a| mail_rows_narrow(b, a));
