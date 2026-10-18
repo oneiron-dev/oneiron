@@ -5659,6 +5659,28 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DeckCommentInspection",
+      "DeckInspectRequest",
+      "DeckInspectionView",
+      "DeckProposeRejection",
+      "DeckRejectionCheck",
+      "DeckRejectionReport",
+      "DeckRejectionSheet",
+      "DeckRejectionSheetDependency",
+      "DeckRejectionSummary"
+     ],
+     "path": "src/blob_artifact/deck_doors.rs",
+     "purpose": "The native deck edit door's typed wire (DOOR-142 A, ARCH-0077 \"Edit target choice\")…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/artifact_actor.rs",
      "purpose": "Vault-local machine identity for capability uploads and verified seal output",
@@ -6227,7 +6249,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 1,
-      "re-export": 8
+      "re-export": 10
      }
     },
     {
@@ -21628,6 +21650,8 @@
      "kind": "src",
      "notable": [
       "DeckEditContext",
+      "DeckEditOutcome",
+      "DeckEditRejection",
       "DeckRender",
       "DeckRenderSide",
       "DeckSettleEvidence"
@@ -21636,9 +21660,9 @@
      "purpose": "Native deck edits (ARCH-0077, \"Edit in place with passthrough\"): one docedit deck transaction over the exact…",
      "surface": {
       "crate-vis": 9,
-      "enum": 1,
+      "enum": 2,
       "fn": 3,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -21781,7 +21805,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 6,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -50150,7 +50174,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 609
+      "fn": 610
      }
     },
     {
@@ -55830,7 +55854,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57267,7 +57291,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3488,
+   "source_files": 3489,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61808,7 +61832,7 @@
       "crate-vis": 3,
       "enum": 3,
       "fn": 1,
-      "mod": 1,
+      "mod": 2,
       "re-export": 2,
       "struct": 6
      }
@@ -61985,6 +62009,27 @@
       "fn": 15,
       "struct": 10,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeckIdentityAmbiguity",
+      "DeckInspection",
+      "DeckNativeRefusal",
+      "DeckShapeInspection",
+      "DeckShapeKind",
+      "DeckSlideInspection",
+      "DeckStepRefusal",
+      "DeckTransactionRefusal"
+     ],
+     "path": "src/edit/wire.rs",
+     "purpose": "Owned wire forms for the deck edit door (ARCH-0077, \"Identities\" and \"The 23 named refusals\"): the native…",
+     "surface": {
+      "enum": 5,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -62857,7 +62902,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62950,7 +62995,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 89,
+   "source_files": 90,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -65734,7 +65779,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 559
+      "fn": 560
      }
     },
     {
@@ -66783,7 +66828,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 560
+      "fn": 561
      }
     },
     {
@@ -78646,12 +78691,18 @@
       "DecisionRung",
       "DecisionTime",
       "DeckBodyView",
+      "DeckCommentInspection",
       "DeckDiff",
+      "DeckEditContext",
       "DeckExportRequest",
       "DeckExportView",
       "DeckForkMergeRequest",
       "DeckGateRequest",
       "DeckGateView",
+      "DeckIdentityAmbiguity",
+      "DeckInspectRequest",
+      "DeckInspectionView",
+      "DeckNativeRefusal",
       "DeckNodeView",
       "DeckOp",
       "DeckOracleRequest",
@@ -78659,8 +78710,23 @@
       "DeckPreviewRequest",
       "DeckPreviewSlide",
       "DeckProposeOutcome",
+      "DeckProposeRejection",
       "DeckProposeRequest",
+      "DeckRejectionCheck",
+      "DeckRejectionReport",
+      "DeckRejectionSheet",
+      "DeckRejectionSheetDependency",
+      "DeckRejectionSummary",
+      "DeckRender",
+      "DeckRenderSide",
       "DeckReviewView",
+      "DeckShapeInspection",
+      "DeckShapeKind",
+      "DeckSlideInspection",
+      "DeckStep",
+      "DeckStepRefusal",
+      "DeckTransaction",
+      "DeckTransactionRefusal",
       "DeclaredMaximum",
       "DelegatedGrant",
       "DelegatedGrantScope",
@@ -78925,6 +78991,7 @@
       "HybridSearchHit",
       "HybridSearchRequest",
       "HybridTemporalQuery",
+      "IdMarks",
       "IdentityActNow",
       "IdentityActNowRequest",
       "IdentityAnswerRequest",
@@ -79280,6 +79347,7 @@
       "OfficeBodyReadRequest",
       "OfficeBodyReviewedFork",
       "OfficeBodyView",
+      "OfficeFormat",
       "OmittedKnowledge",
       "OpaqueChange",
       "OpenSpendLeaseRequest",
@@ -79404,6 +79472,9 @@
       "PolicySkipReason",
       "PolicyVerdictCategory",
       "PostmarkAtom",
+      "PptxInspection",
+      "PptxShapeIdentity",
+      "PptxSlideIdentity",
       "Preset",
       "PriorOrigin",
       "PriorRung",
@@ -79953,8 +80024,13 @@
       "SteerReceipt",
       "SteerRequest",
       "StepAssetKind",
+      "StepCell",
       "StepOutcome",
+      "StepPreset",
       "StepProgression",
+      "StepSequence",
+      "StepTarget",
+      "StepXfrm",
       "StopCause",
       "StoredShapeSeed",
       "SufficiencyCard",
@@ -80221,8 +80297,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 535,
-      "struct": 1517
+      "enum": 547,
+      "struct": 1536
      }
     },
     {
