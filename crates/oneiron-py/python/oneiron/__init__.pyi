@@ -265,6 +265,66 @@ LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply | LensFrameCallba
 class CloseLensFrameReply(TypedDict):
     closed: bool
 
+# OF-469: the checkpoint pin `Oneiron.pair` returns, every byte value as
+# lowercase hex. It is the trust input a local replica adopts the vault's
+# checkpoint by; keep it whole beside the server origin and the credential.
+class CheckpointPinKey(TypedDict):
+    suite: Literal["ed25519", "p256"]
+    # 32 bytes for Ed25519; the compressed SEC1 point for P-256.
+    key: str
+
+class CheckpointPinSignature(TypedDict):
+    suite: Literal["ed25519", "p256"]
+    public_key: CheckpointPinKey
+    signature: str
+
+class CheckpointPinRoot(TypedDict):
+    key: CheckpointPinKey
+    tier: Literal["software", "hardware", "cloud_custodial"]
+    # The managed host root, which managed mode requires.
+    host: bool
+
+class CheckpointPinPolicy(TypedDict):
+    posture: Literal["managed", "relay", "self_host"]
+    # Ascending by key, one row per root.
+    roots: list[CheckpointPinRoot]
+    # Distinct eligible roots that must attest.
+    quorum: int
+    # One attesting root must be hardware-backed.
+    hardware: bool
+
+class CheckpointPinBinding(TypedDict):
+    vault_id: str
+    genesis: str
+    root: CheckpointPinKey
+    # The install whose checkpoint signing seed holds the key (16 bytes).
+    install: str
+    # The SLH-DSA-SHA2-256s public key.
+    slhdsa: str
+    epoch: int
+    signature: CheckpointPinSignature
+
+class CheckpointPin(TypedDict):
+    # The single-use pairing link's nonce.
+    challenge: str
+    vault_id: str
+    # The authority genesis entry hash.
+    genesis: str
+    # The pinned checkpoint image id.
+    checkpoint: str
+    policy: CheckpointPinPolicy
+    # Ascending by root key, one per root.
+    bindings: list[CheckpointPinBinding]
+
+class Paired(TypedDict):
+    # A handle connected with the credential.
+    memory: "Oneiron"
+    # Store as ONEIRON_KEY; the link cannot be redeemed twice.
+    credential: str
+    # Checked against the link and stored nowhere; None when the vault has
+    # no attested checkpoint.
+    pin: CheckpointPin | None
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -292,7 +352,7 @@ class Oneiron:
     @classmethod
     def connect(cls, url: str, key: str) -> "Oneiron": ...
     @classmethod
-    def pair(cls, link: str) -> tuple["Oneiron", str]: ...
+    def pair(cls, link: str) -> Paired: ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
     def in_room_turn(self, room_ref: str) -> "Oneiron": ...
     def in_off_record_session(self, session_ref: str) -> "Oneiron": ...
@@ -1104,6 +1164,8 @@ class Oneiron:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
         def seal(self, request: Facade.NoteRefRequest) -> Facade.NoteSeal: ...
         def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
+        def set_overrides(self, request: Facade.SetNoteOverridesRequest) -> Facade.NoteDefaultsView: ...
+        def defaults(self, request: Facade.NoteRefRequest) -> Facade.NoteDefaultsView: ...
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""
