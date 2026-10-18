@@ -9,7 +9,7 @@
 //! applies a repair.
 
 use super::{
-    DiagnosticEventClass, MAX_EVENTS_PER_RUN, RepairActor, RepairOperation, RepairProposal,
+    DiagnosticEventClass, RepairActor, RepairOperation, RepairProposal,
     decode_diagnostic_event_body,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -33,7 +33,8 @@ pub struct Tier1Sweep {
 
 impl Vault {
     /// Runs every receipt tripwire over the last day, window by window, then
-    /// files the bounded repairs. A manifest that forces tripwires closed
+    /// files the bounded repairs. Each window reads every Gate receipt it
+    /// holds, never a newest top-N. A manifest that forces tripwires closed
     /// silences the sweep.
     pub fn run_tier1_sweep(&self, now: u64) -> Result<Tier1Sweep> {
         let Some(bounds) = self.tripwire_bounds()? else {
@@ -48,7 +49,7 @@ impl Vault {
                 kinds: [ReceiptKind::Gate].into(),
                 start_at: Some(end.saturating_sub(window)),
                 end_at: Some(end),
-                limit: MAX_EVENTS_PER_RUN,
+                limit: usize::MAX,
                 ..ReceiptQuery::default()
             };
             diagnostics.extend(self.run_receipt_tripwires(

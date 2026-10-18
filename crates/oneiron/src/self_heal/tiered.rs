@@ -3,6 +3,7 @@ use super::{
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, diagnostic_event_id, encode_diagnostic_event_body, validate_token,
 };
+use crate::limit_ask::EngineLimit;
 use crate::llm::decision::catalogue::TELEMETRY_ANOMALY;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
@@ -58,6 +59,9 @@ pub struct DetectorPolicy {
     pub consecutive: usize,
 }
 impl DetectorPolicy {
+    /// A positive `consecutive` is the host's to set: the Vault entry points
+    /// ask past `limits.detector_consecutive`. The prompt and rubric must fit
+    /// the decision question's text room.
     pub(super) fn validate(&self) -> Result<()> {
         validate_token(&self.family, "detector family is not a token")?;
         validate_token(
@@ -67,7 +71,6 @@ impl DetectorPolicy {
         if self.prompt.is_empty()
             || self.rubric.is_empty()
             || self.consecutive == 0
-            || self.consecutive > 64
             || self.prompt.len() + self.rubric.len() > QUESTION_TEXT_MAX - QUESTION_FRAMING
         {
             return Err(Error::InvalidConfig("invalid detector policy".into()));
@@ -218,13 +221,14 @@ pub(super) fn propose(
     }))
 }
 
+/// Validates the whole ordered window, every run of it: past
+/// `limits.detector_window_runs` the detector asks and reads on.
 pub(super) fn valid_runs(
     vault: &Vault,
     runs: &[RetrievalRunRecord],
     consecutive: usize,
 ) -> Result<()> {
-    if runs.len() > 64
-        || runs.len() < consecutive
+    if runs.len() < consecutive
         || runs.windows(2).any(|w| {
             (w[0].started_at, w[0].run_id.as_bytes()) >= (w[1].started_at, w[1].run_id.as_bytes())
         })
@@ -233,6 +237,7 @@ pub(super) fn valid_runs(
             "invalid ordered telemetry window".into(),
         ));
     }
+    let _ = vault.measure_limit(EngineLimit::DetectorWindowRuns, runs.len() as u64);
     for run in runs {
         run.replay_state().validate()?;
         if vault.store.retrieval_run(run.run_id)?.as_ref() != Some(run) {
@@ -254,6 +259,7 @@ impl Vault {
         decisions: &DetectorDecisions<'_>,
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
+        let _ = self.measure_limit(EngineLimit::DetectorConsecutive, policy.consecutive as u64);
         self.classify_prompt_with_examples(policy, decisions, runs, (&[], &[]))
     }
 
@@ -303,6 +309,7 @@ impl Vault {
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
         let question = policy.question(ProposedTier::Judge, (0, 0))?;
+        let _ = self.measure_limit(EngineLimit::DetectorConsecutive, policy.consecutive as u64);
         valid_runs(self, runs, policy.consecutive)?;
         let (raised, receipt) = decisions.raised(&question, &run_ids(runs)?)?;
         if !raised {
@@ -320,6 +327,7 @@ impl Vault {
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
         let question = policy.question(ProposedTier::SessionJudge, (0, 0))?;
+        let _ = self.measure_limit(EngineLimit::DetectorConsecutive, policy.consecutive as u64);
         valid_runs(self, runs, policy.consecutive)?;
         let Some(turn) = runs[0].turn else {
             return Err(Error::InvalidConfig("missing session identity".into()));

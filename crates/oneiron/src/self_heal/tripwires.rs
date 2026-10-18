@@ -2,8 +2,8 @@
 use super::{
     DeterministicDetector, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass,
     DiagnosticObservation, DiagnosticReplayCoordinate, DiagnosticSourceKind, DiagnosticWorkingSet,
-    MAX_EVENTS_PER_RUN,
 };
+use crate::limit_ask::EngineLimit;
 use crate::retrieval_quality::RetrievalQuality;
 use crate::{
     EntityId, Result, Vault,
@@ -156,11 +156,14 @@ impl TripwireBounds {
         bounds.valid().then_some(bounds)
     }
 
+    /// A positive window and positive thresholds. A large threshold is the
+    /// owner's to set; `Vault::tripwire_bounds` asks past
+    /// `limits.tripwire_threshold`.
     fn valid(self) -> bool {
         self.window_secs > 0
-            && (1..=MAX_EVENTS_PER_RUN as u64).contains(&self.consent_depth)
-            && (1..=MAX_EVENTS_PER_RUN as u64).contains(&self.actor_writes)
-            && (1..=MAX_EVENTS_PER_RUN as u64).contains(&self.retrieval_regressions)
+            && self.consent_depth > 0
+            && self.actor_writes > 0
+            && self.retrieval_regressions > 0
     }
 }
 pub struct ConsentStormDetector {
@@ -417,25 +420,39 @@ impl DreamerRunFacts {
     }
 }
 impl Vault {
+    /// The resolved tripwire policy. Each of its three count thresholds past
+    /// `limits.tripwire_threshold` asks whether everything is okay, and the
+    /// tripwires run at it.
     pub fn tripwire_bounds(&self) -> Result<Option<TripwireBounds>> {
         let txn = self.store.env.read_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
         if policy.diagnostics().loaded_manifest_forces_fail_closed() {
             return Ok(None);
         }
-        Ok(Some(policy.diagnostic_bounds.unwrap_or_default()))
+        let bounds = policy.diagnostic_bounds.unwrap_or_default();
+        for threshold in [
+            bounds.consent_depth,
+            bounds.actor_writes,
+            bounds.retrieval_regressions,
+        ] {
+            let _ = self.measure_limit(EngineLimit::TripwireThreshold, threshold);
+        }
+        Ok(Some(bounds))
     }
     /// Read the stored ARCH-0037 records, never caller-authored telemetry labels.
+    /// `limit` selects the newest runs; every miss among them is observed, and
+    /// past `limits.detector_observations` the detector asks and reads on.
     pub fn run_retrieval_miss_detector(&self, scope: &str, limit: usize) -> Result<Vec<EntityId>> {
-        if limit == 0 || limit > MAX_EVENTS_PER_RUN {
+        if limit == 0 {
             return Ok(vec![]);
         }
-        let observations = self
+        let observations: Vec<_> = self
             .store
             .retrieval_runs(limit)?
             .iter()
             .filter_map(DiagnosticObservation::from_retrieval_run)
             .collect();
+        let _ = self.measure_limit(EngineLimit::DetectorObservations, observations.len() as u64);
         let ids = run(self, scope, observations, &[&RetrievalMissDetector])?;
         self.capture_tier1_point_producer(&ids)?;
         Ok(ids)
@@ -450,7 +467,7 @@ impl Vault {
         let receipts = self.receipts(query)?;
         self.project_receipt_tripwires_with_capacity(scope, &receipts, end, Some(capacity))
     }
-    /// Projects a bounded scoped receipt slice; also used by receipt adapters.
+    /// Projects a scoped receipt slice whole; also used by receipt adapters.
     pub fn project_receipt_tripwires(
         &self,
         scope: &str,
@@ -470,17 +487,15 @@ impl Vault {
             return Ok(vec![]);
         };
         if capacity
-            .is_some_and(|limit| limit < bounds.consent_depth.max(bounds.actor_writes) as usize)
+            .is_some_and(|limit| (limit as u64) < bounds.consent_depth.max(bounds.actor_writes))
         {
             return Err(crate::Error::InvalidConfig(
                 "receipt query cannot reach the configured tripwire bounds".into(),
             ));
         }
-        if receipts.len() > MAX_EVENTS_PER_RUN {
-            return Err(crate::Error::InvalidConfig(
-                "tripwire receipt window exceeds observation capacity".into(),
-            ));
-        }
+        // Every receipt is projected: past `limits.detector_receipt_rows` the
+        // window asks and reads on.
+        let _ = self.measure_limit(EngineLimit::DetectorReceiptRows, receipts.len() as u64);
         let mut observations: Vec<_> = receipts
             .iter()
             .filter_map(DiagnosticObservation::from_consolidation_receipt)
@@ -579,17 +594,14 @@ impl Vault {
     }
     /// Emit-only. The facts are caller-supplied and no durable row holds a
     /// run's output, expectation, error count or conversation, so these
-    /// diagnostics never become tier-1 export witnesses (OF-418).
+    /// diagnostics never become tier-1 export witnesses (OF-418). Every fact
+    /// is projected: past `limits.dreamer_facts_rows` the pass asks first.
     pub fn run_dreamer_output_tripwires(
         &self,
         scope: &str,
         records: &[DreamerRunFacts],
     ) -> Result<Vec<EntityId>> {
-        if records.len() > MAX_EVENTS_PER_RUN {
-            return Err(crate::Error::InvalidConfig(
-                "tripwire dreamer window exceeds observation capacity".into(),
-            ));
-        }
+        let _ = self.measure_limit(EngineLimit::DreamerFactsRows, records.len() as u64);
         run(
             self,
             scope,

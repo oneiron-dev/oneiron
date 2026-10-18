@@ -178,6 +178,20 @@ impl LimitRow {
         Self::Engine(EngineLimit::CallableNestDepth),
         Self::Engine(EngineLimit::VoiceReferenceBytes),
         Self::Engine(EngineLimit::EsignPdfBytes),
+        Self::Engine(EngineLimit::StateVadTurns),
+        Self::Engine(EngineLimit::StateWindowSeconds),
+        Self::Engine(EngineLimit::DetectorObservations),
+        Self::Engine(EngineLimit::DetectorEvents),
+        Self::Engine(EngineLimit::DetectorReceiptRows),
+        Self::Engine(EngineLimit::DreamerFactsRows),
+        Self::Engine(EngineLimit::HealerProposals),
+        Self::Engine(EngineLimit::RepairDiagnosticRefs),
+        Self::Engine(EngineLimit::CentroidLabels),
+        Self::Engine(EngineLimit::DetectorConsecutive),
+        Self::Engine(EngineLimit::DetectorWindowRuns),
+        Self::Engine(EngineLimit::BlockedDetailBytes),
+        Self::Engine(EngineLimit::SealReferenceBytes),
+        Self::Engine(EngineLimit::TripwireThreshold),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.

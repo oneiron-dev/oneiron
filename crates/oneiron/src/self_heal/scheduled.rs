@@ -1,9 +1,9 @@
 //! Signed host-scheduled T1 runs. Broken/unsigned output is silent, never authority.
 use super::{
     DeterministicDetector, DiagnosticEvent, DiagnosticEventClass, DiagnosticWorkingSet,
-    MAX_EVENTS_PER_RUN, decode_diagnostic_event_body, diagnostic_event_id,
-    encode_diagnostic_event_body,
+    decode_diagnostic_event_body, diagnostic_event_id, encode_diagnostic_event_body,
 };
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
@@ -53,7 +53,9 @@ impl SignedDetectorRun {
     }
 }
 impl Vault {
-    /// The scheduled engine instance signs exactly the validated detector output.
+    /// The scheduled engine instance signs exactly the validated detector output,
+    /// every event of it: past `limits.detector_events` the run asks and signs
+    /// them all.
     pub fn sign_detector_run(
         &self,
         instance: &str,
@@ -69,11 +71,9 @@ impl Vault {
                     return Err(Error::InvariantViolation("detector identity mismatch"));
                 }
                 event_bodies.push(encode_diagnostic_event_body(&event)?);
-                if event_bodies.len() > MAX_EVENTS_PER_RUN {
-                    return Err(Error::InvariantViolation("detector event limit"));
-                }
             }
         }
+        let _ = self.measure_limit(EngineLimit::DetectorEvents, event_bodies.len() as u64);
         event_bodies.sort();
         event_bodies.dedup();
         let identity = crate::identity::ensure_device_identity(self)?;
@@ -97,7 +97,6 @@ impl Vault {
     ) -> Result<Option<Vec<(EntityId, DiagnosticEvent)>>> {
         if super::validate_token(&run.instance, "invalid instance").is_err()
             || super::validate_ref(&run.run_ref).is_err()
-            || run.event_bodies.len() > MAX_EVENTS_PER_RUN
         {
             return Ok(None);
         }
@@ -130,10 +129,13 @@ impl Vault {
         Ok(Some(events))
     }
     /// Unsigned, foreign-device, malformed and tampered runs persist nothing.
+    /// A verified run persists every event; past `limits.detector_events` it
+    /// asks first.
     pub fn accept_signed_detector_run(&self, run: &SignedDetectorRun) -> Result<Vec<EntityId>> {
         let Some(events) = self.verified_run(run)? else {
             return Ok(vec![]);
         };
+        let _ = self.measure_limit(EngineLimit::DetectorEvents, events.len() as u64);
         // Staging validates the complete run before the first entity is emitted.
         let mut ids = Vec::new();
         for (id, event) in events {

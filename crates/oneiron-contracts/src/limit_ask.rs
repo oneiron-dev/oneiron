@@ -154,11 +154,54 @@ pub enum EngineLimit {
     /// original or its prepared copy, whichever is larger. Past it asks
     /// whether everything is okay, and the item is prepared and sealed whole.
     EsignPdfBytes,
+    /// VAD turns one affect state read takes in, supplied or derived. Past it
+    /// every turn is read.
+    StateVadTurns,
+    /// Seconds of look-back one affect state window asks for. Past it the
+    /// whole window is read.
+    StateWindowSeconds,
+    /// Observations one detector pass selects before its detectors see them.
+    /// Past it every observation is read.
+    DetectorObservations,
+    /// Events one deterministic or signed detector run persists. Past it
+    /// every event is kept.
+    DetectorEvents,
+    /// Scoped receipts one tripwire or consent-detector window reads or is
+    /// handed. Past it every receipt is projected.
+    DetectorReceiptRows,
+    /// Dreamer run facts one output-tripwire pass is handed. Past it every
+    /// fact is projected.
+    DreamerFactsRows,
+    /// Proposals one healer bundle carries. Past it the whole bundle is
+    /// reviewed.
+    HealerProposals,
+    /// Diagnostic refs one repair proposal or dev-runner corpus names. Past
+    /// it every ref is kept.
+    RepairDiagnosticRefs,
+    /// Labeled examples one centroid classification reads. Past it every
+    /// label is kept in its snapshot and its finding's evidence.
+    CentroidLabels,
+    /// Consecutive raised runs a model-graded detector policy asks for, or
+    /// reviewed positives its mint needs. Past it the policy runs as set.
+    DetectorConsecutive,
+    /// Runs in one ordered telemetry window a model-graded detector
+    /// validates. Past it the whole window is validated and kept.
+    DetectorWindowRuns,
+    /// Bytes of one blocked report's canonical stored detail. Past it the
+    /// detail is kept whole.
+    BlockedDetailBytes,
+    /// Bytes of one executor, judge or evidence reference a seal check names.
+    /// Past it the reference is kept whole.
+    SealReferenceBytes,
+    /// Each count threshold a tripwire policy sets: consent depth, actor
+    /// writes and retrieval regressions. Past it the tripwire runs at that
+    /// threshold.
+    TripwireThreshold,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 37] = [
+    pub const ALL: [Self; 51] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -196,6 +239,20 @@ impl EngineLimit {
         Self::CallableNestDepth,
         Self::VoiceReferenceBytes,
         Self::EsignPdfBytes,
+        Self::StateVadTurns,
+        Self::StateWindowSeconds,
+        Self::DetectorObservations,
+        Self::DetectorEvents,
+        Self::DetectorReceiptRows,
+        Self::DreamerFactsRows,
+        Self::HealerProposals,
+        Self::RepairDiagnosticRefs,
+        Self::CentroidLabels,
+        Self::DetectorConsecutive,
+        Self::DetectorWindowRuns,
+        Self::BlockedDetailBytes,
+        Self::SealReferenceBytes,
+        Self::TripwireThreshold,
     ];
 
     /// The config key that sets the row.
@@ -238,6 +295,20 @@ impl EngineLimit {
             Self::CallableNestDepth => "limits.callable_nest_depth",
             Self::VoiceReferenceBytes => "limits.voice_reference_bytes",
             Self::EsignPdfBytes => "limits.esign_pdf_bytes",
+            Self::StateVadTurns => "limits.state_vad_turns",
+            Self::StateWindowSeconds => "limits.state_window_seconds",
+            Self::DetectorObservations => "limits.detector_observations",
+            Self::DetectorEvents => "limits.detector_events",
+            Self::DetectorReceiptRows => "limits.detector_receipt_rows",
+            Self::DreamerFactsRows => "limits.dreamer_facts_rows",
+            Self::HealerProposals => "limits.healer_proposals",
+            Self::RepairDiagnosticRefs => "limits.repair_diagnostic_refs",
+            Self::CentroidLabels => "limits.centroid_labels",
+            Self::DetectorConsecutive => "limits.detector_consecutive",
+            Self::DetectorWindowRuns => "limits.detector_window_runs",
+            Self::BlockedDetailBytes => "limits.blocked_detail_bytes",
+            Self::SealReferenceBytes => "limits.seal_reference_bytes",
+            Self::TripwireThreshold => "limits.tripwire_threshold",
         }
     }
 
@@ -289,6 +360,22 @@ impl EngineLimit {
             // The serving policy's old reference cap.
             Self::VoiceReferenceBytes => 16 << 20,
             Self::EsignPdfBytes => 256 << 20,
+            // The ceilings the affect and self-heal doors refused past before
+            // Rule 5; the state window's is 366 days.
+            Self::StateVadTurns => 256,
+            Self::StateWindowSeconds => 31_622_400,
+            Self::DetectorObservations => 1024,
+            Self::DetectorEvents => 1024,
+            Self::DetectorReceiptRows => 1024,
+            Self::DreamerFactsRows => 1024,
+            Self::HealerProposals => 1024,
+            Self::RepairDiagnosticRefs => 64,
+            Self::CentroidLabels => 62,
+            Self::DetectorConsecutive => 64,
+            Self::DetectorWindowRuns => 64,
+            Self::BlockedDetailBytes => 4096,
+            Self::SealReferenceBytes => 256,
+            Self::TripwireThreshold => 1024,
         }
     }
 }

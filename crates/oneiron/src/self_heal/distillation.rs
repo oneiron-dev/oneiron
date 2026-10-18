@@ -9,6 +9,7 @@ use super::{
     tiered::{DetectorDecisions, DetectorPolicy, ProposedDiagnostic},
     validate_token,
 };
+use crate::limit_ask::EngineLimit;
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 use crate::side_table::{self, Named, SideTable};
@@ -234,8 +235,10 @@ impl Vault {
 
     /// Mint a T2 classifier after N distinct owner-reviewed T3 positives and
     /// at least one negative; an unlabeled recurring model opinion is not training.
+    /// An N past `limits.detector_consecutive` asks, and the mint waits for N.
     pub fn mint_t2(&self, policy: DetectorPolicy) -> Result<Option<MintedT2>> {
         policy.validate()?;
+        let _ = self.measure_limit(EngineLimit::DetectorConsecutive, policy.consecutive as u64);
         let labels = self.reviewed_findings(&policy.family)?;
         let mut positive_events = Vec::new();
         let mut negative_events = Vec::new();
