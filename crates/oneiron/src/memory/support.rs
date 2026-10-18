@@ -725,6 +725,14 @@ impl Memory<'_> {
         self
     }
 
+    /// The task-work turn this surface's operation holds, if it holds one:
+    /// a surface the operation builds for another actor binds the same turn
+    /// ([`Self::with_task_work_turn`]) rather than waiting for a second one.
+    #[must_use]
+    pub fn task_work_turn(&self) -> Option<std::sync::Arc<crate::work_line::TaskWorkTurn>> {
+        self.task_work_turn.clone()
+    }
+
     /// Whether this surface's operation holds its task-work turn already.
     pub(crate) fn has_task_work_turn(&self) -> bool {
         self.task_work_turn.is_some()

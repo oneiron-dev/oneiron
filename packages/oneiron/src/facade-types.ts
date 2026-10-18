@@ -2249,7 +2249,7 @@ export type CodeStateView = { document_ref: string; repo: string; path: string; 
 /** `oneiron::code_document::verbs::CodeUnitVersionView` */
 export type CodeUnitVersionView = { content_hash: string; text: string; start_line: number; end_line: number }
 /** `oneiron::code_document::verbs::CodeOperationView` */
-export type CodeOperationView = { operation_ref: string; sequence: number; session_ref: string; actor_ref: string; actor_class: string; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null }
+export type CodeOperationView = { operation_ref: string; sequence: number; session_ref?: string | null; actor_ref?: string | null; actor_class: string; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null }
 /** `oneiron::code_document::verbs::CodeChangeView` */
 export type CodeChangeView = { path: string; symbol: string; before?: CodeUnitVersionView | null; after?: CodeUnitVersionView | null; inserted_by: CodeOperationView[]; deleted_by: CodeOperationView[] }
 /** `oneiron::code_document::verbs::CodeDiffView` */

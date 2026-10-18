@@ -16863,10 +16863,14 @@ pub struct CodeOperationView {
     pub operation_ref: String,
     #[serde(rename = "sequence")]
     pub sequence: u64,
-    #[serde(rename = "session_ref")]
-    pub session_ref: String,
-    #[serde(rename = "actor_ref")]
-    pub actor_ref: String,
+    #[serde(
+        rename = "session_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub session_ref: Option<String>,
+    #[serde(rename = "actor_ref", default, skip_serializing_if = "Option::is_none")]
+    pub actor_ref: Option<String>,
     #[serde(rename = "actor_class")]
     pub actor_class: String,
     #[serde(rename = "turn_ref", default, skip_serializing_if = "Option::is_none")]

@@ -5,6 +5,7 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use serde::Serialize;
@@ -23,6 +24,7 @@ use crate::runtime_hooks::store::{
 };
 use crate::runtime_hooks::{HookBodyRuntime, HookPassReport, apply, filter, grant, read, scope};
 use crate::skill_hub::pack_catalog::{HookPhase, HookSelector, PackHookBinding};
+use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, Result, Vault};
 
 use super::record::{self, HookVerbRunRecord};
@@ -79,13 +81,16 @@ pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
 /// with nothing saved passes through with hooks off, without the sandbox,
 /// or when no binding matches; the cached binding list keeps that last case
 /// free of reads. `resume` is how settlement could run the call again
-/// without its caller: an ask saves it.
+/// without its caller: an ask saves it. `turn` is the task-work turn the
+/// calling operation already holds: a hook's ask and a retry's read of it run
+/// on it as the hook's author ([`ask::retry`], [`ask::open`]).
 pub(super) fn pre(
     vault: &Vault,
     call: VerbCall,
     args: Value,
     check: VerbArgsCheck<'_>,
     resume: Option<&VerbResume>,
+    turn: Option<Arc<TaskWorkTurn>>,
 ) -> Result<Stopped<VerbHookPre>> {
     if depth() > 0 {
         return through(call, args);
@@ -98,7 +103,7 @@ pub(super) fn pre(
     };
     let saved = {
         let _depth = HookDepth::enter();
-        ask::retry(vault, &call, resume)?
+        ask::retry(vault, &call, resume, turn.as_ref())?
     };
     let resumed = match saved {
         ask::Retry::Fresh => None,
@@ -161,7 +166,7 @@ pub(super) fn pre(
         None => (Err(NO_SANDBOX), Vec::new()),
     };
     let _depth = HookDepth::enter();
-    let ended = Chain::new(vault, &call, HookPhase::Pre, runtime, carry.now)
+    let ended = Chain::new(vault, &call, HookPhase::Pre, runtime, carry.now, turn)
         .pre(&hooks, start, args, check, token, resume)?;
     Ok(ended.map(|args| VerbHookPre {
         call,
@@ -190,8 +195,8 @@ pub(super) fn post(vault: &Vault, pre: VerbHookPre, result: Value) -> Result<Sto
         return Ok(Ok(result));
     };
     let _depth = HookDepth::enter();
-    let ended =
-        Chain::new(vault, &call, HookPhase::Post, runtime, carry.now).post(&hooks, &args, result);
+    let ended = Chain::new(vault, &call, HookPhase::Post, runtime, carry.now, None)
+        .post(&hooks, &args, result);
     // A nested boundary of this invocation passes through until here.
     drop(carry.mark);
     ended
@@ -263,6 +268,9 @@ struct Chain<'c> {
     token: Option<ask::AskToken>,
     /// Set when that answer was used meanwhile: nothing committed.
     used: Cell<bool>,
+    /// The task-work turn the calling operation holds, which a hook's ask
+    /// runs on; `None` in a post chain, which opens no ask.
+    turn: Option<Arc<TaskWorkTurn>>,
 }
 
 /// One run, as its receipt tells it, and what its saved copy keeps.
@@ -319,6 +327,7 @@ impl<'c> Chain<'c> {
         phase: HookPhase,
         runtime: std::result::Result<&'c dyn HookBodyRuntime, &'c str>,
         now: u64,
+        turn: Option<Arc<TaskWorkTurn>>,
     ) -> Self {
         let tail = vault
             .memory(call.actor, filter::edge_class(call.class))
@@ -338,6 +347,7 @@ impl<'c> Chain<'c> {
             intents: Vec::new(),
             token: None,
             used: Cell::new(false),
+            turn,
         }
     }
 
@@ -710,10 +720,11 @@ impl<'c> Chain<'c> {
         }]
     }
 
-    /// Opens the asking hook's ask; on success the chain's rows commit with
-    /// the saved call and its `resume` target, and a resumed chain's old
-    /// answer is used up first in the same write. When that answer was used
-    /// meanwhile, nothing commits and the stop is the used Skip.
+    /// Opens the asking hook's ask, on the calling operation's task-work
+    /// turn; on success the chain's rows commit with the saved call and its
+    /// `resume` target, and a resumed chain's old answer is used up first in
+    /// the same write. When that answer was used meanwhile, nothing commits
+    /// and the stop is the used Skip.
     fn ask(
         &self,
         index: usize,
@@ -730,6 +741,7 @@ impl<'c> Chain<'c> {
             args,
             label,
             resume,
+            self.turn.as_ref(),
             &|txn: &mut heed::RwTxn<'_>| self.write_in_txn(txn),
         );
         if self.used.get() {

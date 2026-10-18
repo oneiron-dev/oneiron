@@ -28,9 +28,10 @@ use crate::server::SyncServer;
 /// check, then the projection, scoped admission and credential gate the
 /// connector's own call of the tool meets, for the same actor, at each
 /// Rewrite. An ask saves the registration the call came in by, so
-/// settlement runs it again here, its pre chain on the drain's permit. The
-/// memory is read before the returned future first waits, so the future
-/// holds none of it.
+/// settlement runs it again here, its pre chain on the drain's permit. A
+/// hook's ask runs on the task-work turn the memory's operation holds, if
+/// any. The memory is read before the returned future first waits, so the
+/// future holds none of it.
 pub(crate) fn mcp_row_hooks_pre<'a>(
     server: &'a Arc<SyncServer>,
     tool: &'a str,
@@ -40,6 +41,7 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
 ) -> impl Future<Output = Result<VerbHookPre, McpGatewayError>> + Send + use<'a> {
     let admitted = mcp_hooks_admitted(server, tool, actor, memory);
     let invocation = memory.invocation();
+    let turn = memory.task_work_turn();
     let resume = RowHookResume {
         credential: mcp_verb_ask_credential(actor, memory),
         drain: actor.drain.clone(),
@@ -56,6 +58,7 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
             tool,
             input,
             resume,
+            turn,
         )
         .await
         .map_err(mcp_facade_error)
