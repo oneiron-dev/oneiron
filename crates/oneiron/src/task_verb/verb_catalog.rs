@@ -133,6 +133,10 @@ pub enum AgentVerb {
     VaultSharedEraseAsk,
     VaultSharedEraseAsks,
     VaultSharedCloseEraseAsk,
+    VaultSharedPolicyGet,
+    VaultSharedPolicyPropose,
+    VaultSharedPolicyAnswer,
+    VaultSharedPolicyChange,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
     VaultResidenceMode,
@@ -307,6 +311,8 @@ pub enum AgentVerb {
     SelfSkillsSave,
     SelfSkillsFork,
     SelfSkillsCallables,
+    AiReply,
+    VaultReceiptsContext,
     AiOptions,
     AiImage,
     AiSpeech,
@@ -613,6 +619,10 @@ impl AgentVerb {
         Self::VaultSharedEraseAsk,
         Self::VaultSharedEraseAsks,
         Self::VaultSharedCloseEraseAsk,
+        Self::VaultSharedPolicyGet,
+        Self::VaultSharedPolicyPropose,
+        Self::VaultSharedPolicyAnswer,
+        Self::VaultSharedPolicyChange,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
         Self::VaultResidenceMode,
@@ -787,6 +797,8 @@ impl AgentVerb {
         Self::SelfSkillsSave,
         Self::SelfSkillsFork,
         Self::SelfSkillsCallables,
+        Self::AiReply,
+        Self::VaultReceiptsContext,
         Self::AiOptions,
         Self::AiImage,
         Self::AiSpeech,
@@ -1096,6 +1108,10 @@ impl AgentVerb {
             Self::VaultSharedEraseAsk => "vault.shared.erase_ask",
             Self::VaultSharedEraseAsks => "vault.shared.erase_asks",
             Self::VaultSharedCloseEraseAsk => "vault.shared.close_erase_ask",
+            Self::VaultSharedPolicyGet => "vault.shared.policy.get",
+            Self::VaultSharedPolicyPropose => "vault.shared.policy.propose",
+            Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
+            Self::VaultSharedPolicyChange => "vault.shared.policy.change",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultResidenceMode => "vault.residence.mode",
@@ -1274,6 +1290,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => "self.skills.save",
             Self::SelfSkillsFork => "self.skills.fork",
             Self::SelfSkillsCallables => "self.skills.callables",
+            Self::AiReply => "ai.reply",
+            Self::VaultReceiptsContext => "vault.receipts.context",
             Self::AiOptions => "ai.options",
             Self::AiImage => "ai.image",
             Self::AiSpeech => "ai.speech",
@@ -1583,6 +1601,10 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsk
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
+                | Self::VaultSharedPolicyGet
+                | Self::VaultSharedPolicyPropose
+                | Self::VaultSharedPolicyAnswer
+                | Self::VaultSharedPolicyChange
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -1757,6 +1779,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiReply
+                | Self::VaultReceiptsContext
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2070,6 +2094,10 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsk
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
+                | Self::VaultSharedPolicyGet
+                | Self::VaultSharedPolicyPropose
+                | Self::VaultSharedPolicyAnswer
+                | Self::VaultSharedPolicyChange
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2244,6 +2272,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiReply
+                | Self::VaultReceiptsContext
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2598,6 +2628,10 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsk
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
+                | Self::VaultSharedPolicyGet
+                | Self::VaultSharedPolicyPropose
+                | Self::VaultSharedPolicyAnswer
+                | Self::VaultSharedPolicyChange
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2772,6 +2806,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiReply
+                | Self::VaultReceiptsContext
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -3009,6 +3045,8 @@ impl AgentVerb {
                 | Self::VaultSharedWithdrawObjection
                 | Self::VaultSharedEraseAsk
                 | Self::VaultSharedCloseEraseAsk
+                | Self::VaultSharedPolicyPropose
+                | Self::VaultSharedPolicyAnswer
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -3121,6 +3159,7 @@ impl AgentVerb {
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
+                | Self::AiReply
                 | Self::AiImage
                 | Self::AiSpeech
                 | Self::AiTranscribe
@@ -3381,6 +3420,10 @@ impl AgentVerb {
             Self::VaultSharedEraseAsk => &["spec"],
             Self::VaultSharedEraseAsks => &["spec"],
             Self::VaultSharedCloseEraseAsk => &["spec"],
+            Self::VaultSharedPolicyGet => &["spec"],
+            Self::VaultSharedPolicyPropose => &["spec"],
+            Self::VaultSharedPolicyAnswer => &["spec"],
+            Self::VaultSharedPolicyChange => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -3555,6 +3598,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::AiReply => &["spec"],
+            Self::VaultReceiptsContext => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -3862,6 +3907,10 @@ impl AgentVerb {
             Self::VaultSharedEraseAsk => &["spec"],
             Self::VaultSharedEraseAsks => &["spec"],
             Self::VaultSharedCloseEraseAsk => &["spec"],
+            Self::VaultSharedPolicyGet => &["spec"],
+            Self::VaultSharedPolicyPropose => &["spec"],
+            Self::VaultSharedPolicyAnswer => &["spec"],
+            Self::VaultSharedPolicyChange => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -4036,6 +4085,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::AiReply => &["spec"],
+            Self::VaultReceiptsContext => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -4586,6 +4637,18 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => {
                 "An Owner closes an open erase ask, as erased (naming its erase act) or declined."
             }
+            Self::VaultSharedPolicyGet => {
+                "A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds."
+            }
+            Self::VaultSharedPolicyPropose => {
+                "A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it."
+            }
+            Self::VaultSharedPolicyAnswer => {
+                "A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row."
+            }
+            Self::VaultSharedPolicyChange => {
+                "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."
+            }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
@@ -5077,6 +5140,12 @@ impl AgentVerb {
             }
             Self::SelfSkillsCallables => {
                 "Every loadable callable helper skill and its call contract: what it takes and returns."
+            }
+            Self::AiReply => {
+                "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."
+            }
+            Self::VaultReceiptsContext => {
+                "Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."
             }
             Self::AiOptions => {
                 "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."

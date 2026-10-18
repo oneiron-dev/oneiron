@@ -1358,6 +1358,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_policy_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.policy.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.policy.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_policy_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.policy.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.policy.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_policy_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.policy.answer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.policy.answer", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_policy_change(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.policy.change")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.policy.change", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_guests_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.guests.revoke")?;
         let output = py
@@ -2803,6 +2831,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.skills.callables")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.skills.callables", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_reply(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.reply")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.reply", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_receipts_context(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.receipts.context")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.receipts.context", input))
             .map_err(raise)?;
         encode(&output)
     }

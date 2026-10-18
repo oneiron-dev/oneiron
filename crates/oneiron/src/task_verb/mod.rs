@@ -293,6 +293,7 @@ mod sdk_live_run;
 mod sdk_mesh;
 mod sdk_off_record;
 mod sdk_record_erase;
+mod sdk_reply;
 mod sdk_research;
 mod sdk_residence;
 mod sdk_scratchpad;
@@ -302,6 +303,7 @@ mod sdk_self;
 mod sdk_share;
 mod sdk_shared;
 mod sdk_shared_members;
+mod sdk_shared_policy;
 mod sdk_workspace;
 pub mod verb_hook_boundary;
 

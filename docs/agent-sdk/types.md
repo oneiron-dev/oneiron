@@ -1148,6 +1148,8 @@ class Oneiron:
         def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
+        def context(self, spec: Facade.CallReceiptRequest) -> Facade.ContextEmitReceipt | None:
+            """Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."""
     class _VaultImagesVerbs:
         def view(self, request: Facade.ImageViewRequest) -> Facade.PulledImage: ...
     class _VaultExplainVerbs:
@@ -1347,6 +1349,17 @@ class Oneiron:
             """The erase asks the caller may see: every ask for an Owner, their own for anyone else."""
         def close_erase_ask(self, spec: Facade.SharedEraseAskCloseRequest) -> Facade.SharedEraseAsk:
             """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
+        @property
+        def policy(self) -> "Oneiron._VaultSharedPolicyVerbs": ...
+    class _VaultSharedPolicyVerbs:
+        def get(self, spec: Facade.SharedVaultRequest) -> Facade.SharedActPoliciesView:
+            """A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds."""
+        def propose(self, spec: Facade.SharedActPolicyProposeRequest) -> Facade.SharedActPolicyChange:
+            """A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it."""
+        def answer(self, spec: Facade.SharedActPolicyAnswerRequest) -> Facade.SharedActPolicyChange:
+            """A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row."""
+        def change(self, spec: Facade.SharedActPolicyChangeRequest) -> Facade.SharedActPolicyChange:
+            """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
     class _VaultMembersVerbs:
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
@@ -1992,6 +2005,8 @@ class Oneiron:
         def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
     class _AiVerbs:
+        def reply(self, spec: Facade.AiReplyRequest) -> Facade.AiReply:
+            """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:

@@ -1153,6 +1153,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_shared_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.policy.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_policy_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.policy.propose", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_policy_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.policy.answer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_policy_change(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.policy.change", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_guests_revoke(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.guests.revoke", input)
@@ -2831,6 +2867,21 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.skills.callables", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_reply(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.reply", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_receipts_context(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.receipts.context", input)
             .map_err(facade_error)
     }
     #[napi]
