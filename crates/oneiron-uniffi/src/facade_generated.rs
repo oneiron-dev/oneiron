@@ -491,6 +491,16 @@ export_facade! {
     let output = client.vault_receipts_get(&input)?;
     crate::codec::lift_record("vault.receipts.get", &output)
 };
+"self.admission.status" => fn self_admission_status(&self, input: AdmissionStatusRequest) -> Option<AdmissionReceipt> = |client| {
+    let input: oneiron::receipt::admission::AdmissionStatusRequest = crate::codec::lower_record("self.admission.status", input)?;
+    let output = client.self_admission_status(&input)?;
+    crate::codec::lift_record("self.admission.status", &output)
+};
+"self.admission.receipts" => fn self_admission_receipts(&self, input: AdmissionReceiptsRequest) -> Vec<AdmissionReceipt> = |client| {
+    let input: oneiron::receipt::admission::AdmissionReceiptsRequest = crate::codec::lower_record("self.admission.receipts", input)?;
+    let output = client.self_admission_receipts(&input)?;
+    crate::codec::lift_record("self.admission.receipts", &output)
+};
 "vault.explain.memory" => fn vault_explain_memory(&self, input: ExplainMemoryRequest) -> Option<ExplainMemoryReply> = |client| {
     let input: oneiron::task_verb::sdk::ExplainMemoryRequest = crate::codec::lower_record("vault.explain.memory", input)?;
     let output = client.vault_explain_memory(&input)?;
@@ -2145,6 +2155,11 @@ export_facade! {
     let input: oneiron::memory::code_doors::CodeRepoRequest = crate::codec::lower_record("vault.code.oplog", input)?;
     let output = client.vault_code_oplog(&input)?;
     crate::codec::lift_record("vault.code.oplog", &output)
+};
+"execute_code" => fn execute_code(&self, input: ForeignCodeRunRequest) -> ForeignCodeRunResult = |client| {
+    let input: oneiron::memory::foreign_code::ForeignCodeRunRequest = crate::codec::lower_record("execute_code", input)?;
+    let output = client.execute_code(&input)?;
+    crate::codec::lift_record("execute_code", &output)
 };
 "vault.code.model_heal_count" => fn vault_code_model_heal_count(&self, input: CodeRunModelHealCountRequest) -> CodeRunModelHealCountView = |client| {
     let input: oneiron::memory::code_run_doors::CodeRunModelHealCountRequest = crate::codec::lower_record("vault.code.model_heal_count", input)?;
@@ -3815,6 +3830,26 @@ export_facade! {
     let input: oneiron::code_run::fold_api::FoldHistoryRequest = crate::codec::lower_record("self.history", input)?;
     let output = client.self_history(&input)?;
     crate::codec::lift_record("self.history", &output)
+};
+"vault.runs.review" => fn vault_runs_review(&self, input: RunReviewRequest) -> RunReview = |client| {
+    let input: oneiron::memory::run_review::RunReviewRequest = crate::codec::lower_record("vault.runs.review", input)?;
+    let output = client.vault_runs_review(&input)?;
+    crate::codec::lift_record("vault.runs.review", &output)
+};
+"vault.runs.settle" => fn vault_runs_settle(&self, input: RunSettleRequest) -> RunSettlement = |client| {
+    let input: oneiron::memory::run_review::RunSettleRequest = crate::codec::lower_record("vault.runs.settle", input)?;
+    let output = client.vault_runs_settle(&input)?;
+    crate::codec::lift_record("vault.runs.settle", &output)
+};
+"vault.runs.settlement" => fn vault_runs_settlement(&self, input: RunSettlementRequest) -> RunSettlement = |client| {
+    let input: oneiron::memory::run_review::RunSettlementRequest = crate::codec::lower_record("vault.runs.settlement", input)?;
+    let output = client.vault_runs_settlement(&input)?;
+    crate::codec::lift_record("vault.runs.settlement", &output)
+};
+"vault.revert_run" => fn vault_revert_run(&self, input: RevertRunRequest) -> RevertRunOutcome = |client| {
+    let input: oneiron::memory::run_review::RevertRunRequest = crate::codec::lower_record("vault.revert_run", input)?;
+    let output = client.vault_revert_run(&input)?;
+    crate::codec::lift_record("vault.revert_run", &output)
 };
 "self.browser.open" => fn self_browser_open(&self, input: LiveRunRequestOpenInput) -> ObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserOpenInput> = crate::codec::lower_record("self.browser.open", input)?;

@@ -1084,6 +1084,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_admission_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.admission.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.admission.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_admission_receipts(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.admission.receipts")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.admission.receipts", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_explain_memory(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.explain.memory")?;
         let output = py
@@ -4110,6 +4124,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn execute_code(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "execute_code")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("execute_code", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_model_heal_count(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.code.model_heal_count")?;
         let output = py
@@ -6862,6 +6883,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.history")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_runs_review(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.runs.review")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.runs.review", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_runs_settle(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.runs.settle")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.runs.settle", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_runs_settlement(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.runs.settlement")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.runs.settlement", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_revert_run(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.revert_run")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.revert_run", input))
             .map_err(raise)?;
         encode(&output)
     }
