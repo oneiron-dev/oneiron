@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 675 facade rows, 2475 declarations.
-Inputs: 623 of 675 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 602 of 675 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 94; unread shapes: 0.
+Census: 677 facade rows, 2483 declarations.
+Inputs: 625 of 677 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 602 of 677 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -11603,6 +11603,11 @@ class DreamerAttemptRef(TypedDict):
     existing: bool
 class ConsolidationStatusRequest(TypedDict):
     job_ref: str
+DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "cancelled", "signal", "other"]
+class DreamerParkedAttemptView(TypedDict):
+    job_ref: str
+    cause: DreamerParkCauseView
+    parked_at: int
 class DreamerAttemptView(TypedDict):
     job_ref: str
     state: str
@@ -11613,6 +11618,40 @@ class DreamerAttemptView(TypedDict):
     last_error: NotRequired[str | None]
     created_at: int
     updated_at: int
+    parked: NotRequired[DreamerParkedAttemptView | None]
+class SettledStepRequest(TypedDict):
+    job_ref: str
+    step_hash: str
+class SettledStepView(TypedDict):
+    job_ref: str
+    run_id: NotRequired[str | None]
+    claim_ref: str
+    step_hash: str
+    model: ModelId
+    purpose: str
+    params_hash: str
+    response: LlmResponse
+class CheckpointReadRequest(TypedDict):
+    run_ref: str
+    from_step: NotRequired[int]
+    limit: NotRequired[int | None]
+class CheckpointStepView(TypedDict):
+    step: int
+    label: str
+    state_hash: str
+    created_at_ms: int
+class CheckpointResumeView(TypedDict):
+    step: int
+    wait_ref: str
+    effect: str
+    output_handle: str
+    reply: NotRequired[Any | None]
+class CheckpointView(TypedDict):
+    run_ref: str
+    completed_steps: int
+    steps: list[CheckpointStepView]
+    resumed: list[CheckpointResumeView]
+    next_step: NotRequired[int | None]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]
 class CursorSpan(TypedDict):
     start: list[int]

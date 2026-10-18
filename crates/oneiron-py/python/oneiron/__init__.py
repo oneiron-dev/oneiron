@@ -2461,6 +2461,12 @@ class Oneiron:
         @property
         def branches(self) -> "Oneiron._VaultRunsBranchesVerbs":
             return Oneiron._VaultRunsBranchesVerbs(self._client)
+        def step(self, spec):
+            """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
+            return json.loads(_translate(lambda: self._client.vault_runs_step(json.dumps(spec))))
+        def checkpoint(self, spec):
+            """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
+            return json.loads(_translate(lambda: self._client.vault_runs_checkpoint(json.dumps(spec))))
     class _VaultRunsBranchesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

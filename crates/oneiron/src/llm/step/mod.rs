@@ -17,6 +17,7 @@ mod schema_guard;
 mod schema_runtime;
 pub use schema::validate_json_schema;
 mod peer_wait;
+mod settled;
 mod step_claim;
 mod step_only;
 mod step_state;

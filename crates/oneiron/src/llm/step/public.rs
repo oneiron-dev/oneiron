@@ -25,6 +25,8 @@ use crate::runtime_hooks::verb::InvocationEntry;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, Vault, WriteActor};
 
+pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_owner};
+
 pub(crate) const MODEL_STEP_ATTEMPT_KIND: &str = "model-step";
 const WORKER: &str = "model-step-door";
 const SUBMISSIONS: SideTable<AttemptId, Submission, Named> =

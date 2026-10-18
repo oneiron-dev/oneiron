@@ -9,6 +9,7 @@
 mod attempt_cancels;
 mod cancel;
 mod capture;
+pub mod checkpoint_read;
 mod code_check;
 mod compaction;
 mod compaction_host;
