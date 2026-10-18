@@ -215,7 +215,14 @@ impl<'a> ScopedRead<'a> {
         raw: &[u8],
     ) -> Result<bool> {
         let viewers: Vec<_> = self.actor_key.authenticated_person().into_iter().collect();
-        crate::conversation::private_threads_readable_raw_in(self.vault, txn, *id, raw, &viewers)
+        crate::conversation::private_threads_readable_with_read_in(
+            self.vault,
+            &self.store_read(),
+            txn,
+            *id,
+            raw,
+            &viewers,
+        )
     }
 
     /// Whether this read serves a caller off this device.

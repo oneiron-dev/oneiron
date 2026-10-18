@@ -119,9 +119,10 @@ pub(crate) fn actor_in_txn(store: &Store, txn: &RoTxn<'_>, actor: WriteActor) ->
 }
 
 /// Counts examined rows, not only live results. A forged index cannot bypass
-/// the work bound by filling a neighborhood with tombstones.
+/// the work bound by filling a neighborhood with tombstones. `store` is base
+/// or a session's composed view.
 pub(crate) fn edge_ids(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     kind: EdgeKind,

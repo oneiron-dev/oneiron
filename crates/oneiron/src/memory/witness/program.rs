@@ -461,8 +461,7 @@ impl Memory<'_> {
             let mut quoted: Option<crate::conversation_dag::QuotedReply> = None;
             let admission = match &sink {
                 WitnessSink::Base(_) => {
-                    let mut thread = None;
-                    let person_author =
+                    let (person_author, thread) =
                         match self.base_guards_in_txn(&plan, wtxn, prepare, quote_key.as_ref())? {
                             BaseGuards::HardDeleted(id) => return Ok(Landed::HardDeleted(id)),
                             BaseGuards::Clear {
@@ -470,14 +469,13 @@ impl Memory<'_> {
                                 person_author,
                                 leader_project: project,
                                 quoted: proven,
-                                thread: binding,
+                                thread,
                             } => {
                                 mint_conversation = absent;
                                 leader_project = project;
                                 quoted = proven;
-                                thread = binding;
                                 // The importer is not the author of the source's words.
-                                person_author.filter(|_| plan.imported.is_none())
+                                (person_author.filter(|_| plan.imported.is_none()), thread)
                             }
                         };
                     let assertions = assertion_lane.as_ref().map(|lane| AssertionRead {
@@ -499,56 +497,44 @@ impl Memory<'_> {
                 // overlay segment installs, and a divergent body or parent
                 // leaves no journal or index delta.
                 WitnessSink::Overlay(overlay) => {
-                    // A private thread opens on the room's base, where its
-                    // root is stamped (FIX 2951); an overlay opens none.
-                    if plan.turn.thread_audience.is_some() {
-                        return Err(MemoryError::bad_request(
-                            "a private thread opens on the room itself, not in a session overlay",
-                        ));
-                    }
                     let rostered = room_speech.is_some();
                     let person_author =
                         self.overlay_guards_in_txn(&plan, overlay, rostered, wtxn)?;
-                    let admission = {
-                        // The writer's own key reads the composed room view,
-                        // as recall's session lane does; both drop here.
-                        let view = overlay.read_view()?;
-                        let session_lane = assertion_lane.as_ref().map(|lane| {
-                            self.vault
-                                .scoped_read_in_session(lane.actor_key().clone(), &view)
-                                .with_claim_status(ClaimReadStatus::Recorded)
-                        });
-                        let assertions = session_lane.as_ref().map(|lane| AssertionRead {
-                            lane,
-                            refused: &refused,
-                        });
-                        self.admit_witness_in_txn(
-                            &plan,
-                            &view,
-                            wtxn,
-                            assertions,
-                            person_author,
-                            None,
-                            None,
-                        )?
-                    };
-                    // A stored private thread's TURN takes words from its
-                    // audience alone, as on base.
-                    if let AdmittedTurn::Existing(record) = &admission.turn
-                        && let Some(binding) =
-                            crate::workspace_roster::thread_binding(&record.body)?
-                        && !crate::workspace_roster::thread_root_readable_in(
-                            self.vault,
-                            wtxn,
-                            binding.root,
-                            &[self.actor],
-                        )?
-                    {
-                        return Err(MemoryError::not_found(
-                            "the witnessed turn no longer exists",
-                        ));
-                    }
-                    admission
+                    // The writer's own key reads the composed room view, as
+                    // recall's session lane does; both drop here.
+                    let view = overlay.read_view()?;
+                    // A thread turn staged here is born bound as on base, to
+                    // the stretch's room and read against its base members
+                    // (FIX 3122); a stored one keeps its thread and takes
+                    // words from its audience alone.
+                    let thread = crate::workspace_roster::overlay_thread_binding_in(
+                        self.vault,
+                        &view.read(),
+                        wtxn,
+                        overlay.room()?,
+                        plan.conversation_id,
+                        plan.turn_id,
+                        self.actor,
+                        plan.turn,
+                    )?;
+                    let session_lane = assertion_lane.as_ref().map(|lane| {
+                        self.vault
+                            .scoped_read_in_session(lane.actor_key().clone(), &view)
+                            .with_claim_status(ClaimReadStatus::Recorded)
+                    });
+                    let assertions = session_lane.as_ref().map(|lane| AssertionRead {
+                        lane,
+                        refused: &refused,
+                    });
+                    self.admit_witness_in_txn(
+                        &plan,
+                        &view,
+                        wtxn,
+                        assertions,
+                        person_author,
+                        None,
+                        thread.as_ref(),
+                    )?
                 }
             };
             let landed = match &sink {

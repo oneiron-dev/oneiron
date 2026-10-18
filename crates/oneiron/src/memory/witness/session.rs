@@ -42,6 +42,11 @@ impl OverlaySink<'_, '_> {
         self.session.read_view()
     }
 
+    /// The room this stretch runs in; `None` for the owner's 1:1.
+    pub(super) fn room(&self) -> crate::error::Result<Option<EntityId>> {
+        self.session.room()
+    }
+
     /// The shell row is in the room now, so the claim is spent for good.
     pub(super) fn commit_shell(self) {
         if let Some(reservation) = self.shell {
