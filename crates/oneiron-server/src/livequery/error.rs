@@ -2,11 +2,13 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use oneiron::memory::MemoryError;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
 
-#[derive(Debug, Serialize)]
+/// Read back as well as written: a claimed invocation's refusal is saved
+/// whole for the calls waiting on it (OF-580).
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppError {
     code: String,
@@ -115,6 +117,26 @@ impl AppError {
             "RESULT_CHANGED",
             "the result changed before it was sent",
             ["Repeat the read."],
+        )
+    }
+
+    /// A call naming an invocation another call is still running past the
+    /// wait, or one that left no answer to send again (OF-580): the HTTP
+    /// facade's code.
+    pub(super) fn invocation_in_flight() -> Self {
+        Self::new(
+            crate::api::INVOCATION_IN_FLIGHT,
+            "another request is still running this invocation",
+            ["Retry with the same invocation once the first call returns."],
+        )
+    }
+
+    /// A call naming an invocation that names a different call (OF-580).
+    pub(super) fn invocation_conflict() -> Self {
+        Self::new(
+            crate::api::INVOCATION_CONFLICT,
+            "this invocation id names a different call",
+            ["Name a fresh invocation for a different call."],
         )
     }
 }

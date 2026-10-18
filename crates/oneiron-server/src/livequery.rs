@@ -23,8 +23,10 @@ mod residence;
 pub(crate) use residence::ResidenceIndexCache;
 mod routing;
 mod rpc;
+pub(crate) use rpc::SocketCallContext;
 mod wire;
 use error::AppError;
+pub(crate) use wire::RpcCallContext;
 
 /// RPC ids never index the subscription table.
 #[derive(Debug, Deserialize)]
@@ -36,7 +38,23 @@ pub(crate) struct RpcRequest {
     pub params: Value,
 }
 
+/// An `rpc.req` that carries no call context: the MCP socket's, whose call
+/// names its own context inside its MCP request (FIX 2059). One that carries
+/// a context is refused as invalid.
 pub(crate) fn decode_rpc(payload: &[u8]) -> Result<RpcRequest, ProtocolError> {
+    match wire::rpc(payload)? {
+        (request, None) => Ok(request),
+        (_, Some(_)) => Err(ProtocolError::InvalidPayload(
+            "a call context rides only a facade verb RPC",
+        )),
+    }
+}
+
+/// An app-tier `rpc.req`, and the call context it carried beside its params
+/// (FIX 2059): only a facade verb RPC reads one.
+pub(crate) fn decode_rpc_call(
+    payload: &[u8],
+) -> Result<(RpcRequest, Option<RpcCallContext>), ProtocolError> {
     wire::rpc(payload)
 }
 
@@ -99,6 +117,10 @@ pub(crate) struct RpcCall {
     request_digest: String,
     /// The input versions the call reads (OF-568); `None` when uncaptured.
     inputs: Option<oneiron::receipt::ActionInputs>,
+    /// The call ran inside an anonymous off-record session its principal is
+    /// verified in (OF-063), on arrival or when it answered: it writes no
+    /// receipt.
+    anonymous: bool,
 }
 
 impl RpcCall {
@@ -107,6 +129,7 @@ impl RpcCall {
             method: request.method.clone(),
             request_digest: oneiron::receipt::call_json_digest(&request.params),
             inputs: None,
+            anonymous: false,
         }
     }
 
@@ -135,9 +158,10 @@ impl RpcReply {
     /// chunk and on `rpc.err` alike. The result is packed first, so one past
     /// the byte limit is recorded as the refusal the caller receives.
     ///
-    /// A WS RPC runs on the vault the bound credential reads, never inside
-    /// an off-record session, so the anonymous no-record exception never
-    /// arises here.
+    /// A facade verb RPC whose call context names an anonymous off-record
+    /// session its principal is verified in ([`RpcCall::anonymous`]) writes
+    /// no receipt, and each frame says so (`receipt_ref: null`,
+    /// `no_record: true`), a refusal's included (#1968).
     fn answer(
         server: &crate::server::SyncServer,
         auth: &CoreAuth,
@@ -181,7 +205,7 @@ impl RpcReply {
         let (actor_ref, actor_class) = call_receipt::call_actor(auth);
         let stamp = call_receipt::record(
             server,
-            false,
+            call.anonymous,
             oneiron::receipt::CallReceiptInput {
                 transport: oneiron::receipt::CallTransport::Ws,
                 verb: call.method,
@@ -286,7 +310,7 @@ pub(crate) fn bound_rpc(
     auth: &CoreAuth,
     request: RpcRequest,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
-    bound_rpc_reply(server, auth, request).map(|reply| reply.frames)
+    bound_rpc_reply(server, auth, request, SocketCallContext::default()).map(|reply| reply.frames)
 }
 
 /// [`rpc_reply`] from a synchronous test door, through the blocking bridge
@@ -298,13 +322,14 @@ pub(crate) fn bound_rpc_reply(
     server: &crate::server::SyncServer,
     auth: &CoreAuth,
     request: RpcRequest,
+    context: SocketCallContext,
 ) -> Result<RpcReply, ProtocolError> {
     let Some(served) = connection::Hub::served(server) else {
         let call = RpcCall::of(&request);
         let unserved = AppError::internal_server_error("no live-query hub serves this server");
         return RpcReply::answer(server, auth, call, request.request_id, Err(unserved));
     };
-    rpc::blocking(rpc_reply(&served, auth, request))
+    rpc::blocking(rpc_reply(&served, auth, request, context))
 }
 
 /// One verb RPC on a held socket, answered through OF-538's WS door: the
@@ -313,13 +338,23 @@ pub(crate) fn bound_rpc_reply(
 /// applies, and its answer carries the rows it was derived from to the send
 /// door. A name that is no facade verb is refused before any check, with its
 /// correction when it is a canonical verb under the wrong root.
+///
+/// The call runs in the context its `rpc.req` carried (FIX 2059), as the
+/// socket took it on arrival ([`SocketCallContext::arrived`]): its session,
+/// room turn and invocation as the HTTP facade reads them from its headers,
+/// a named invocation claimed once around the whole call, and the
+/// subscription it names as this socket's open instance of it.
 pub(crate) async fn rpc_reply(
     server: &std::sync::Arc<crate::server::SyncServer>,
     auth: &CoreAuth,
     request: RpcRequest,
+    context: SocketCallContext,
 ) -> Result<RpcReply, ProtocolError> {
-    let call = RpcCall::captured(server, &request);
-    let result = rpc::run(server, auth, &request.method, request.params).await;
+    let mut call = RpcCall::captured(server, &request);
+    let result = rpc::claimed(server, auth, &context, &request.method, request.params).await;
+    // OF-063: judged on arrival and again before the receipt is written, so
+    // a session closed mid-call keeps its call's exception.
+    call.anonymous = context.anonymous(server, auth);
     RpcReply::answer(server, auth, call, request.request_id, result)
 }
 

@@ -196,23 +196,35 @@ pub(crate) async fn no_record_reply(mut response: Response) -> Response {
 
 /// Whether a request made for `principal` runs inside an anonymous
 /// off-record session that principal is verified in: the session its
-/// `x-oneiron-session` header names is one the live registry holds in
-/// `OffRecordMode::Anonymous`, and the principal the request's credential
-/// names (its holder, whichever class acts under it) is on its room's
-/// roster or is the actor who entered it alone
-/// (`Vault::off_record_session_is_anonymous_for`, OF-063). Every other
-/// request records as anywhere else, and so does one with no principal
-/// (the host root, an OAuth relay, the legacy shared secret): it binds no
-/// session (Engine ruling 2137/2271). Each transport asks when the call
-/// arrives and again when its receipt would be written: a caller verified
-/// at either time writes none, so a session closed mid-call keeps its
-/// call's exception.
+/// `x-oneiron-session` header names, read by
+/// [`session_is_anonymous_for`].
 pub(crate) fn in_anonymous_session(
     server: &SyncServer,
     headers: &HeaderMap,
     principal: Option<oneiron::EntityId>,
 ) -> bool {
-    request_session_ref(headers).is_some_and(|session_ref| {
+    session_is_anonymous_for(server, request_session_ref(headers), principal)
+}
+
+/// Whether a call made for `principal` in the session `session_ref` names
+/// runs inside an anonymous off-record session that principal is verified
+/// in: the live registry holds it in `OffRecordMode::Anonymous`, and the
+/// principal the call's credential names (its holder, whichever class acts
+/// under it) is on its room's roster or is the actor who entered it alone
+/// (`Vault::off_record_session_is_anonymous_for`, OF-063). Every other call
+/// records as anywhere else, and so does one with no principal (the host
+/// root, an OAuth relay, the legacy shared secret): it binds no session
+/// (Engine ruling 2137/2271). The one check the HTTP facade makes of its
+/// session header and the held socket of its `rpc.req` call context (FIX
+/// 2059). Each transport asks when the call arrives and again when its
+/// receipt would be written: a caller verified at either time writes none,
+/// so a session closed mid-call keeps its call's exception.
+pub(crate) fn session_is_anonymous_for(
+    server: &SyncServer,
+    session_ref: Option<&str>,
+    principal: Option<oneiron::EntityId>,
+) -> bool {
+    session_ref.is_some_and(|session_ref| {
         server
             .vault()
             .off_record_session_is_anonymous_for(session_ref, principal)
@@ -253,7 +265,13 @@ pub(crate) fn request_session_ref(headers: &HeaderMap) -> Option<&str> {
         .get(super::write_facet::SESSION_HEADER)?
         .to_str()
         .ok()
-        .map(str::trim)
+        .map(spelled_session_ref)
+}
+
+/// A session ref as a transport spelled it, as the off-record surface reads
+/// it: the HTTP facade's header, the held socket's call context.
+pub(crate) fn spelled_session_ref(text: &str) -> &str {
+    text.trim()
 }
 
 /// Who a credential's call is attributed to: its bound principal and actor

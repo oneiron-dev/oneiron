@@ -135,9 +135,38 @@ struct RpcBody {
     method: String,
     #[serde(default)]
     params: Value,
+    #[serde(default)]
+    ctx: Option<RpcCallContext>,
 }
 
-pub(super) fn rpc(bytes: &[u8]) -> Result<RpcRequest, ProtocolError> {
+/// What an `rpc.req` carries beside its params for a facade verb (FIX 2059):
+/// the session it is made in, the room whose turn it runs in, the logical
+/// invocation it names and a subscription open on the same connection, each
+/// optional. It is transport context, as the HTTP facade's headers are: the
+/// actor, its class and its grants stay the bound credential's, and no field
+/// here names a drain permit or the run that creates a lens card. The ids
+/// stay text until the call reads them, so a malformed one is refused where
+/// its row reads it, as its HTTP header is.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RpcCallContext {
+    /// The session the call is made in, as `x-oneiron-session` names it.
+    #[serde(default)]
+    pub(crate) session: Option<String>,
+    /// The room whose turn the call runs in, as `x-oneiron-room-turn` names
+    /// it: the room's id, never a turn's.
+    #[serde(default)]
+    pub(crate) room_turn: Option<String>,
+    /// The logical invocation, as `x-oneiron-invocation` names it.
+    #[serde(default)]
+    pub(crate) invocation: Option<String>,
+    /// A subscription open on this connection, by its `sub.open` id.
+    #[serde(default)]
+    pub(crate) subscription: Option<u64>,
+}
+
+/// An app-tier request, and the call context its `rpc.req` carried.
+pub(super) fn rpc(bytes: &[u8]) -> Result<(RpcRequest, Option<RpcCallContext>), ProtocolError> {
     let envelope: Envelope<Value> = decode(bytes)?;
     if envelope.seq != 0 || !envelope.last {
         return Err(ProtocolError::InvalidPayload(
@@ -145,22 +174,28 @@ pub(super) fn rpc(bytes: &[u8]) -> Result<RpcRequest, ProtocolError> {
         ));
     }
     if envelope.kind == "ping" {
-        return Ok(RpcRequest {
-            request_id: envelope.id,
-            method: "ping".to_owned(),
-            params: envelope.payload,
-        });
+        return Ok((
+            RpcRequest {
+                request_id: envelope.id,
+                method: "ping".to_owned(),
+                params: envelope.payload,
+            },
+            None,
+        ));
     }
     if envelope.kind != "rpc.req" {
         return Err(ProtocolError::InvalidPayload("expected rpc.req"));
     }
     let body: RpcBody = serde_json::from_value(envelope.payload)
         .map_err(|_| ProtocolError::InvalidPayload("invalid RPC request"))?;
-    Ok(RpcRequest {
-        request_id: envelope.id,
-        method: body.method,
-        params: body.params,
-    })
+    Ok((
+        RpcRequest {
+            request_id: envelope.id,
+            method: body.method,
+            params: body.params,
+        },
+        body.ctx,
+    ))
 }
 
 #[derive(Deserialize)]

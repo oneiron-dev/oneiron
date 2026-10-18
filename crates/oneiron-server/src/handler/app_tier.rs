@@ -228,7 +228,7 @@ pub(super) fn handle_app_message(
     else {
         return Ok(());
     };
-    let reply = crate::livequery::bound_rpc_reply(server, &call.auth, call.request)?;
+    let reply = crate::livequery::bound_rpc_reply(server, &call.auth, call.request, call.context)?;
     for frame in reply.queued(call.conn) {
         direct_tx
             .send(frame)
@@ -238,10 +238,12 @@ pub(super) fn handle_app_message(
 }
 
 /// A verb RPC the owner loop answers off the loop: the bound credential it
-/// runs under, the request, and the socket its answer is queued for.
+/// runs under, the request, the call context the socket took on arrival
+/// (FIX 2059), and the socket its answer is queued for.
 pub(super) struct VerbCall {
     auth: CoreAuth,
     request: crate::livequery::RpcRequest,
+    context: crate::livequery::SocketCallContext,
     conn: u32,
 }
 
@@ -253,7 +255,8 @@ impl VerbCall {
         server: std::sync::Arc<SyncServer>,
         direct_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     ) -> Result<(), ProtocolError> {
-        let reply = crate::livequery::rpc_reply(&server, &self.auth, self.request).await?;
+        let reply =
+            crate::livequery::rpc_reply(&server, &self.auth, self.request, self.context).await?;
         for frame in reply.queued(self.conn) {
             direct_tx
                 .send(frame)
@@ -278,9 +281,9 @@ pub(super) fn handle_app_message_with_connection(
     let answered = answer_app_message(server, state, tag, payload, direct_tx, connection);
     if let Err(error) = &answered {
         let method = (tag == protocol::TAG_RPC)
-            .then(|| crate::livequery::decode_rpc(payload).ok())
+            .then(|| crate::livequery::decode_rpc_call(payload).ok())
             .flatten()
-            .map(|request| request.method);
+            .map(|(request, _)| request.method);
         let (verb, request_digest) = match method {
             // A bind carries a credential: its receipt digests none of it.
             Some(method) if method == "auth.bind" => (method, call_bytes_digest(&[])),
@@ -313,7 +316,7 @@ fn answer_app_message(
         return Err(ProtocolError::RpcVersionMismatch);
     }
     if tag == protocol::TAG_RPC {
-        let request = crate::livequery::decode_rpc(payload).map_err(|_| {
+        let (request, context) = crate::livequery::decode_rpc_call(payload).map_err(|_| {
             if state.bound_auth.is_none() {
                 ProtocolError::RpcNoPrincipal
             } else {
@@ -322,7 +325,8 @@ fn answer_app_message(
         })?;
         if request.method == "auth.bind" {
             let binding = (|| {
-                if state.bound_auth.is_some() {
+                // A bind is the connection's, and carries no call context.
+                if state.bound_auth.is_some() || context.is_some() {
                     return Err(ProtocolError::RpcNoPrincipal);
                 }
                 let token = crate::livequery::bind_token(&request.params)
@@ -375,6 +379,15 @@ fn answer_app_message(
             auth.principal_ref().unwrap_or(auth.principal()),
             oneiron_vault_contract::now_ts(),
         );
+        // A call context rides a facade verb RPC only (FIX 2059): a ping is
+        // the connection's, and a residence read the proved machine's.
+        if context.is_some()
+            && (request.method == "ping" || request.method.starts_with("residence."))
+        {
+            return Err(ProtocolError::InvalidPayload(
+                "a call context rides only a facade verb RPC",
+            ));
+        }
         // A result is queued with the rows it carries, for the socket's
         // send door to judge again (DEC-0005).
         let conn = connection
@@ -409,9 +422,20 @@ fn answer_app_message(
             )?
             .queued(conn)
         } else {
+            // FIX 2059: the call context is taken here, before the call
+            // leaves the loop: its session judged for the bound principal
+            // now, and the subscription it names as this socket holds it
+            // open now.
+            let context = crate::livequery::SocketCallContext::arrived(
+                server,
+                auth,
+                context,
+                connection.as_deref(),
+            );
             return Ok(Some(VerbCall {
                 auth: auth.clone(),
                 request,
+                context,
                 conn,
             }));
         };
