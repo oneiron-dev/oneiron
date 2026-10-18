@@ -3,19 +3,22 @@
 //!
 //! A blank slide holds an empty shape tree, the master's colour mapping and
 //! a minted `p14:creationId`; it relates to its layout and takes a slide id
-//! above the caller's high-water mark. A removal takes the slide's list and
-//! section entries and its presentation relationship away, then drops from
-//! the archive every part the slide reaches that the package root no longer
-//! does: the slide, its notes slide and comments, and media, charts or
-//! embeddings only it used. A part another survivor still relates to stays.
-//! The app properties lose the slide from their counts and titles, and the
-//! content types lose each extension default no part uses any more. An
-//! emptied section stays, as PowerPoint keeps one.
+//! above the caller's high-water mark, and the app properties count it and
+//! list its title. A removal takes the slide's list and section entries and
+//! its presentation relationship away, then drops from the archive every
+//! part the slide reaches that the package root no longer does: the slide,
+//! its notes slide and comments, and media, charts or embeddings only it
+//! used. A part another survivor still relates to stays. The app properties
+//! lose the slide from their counts and titles, and the content types lose
+//! each extension default no part uses any more. An emptied section stays,
+//! as PowerPoint keeps one. Either way the app properties recount the
+//! deck's words and paragraphs.
 
 use super::super::super::check::declared_type;
 use super::super::super::media::related;
 use super::super::super::xml::{self, A, P, R};
 use super::super::Plan;
+use super::app_props::Text;
 use super::{Lists, P14, SLIDE_CREATION_EXT, SLIDE_IDS, copy_with, custom_shows, mint_creation_id};
 use crate::deck::DeckView;
 use crate::edit::{EditRefusal, Effect};
@@ -164,6 +167,16 @@ pub(in super::super) fn add_blank(
         return Err(EditRefusal::ReorderUnsupported("a slide in no section"));
     }
     next.replace_xml_part(&lists.part, xml::splice(&lists.bytes, edits)?)?;
+    let index = anchor
+        .and_then(|at| lists.slides.iter().position(|&(entry, _)| entry == at))
+        .map_or(0, |at| at + 1);
+    super::app_props::slide_added(
+        next,
+        (index, lists.slides.len()),
+        (false, false),
+        None,
+        Text::of_deck(before),
+    )?;
     Ok((
         Plan::Arranged,
         vec![Effect::SlideAdded {
@@ -266,7 +279,13 @@ pub(in super::super) fn delete(
     for part in &released {
         next.remove_part(part)?;
     }
-    super::app_props::slide_removed(next, index, lists.slides.len(), hidden, notes)?;
+    super::app_props::slide_removed(
+        next,
+        index,
+        lists.slides.len(),
+        (hidden, notes),
+        Text::of_deck(before).less(Text::of_slide(view)),
+    )?;
     if !released.is_empty() {
         next.prune_defaults()?;
     }
