@@ -5,7 +5,9 @@
 use std::collections::BTreeMap;
 
 use super::super::join_receipt::{JOINS, READY, intent_digest, is_join_ref, join_ref, ready_key};
-use super::offers::{OFFER_CURRENT, OFFERS, OfferState, StoredOffer, current_key, is_offer_id};
+use super::offers::{
+    OFFER_CURRENT, OFFERS, OfferBallot, OfferState, StoredOffer, current_key, is_offer_id,
+};
 use super::*;
 use crate::workspace_roster::{JoinDecision, JoinReceipt, JoinSubject};
 
@@ -32,7 +34,8 @@ pub(crate) enum TurnMergeRefusal {
     /// This vault erased the thread a fact names; no thread erase is undone.
     ThreadDeleted,
     /// Two copies of one join or offer card settle otherwise: two settled
-    /// decisions, or two answers. Neither is chosen silently.
+    /// decisions, two answers, or one voter's two ballots under one stamp.
+    /// Neither is chosen silently.
     DecisionConflict,
 }
 
@@ -523,12 +526,11 @@ pub(crate) fn merge_replicated_side_row_in_txn(
 /// carried (FIX 1794), as room turn rows merge: one this vault lacks is
 /// written as carried, and one it holds takes the carried copy by
 /// [`merged_join`] or [`merged_offer`], or quarantines, logged and left
-/// out. Where one voter's two ballots differ the carried one stands: it is
-/// the window's latest carrier write by Loro order. The Ready and
-/// current-card indexes are rebuilt from what merged; nothing is decided
-/// again, and no seat, companion, participation, acceptance or diary effect
-/// runs. Returns what the merge did, and whether the carried copy now holds
-/// everything this vault's does.
+/// out. Where one voter's two ballots differ the later stamp stands. The
+/// Ready and current-card indexes are rebuilt from what merged; nothing is
+/// decided again, and no seat, companion, participation, acceptance or
+/// diary effect runs. Returns what the merge did, and whether the carried
+/// copy now holds everything this vault's does.
 pub(crate) fn merge_replicated_shared_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -561,7 +563,7 @@ fn merge_shared_in_txn(
     };
     let merged = match held {
         None => row.clone(),
-        Some(held) => match merged_shared_row(row, &held, false) {
+        Some(held) => match merged_shared_row(row, &held) {
             Ok(merged) if merged == held => return Ok((SideMerge::Held, merged == *row)),
             Ok(merged) => merged,
             Err(refusal) => return Ok((SideMerge::Refused(refusal), true)),
@@ -582,20 +584,18 @@ fn merge_shared_in_txn(
 }
 
 /// The window's copy `theirs` of a join or offer card merged with this
-/// vault's copy `ours` (FIX 1794), the same on every machine but for one
-/// voter's two ballots, which keep `ours` only when `ours_win`. The error
-/// names why the two quarantine.
+/// vault's copy `ours` (FIX 1794), the same on every machine whichever
+/// arrived first. The error names why the two quarantine.
 pub(crate) fn merged_shared_row(
     theirs: &RoomSideRow,
     ours: &RoomSideRow,
-    ours_win: bool,
 ) -> std::result::Result<RoomSideRow, TurnMergeRefusal> {
     match (theirs, ours) {
         (RoomSideRow::Join { receipt: theirs }, RoomSideRow::Join { receipt: ours }) => {
             merged_join(ours, theirs).map(|receipt| RoomSideRow::Join { receipt })
         }
         (RoomSideRow::Offer { offer: theirs }, RoomSideRow::Offer { offer: ours }) => {
-            merged_offer(ours, theirs, ours_win).map(|offer| RoomSideRow::Offer { offer })
+            merged_offer(ours, theirs).map(|offer| RoomSideRow::Offer { offer })
         }
         _ => Err(TurnMergeRefusal::FixedFieldsConflict),
     }
@@ -665,13 +665,12 @@ fn merged_join(
 /// acceptance landed, wins over one without; two that differ quarantine.
 /// Otherwise the later reopening wins, and within one a settled card wins
 /// over an open one; their encoding breaks a tie. Ballots of the latest
-/// reopening union per voter, and a lower reopening's are dropped; one
-/// voter's two ballots keep `theirs`, the window's latest carrier write by
-/// Loro order, unless `ours_win`. The latest engagement stands.
+/// reopening union per voter, and a lower reopening's are dropped; of one
+/// voter's two ballots the later stamp stands ([`ROOM_OFFER_VOTE_ORDER`]),
+/// whichever copy carried it (FIX 3323). The latest engagement stands.
 fn merged_offer(
     ours: &StoredOffer,
     theirs: &StoredOffer,
-    ours_win: bool,
 ) -> std::result::Result<StoredOffer, TurnMergeRefusal> {
     let (card, other) = (&ours.card, &theirs.card);
     if card.offer_id != other.offer_id
@@ -719,21 +718,38 @@ fn merged_offer(
     };
     merged.reopen_epoch = ours.reopen_epoch.max(theirs.reopen_epoch);
     merged.card.last_engaged_at = ours.card.last_engaged_at.max(theirs.card.last_engaged_at);
-    let (first, last) = if ours_win {
-        (theirs, ours)
-    } else {
-        (ours, theirs)
-    };
     merged.votes = BTreeMap::new();
-    for offer in [first, last] {
-        if offer.reopen_epoch == merged.reopen_epoch {
-            merged
-                .votes
-                .extend(offer.votes.iter().map(|(voter, vote)| (*voter, *vote)));
+    for offer in [ours, theirs] {
+        if offer.reopen_epoch != merged.reopen_epoch {
+            continue;
+        }
+        for (voter, ballot) in &offer.votes {
+            match merged.votes.get(voter) {
+                Some(held) if held == ballot => {}
+                Some(held) if ROOM_OFFER_VOTE_ORDER(held) == ROOM_OFFER_VOTE_ORDER(ballot) => {
+                    return Err(ROOM_OFFER_VOTE_EQUAL_STAMP);
+                }
+                Some(held) if ROOM_OFFER_VOTE_ORDER(held) > ROOM_OFFER_VOTE_ORDER(ballot) => {}
+                _ => {
+                    merged.votes.insert(*voter, *ballot);
+                }
+            }
         }
     }
     Ok(merged)
 }
+
+/// The stamp one voter's two ballots on a card settle by (FIX 3323; a call,
+/// canon is silent): the later revision wins, and of two cast at one
+/// revision on two machines at once, the greater client id. No wall time
+/// orders them.
+const ROOM_OFFER_VOTE_ORDER: fn(&OfferBallot) -> (u64, u64) =
+    |ballot: &OfferBallot| (ballot.revision, ballot.client_id);
+
+/// What one voter's two ballots that differ under one stamp do (FIX 3323; a
+/// call, canon is silent): no machine casts two at one stamp, so the two
+/// copies quarantine, as two answers do.
+const ROOM_OFFER_VOTE_EQUAL_STAMP: TurnMergeRefusal = TurnMergeRefusal::DecisionConflict;
 
 /// Points the Ready index at `receipt`, a merged copy, when it is the latest
 /// Ready receipt for its subject in its room or thread (FIX 1794): the

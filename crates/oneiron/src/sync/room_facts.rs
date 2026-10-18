@@ -233,9 +233,9 @@ pub(crate) fn admit_room_fact_map(key: Option<&WindowKey>, map: &LoroMap) -> Res
 /// A changed cell this vault no longer holds was cleared here, and leaves
 /// the window. Every other cell stands as the window holds it. A join or an
 /// offer card is merged into the window's copy, and the merge written where
-/// the window lacks part of it; one this machine changed, `changed` or
-/// marked, keeps its own ballots. Returns whether it wrote; the caller
-/// commits.
+/// the window lacks part of it. One this machine changed, `changed` or
+/// marked, is sent so; the mark orders no ballot, which settles by its own
+/// stamp (FIX 3324). Returns whether it wrote; the caller commits.
 pub(crate) fn mirror_room_facts(
     vault: &Vault,
     doc: &LoroDoc,
@@ -243,7 +243,7 @@ pub(crate) fn mirror_room_facts(
     entity_type: u8,
     changed: &[&str],
 ) -> Result<bool> {
-    let (rows, mut ours, named_here) = {
+    let (rows, mut ours) = {
         let rtxn = vault.store.env.read_txn()?;
         let mut rows = replicated_side_rows_in(vault, &rtxn, *id, entity_type)?;
         let mut ours = Vec::new();
@@ -276,7 +276,7 @@ pub(crate) fn mirror_room_facts(
                 rows.extend(replicated_shared_rows_in(vault, &rtxn, offer, reference)?);
             }
         }
-        (rows, ours, named_here)
+        (rows, ours)
     };
     if rows.is_empty() && ours.is_empty() {
         return Ok(false);
@@ -291,7 +291,7 @@ pub(crate) fn mirror_room_facts(
             continue;
         }
         if is_shared(&key) {
-            wrote |= mirror_shared_row(&map, &key, row, &bytes, named_here.contains(&key))?;
+            wrote |= mirror_shared_row(&map, &key, row, &bytes)?;
             continue;
         }
         let changed_here = ours.contains(&key);
@@ -316,23 +316,16 @@ pub(crate) fn mirror_room_facts(
 }
 
 /// Writes this vault's join or offer card `row`, encoded as `bytes`, into
-/// `map` under `key`, merged with the copy the window holds; `ours_win`
-/// keeps this vault's ballots where a voter's two differ. A copy that does
-/// not merge with the window's quarantines, logged, and the window's stays.
-/// Returns whether it wrote.
-fn mirror_shared_row(
-    map: &LoroMap,
-    key: &str,
-    row: &RoomSideRow,
-    bytes: &[u8],
-    ours_win: bool,
-) -> Result<bool> {
+/// `map` under `key`, merged with the copy the window holds. A copy that
+/// does not merge with the window's quarantines, logged, and the window's
+/// stays. Returns whether it wrote.
+fn mirror_shared_row(map: &LoroMap, key: &str, row: &RoomSideRow, bytes: &[u8]) -> Result<bool> {
     let held = map_get_bytes(map, key);
     if held.as_deref() == Some(bytes) {
         return Ok(false);
     }
     let merged = match held.as_deref().map(decode) {
-        Some(Ok(theirs)) => match merged_shared_row(&theirs, row, ours_win) {
+        Some(Ok(theirs)) => match merged_shared_row(&theirs, row) {
             Ok(merged) => encode(&merged)?,
             Err(reason) => {
                 tracing::warn!(
