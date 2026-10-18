@@ -49,6 +49,7 @@ mod owner_answer;
 mod owner_policy_mutation;
 mod pack_install_policy;
 mod policy_upgrade;
+pub mod policy_manifest_doors;
 pub(crate) mod policy_values;
 #[cfg(test)]
 pub(crate) use policy_upgrade::ConsentRegate;

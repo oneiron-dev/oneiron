@@ -2059,6 +2059,75 @@
       "section": false
     },
     {
+      "name": "vault.gate.policy.get",
+      "description": "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions.",
+      "input": "crate::policy_manifest_doors::PolicyManifestRead",
+      "output": "crate::policy_manifest_doors::PolicyManifestsView",
+      "call": "crate::policy_manifest_doors::policy_manifests_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.policy.get\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.gate.policy.put",
+      "description": "The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions.",
+      "input": "crate::policy_manifest_doors::PolicyManifestPut",
+      "output": "crate::policy_manifest_doors::PolicyManifestReceipt",
+      "call": "crate::policy_manifest_doors::put_policy_manifest_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.policy.put\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.gate.policy.propose",
+      "description": "Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert.",
+      "input": "crate::policy_manifest_doors::PolicyManifestPropose",
+      "output": "crate::policy_manifest_doors::PolicyManifestReceipt",
+      "call": "crate::policy_manifest_doors::propose_policy_manifest(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "proposes": true
+    },
+    {
+      "name": "vault.gate.checker.get",
+      "description": "The owner reads the calibrated checker verdict role from the vault model manifest.",
+      "input": "EmptyRequest",
+      "output": "crate::policy_manifest_doors::GateCheckerView",
+      "call": "crate::policy_manifest_doors::gate_checker_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.checker.get\")?).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.gate.checker.set",
+      "description": "The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings.",
+      "input": "crate::policy_manifest_doors::GateCheckerSet",
+      "output": "crate::policy_manifest_doors::GateCheckerReceipt",
+      "call": "crate::policy_manifest_doors::set_gate_checker_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.checker.set\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
       "name": "vault.settings.learning",
       "description": "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type.",
       "input": "crate::learning_setting_doors::LearningSettingsRequest",
