@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use oneiron::code_run::GatedActorWrite;
 use oneiron::engine_executor::{EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime};
+use oneiron::off_record::OffRecordCreator;
 use oneiron::{EntityId, Vault, WriteActor};
 
 use super::{ActiveRun, McpCodeExecutionError, McpCodeModeProvider, McpEngineNativeCodeHost};
@@ -35,9 +36,19 @@ pub(crate) fn off_record_run_id(session_ref: &str, actor: EntityId, run_ref: &st
     }
 }
 
+/// The live session a run enters, by name, and the creator that instance
+/// must name when its caller manages it as its creator (WILL-PLAN L13 row
+/// 03); `None` for the vault's owner, who manages every stretch entered
+/// alone. The run binds it again on its own thread, so a name taken again
+/// since its door's check never lends the run another creator's stretch.
+pub(crate) struct OffRecordRunSession {
+    pub(crate) session_ref: String,
+    pub(crate) creator: Option<OffRecordCreator>,
+}
+
 impl McpEngineNativeCodeHost {
     /// One entry of the durable code-mode run `run_id`, bound to the live
-    /// off-record session `session_ref` and written by `actor` (DOOR-127).
+    /// off-record session `session` names and written by `actor` (DOOR-127).
     /// The session's route takes every row the run makes (its replay
     /// record, scripts, observations and raw outputs) and its spilled
     /// outputs land in the session's own body directory, so close drops them
@@ -48,7 +59,7 @@ impl McpEngineNativeCodeHost {
     pub(crate) async fn execute_in_off_record_session(
         &self,
         vault: Arc<Vault>,
-        session_ref: String,
+        session: OffRecordRunSession,
         actor: WriteActor,
         run_ref: String,
         task: String,
@@ -70,7 +81,7 @@ impl McpEngineNativeCodeHost {
                 let outcome = run_in_off_record_session(
                     &vault,
                     provider.as_ref(),
-                    &session_ref,
+                    &session,
                     actor,
                     &run_ref,
                     run_id,
@@ -91,22 +102,25 @@ impl McpEngineNativeCodeHost {
 }
 
 /// [`McpEngineNativeCodeHost::execute_in_off_record_session`]'s worker: the
-/// session bound for `actor`, then the paired session constructors, the
-/// gated write and the executor, as a session's reader child pairs them.
+/// session bound for `actor` (for its creator, when `target` names one),
+/// then the paired session constructors, the gated write and the executor,
+/// as a session's reader child pairs them.
 fn run_in_off_record_session(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
-    session_ref: &str,
+    target: &OffRecordRunSession,
     actor: WriteActor,
     run_ref: &str,
     run_id: EntityId,
     task: &str,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let binding = |error: oneiron::Error| McpCodeExecutionError::RunBinding(error.to_string());
-    let session = vault
-        .off_record_session_vault()
-        .bind_for(session_ref, actor.entity_ref())
-        .map_err(binding)?;
+    let rooms = vault.off_record_session_vault();
+    let session = match target.creator {
+        Some(creator) => rooms.bind_as_creator(&target.session_ref, creator),
+        None => rooms.bind_for(&target.session_ref, actor.entity_ref()),
+    }
+    .map_err(binding)?;
     let config = provider
         .executor_config(vault, run_id, task)
         .map_err(binding)?;

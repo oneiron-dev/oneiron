@@ -16,6 +16,7 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `BUDGET_SPENT` | The line a paid call spends on is spent, or the vault's budget policy refuses it. Use light or medium recall, or ask the owner to raise the line. |
 | `MODEL_UNAVAILABLE` | The model the request needs did not answer usably; nothing stands in for it. Use light or medium recall, or ask the owner to check the model route. |
 | `OFF_RECORD_SESSION_DOOR` | Use the owning off-record session handle. The canonical witness door is not that handle. |
+| `OFF_RECORD_ROOM_MANAGEMENT_CONSENT_UNAVAILABLE` | No record holds a room's consent to one caller managing its whole off-record stretch, on any host. Act as a member instead: status and witness, and save or export your own copy through the room's routes. |
 | `OWNER_BINDING_REQUIRED` | An owner device must bind this human actor in the authority log. Scope changes do not grant ownership. |
 | `VAULT_LOCKED_SINGLE_WRITER` | Connect to the process that owns this vault. Do not remove lock files or open a second writer. |
 | `WRONG_ROOT` | The verb was named under the wrong root and nothing ran; the SDK never corrects and runs it. Issue a fresh call to the `replacement` the error carries. |

@@ -1,20 +1,25 @@
-//! The owner's off-record session rows (DOOR-127, e2e PRIVACY-06): typed
-//! calls over the engine's off-record lifecycle (ARCH-0052) that a client
-//! reaches through the verb table, as `/v1/owner/off-record` reaches it by
-//! hand. `vault.off_record.start`, `.status`, `.witness` and `.discard` take
-//! the owner's proof and run the owner adapter's own enter, record, witness
-//! and close; close without a save is the discard. `vault.off_record.recall`
-//! reads the room's overlay with base, on the caller's own credential.
+//! The off-record session rows (DOOR-127, e2e PRIVACY-06): typed calls over
+//! the engine's off-record lifecycle (ARCH-0052) that a client reaches
+//! through the verb table, as `/v1/owner/off-record` reaches it by hand.
+//! `vault.off_record.start`, `.status`, `.witness` and `.discard` enter,
+//! read, speak in and close a session; close without a save is the
+//! discard. `vault.off_record.recall` reads the room's overlay with base, on
+//! the caller's own credential.
 //! `vault.off_record.notes.create` and `.claims.upsert` write through the
 //! session's handle, so the row lands in the room's overlay and close drops
 //! it. `self.off_record.execute` runs one entry of a durable code-mode run
 //! bound to the session, so its replay rows and its spilled outputs stay in
 //! the room too.
 //!
-//! Each row is the owner's, and each acts on the owner's own 1:1 stretch
-//! only (`OFF_RECORD_OWNER_ONE_TO_ONE`). An off-record session lives in one
-//! server process, so an embedded handle answers each row with
-//! [`off_record_host_only`].
+//! A stretch entered alone is managed by the person or agent who entered it,
+//! on their own live slip, and by the vault's live owner on their proof
+//! (WILL-PLAN L13 row 03, Engine ruling 2026-10-19). A room's stretch keeps
+//! its members' bounded status and witness; recall, writes, runs and
+//! discard of the whole room answer
+//! `OFF_RECORD_ROOM_MANAGEMENT_CONSENT_UNAVAILABLE`. The session lives on the
+//! served host that entered it, which admits its manager on every call, so a
+//! bare embedded handle, which binds no session manager, answers each row
+//! with [`off_record_host_only`].
 //!
 //! The owner adapter's shapes have no wire form in the engine, so the
 //! inputs and answers are spelled here, field for field as the owner routes
@@ -24,12 +29,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 use crate::off_record::{OffRecordBackendClass, OffRecordMode};
-
-/// Whether the session rows act on the owner's own 1:1 stretch alone. A
-/// stretch in a room keeps its roster's doors (`/v1/core/off-record/*`);
-/// the union read and the session writes never reach one. Canon is silent
-/// on room participants for these rows (Engine call, DOOR-127).
-pub const OFF_RECORD_OWNER_ONE_TO_ONE: bool = true;
 
 /// How `vault.off_record.start` enters a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -171,9 +170,11 @@ pub struct OffRecordExecuted {
     pub bridge_calls: usize,
 }
 
-/// A session row on an embedded handle: refused, as an off-record session
-/// lives in the server process that entered it, behind the owner's proof
-/// that server checks. A server's host door runs it.
+/// A session row on a bare embedded handle: refused, as this handle binds no
+/// session manager. The session lives on the served host that entered it,
+/// which admits its manager (its creator or the vault's owner) on every
+/// call; the engine's in-process served client reaches that host from the
+/// same process, as a remote client reaches a server.
 ///
 /// # Errors
 ///
@@ -182,8 +183,8 @@ pub fn off_record_host_only<I, T>(_memory: &Memory<'_>, verb: &str, _input: &I) 
     Err(MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
         format!(
-            "{verb} acts on an off-record session a server holds; an embedded vault holds none"
+            "{verb} acts on an off-record session through the served host that holds it; this bare handle binds no session manager"
         ),
-        &["Call it through the server that entered the session, with the owner's credential."],
+        &[super::sdk_host::SERVED_CLIENT_HINT],
     ))
 }

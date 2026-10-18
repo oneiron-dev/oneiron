@@ -35,6 +35,7 @@ def artifacts():
         "INTERNAL_SERVER_ERROR": "Check the server endpoint, network and health. Report reproducible SDK boundary failures.",
         "LEASE_REQUIRED": "Use light or medium recall, or present a budget lease.",
         "OFF_RECORD_SESSION_DOOR": "Use the owning off-record session handle. The canonical witness door is not that handle.",
+        "OFF_RECORD_ROOM_MANAGEMENT_CONSENT_UNAVAILABLE": "No record holds a room's consent to one caller managing its whole off-record stretch, on any host. Act as a member instead: status and witness, and save or export your own copy through the room's routes.",
         "OWNER_BINDING_REQUIRED": "An owner device must bind this human actor in the authority log. Scope changes do not grant ownership.",
         "VAULT_LOCKED_SINGLE_WRITER": "Connect to the process that owns this vault. Do not remove lock files or open a second writer.",
         "INVENTED_REFERENCE": "Name only records this writer can read, by the ref the engine issued. The write was refused and receipted.",

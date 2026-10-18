@@ -11,6 +11,7 @@ use crate::receipt::SessionLocalReceiptLog;
 use crate::session_overlay::SessionOverlay;
 use crate::store::Store;
 
+use super::creator::OffRecordCreator;
 use super::types::{
     OFF_RECORD_SESSION_RECORD_VERSION, OFF_RECORD_SESSION_REF_MAX_LEN, OffRecordBackendClass,
     OffRecordMode, OffRecordSessionRecord,
@@ -33,10 +34,18 @@ pub(super) enum SessionStart {
     /// Entered alone (a 1:1), by this actor when the door that entered it
     /// named one.
     Alone(Option<EntityId>),
+    /// Entered alone by this creator, whom the entering door authenticated:
+    /// they manage it beside the vault's owner (`creator`).
+    Created(OffRecordCreator),
 }
 
 pub(super) struct OffRecordSessionEntry {
     pub(super) overlay: Arc<SessionOverlay>,
+    /// Who entered this instance through a creator's door, set once at entry
+    /// and dropped with the entry (WILL-PLAN L13 row 03): RAM only, never on
+    /// the record a caller reads, so a name taken again after close starts
+    /// with its own creator or none.
+    pub(super) creator: Option<OffRecordCreator>,
     pub(super) state: Mutex<OffRecordSessionEntryState>,
     published_record: ArcSwapOption<OffRecordSessionRecord>,
 }
@@ -151,9 +160,10 @@ impl OffRecordSessionRegistry {
         start: SessionStart,
         clock: &crate::ports::StoreClock,
     ) -> Result<Arc<OffRecordSessionEntry>> {
-        let (room, entered_by) = match start {
-            SessionStart::InRoom(room, by) => (Some((room, by)), None),
-            SessionStart::Alone(actor) => (None, actor),
+        let (room, entered_by, creator) = match start {
+            SessionStart::InRoom(room, by) => (Some((room, by)), None, None),
+            SessionStart::Alone(actor) => (None, actor, None),
+            SessionStart::Created(creator) => (None, Some(creator.actor), Some(creator)),
         };
         let mut sessions = self.sessions()?;
         if sessions.contains_key(session_ref) {
@@ -185,6 +195,7 @@ impl OffRecordSessionRegistry {
         }
         let entry = Arc::new(OffRecordSessionEntry {
             overlay,
+            creator,
             state: Mutex::new(OffRecordSessionEntryState {
                 record: record.clone(),
                 receipt_log: (mode != OffRecordMode::Anonymous)

@@ -47,6 +47,16 @@ pub const MEMORY_CODE_MODEL_UNAVAILABLE: &str = "MODEL_UNAVAILABLE";
 /// reachable through the session handle.
 pub const MEMORY_CODE_OFF_RECORD_SESSION_DOOR: &str = "OFF_RECORD_SESSION_DOOR";
 
+/// A session row asked to manage a room's whole off-record stretch: read
+/// everyone's overlay at once, write or run in it, or discard it for the
+/// room (WILL-PLAN L13 row 03, Engine ruling 2026-10-19). The caller is on
+/// the room's roster, so this is no `NOT_FOUND`; nor a `FORBIDDEN` a scope or
+/// actor change admits. It is a missing consent record, not a location
+/// limit: no record holds the room audience's consent to that management,
+/// so every host refuses it alike, hosted, self-hosted or embedded. The
+/// members' own bounded acts (status, witness, save, export) stay open.
+pub const MEMORY_CODE_ROOM_MANAGEMENT: &str = "OFF_RECORD_ROOM_MANAGEMENT_CONSENT_UNAVAILABLE";
+
 /// An owner verb was attempted by an actor holding no ACTIVE human-class owner
 /// binding in the vault's authority log (S-AUTH3 T9/T11).
 ///
