@@ -1965,6 +1965,85 @@
       "section": false
     },
     {
+      "name": "vault.off_record.start",
+      "description": "The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it.",
+      "input": "crate::task_verb::sdk::OffRecordStartRequest",
+      "output": "crate::task_verb::sdk::OffRecordSessionView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.start\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.status",
+      "description": "The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing.",
+      "input": "crate::task_verb::sdk::OffRecordSessionRequest",
+      "output": "crate::task_verb::sdk::OffRecordSessionView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.status\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.witness",
+      "description": "The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close.",
+      "input": "crate::task_verb::sdk::OffRecordWitnessRequest",
+      "output": "crate::memory::WitnessReceipt",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.witness\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.discard",
+      "description": "The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay.",
+      "input": "crate::task_verb::sdk::OffRecordSessionRequest",
+      "output": "crate::task_verb::sdk::OffRecordClosed",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.discard\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.recall",
+      "description": "The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike.",
+      "input": "crate::task_verb::sdk::OffRecordRecallRequest",
+      "output": "crate::memory::MemoryPack",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.recall\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.records.erase_preview",
       "description": "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back.",
       "input": "crate::task_verb::sdk::RecordEraseRequest",

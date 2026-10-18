@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 443 code-mode rows (422 host rows, 21 run rows), 1599 declarations.
-// Replies: 387 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 448 code-mode rows (427 host rows, 21 run rows), 1608 declarations.
+// Replies: 392 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -592,6 +592,15 @@ declare namespace Sdk {
   type ResidenceIndex = { windows: ResidenceIndexWindowView[] };
   type ResidencePruneRequest = { machine: EntityId; before: number };
   type ResidencePruned = { dropped: number };
+  type OffRecordEnterMode = "off_record" | "anonymous";
+  type OffRecordBackendClass = "local" | "remote_provider";
+  type OffRecordStartRequest = { session_ref: string; mode: OffRecordEnterMode; backend: OffRecordBackendClass };
+  type OffRecordMode = "off_record" | "on_record" | "anonymous";
+  type OffRecordSessionView = { session_ref: string; mode: OffRecordMode; backend: OffRecordBackendClass; entered_at: string; promoted_turns: string[]; closing: boolean };
+  type OffRecordSessionRequest = { session_ref: string };
+  type OffRecordWitnessRequest = { session_ref: string; turn: WitnessTurn; summary?: string | null };
+  type OffRecordClosed = { session_ref: string; turns_dropped: number; context_receipts_dropped: number; emit_receipts_dropped: number; emit_receipts_kept: number; promoted_turns_kept: number };
+  type OffRecordRecallRequest = { session_ref: string; query: string; limit: number };
   type RecordEraseRequest = { record: EntityId };
   type EraseShare = { grant: string; recipient: string };
   type EraseHeldBytes = { content_hash: string; other_holders: string[] };
@@ -2360,6 +2369,18 @@ declare const vault: Sdk.VaultHost & {
     seal(input: Sdk.NoteRefRequest): Promise<Sdk.NoteSeal | StoredResult>;
     /** Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check. */
     set_overrides(input: Sdk.SetNoteOverridesRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
+  };
+  off_record: {
+    /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+    discard(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordClosed | StoredResult>;
+    /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+    recall(input: Sdk.OffRecordRecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
+    /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+    start(input: Sdk.OffRecordStartRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
+    /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+    status(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
+    /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+    witness(input: Sdk.OffRecordWitnessRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
   };
   packs: {
     /** Reads an installed pack and its exact source, pin, publisher and requested powers as the owner. */

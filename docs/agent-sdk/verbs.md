@@ -123,6 +123,11 @@ both bindings and their export-census tests in one change.
 - `vault.residence.open`
 - `vault.residence.index`
 - `vault.residence.prune`
+- `vault.off_record.start`
+- `vault.off_record.status`
+- `vault.off_record.witness`
+- `vault.off_record.discard`
+- `vault.off_record.recall`
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
 - `vault.research.bind`

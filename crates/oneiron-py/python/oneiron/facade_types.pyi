@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 385 facade rows, 1508 declarations.
-Inputs: 342 of 385 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 340 of 385 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 390 facade rows, 1517 declarations.
+Inputs: 346 of 390 fully typed, 44 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 345 of 390 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -2933,6 +2933,37 @@ class ResidencePruneRequest(TypedDict):
     before: int
 class ResidencePruned(TypedDict):
     dropped: int
+OffRecordEnterMode = Literal["off_record", "anonymous"]
+OffRecordBackendClass = Literal["local", "remote_provider"]
+class OffRecordStartRequest(TypedDict):
+    session_ref: str
+    mode: OffRecordEnterMode
+    backend: OffRecordBackendClass
+OffRecordMode = Literal["off_record", "on_record", "anonymous"]
+class OffRecordSessionView(TypedDict):
+    session_ref: str
+    mode: OffRecordMode
+    backend: OffRecordBackendClass
+    entered_at: str
+    promoted_turns: list[str]
+    closing: bool
+class OffRecordSessionRequest(TypedDict):
+    session_ref: str
+class OffRecordWitnessRequest(TypedDict):
+    session_ref: str
+    turn: WitnessTurn
+    summary: NotRequired[str | None]
+class OffRecordClosed(TypedDict):
+    session_ref: str
+    turns_dropped: int
+    context_receipts_dropped: int
+    emit_receipts_dropped: int
+    emit_receipts_kept: int
+    promoted_turns_kept: int
+class OffRecordRecallRequest(TypedDict):
+    session_ref: str
+    query: str
+    limit: int
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):

@@ -147,6 +147,11 @@ vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown
 vaultResidencePrune(input: unknown): unknown
+vaultOffRecordStart(input: unknown): unknown
+vaultOffRecordStatus(input: unknown): unknown
+vaultOffRecordWitness(input: unknown): unknown
+vaultOffRecordDiscard(input: unknown): unknown
+vaultOffRecordRecall(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown

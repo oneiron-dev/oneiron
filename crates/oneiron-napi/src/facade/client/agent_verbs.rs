@@ -1057,6 +1057,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_off_record_start(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.start", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_witness(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.witness", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_discard(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.discard", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_recall(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.recall", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_records_erase_preview(
         &self,
         input: serde_json::Value,

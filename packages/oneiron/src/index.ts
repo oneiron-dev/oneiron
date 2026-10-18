@@ -618,6 +618,18 @@ export class Oneiron {
       /** Drops the opened-item caches one of the owner's machines last touched before a time. */
       prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruned => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruned),
     },
+    off_record: {
+      /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+      start: (input: Facade.OffRecordStartRequest): Facade.OffRecordSessionView => this.#call(() => this.#client.vaultOffRecordStart(input) as Facade.OffRecordSessionView),
+      /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+      status: (input: Facade.OffRecordSessionRequest): Facade.OffRecordSessionView => this.#call(() => this.#client.vaultOffRecordStatus(input) as Facade.OffRecordSessionView),
+      /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+      witness: (input: Facade.OffRecordWitnessRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultOffRecordWitness(input) as Facade.WitnessReceipt),
+      /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+      discard: (input: Facade.OffRecordSessionRequest): Facade.OffRecordClosed => this.#call(() => this.#client.vaultOffRecordDiscard(input) as Facade.OffRecordClosed),
+      /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+      recall: (input: Facade.OffRecordRecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultOffRecordRecall(input) as Facade.MemoryPack),
+    },
     records: {
       /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
       erase_preview: (input: Facade.RecordEraseRequest): Facade.RecordErasePreview => this.#call(() => this.#client.vaultRecordsErasePreview(input) as Facade.RecordErasePreview),

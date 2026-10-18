@@ -967,6 +967,8 @@ class Oneiron:
         @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs": ...
         @property
+        def off_record(self) -> "Oneiron._VaultOffRecordVerbs": ...
+        @property
         def records(self) -> "Oneiron._VaultRecordsVerbs": ...
         @property
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
@@ -1313,6 +1315,17 @@ class Oneiron:
             """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
         def prune(self, spec: Facade.ResidencePruneRequest) -> Facade.ResidencePruned:
             """Drops the opened-item caches one of the owner's machines last touched before a time."""
+    class _VaultOffRecordVerbs:
+        def start(self, spec: Facade.OffRecordStartRequest) -> Facade.OffRecordSessionView:
+            """The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it."""
+        def status(self, spec: Facade.OffRecordSessionRequest) -> Facade.OffRecordSessionView:
+            """The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing."""
+        def witness(self, spec: Facade.OffRecordWitnessRequest) -> Facade.WitnessReceipt:
+            """The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close."""
+        def discard(self, spec: Facade.OffRecordSessionRequest) -> Facade.OffRecordClosed:
+            """The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay."""
+        def recall(self, spec: Facade.OffRecordRecallRequest) -> Facade.MemoryPack:
+            """The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."""
     class _VaultRecordsVerbs:
         def erase_preview(self, spec: Facade.RecordEraseRequest) -> Facade.RecordErasePreview:
             """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
