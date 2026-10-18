@@ -162,6 +162,18 @@ pub(super) fn state_in(
     }
     fold(&rows)?.ok_or_else(|| invalid("unknown signing document"))
 }
+/// The document as its whole verified chain folds, its trail, and whether an
+/// event in it awaits its owner's answer: the read door's view, which shows a
+/// held document rather than refusing it.
+pub(super) fn read_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+) -> Result<(EsignState, Vec<EsignEventRow>, bool)> {
+    let (rows, held) = chain_in(vault, txn, document)?;
+    let state = fold(&rows)?.ok_or_else(|| invalid("unknown signing document"))?;
+    Ok((state, rows, held))
+}
 /// Whether an event of `document` awaits its owner's answer.
 pub(super) fn held_in(vault: &Vault, txn: &heed::RoTxn<'_>, document: EntityId) -> Result<bool> {
     Ok(chain_in(vault, txn, document)?.1)

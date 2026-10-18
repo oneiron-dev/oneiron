@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 309 facade rows, 1211 declarations.
-Inputs: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 314 facade rows, 1228 declarations.
+Inputs: 271 of 314 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 271 of 314 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
@@ -5463,6 +5463,121 @@ class EsignDraftView(TypedDict):
     project_ref: NotRequired[str | None]
     recipients: list[str]
     fields: int
+class EsignGetRequest(TypedDict):
+    document_ref: str
+DeliveryStatus = Literal["unsent", "sent", "viewed"]
+SigningStatus = Literal["waiting", "ready", "completed", "rejected"]
+AccessStatus = Literal["unverified", "verified"]
+class RecipientState(TypedDict):
+    delivery: DeliveryStatus
+    signing: SigningStatus
+    access: AccessStatus
+    expires_at: int
+class FieldValueText(TypedDict):
+    kind: Literal["text"]
+    value: str
+class FieldValueChecked(TypedDict):
+    kind: Literal["checked"]
+    value: bool
+class FieldValueSignatureContent(TypedDict):
+    image_ref: str
+class FieldValueSignature(TypedDict):
+    kind: Literal["signature"]
+    value: FieldValueSignatureContent
+FieldValue = FieldValueText | FieldValueChecked | FieldValueSignature
+class SignatureRow(TypedDict):
+    field: str
+    recipient: str
+    value: FieldValue
+    at: int
+class EsignEventDrafted(TypedDict):
+    event: Literal["drafted"]
+    document: EsignDocument
+class EsignEventSent(TypedDict):
+    event: Literal["sent"]
+class EsignEventViewed(TypedDict):
+    event: Literal["viewed"]
+    recipient: str
+class EsignEventFieldSaved(TypedDict):
+    event: Literal["field_saved"]
+    signature: SignatureRow
+class EsignEventSigned(TypedDict):
+    event: Literal["signed"]
+    recipient: str
+    next: NotRequired[str | None]
+class EsignEventDeclined(TypedDict):
+    event: Literal["declined"]
+    recipient: str
+    reason: str
+class EsignEventVoided(TypedDict):
+    event: Literal["voided"]
+    reason: str
+class EsignEventExpired(TypedDict):
+    event: Literal["expired"]
+    recipient: NotRequired[str | None]
+class EsignEventReminded(TypedDict):
+    event: Literal["reminded"]
+    recipient: str
+    rung: int
+class EsignEventSealed(TypedDict):
+    event: Literal["sealed"]
+    rejected: bool
+    item_sha256: list[list[int]]
+class EsignEventResealRequested(TypedDict):
+    event: Literal["reseal_requested"]
+    owner: str
+    authority: str
+EsignEvent = EsignEventDrafted | EsignEventSent | EsignEventViewed | EsignEventFieldSaved | EsignEventSigned | EsignEventDeclined | EsignEventVoided | EsignEventExpired | EsignEventReminded | EsignEventSealed | EsignEventResealRequested
+class EsignAuditActor(TypedDict):
+    actor: str
+    ip: NotRequired[str | None]
+    user_agent: NotRequired[str | None]
+class EsignEventRow(TypedDict):
+    sequence: int
+    previous_sha256: list[int]
+    event: EsignEvent
+    actor: EsignAuditActor
+    at: int
+class EsignDocumentView(TypedDict):
+    document_ref: str
+    status: DocumentStatus
+    awaits_owner_answer: bool
+    document: EsignDocument
+    recipients: dict[str, RecipientState]
+    signatures: list[SignatureRow]
+    rejection: NotRequired[str | None]
+    sealed_sha256: list[str]
+    audit: list[EsignEventRow]
+class EsignLinksIssueRequest(TypedDict):
+    document_ref: str
+    rotate: NotRequired[bool]
+class EsignIssuedLink(TypedDict):
+    recipient: str
+    email: str
+    capability: str
+class EsignLinksView(TypedDict):
+    document_ref: str
+    issued: list[EsignIssuedLink]
+    unchanged: list[str]
+class EsignDispatchRequest(TypedDict):
+    document_ref: str
+    recipient_count: int
+    on_behalf_of: NotRequired[str | None]
+    idempotency_key: NotRequired[str | None]
+class EsignDispatchView(TypedDict):
+    document_ref: str
+    verb: str
+    intent_ref: str
+    outcome: str
+    gate_outcome: str
+    gate_decision_ref: NotRequired[str | None]
+    gate_reason_codes: list[str]
+class EsignVoidRequest(TypedDict):
+    document_ref: str
+    recipient_count: int
+    reason: str
+    on_behalf_of: NotRequired[str | None]
+    idempotency_key: NotRequired[str | None]
 class CoreWriteTextField(TypedDict):
     field: str
     value: str

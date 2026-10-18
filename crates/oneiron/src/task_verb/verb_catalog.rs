@@ -315,6 +315,11 @@ pub enum AgentVerb {
     VaultClaimsAdmit,
     VaultArtifactsCreate,
     VaultEsignCreate,
+    VaultEsignGet,
+    VaultEsignLinksIssue,
+    VaultEsignSendForSignature,
+    VaultEsignRemind,
+    VaultEsignVoid,
     VaultConversationsCreate,
     VaultConversationsTurnsCreate,
     VaultConversationsRecordsAppend,
@@ -668,6 +673,11 @@ impl AgentVerb {
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
         Self::VaultEsignCreate,
+        Self::VaultEsignGet,
+        Self::VaultEsignLinksIssue,
+        Self::VaultEsignSendForSignature,
+        Self::VaultEsignRemind,
+        Self::VaultEsignVoid,
         Self::VaultConversationsCreate,
         Self::VaultConversationsTurnsCreate,
         Self::VaultConversationsRecordsAppend,
@@ -1028,6 +1038,11 @@ impl AgentVerb {
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
             Self::VaultEsignCreate => "vault.esign.create",
+            Self::VaultEsignGet => "vault.esign.get",
+            Self::VaultEsignLinksIssue => "vault.esign.links.issue",
+            Self::VaultEsignSendForSignature => "vault.esign.send_for_signature",
+            Self::VaultEsignRemind => "vault.esign.remind",
+            Self::VaultEsignVoid => "vault.esign.void",
             Self::VaultConversationsCreate => "vault.conversations.create",
             Self::VaultConversationsTurnsCreate => "vault.conversations.turns.create",
             Self::VaultConversationsRecordsAppend => "vault.conversations.records.append",
@@ -1342,6 +1357,11 @@ impl AgentVerb {
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
+                | Self::VaultEsignGet
+                | Self::VaultEsignLinksIssue
+                | Self::VaultEsignSendForSignature
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -1702,6 +1722,11 @@ impl AgentVerb {
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
+                | Self::VaultEsignGet
+                | Self::VaultEsignLinksIssue
+                | Self::VaultEsignSendForSignature
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2120,6 +2145,11 @@ impl AgentVerb {
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
+                | Self::VaultEsignGet
+                | Self::VaultEsignLinksIssue
+                | Self::VaultEsignSendForSignature
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2351,6 +2381,10 @@ impl AgentVerb {
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
+                | Self::VaultEsignLinksIssue
+                | Self::VaultEsignSendForSignature
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2721,6 +2755,11 @@ impl AgentVerb {
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
+            Self::VaultEsignGet => &["spec"],
+            Self::VaultEsignLinksIssue => &["spec"],
+            Self::VaultEsignSendForSignature => &["spec"],
+            Self::VaultEsignRemind => &["spec"],
+            Self::VaultEsignVoid => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
             Self::VaultConversationsRecordsAppend => &["spec"],
@@ -3075,6 +3114,11 @@ impl AgentVerb {
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
+            Self::VaultEsignGet => &["spec"],
+            Self::VaultEsignLinksIssue => &["spec"],
+            Self::VaultEsignSendForSignature => &["spec"],
+            Self::VaultEsignRemind => &["spec"],
+            Self::VaultEsignVoid => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
             Self::VaultConversationsRecordsAppend => &["spec"],
@@ -3939,6 +3983,21 @@ impl AgentVerb {
             }
             Self::VaultEsignCreate => {
                 "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."
+            }
+            Self::VaultEsignGet => {
+                "Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail."
+            }
+            Self::VaultEsignLinksIssue => {
+                "The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."
+            }
+            Self::VaultEsignSendForSignature => {
+                "Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope."
+            }
+            Self::VaultEsignRemind => {
+                "Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller."
+            }
+            Self::VaultEsignVoid => {
+                "Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller."
             }
             Self::VaultConversationsCreate => {
                 "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."

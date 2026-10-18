@@ -302,6 +302,11 @@ vaultHabitsCheckin(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
 vaultEsignCreate(input: unknown): unknown
+vaultEsignGet(input: unknown): unknown
+vaultEsignLinksIssue(input: unknown): unknown
+vaultEsignSendForSignature(input: unknown): unknown
+vaultEsignRemind(input: unknown): unknown
+vaultEsignVoid(input: unknown): unknown
 vaultConversationsCreate(input: unknown): unknown
 vaultConversationsTurnsCreate(input: unknown): unknown
 vaultConversationsRecordsAppend(input: unknown): unknown
