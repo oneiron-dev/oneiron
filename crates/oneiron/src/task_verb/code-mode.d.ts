@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 562 code-mode rows (541 host rows, 21 run rows), 1975 declarations.
-// Replies: 495 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 570 code-mode rows (549 host rows, 21 run rows), 1986 declarations.
+// Replies: 503 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1887,6 +1887,18 @@ declare namespace Sdk {
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
   type NoteAuthorship = { operation: string; actor: string; actor_class: string; grant?: string | null; command_hash: number[] };
   type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean };
+  type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
+  type NoteForkRequest = { note_ref: string; base: NoteVersion; edit: NoteEdit; reason?: string | null };
+  type NoteForkRecordView = { note_ref: string; fork_ref: string; parent: string; frontier: number[]; actor?: string | null; rewrite: boolean; proposal_ref?: string | null; decided: boolean };
+  type NoteForkView = { record: NoteForkRecordView; markdown?: string | null };
+  type NoteForkReadRequest = { note_ref: string; fork_ref: string; reason?: string | null };
+  type NoteProposalForkRef = { note_ref: string; fork_ref: string };
+  type NoteProposalOpenRequest = { forks: NoteProposalForkRef[]; explainer: string; reason?: string | null };
+  type NoteVerdict = "Merge" | "Switch" | "Reject";
+  type NoteLandingView = { receipt: string; note_ref: string; fork_ref: string; previous_head: string; head: string; verdict: NoteVerdict; actor?: string | null; at: number };
+  type NoteProposalView = { proposal_ref: string; waiting: NoteForkView[]; landed: NoteLandingView[]; explainer: string };
+  type NoteProposalRequest = { proposal_ref: string; reason?: string | null };
+  type NoteVersionTree = { version: NoteVersion; birth_author: string; born_at: number; forks: NoteForkRecordView[]; receipts: NoteLandingView[] };
   type NoteHistoryPurgeRequest = { note_ref: string };
   type NoteHistoryPurgeReceipt = { receipt: string; entity: string; document: string; actor?: string | null; requested: number[]; applied: number[]; at: number; live_text_hash: number[] };
   type NoteHistoryPurgeOutcome = { state: "erased"; receipt: NoteHistoryPurgeReceipt } | { state: "waiting"; note_ref: string; act_id: string };
@@ -1894,7 +1906,6 @@ declare namespace Sdk {
   type NoteEditorBinding = { binding: string; note: NoteReadView };
   type NoteEditorCloseRequest = { binding: string };
   type NoteEditorClosed = { closed: boolean };
-  type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
   type EditNoteRequest = { note_ref: string; edit: NoteEdit };
   type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
   type NoteRefRequest = { note_ref: string };
@@ -2916,6 +2927,12 @@ declare const vault: Sdk.VaultHost & {
       /** Closes one live NOTE editor held by this caller; a binding id alone grants no authority. */
       close(input: Sdk.NoteEditorCloseRequest): Promise<Sdk.NoteEditorClosed | StoredResult>;
     };
+    /** Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head. */
+    fork(input: Sdk.NoteForkRequest): Promise<Sdk.NoteForkView | StoredResult>;
+    forks: {
+      /** Reads a NOTE fork and its retained pending text through the same scoped, reason-logged read as the live NOTE. */
+      read(input: Sdk.NoteForkReadRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteForkView | null> | StoredResult>;
+    };
     /** Creates a NOTE of a registered kind from an existing entity. */
     from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
@@ -2928,12 +2945,26 @@ declare const vault: Sdk.VaultHost & {
     history_purge_receipts(input: Sdk.NoteHistoryPurgeRequest): Promise<Sdk.NoteHistoryPurgeReceipt[] | StoredResult>;
     /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
     lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.NoteLifecycleView | StoredResult>;
+    proposals: {
+      /** Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts. */
+      merge(input: Sdk.NoteProposalRequest): Promise<Sdk.NoteProposalView | StoredResult>;
+      /** Opens one explicit set of NOTE forks with its shared explainer; the engine routes each member under the caller's own existing grants. */
+      open(input: Sdk.NoteProposalOpenRequest): Promise<Sdk.NoteProposalView | StoredResult>;
+      /** Reads an entire NOTE proposal set, its pending fork text, explainer and head-move receipts only when every member is readable. */
+      read(input: Sdk.NoteProposalRequest): Promise<Sdk.NoteProposalView | StoredResult>;
+      /** Rejects the complete NOTE proposal set under the caller's existing NOTE grants, dropping pending text without changing live heads. */
+      reject(input: Sdk.NoteProposalRequest): Promise<Sdk.NoteProposalView | StoredResult>;
+      /** Accepts the complete NOTE proposal set by explicit switch under the caller's existing NOTE grants, recording every head move. */
+      switch(input: Sdk.NoteProposalRequest): Promise<Sdk.NoteProposalView | StoredResult>;
+    };
     /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
     read(input: Sdk.NoteReadRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteReadView | null> | StoredResult>;
     /** Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays. */
     seal(input: Sdk.NoteRefRequest): Promise<Sdk.NoteSeal | StoredResult>;
     /** Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check. */
     set_overrides(input: Sdk.SetNoteOverridesRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
+    /** Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts. */
+    version_tree(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteVersionTree | null> | StoredResult>;
   };
   off_record: {
     claims: {

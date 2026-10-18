@@ -89,7 +89,7 @@ pub struct NoteFork {
     pub proposal: Option<EntityId>,
     pub decided: bool,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum NoteVerdict {
     Merge,
     Switch,
@@ -279,7 +279,7 @@ pub(super) fn remember_fork(
         note: parent.note,
         fork: fork.head,
         parent: parent.head,
-        frontier: Vec::new(),
+        frontier: parent.doc.state_frontiers().encode(),
         recovery_merge: (!rewrite).then(|| (parent.text(), fork.text())),
         actor: NoteActor::Actor(actor),
         rewrite,
@@ -458,6 +458,16 @@ impl Vault {
         edit: &NoteProgramEdit,
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
+        self.fork_note_at_version(note, None, edit, actor)
+    }
+
+    pub(crate) fn fork_note_at_version(
+        &self,
+        note: EntityId,
+        base: Option<&super::NoteVersion>,
+        edit: &NoteProgramEdit,
+        actor: WriteActor,
+    ) -> MemoryResult<EntityId> {
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn| {
@@ -465,6 +475,10 @@ impl Vault {
                     super::verbs::note_core(self, txn, note)?;
                     let parent =
                         load_doc(self, txn, note)?.ok_or(invalid("note has no document"))?;
+                    let parent = match base {
+                        Some(base) => parent.at_version(base)?,
+                        None => parent,
+                    };
                     let fork_doc = parent
                         .doc
                         .fork_at(&parent.doc.state_frontiers())

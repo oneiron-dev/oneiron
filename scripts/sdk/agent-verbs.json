@@ -8774,6 +8774,165 @@
       "openapi": true
     },
     {
+      "name": "vault.notes.fork",
+      "description": "Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head.",
+      "input": "crate::note::NoteForkRequest",
+      "output": "crate::note::NoteForkView",
+      "call": "memory.fork_note(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true,
+      "refs": [
+        "/note_ref"
+      ],
+      "prose_links": [
+        "/edit/text"
+      ]
+    },
+    {
+      "name": "vault.notes.forks.read",
+      "description": "Reads a NOTE fork and its retained pending text through the same scoped, reason-logged read as the live NOTE.",
+      "input": "crate::note::NoteForkReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteForkView>>",
+      "call": "memory.read_note_fork(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.proposals.open",
+      "description": "Opens one explicit set of NOTE forks with its shared explainer; the engine routes each member under the caller's own existing grants.",
+      "input": "crate::note::NoteProposalOpenRequest",
+      "output": "crate::note::NoteProposalView",
+      "call": "memory.open_note_proposal(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true,
+      "refs": [
+        "/forks/*/note_ref"
+      ],
+      "prose_links": [
+        "/explainer"
+      ]
+    },
+    {
+      "name": "vault.notes.proposals.read",
+      "description": "Reads an entire NOTE proposal set, its pending fork text, explainer and head-move receipts only when every member is readable.",
+      "input": "crate::note::NoteProposalRequest",
+      "output": "crate::note::NoteProposalView",
+      "call": "memory.read_note_proposal(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.proposals.merge",
+      "description": "Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts.",
+      "input": "crate::note::NoteProposalRequest",
+      "output": "crate::note::NoteProposalView",
+      "call": "memory.settle_note_proposal(&input, crate::note::NoteVerdict::Merge)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.proposals.switch",
+      "description": "Accepts the complete NOTE proposal set by explicit switch under the caller's existing NOTE grants, recording every head move.",
+      "input": "crate::note::NoteProposalRequest",
+      "output": "crate::note::NoteProposalView",
+      "call": "memory.settle_note_proposal(&input, crate::note::NoteVerdict::Switch)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.proposals.reject",
+      "description": "Rejects the complete NOTE proposal set under the caller's existing NOTE grants, dropping pending text without changing live heads.",
+      "input": "crate::note::NoteProposalRequest",
+      "output": "crate::note::NoteProposalView",
+      "call": "memory.settle_note_proposal(&input, crate::note::NoteVerdict::Reject)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.version_tree",
+      "description": "Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts.",
+      "input": "crate::note::NoteAccessRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteVersionTree>>",
+      "call": "memory.note_version_tree(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
       "name": "vault.notes.history_purge",
       "description": "The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action.",
       "input": "crate::task_verb::sdk::NoteHistoryPurgeRequest",

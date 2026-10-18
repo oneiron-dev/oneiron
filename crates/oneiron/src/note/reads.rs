@@ -154,7 +154,7 @@ impl Memory<'_> {
             note_ref: input.note_ref.clone(),
             reason: input.reason.clone(),
         };
-        self.project_note_read(&access, |doc| {
+        self.project_note_read(&access, |_, doc| {
             let selected = match &input.version {
                 Some(version) => doc.at_version(version)?,
                 None => doc,
@@ -169,7 +169,7 @@ impl Memory<'_> {
         &self,
         input: &NoteAccessRequest,
     ) -> MemoryResult<ScopedReadResult<Option<NoteHistoryView>>> {
-        self.project_note_read(input, |doc| {
+        self.project_note_read(input, |_, doc| {
             let complete = !doc.doc.is_shallow();
             Ok(NoteHistoryView {
                 version: doc.version(),
@@ -184,10 +184,10 @@ impl Memory<'_> {
         })
     }
 
-    fn project_note_read<T: Serialize + serde::de::DeserializeOwned>(
+    pub(super) fn project_note_read<T: Serialize + serde::de::DeserializeOwned>(
         &self,
         input: &NoteAccessRequest,
-        project: impl FnOnce(NoteDocument) -> MemoryResult<T>,
+        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument) -> MemoryResult<T>,
     ) -> MemoryResult<ScopedReadResult<Option<T>>> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let note = match crate::memory::resolve_entity_ref(self.vault(), &input.note_ref) {
@@ -234,7 +234,7 @@ impl Memory<'_> {
             {
                 return Ok((None, gate));
             }
-            let view = project(live_doc(self.vault(), txn, note)?)?;
+            let view = project(txn, live_doc(self.vault(), txn, note)?)?;
             let value =
                 serde_json::to_value(&view).map_err(|_| invalid("NOTE read view encoding"))?;
             let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(

@@ -88,6 +88,12 @@ mod lifecycle;
 pub(crate) mod recovery;
 pub(crate) mod storage;
 pub(crate) use kinds::validate_registered_kind;
+mod proposal_doors;
+pub use proposal_doors::{
+    NoteForkReadRequest, NoteForkRecordView, NoteForkRequest, NoteForkView, NoteLandingView,
+    NoteProposalForkRef, NoteProposalOpenRequest, NoteProposalRequest, NoteProposalView,
+    NoteVersionTree,
+};
 mod proposals;
 mod tombstone_review;
 mod verbs;
