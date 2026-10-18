@@ -40,7 +40,12 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: RecordEraseSweepRequest,
     ) -> MemoryResult<Option<RecordEraseSweep>> {
-        let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         let actor = owner.revalidate_in_txn(self.vault, &txn)?;
         if actor != self.actor {
             return Err(MemoryError::new(
@@ -70,12 +75,8 @@ impl Memory<'_> {
         let sweep_complete_at = if receipt.sweep_complete_at.is_some() {
             receipt.sweep_complete_at
         } else {
-            let completed = redaction_sweep_completion_in_txn(
-                &self.vault.store,
-                &txn,
-                &receipt_id,
-                &receipt,
-            )?;
+            let completed =
+                redaction_sweep_completion_in_txn(&self.vault.store, &txn, &receipt_id, &receipt)?;
             if completed.is_some() {
                 self.produced_from([redaction_sweep_completion_id(&receipt_id)?]);
             }

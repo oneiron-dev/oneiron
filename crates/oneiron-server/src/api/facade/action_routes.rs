@@ -405,7 +405,8 @@ pub(super) async fn execute_result_set_action(
         move |executor, vault, writer, binding| {
             executor.execute_ui_bound(vault, writer, &event, &key, binding)
         },
-    ).await
+    )
+    .await
 }
 
 /// Runs `run` on a blocking thread with the app's table, the vault, the
@@ -437,8 +438,9 @@ where
         surface,
         live_run,
     } = bound;
-    let door: Arc<dyn AgentVerbDoor> =
-        Arc::new(FacadeRowDoor::new(server, headers, extensions, key, credential));
+    let door: Arc<dyn AgentVerbDoor> = Arc::new(FacadeRowDoor::new(
+        server, headers, extensions, key, credential,
+    ));
     let executor = app()?;
     // OF-181: the live run's guard, waited for briefly while an entry or
     // another action holds it, taken before the action and held through it,
@@ -790,14 +792,15 @@ impl FacadeRowDoor {
             self.runtime.spawn(async move {
                 let invocation = invocation.to_hex();
                 let context = super::FacadeCall::bound(&auth, None, Some(&invocation), None);
-                let answer = super::call_verb(&server, &context, call.verb.as_str(), Ok(call.input))
-                    .await
-                    .map(|answer| answer.value)
-                    .map_err(|error| AgentVerbRefusalWords {
-                        code: error.body.error.code,
-                        message: error.body.error.message,
-                        suggestions: error.body.error.suggestions,
-                    });
+                let answer =
+                    super::call_verb(&server, &context, call.verb.as_str(), Ok(call.input))
+                        .await
+                        .map(|answer| answer.value)
+                        .map_err(|error| AgentVerbRefusalWords {
+                            code: error.body.error.code,
+                            message: error.body.error.message,
+                            suggestions: error.body.error.suggestions,
+                        });
                 let _ = sender.send(answer);
             });
             let output = receiver.recv().map_err(|_| refused())?.map_err(|row| {
@@ -848,15 +851,18 @@ impl AgentVerbDoor for FacadeRowDoor {
     }
 
     /// The typed actions keep their own ceiling and owner proof; this door
-    /// adds nothing to them. A search reads on the credential's lane, and an
-    /// edge's target is placed only when that lane reads it (DEC-0005).
+    /// adds nothing to them. A search reads on the credential's lane, an
+    /// edge's target is placed only when that lane reads it, and a consult
+    /// lands only refs that lane reads (DEC-0005).
     fn admit_run_call(
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         Ok(matches!(
             call,
-            RunCall::Bridge(SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge)
+            RunCall::Bridge(
+                SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge | SelfEffect::ConsultResult
+            )
         )
         .then(|| self.read_key.clone()))
     }

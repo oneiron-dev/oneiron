@@ -1195,6 +1195,81 @@
       "openapi": true
     },
     {
+      "name": "vault.retrieval.hyde.configure",
+      "description": "The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work.",
+      "input": "crate::query_expansion::host::HydeHostConfigureRequest",
+      "output": "crate::query_expansion::host::HydeHostConfiguration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.retrieval.hyde.configure\", &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.hyde.get",
+      "description": "The owner reads the serving host HyDE binding, grounding and bounded retry options.",
+      "input": "EmptyRequest",
+      "output": "crate::query_expansion::host::HydeHostConfiguration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.retrieval.hyde.get\", &_input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.hyde.pending",
+      "description": "Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing.",
+      "input": "crate::query_expansion::host::HydeHostPendingRequest",
+      "output": "Vec<crate::query_expansion::host::HydeHostWork>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.retrieval.hyde.pending\", &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.hyde.complete",
+      "description": "Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded.",
+      "input": "crate::query_expansion::host::HydeHostCompleteRequest",
+      "output": "crate::query_expansion::host::HydeHostReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.retrieval.hyde.complete\", &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.hyde.receipt",
+      "description": "Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline.",
+      "input": "crate::query_expansion::host::HydeHostReceiptRequest",
+      "output": "Option<crate::query_expansion::host::HydeHostReceipt>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.retrieval.hyde.receipt\", &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.affect.annotations.put",
       "description": "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval.",
       "input": "crate::memory::affect::AffectAnnotationPut",
@@ -6496,6 +6571,54 @@
       "section": false
     },
     {
+      "name": "host.compact",
+      "description": "Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint.",
+      "input": "crate::runtime_hooks::host_doors::HostCompactRequest",
+      "output": "crate::runtime_hooks::host_doors::HostCompactResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"host.compact\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "host.wake",
+      "description": "Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes.",
+      "input": "crate::runtime_hooks::host_doors::HostWakeRequest",
+      "output": "crate::runtime_hooks::host_doors::HostWakeResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"host.wake\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "host.budget.hit",
+      "description": "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work.",
+      "input": "crate::runtime_hooks::host_doors::HostBudgetHitRequest",
+      "output": "crate::runtime_hooks::host_doors::HostBudgetHitResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"host.budget.hit\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.hooks.replay",
       "description": "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands.",
       "input": "crate::task_verb::sdk::HooksReplayRequest",
@@ -9611,7 +9734,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.voices.packs.put",
@@ -10837,6 +10961,79 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.ics.configure",
+      "description": "Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent.",
+      "input": "crate::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest",
+      "output": "crate::calendar::ingest::feed_door::CalendarIcsFeedRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.ics.configure\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.ics.poll",
+      "description": "Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence.",
+      "input": "crate::calendar::ingest::feed_door::CalendarIcsFeedRequest",
+      "output": "crate::calendar::ingest::feed_door::CalendarIcsPollCompletion",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.ics.poll\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.ics.status",
+      "description": "Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL.",
+      "input": "crate::calendar::ingest::feed_door::CalendarIcsFeedRequest",
+      "output": "Option<crate::calendar::ingest::feed_door::CalendarIcsFeedStatus>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.ics.status\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.calendar.passports.read",
+      "description": "Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence.",
+      "input": "crate::calendar::query::passport::CalendarPassportReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::calendar::query::passport::CalendarPassportRevision>>",
+      "call": "memory.calendar_passport_read(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.calendar.passports.history",
+      "description": "Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate.",
+      "input": "crate::calendar::query::passport::CalendarPassportReadRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::query::passport::CalendarPassportRevision>>",
+      "call": "memory.calendar_passport_history(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
@@ -12517,6 +12714,81 @@
       "section": false
     },
     {
+      "name": "vault.sieve.evidence",
+      "description": "Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner.",
+      "input": "crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest",
+      "output": "crate::dreamer_wake::sieve_evidence::SieveEvidenceView",
+      "call": "crate::dreamer_wake::sieve_evidence::evidence_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.evidence\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.evidence.replay",
+      "description": "Replay the same stored TURN through its owed sieve read under the owner proof; preserve every ingress identity and let the existing digest check decide whether evidence changed.",
+      "input": "crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest",
+      "output": "crate::dreamer_wake::sieve_evidence::SieveEvidenceView",
+      "call": "crate::dreamer_wake::sieve_evidence::replay_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.evidence.replay\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.cadence",
+      "description": "Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model.",
+      "input": "crate::dreamer_wake::WakeCadenceRequest",
+      "output": "crate::dreamer_wake::WakeCadenceView",
+      "call": "crate::dreamer_wake::cadence_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.cadence\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.settlements",
+      "description": "Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks.",
+      "input": "crate::dreamer_runner::observation::WakeSettlementsRequest",
+      "output": "crate::dreamer_runner::observation::WakeSettlementsPage",
+      "call": "crate::dreamer_runner::observation::settlements_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.settlements\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.settlements.get",
+      "description": "Read one shared-scheduler root and its complete descendant settlement; a completed dispatcher never implies its children completed.",
+      "input": "crate::dreamer_runner::observation::WakeSettlementRequest",
+      "output": "Option<crate::dreamer_runner::observation::WakeSettlementView>",
+      "call": "crate::dreamer_runner::observation::settlement_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.settlements.get\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.sieve.queue",
       "description": "The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed.",
       "input": "crate::dreamer_wake::sieve_doors::SievePageRequest",
@@ -13970,6 +14242,14 @@
       }
     },
     {
+      "name": "tasks.consult.result",
+      "input": "crate::task_verb::run_doors::ConsultLandRequest",
+      "output": "crate::task_verb::run_doors::ConsultLandReply",
+      "scope": "Write",
+      "context": "run",
+      "effect": "ConsultResult"
+    },
+    {
       "name": "tasks.refuse",
       "input": "crate::code_run::TaskRefuseInput",
       "output": "crate::code_run::TaskRefuseOutput",
@@ -14204,6 +14484,156 @@
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.identity.merge",
+      "description": "The owner merges source identities into a survivor, retaining claim subjects and append-only evidence.",
+      "input": "crate::task_verb::sdk::IdentityMergeRequest",
+      "output": "crate::task_verb::sdk::IdentityTopologyResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.merge\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.identity.split",
+      "description": "The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map.",
+      "input": "crate::task_verb::sdk::IdentitySplitRequest",
+      "output": "crate::task_verb::sdk::IdentityTopologyResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.split\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.identity.facet",
+      "description": "The owner mints identity facets and forks assigned claims under their masks without restamping original claims.",
+      "input": "crate::task_verb::sdk::IdentityFacetRequest",
+      "output": "crate::task_verb::sdk::IdentityTopologyResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.facet\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.identity.assert_distinct",
+      "description": "The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals.",
+      "input": "crate::task_verb::sdk::IdentityAssertDistinctRequest",
+      "output": "crate::task_verb::sdk::IdentityTopologyResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.assert_distinct\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.identity.propose",
+      "description": "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals.",
+      "input": "crate::task_verb::sdk::IdentityProposeRequest",
+      "output": "crate::task_verb::sdk::IdentityTopologyResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.propose\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.identity.undo",
+      "description": "The owner undoes one current topology event by appending a counter-event under its observed revision.",
+      "input": "crate::task_verb::sdk::IdentityUndoRequest",
+      "output": "crate::task_verb::sdk::IdentityTopologyResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.undo\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.identity.resolve",
+      "description": "The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments.",
+      "input": "crate::task_verb::sdk::IdentityEntityRequest",
+      "output": "crate::task_verb::sdk::IdentityResolution",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.resolve\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.identity.events.get",
+      "description": "The owner reads one topology decision with its actor, evidence, action and current decision revision.",
+      "input": "crate::task_verb::sdk::IdentityEventRequest",
+      "output": "crate::task_verb::sdk::IdentityTopologyReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.events.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.identity.proposals.resolve",
+      "description": "The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision.",
+      "input": "crate::task_verb::sdk::IdentityProposalResolveRequest",
+      "output": "crate::task_verb::sdk::IdentityProposalResolutionResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.proposals.resolve\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.identity.proposals.for_pair",
+      "description": "The owner reads open merge proposals and effective distinctness claims for an unordered identity pair.",
+      "input": "crate::task_verb::sdk::IdentityPairRequest",
+      "output": "crate::task_verb::sdk::IdentityPairProposals",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.proposals.for_pair\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },

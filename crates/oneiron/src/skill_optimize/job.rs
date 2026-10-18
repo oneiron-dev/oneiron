@@ -359,22 +359,30 @@ pub(crate) fn propose_skill_repair_in_txn(
         ));
     }
     use crate::ports::EntityStoreRead;
-    for id in vault.store.port_entity_ids_by_type(wtxn, crate::registry::ENTITY_TYPE_SKILL, None)? {
+    for id in vault
+        .store
+        .port_entity_ids_by_type(wtxn, crate::registry::ENTITY_TYPE_SKILL, None)?
+    {
         let id = id?;
         let Some(other) = vault.get_skill_record_in_txn(wtxn, &id)? else {
             continue;
         };
         if matches!(&other.provenance, Value::Map(fields) if
             fields.iter().any(|(key, value)| key.as_str() == Some(PROVENANCE_OPTIMIZE_ATTEMPT_KEY)
-                && value.as_str() == Some(bytes_to_hex_lower(stamp.attempt.as_bytes()).as_str()))) {
-            return Err(invalid("this drafting attempt already landed an optimizer proposal"));
+                && value.as_str() == Some(bytes_to_hex_lower(stamp.attempt.as_bytes()).as_str())))
+        {
+            return Err(invalid(
+                "this drafting attempt already landed an optimizer proposal",
+            ));
         }
         if other.lifecycle_status == SkillLifecycle::Candidate
             && other.approval_status == ClaimApprovalStatus::Proposed
             && other.skill_id == target.skill_id
             && crate::skill::resident_of(&other)? == stamp.resident
         {
-            return Err(invalid("the optimization target already has an open proposed revision"));
+            return Err(invalid(
+                "the optimization target already has an open proposed revision",
+            ));
         }
     }
     let mut record = proposal_record(
@@ -424,7 +432,10 @@ pub(crate) fn propose_skill_repair_in_txn(
 /// An explicit candidate submitted by the owner against one fixed baseline.
 /// A real queued optimize attempt proves its cycle; the owner, not the Coach,
 /// is its author stamp. It remains an ordinary generated, proposed candidate.
-#[expect(clippy::too_many_arguments, reason = "the candidate binds its baseline, drafting cycle and text")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the candidate binds its baseline, drafting cycle and text"
+)]
 pub(crate) fn propose_skill_edit_as_owner(
     vault: &Vault,
     owner: &crate::consent::AuthenticatedOwner,
@@ -438,20 +449,26 @@ pub(crate) fn propose_skill_edit_as_owner(
     let now = vault.now_recorded_at();
     let brief = skill_repair_brief(vault, skill, now)?;
     if brief.version != expected_version {
-        return Err(invalid("the submitted candidate's baseline version changed"));
+        return Err(invalid(
+            "the submitted candidate's baseline version changed",
+        ));
     }
     let proposal = vault.store.clock.entity_id()?;
     vault.with_write_txn_grouped(|txn| {
         let principal = owner.revalidate_in_txn(vault, txn)?;
-        let queued = AttemptQueue::new(vault).get_in_txn(txn, attempt)?
-            .ok_or(invalid("a submitted candidate needs a stored optimize attempt"))?;
+        let queued = AttemptQueue::new(vault)
+            .get_in_txn(txn, attempt)?
+            .ok_or(invalid(
+                "a submitted candidate needs a stored optimize attempt",
+            ))?;
         if queued.kind != crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND {
-            return Err(invalid("a submitted candidate needs a skill_optimize attempt"));
+            return Err(invalid(
+                "a submitted candidate needs a skill_optimize attempt",
+            ));
         }
         let cycle = proven_cycle_in_txn(vault, txn, attempt)?;
-        let actor = crate::write_envelope::WriteActor::new(
-            principal, crate::edge::EdgeActorClass::Human,
-        );
+        let actor =
+            crate::write_envelope::WriteActor::new(principal, crate::edge::EdgeActorClass::Human);
         let target = vault.read_skill_record_in_txn(txn, skill)?;
         let stamp = SkillRepairStamp {
             actor,
@@ -462,8 +479,18 @@ pub(crate) fn propose_skill_edit_as_owner(
             resident: crate::skill::resident_of(&target)?,
         };
         propose_skill_repair_in_txn(
-            vault, txn, &brief, desc, rationale, &stamp, &proposal,
-            TimeRange { start: now, end: now }, now,
+            vault,
+            txn,
+            &brief,
+            desc,
+            rationale,
+            &stamp,
+            &proposal,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
         )?;
         Ok(proposal)
     })

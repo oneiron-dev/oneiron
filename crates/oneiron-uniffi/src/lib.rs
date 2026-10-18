@@ -55,11 +55,11 @@ pub use dto::{
     EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits,
     MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit,
     NeighborHits, NeighborOpts, OpenOptions, OutboundDraftInput, OutboundIntentReceipt, Paired,
-    PendingWrite,
-    QueryAffect, QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallScope, RecordRefusal,
-    RefusalReason, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
-    SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec, StructuralPutInput, TemporalHint,
-    TextIndexField, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    PendingWrite, QueryAffect, QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallScope,
+    RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta,
+    RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec, StructuralPutInput,
+    TemporalHint, TextIndexField, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt,
+    WitnessTurn,
 };
 #[cfg(feature = "engine")]
 pub use embedded_engine::{
@@ -226,10 +226,11 @@ impl Oneiron {
     /// Sends one event on a lens card the connected server rendered
     /// (OF-181).
     ///
-    /// `request` is the route's `{event, idempotencyKey}` body as one JSON
-    /// value, camelCase as the wire spells it; the reply is its wire JSON,
-    /// `{"$state": ...}` for a local action or `{outcome, readReceipt}` for a
-    /// deterministic tool. A card the server no longer holds fails
+    /// `request` is the route's `{event, idempotencyKey}` body as its
+    /// generated record; the reply is the generated `LensFrameEventReply`:
+    /// `Local` (the card's new `$state`) for a local action, `Tool`
+    /// (`outcome`, `readReceipt`) for a deterministic tool, or `Callback` for
+    /// a model round trip. A card the server no longer holds fails
     /// `NOT_FOUND`: render the lens again. An embedded handle fails
     /// `BAD_REQUEST`: lens frames live on the served host that rendered the
     /// card, so render the lens through `EmbeddedEngine.client(key:)` (or a
@@ -237,20 +238,20 @@ impl Oneiron {
     pub fn lens_frame_event(
         &self,
         card_id: String,
-        request: WireJson,
-    ) -> Result<WireJson, OneironError> {
+        request: LensFrameEventRequest,
+    ) -> Result<LensFrameEventReply, OneironError> {
         let request: oneiron_remote::LensFrameEventRequest =
-            codec::decode("lens_frame_event", &request)?;
+            codec::lower_record("lens_frame_event", request)?;
         let reply = self.inner.lens_frame_event(&card_id, &request)?;
-        codec::encode("lens_frame_event", &reply)
+        codec::lift_record("lens_frame_event", &reply)
     }
 
     /// Closes a lens card the connected server rendered and frees its frame
-    /// (OF-181); the reply is the route's `{closed}`. An embedded handle
-    /// fails `BAD_REQUEST`.
-    pub fn close_lens_frame(&self, card_id: String) -> Result<WireJson, OneironError> {
+    /// (OF-181); the reply is the route's `{closed}` as its generated record.
+    /// An embedded handle fails `BAD_REQUEST`.
+    pub fn close_lens_frame(&self, card_id: String) -> Result<CloseLensFrameReply, OneironError> {
         let reply = self.inner.close_lens_frame(&card_id)?;
-        codec::encode("close_lens_frame", &reply)
+        codec::lift_record("close_lens_frame", &reply)
     }
 }
 
