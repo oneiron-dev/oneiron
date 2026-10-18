@@ -6,7 +6,6 @@
 use std::collections::BTreeMap;
 
 use rmpv::Value;
-use sha2::{Digest, Sha256};
 
 use super::codec::{decode_value, encode_value, invalid, map_entry, map_str};
 use super::ledger::{
@@ -41,7 +40,8 @@ fn invocation_prefix(skill: &EntityId, receipt: &str) -> Result<Vec<u8>> {
 /// per caller step. The first write proves execution began; the second proves
 /// its return contract passed. A pack manifest by itself never proves either
 /// fact, and a step already bound to one executor cannot be re-credited to
-/// another.
+/// another. `result` is the SHA-256 of an answer that passed, digested as it
+/// streamed: no whole answer is kept for its credit.
 pub(crate) fn record_callable_invocation(
     vault: &Vault,
     leased: &AttemptRecord,
@@ -49,7 +49,7 @@ pub(crate) fn record_callable_invocation(
     executor: &str,
     version: &str,
     seq: u64,
-    result: Option<&str>,
+    result: Option<&[u8; 32]>,
 ) -> Result<()> {
     validate_executor(executor)?;
     let succeeded = result.is_some();
@@ -99,9 +99,7 @@ pub(crate) fn record_callable_invocation(
             (Value::from("success"), Value::Boolean(succeeded)),
             (
                 Value::from("resultDigest"),
-                result.map_or(Value::Nil, |text| {
-                    Value::from(bytes_to_hex_lower(&Sha256::digest(text.as_bytes())))
-                }),
+                result.map_or(Value::Nil, |digest| Value::from(bytes_to_hex_lower(digest))),
             ),
         ]))?;
         INVOCATIONS.put(&vault.store, txn, &binding, &encoded)?;

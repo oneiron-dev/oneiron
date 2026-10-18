@@ -187,7 +187,6 @@ impl WasmtimeComponentRuntime {
             random_counter: 0,
             message_bytes: budget.message_bytes,
             held: HeldOutput::default(),
-            held_limit: budget.memory_bytes,
             output_failure: None,
             cancel,
         };
@@ -409,7 +408,6 @@ struct Bridge<'a> {
     random_counter: u64,
     message_bytes: usize,
     held: HeldOutput,
-    held_limit: usize,
     output_failure: Option<Error>,
     /// This step's token. Every host operation the bridge admits reads it
     /// before and after, and a call that runs a step of its own runs that
@@ -436,28 +434,20 @@ impl StreamTarget {
     }
 }
 
-/// The streamed result of a step whose host keeps no body store (a probe, a
-/// callable skill's JSON answer), held for its outcome within the
-/// component's memory budget.
+/// The streamed result of a step whose host keeps no body store (a probe),
+/// held for its outcome. A host whose answer may be large takes its frames
+/// itself (a callable skill spools its own); nothing here refuses for size.
 #[derive(Default)]
 struct HeldOutput {
     console: Vec<u8>,
     finish: Vec<u8>,
     files: Vec<(String, Vec<u8>)>,
-    bytes: usize,
 }
 
 impl HeldOutput {
-    fn take(&mut self, target: StreamTarget, frame: Vec<u8>, limit: usize) -> Result<()> {
+    fn take(&mut self, target: StreamTarget, frame: Vec<u8>) -> Result<()> {
         if let StreamTarget::Finish { start: true } = target {
-            self.bytes -= self.finish.len();
             self.finish.clear();
-        }
-        self.bytes = self.bytes.saturating_add(frame.len());
-        if self.bytes > limit {
-            return Err(failure(
-                "streamed output exceeds what a host with no result store holds",
-            ));
         }
         match target {
             StreamTarget::Console => self.console.extend_from_slice(&frame),
