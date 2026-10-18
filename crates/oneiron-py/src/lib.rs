@@ -3445,6 +3445,62 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn ai_voice_start(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.start")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.start", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_audio(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.audio")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.audio", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_events(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.events")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.events", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_ack(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.ack")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.ack", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_usage(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.usage")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.usage", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_tool(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.tool")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.tool", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_end(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.end")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.end", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_close(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.close")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.close", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_options(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.options")?;
         let output = py

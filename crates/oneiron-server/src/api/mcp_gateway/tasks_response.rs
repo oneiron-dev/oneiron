@@ -1333,6 +1333,14 @@ fn mcp_agent_verb_input(
         "ai.steps.receipt" => a.spec.clone().ok_or_else(invalid),
         "ai.reply" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts.context" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.start" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.audio" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.events" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.ack" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.usage" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.tool" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.end" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.close" => a.spec.clone().ok_or_else(invalid),
         "ai.options" => a.spec.clone().ok_or_else(invalid),
         "ai.image" => a.spec.clone().ok_or_else(invalid),
         "ai.speech" => a.spec.clone().ok_or_else(invalid),
@@ -2709,6 +2717,30 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.receipts.context" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.start" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.audio" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.events" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.ack" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.usage" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.tool" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.end" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.close" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.options" => {
@@ -9119,6 +9151,114 @@ async fn execute_agent_verb_row(
             let input: oneiron::receipt::CallReceiptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_receipts_context(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.start" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.start", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceStartRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_voice_start(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.audio" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.audio", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceAudioRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_voice_audio(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.events" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.events", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceEventsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_voice_events(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.ack" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.ack", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceAckRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_voice_ack(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.usage" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.usage", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceUsageRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_voice_usage(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.tool" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.tool", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceToolRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::ai_voice_tool(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.end" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.end", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_voice_end(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.close" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.close", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_voice_close(server, auth, input)
+                .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
