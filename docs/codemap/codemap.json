@@ -77726,6 +77726,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/server/core/pattern_workflow.rs",
+     "purpose": "The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/desktop_seats.rs",
      "purpose": "The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door…",
      "surface": {
@@ -79146,7 +79157,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79218,7 +79229,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 717,
+   "source_files": 718,
    "test_files": 182
   },
   "oneiron-spawn": {
