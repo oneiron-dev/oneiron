@@ -11667,6 +11667,72 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_run/consent_wait/binding.rs",
+     "purpose": "The binding: minted beside the held effect's pending row, in its writer; sealed with the parked checkpoint…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeConsentEffectHost"
+     ],
+     "path": "src/code_run/consent_wait/host.rs",
+     "purpose": "The one host seam a code consent wait needs: the served host that drives an already-answered effect through…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/consent_wait/mod.rs",
+     "purpose": "Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03)",
+     "surface": {
+      "crate-vis": 3,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/consent_wait/settle.rs",
+     "purpose": "The answer and the settlement (DOOR-079 1a)",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CodeConsentAnswerInput",
+      "CodeConsentChoice",
+      "CodeConsentSavedCredential",
+      "CodeConsentSettleOutcome",
+      "CodeConsentWaitState",
+      "CodeConsentWaitView"
+     ],
+     "path": "src/code_run/consent_wait/types.rs",
+     "purpose": "The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row…",
+     "surface": {
+      "crate-vis": 19,
+      "enum": 3,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ContributionForkModel",
       "ContributionForkReceipt",
@@ -11930,9 +11996,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 6,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -14783,7 +14849,7 @@
      "purpose": "ARCH-0072 typed per-capability grant slates",
      "surface": {
       "const": 2,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 3,
       "fn": 36,
       "struct": 10
@@ -14948,7 +15014,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 31,
       "fn": 25,
       "struct": 2
      }
@@ -14982,6 +15048,7 @@
      "kind": "src",
      "notable": [
       "ActionGrant",
+      "CodeWaitReceiptLinks",
       "ConsentGrant",
       "ConsentGrantRow",
       "ConsentGrantStatus",
@@ -14995,10 +15062,10 @@
      "path": "src/consent/grant.rs",
      "purpose": "—",
      "surface": {
-      "const": 8,
+      "const": 10,
       "enum": 4,
       "fn": 16,
-      "struct": 5,
+      "struct": 6,
       "trait": 1
      }
     },
@@ -19971,7 +20038,7 @@
      "path": "src/dreamer_runner/maintenance/representation/approval.rs",
      "purpose": "Content-bound owner review, live revalidation, and the existing OF-327 adapter",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 12,
       "struct": 2
      }
@@ -24571,7 +24638,7 @@
      "path": "src/gate/effect/effect_consent.rs",
      "purpose": "Pure DEC-0006 consent constructors over gate input",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -24601,7 +24668,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -32308,7 +32375,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 47,
+      "crate-vis": 50,
       "fn": 33,
       "struct": 2,
       "type": 1
@@ -33819,6 +33886,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/actor_erase.rs",
+     "purpose": "An erased actor out of the office rows that name it (FIX 3520): the export records, the deck forks' records…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -33840,7 +33917,7 @@
      "purpose": "Office proposals (DEC-0006, \"A content proposal is a set of forks that share its id\"; ARCH-0035's embedded…",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 14,
       "enum": 4,
       "fn": 2,
       "struct": 9
@@ -33910,7 +33987,7 @@
      "path": "src/office_body/mod.rs",
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 18,
       "re-export": 8,
@@ -35385,7 +35462,7 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 16,
+      "crate-vis": 19,
       "enum": 2,
       "fn": 7,
       "struct": 8,
@@ -35401,6 +35478,17 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_code.rs",
+     "purpose": "A held `connector.call` a code consent wait owns (DOOR-079 1a): the first effect a code consent wait binds",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 3
      }
     },
     {
@@ -35448,7 +35536,7 @@
      "path": "src/outbound_consent/execution.rs",
      "purpose": "Scoped-call execution, post-effect decision, and result transport",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -35461,7 +35549,7 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 1,
       "re-export": 8
      }
@@ -49143,6 +49231,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/code_consent_word.rs",
+     "purpose": "The person's word a code consent answer stands on (DOOR-079 1a)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -49571,7 +49669,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "fn": 1,
       "mod": 3,
       "re-export": 25
@@ -51804,6 +51902,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/training_pack/actor_erase.rs",
+     "purpose": "An erased owner out of the training rows that name it (FIX 3520): the runs, and the role-swap receipts in…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/training_pack/authorize.rs",
      "purpose": "The owner's authorization of one prepared run, and the host's record of why a run that waits on it cannot…",
      "surface": {
@@ -51857,7 +51965,7 @@
      "path": "src/training_pack/mod.rs",
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6,
       "re-export": 3
      }
@@ -51908,6 +52016,7 @@
       "TrainingDeclarationPin",
       "TrainingDispatch",
       "TrainingHold",
+      "TrainingOwner",
       "TrainingPackDraft",
       "TrainingPlan",
       "TrainingResult",
@@ -51918,7 +52027,9 @@
      "path": "src/training_pack/types.rs",
      "purpose": "Pins and receipts shared by the training pack and its host adapters",
      "surface": {
-      "enum": 6,
+      "crate-vis": 1,
+      "enum": 7,
+      "fn": 1,
       "struct": 25
      }
     },
@@ -51935,10 +52046,25 @@
      "path": "src/typed_body.rs",
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 11,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BodyActor"
+     ],
+     "path": "src/typed_body/body_actor.rs",
+     "purpose": "Who a typed-body fork names, and the erase that forgets it (FIX 3520)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 3
      }
     },
     {
@@ -56036,7 +56162,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 78,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56673,7 +56799,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56701,7 +56827,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57149,7 +57275,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 160,
+     "files": 161,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57219,14 +57345,14 @@
      "purpose": "—"
     },
     "training_pack": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap"
     },
     "typed_body": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -57319,7 +57445,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3490,
+   "source_files": 3500,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72697,6 +72823,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_consent_host.rs",
+     "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -77694,6 +77830,13 @@
      "layout": "file+dir",
      "purpose": "—"
     },
+    "code_consent_host": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
+    },
     "commands": {
      "files": 38,
      "impl_vault": false,
@@ -78054,7 +78197,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 697,
+   "source_files": 698,
    "test_files": 182
   },
   "oneiron-spawn": {
