@@ -404,6 +404,27 @@ pub(super) fn folded_owner_work(
     }
 }
 
+/// The request signed as entry `hash`, when `standing`'s state admits it and
+/// it counts there as this install reads it: not narrowed here at its
+/// parents, and its carrier's removal race passes
+/// ([`Standing::owner_act_race`]). What a key record naming it among its
+/// parents may do on the owner's behalf (CALLS WORLD_KEY_WRAP_AUTH).
+pub(super) fn counted_request<'s>(
+    standing: &Standing<'s>,
+    hash: &AuthorityEntryHash,
+) -> Option<&'s OwnerWorkRequest> {
+    let folded = standing.state().owner_work.requests.get(hash)?;
+    let counts = !folded.narrow_only
+        && standing.owner_act_race(
+            folded.request.carrier,
+            hash,
+            &folded.key,
+            &folded.marks,
+            StandingView::Install,
+        );
+    counts.then_some(&folded.request)
+}
+
 /// The requests `machine` carried that have no result yet, for its next
 /// profile revision's acknowledged set
 /// ([`super::world_privacy::live_edits_by`]): a removal the owner signs

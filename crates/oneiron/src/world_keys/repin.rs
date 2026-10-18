@@ -398,6 +398,7 @@ impl Vault {
                     (WrapRecipient::Machine(me), my_public.clone()),
                 ],
                 &mut seq,
+                None,
             )? {
                 Ok(records) => records,
                 // The same two wraps on bounded parents, so a later door
@@ -414,6 +415,7 @@ impl Vault {
                         Some(&root),
                         &my_public,
                         &mut seq,
+                        None,
                     )?]
                 }
             };
@@ -466,6 +468,7 @@ impl Vault {
                 reached.owner,
                 &missing,
                 &mut seq,
+                None,
             )? {
                 Ok(records) => appended.extend(records),
                 // The root's and this machine's wraps go in a bridge record,
@@ -484,6 +487,7 @@ impl Vault {
                             Some(&root),
                             &my_public,
                             &mut seq,
+                            None,
                         )?;
                     }
                 }

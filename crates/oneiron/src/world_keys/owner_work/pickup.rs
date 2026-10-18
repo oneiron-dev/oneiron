@@ -4,9 +4,10 @@
 use super::record::eligible_readers;
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, EffectiveRead, OwnerWorkBody, OwnerWorkOutcome,
-    OwnerWorkRefusal, OwnerWorkRequest,
+    OwnerWorkRefusal, OwnerWorkRequest, WorldKeyMode,
 };
 use crate::error::{Error, Result};
+use crate::world_keys::reassert::{ReassertIncomplete, WORLD_KEY_REASSERT_INCOMPLETE};
 use crate::world_keys::{MachineSecret, recipients};
 use crate::{EntityId, Vault};
 
@@ -113,7 +114,9 @@ impl Vault {
             return Ok(Ran::Gone);
         };
         let outcome = match request.work {
-            OwnerWorkBody::WorldKey => self.world_key_work_in_txn(txn, &fold, &request, secret)?,
+            OwnerWorkBody::WorldKey { mode } => {
+                self.world_key_work_in_txn(txn, &fold, hash, &request, mode, secret)?
+            }
         };
         let Some(outcome) = outcome else {
             return Ok(Ran::Pending);
@@ -122,23 +125,47 @@ impl Vault {
         Ok(Ran::Answered(outcome))
     }
 
-    /// A world's key work: mint its first key, or wrap its current key to
-    /// every reader the settings allow, as the act's owner. `None` leaves it
-    /// pending: this install holds no wrap, pad or secret it needs, or a
-    /// reader is still unwrapped.
+    /// A world's key work, as the act's owner, each record naming the
+    /// request signed as entry `hash`. In Ensure mode: mint the world's
+    /// first key, or wrap its current key to every reader the settings
+    /// allow. In Reassert mode: first wrap again each key this install
+    /// wrapped itself, from its own records and keeping each id, then the
+    /// same (CALLS WORLD_KEY_REASSERT_MODE). `None` leaves it pending: this
+    /// install holds no wrap, pad, record or secret it needs, the world's
+    /// edits outgrow one record, or a reader is still unwrapped (CALLS
+    /// WORLD_KEY_REASSERT_INCOMPLETE).
     fn world_key_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
+        hash: AuthorityEntryHash,
         request: &OwnerWorkRequest,
+        mode: WorldKeyMode,
         secret: &MachineSecret,
     ) -> Result<Option<OwnerWorkOutcome>> {
         let world = request.act.target;
         if let Some(reason) = self.world_key_refusal(txn, fold, request, secret.machine)? {
             return Ok(Some(OwnerWorkOutcome::Refused { reason }));
         }
-        match self.ensure_world_key_in_txn(txn, request.act.owner, world, secret) {
-            Ok(_) => {}
+        if mode == WorldKeyMode::Reassert
+            && !self
+                .reassert_held_world_keys_in_txn(txn, world, secret, Some(hash))?
+                .ensures()
+        {
+            return Ok(match WORLD_KEY_REASSERT_INCOMPLETE {
+                ReassertIncomplete::Pending => None,
+            });
+        }
+        match self.ensure_world_key_or_wide_in_txn(
+            txn,
+            request.act.owner,
+            world,
+            secret,
+            Some(hash),
+        ) {
+            Ok(Ok(_)) => {}
+            // A frontier too wide for one record waits for a merge.
+            Ok(Err(_wide)) => return Ok(None),
             // Key possession: every refusal comes before the first write.
             Err(Error::Secret(_)) => return Ok(None),
             Err(error) => return Err(error),

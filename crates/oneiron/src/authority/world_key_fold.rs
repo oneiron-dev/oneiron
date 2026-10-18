@@ -16,15 +16,28 @@
 //! never lets a descendant evict its ancestor's envelope, and the hash
 //! breaks ties between concurrent rows only.
 //!
-//! A record counts under this install's pin, never under admission alone:
-//! its signer is mine here with the key that signed it, the world is private
-//! and readable on the signer, every machine recipient is mine and may read
-//! it, and the record's settings revision is the world's at its parents. A
-//! record from an admitted machine that is not mine here (a host-anchored
-//! one, say) is a valid no-op: it never mints the current key and never
-//! fills a recipient's slots. That only withholds; the pin doors wrap again.
-//! Validity is pin-free: a record no chain of its machine admits under the
-//! key that signed it is invalid on every install.
+//! A record counts here (CALLS WORLD_KEY_WRAP_AUTH) when, at its parents:
+//! - its publisher passes the one carrier rule's exact-key admission, pin-free
+//!   and as this install counts it ([`super::owner_act_signer_admits`]): any
+//!   live profile under the key that signed. A removal its parents do not
+//!   hold is the removal race below;
+//! - the publisher is the executor an admitted world key request in the
+//!   record's causal ancestry names (the record's `request`, which counts
+//!   here), for the record's world, owner and settings revision, and it reads
+//!   the world under the request's settings with that key; or it is an
+//!   eligible private reader here: mine under this install's pin with that
+//!   key, and the world readable on it;
+//! - `permitted` is exactly the record's recipients, each machine mine here
+//!   and readable under the current settings, and under the request's too
+//!   when the record does one, and each root one the parents record: the
+//!   owner's recipient choice and the root's evidence, whoever publishes;
+//! - its generation is the first, and its settings revision is the world's.
+//!
+//! Any other well-signed record is a valid no-op: it never mints the current
+//! key and never fills a recipient's slots. That only withholds; the pin
+//! doors and the owner's work wrap again. Validity is pin-free: a record no
+//! chain of its publisher names under the key that signed it is invalid on
+//! every install.
 //!
 //! A key is current only while a machine whose chain is not removed in this
 //! install's trust set signed one of its counted records. A removed
@@ -41,15 +54,26 @@ use std::sync::Arc;
 
 use crate::entity_id::EntityId;
 
-use super::machine_claims::folded_machine_in;
 use super::machine_standing::{Standing, StandingView};
 use super::world_privacy::policy_revision;
-use super::world_strength::world_meet;
+use super::world_strength::{read_under, world_meet};
 use super::*;
 
 /// At most this many envelopes of one key, from one signer, for one
 /// recipient.
 pub const WORLD_KEY_WRAPS_PER_RECIPIENT: usize = 4;
+
+/// Who may publish a key record that counts (CALLS WORLD_KEY_WRAP_AUTH).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WrapAuth {
+    /// The executor an admitted owner work request in the record's ancestry
+    /// names, or an eligible private reader. Either way the recipients stay
+    /// within the owner's read choice: no request grants a wrap to a machine
+    /// the settings exclude.
+    NamedRequestExecutorOrEligibleReader,
+}
+
+const WORLD_KEY_WRAP_AUTH: WrapAuth = WrapAuth::NamedRequestExecutorOrEligibleReader;
 
 /// One world key as a history holds it: per commitment and owner its counted
 /// records named, per signer, per recipient, the records whose wraps count,
@@ -156,7 +180,9 @@ impl AuthorityFold {
 
 /// The `WorldKeyWraps` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster check:
-/// its signer is a machine's install key.
+/// its signer is a machine's install key, never a roster key. Some chain of
+/// the publisher must name that key, live or not, as for an owner act's
+/// carrier; whether the record counts is [`counts`].
 pub(super) fn apply_world_key_wraps(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -167,11 +193,8 @@ pub(super) fn apply_world_key_wraps(
     let AuthorityKey::Ed25519(signer) = entry.signer_key() else {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     };
-    if !folded_machine_in(state, record.machine).is_some_and(|machine| {
-        machine
-            .chains()
-            .any(|(_, chain)| chain.says_yours() && chain.profile.machine_key == *signer)
-    }) {
+    let standing = Standing::new(state, context.pin, context.machine_standing);
+    if !standing.names_key(record.machine, signer) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
     if state
@@ -181,7 +204,9 @@ pub(super) fn apply_world_key_wraps(
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
-    if !counts(state, record, signer, context) {
+    let counted = counts(&standing, record, signer);
+    drop(standing);
+    if !counted {
         state.refused_world_keys.insert(hash);
         return Ok(());
     }
@@ -205,36 +230,89 @@ pub(super) fn apply_world_key_wraps(
 }
 
 /// Whether a well-signed record counts here, judged in its parent state as
-/// this install counts machines: the signer and every machine recipient mine
-/// under the pin with this install's holds, through the seam
-/// ([`Standing::counted_key`]), and the world readable on each in the read
-/// this install computes there.
-fn counts(
-    state: &FoldState,
-    record: &WorldKeyWrapsRecord,
-    signer: &[u8; 32],
-    context: FoldContext<'_>,
-) -> bool {
-    let standing = Standing::new(state, context.pin, context.machine_standing);
-    let read = world_meet(&standing, record.key.world, StandingView::Install)
+/// this install counts machines (the module's rule, CALLS
+/// WORLD_KEY_WRAP_AUTH). Every machine recipient is mine under the pin with
+/// this install's holds, through the seam ([`Standing::counted_key`]), and
+/// the world readable on it in the read this install computes there: the
+/// Yours/readable floor and a one-machine read's identity, whoever publishes.
+/// The same parent state and view give the same answer on a full, a resumed
+/// and a checkpoint fold.
+fn counts(standing: &Standing<'_>, record: &WorldKeyWrapsRecord, signer: &[u8; 32]) -> bool {
+    let state = standing.state();
+    let world = record.key.world;
+    let roster = StandingView::Under(MachineAdmitter::Roster);
+    if record.key.generation != FIRST_GENERATION
+        || record.policy != policy_revision(state, world)
+        || !record.permits_exactly_its_wraps()
+        || !standing.admits_owner_act_signer(record.machine, signer, roster)
+        || !standing.admits_owner_act_signer(record.machine, signer, StandingView::Install)
+    {
+        return false;
+    }
+    let current = world_meet(standing, world, StandingView::Install)
         .effective()
         .read;
-    let may_read = |id: EntityId| {
-        let mine = || standing.counted_key(id).is_some();
-        match &read {
-            EffectiveRead::MyMachines => mine(),
-            EffectiveRead::OneMachine(only) => *only == id && mine(),
-            EffectiveRead::Everywhere | EffectiveRead::Conflicted { .. } => false,
-        }
+    let may_read = |id: EntityId| reads(&current, id, standing.counted_key(id));
+    let requested = match WORLD_KEY_WRAP_AUTH {
+        WrapAuth::NamedRequestExecutorOrEligibleReader => record
+            .request
+            .and_then(|request| requested_read(standing, record, signer, &request)),
     };
-    record.key.generation == FIRST_GENERATION
-        && standing.counted_key(record.machine) == Some(*signer)
-        && may_read(record.machine)
-        && record.policy == policy_revision(state, record.key.world)
-        && record.wraps.iter().all(|(recipient, _)| match recipient {
-            WrapRecipient::Machine(id) => may_read(*id),
-            WrapRecipient::RecoveryRoot(_) => true,
-        })
+    let reader = standing.counted_key(record.machine) == Some(*signer) && may_read(record.machine);
+    if requested.is_none() && !reader {
+        return false;
+    }
+    record.permitted.iter().all(|recipient| match recipient {
+        WrapRecipient::Machine(id) => {
+            may_read(*id)
+                && requested
+                    .as_ref()
+                    .is_none_or(|read| reads(read, *id, standing.trusted_key(*id, roster)))
+        }
+        WrapRecipient::RecoveryRoot(root) => state
+            .root_anchors
+            .values()
+            .any(|roots| roots.contains(root)),
+    })
+}
+
+/// The settings of the request `record` does, as the roster rule reads the
+/// world at the record's parents, when that request counts there
+/// ([`super::owner_work::counted_request`]), is world key work naming the
+/// publisher as its executor, for the record's world, owner and settings
+/// revision, and the publisher reads the world under it with the key that
+/// signed. `None` otherwise: the record then counts only from an eligible
+/// reader.
+fn requested_read(
+    standing: &Standing<'_>,
+    record: &WorldKeyWrapsRecord,
+    signer: &[u8; 32],
+    request: &AuthorityEntryHash,
+) -> Option<EffectiveRead> {
+    let asked = super::owner_work::counted_request(standing, request)?;
+    let named = asked.kind() == OwnerWorkKind::WorldKey
+        && asked.executor == record.machine
+        && asked.act.target == record.key.world
+        && asked.act.owner == record.owner
+        && asked.act.seen == record.policy.0;
+    if !named {
+        return None;
+    }
+    let read = read_under(standing, record.key.world, MachineAdmitter::Roster);
+    let key = standing.trusted_key(record.machine, StandingView::Under(MachineAdmitter::Roster));
+    (key == Some(*signer) && reads(&read, record.machine, key)).then_some(read)
+}
+
+/// Whether `read` lets machine `id` hold a private world's key, `key` being
+/// its trusted identity's machine key under the view judged: my machines and
+/// one machine name only machines the owner marked "yours", his recipient
+/// choice, and a world read everywhere or conflicted counts no key.
+fn reads(read: &EffectiveRead, id: EntityId, key: Option<[u8; 32]>) -> bool {
+    match read {
+        EffectiveRead::MyMachines => key.is_some(),
+        EffectiveRead::OneMachine(only) => *only == id && key.is_some(),
+        EffectiveRead::Everywhere | EffectiveRead::Conflicted { .. } => false,
+    }
 }
 
 /// Joins two histories' keys: a key both hold keeps what both counted, up to

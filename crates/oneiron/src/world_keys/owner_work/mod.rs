@@ -19,10 +19,16 @@
 //! executor leaves the work pending, and only a new owner act names another
 //! executor.
 //!
-//! The first kind is a world's key work. Bundle publication, custody control
-//! and a root request each add an `OwnerWorkBody` variant (with its act kind
-//! and wire map) and one arm in [`pickup`]'s dispatch; the request, result,
-//! executor pin, receipts and the drain stay shared.
+//! The first kind is a world's key work, in Ensure mode after a settings
+//! edit and in Reassert mode after the owner's re-assertion of a world
+//! (`super::reassert`): the executor wraps its own keys of the world again
+//! before it ensures. Each record it writes names the request it does, so a
+//! replica that does not count the executor as mine still takes its wraps
+//! within the owner's read choice (CALLS WORLD_KEY_WRAP_AUTH). Bundle
+//! publication, custody control and a root request each add an
+//! `OwnerWorkBody` variant (with its act kind and wire map) and one arm in
+//! [`pickup`]'s dispatch; the request, result, executor pin, receipts and the
+//! drain stay shared.
 //!
 //! No location, origin or hosted-mode rule reads anything here: the carrier
 //! is any live linked machine the carrier rule admits, and `surface` is audit

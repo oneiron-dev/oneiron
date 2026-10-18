@@ -38,8 +38,10 @@ fn parent_bound(named: usize) -> Error {
 /// The install pinned to do an act's work (CALLS OWNER_WORK_EXECUTOR), or
 /// `None` when none can (CALLS OWNER_WORK_NO_EXECUTOR). One executor, read
 /// from `fold` alone: no election, no expiry and no clock takeover; only a
-/// new owner act names another. `recorder` is never named: an install that
-/// could do the work does it in the act's own commit.
+/// new owner act names another. `recorder` is not named while another can
+/// do the work: an install that could do it all does it in the act's own
+/// commit. It names itself only when it alone holds the key the work needs
+/// (FIX 4634).
 pub(crate) fn owner_work_executor(
     fold: &AuthorityFold,
     kind: OwnerWorkKind,
@@ -52,30 +54,35 @@ pub(crate) fn owner_work_executor(
 }
 
 /// A world's key work goes to the lowest machine id among its eligible
-/// readers that hold a counted wrap of its current key; with none, to the
-/// lowest eligible reader, which mints the first key when the world has none
-/// it can see.
+/// readers other than `recorder` that hold a counted wrap of its current
+/// key. When `recorder` alone holds one, it names itself: a first key it
+/// minted on a bridge record (Docs Q06), or a frontier too wide for its
+/// wraps in the act's commit, leaves no other reader able to open the key,
+/// so its own pickup wraps them once one record names the world's frontier
+/// (FIX 4634). With no holder at all, the work goes to the lowest eligible
+/// reader other than `recorder`, which mints the first key when the world
+/// has none it can see.
 fn world_key_executor(
     fold: &AuthorityFold,
     world: EntityId,
     recorder: EntityId,
 ) -> Option<EntityId> {
-    let readers: BTreeSet<EntityId> = eligible_readers(fold, world)
-        .filter(|id| *id != recorder)
+    let readers: BTreeSet<EntityId> = eligible_readers(fold, world).collect();
+    let holders: BTreeSet<EntityId> = fold
+        .current_world_key(world)
+        .into_iter()
+        .flat_map(|current| current.wraps.iter())
+        .filter(|(_, wraps)| !wraps.is_empty())
+        .filter_map(|(to, _)| match to {
+            WrapRecipient::Machine(id) => Some(*id),
+            WrapRecipient::RecoveryRoot(_) => None,
+        })
+        .filter(|id| readers.contains(id))
         .collect();
-    let holder = fold.current_world_key(world).and_then(|current| {
-        current
-            .wraps
-            .iter()
-            .filter(|(_, wraps)| !wraps.is_empty())
-            .filter_map(|(to, _)| match to {
-                WrapRecipient::Machine(id) => Some(*id),
-                WrapRecipient::RecoveryRoot(_) => None,
-            })
-            .filter(|id| readers.contains(id))
-            .min()
-    });
-    holder.or_else(|| readers.first().copied())
+    let others = |ids: &BTreeSet<EntityId>| ids.iter().copied().find(|id| *id != recorder);
+    others(&holders)
+        .or_else(|| holders.contains(&recorder).then_some(recorder))
+        .or_else(|| others(&readers))
 }
 
 /// The machines the world's settings let read it, each with an importable

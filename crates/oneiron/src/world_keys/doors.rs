@@ -5,7 +5,10 @@
 //!
 //! The machine secret is read from the keystore before a door's transaction,
 //! and the transaction refuses when the machine id changed in between. No
-//! key, seed or secret is ever written; only the signed records are.
+//! key, seed or secret is ever written; only the signed records are. Each
+//! record names the owner work request it does, if any ([`provenance`]).
+
+mod provenance;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -20,9 +23,8 @@ use super::{
 };
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, Destination, EffectiveRead,
-    FoldedWorldKey, MAX_PARENTS, RecoveryRootId, WORLD_KEY_WRAPS_MAX, WorldKeyWrapsRecord,
-    invalid_authority, next_sequence, owner_root_record_in_txn, scope_head, sign_side_entry,
-    standing_rows,
+    FoldedWorldKey, MAX_PARENTS, RecoveryRootId, WORLD_KEY_WRAPS_MAX, invalid_authority,
+    next_sequence, owner_root_record_in_txn, scope_head, sign_side_entry, standing_rows,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
@@ -216,7 +218,7 @@ impl Vault {
         world: EntityId,
         secret: &MachineSecret,
     ) -> Result<WorldKeyStatus> {
-        self.ensure_world_key_or_wide_in_txn(txn, owner, world, secret)?
+        self.ensure_world_key_or_wide_in_txn(txn, owner, world, secret, None)?
             .map_err(FrontierWide::refused)
     }
 
@@ -262,7 +264,7 @@ impl Vault {
             return Ok(None);
         }
         let attempt = match secret {
-            Ok(secret) => self.ensure_world_key_or_wide_in_txn(txn, owner, world, secret),
+            Ok(secret) => self.ensure_world_key_or_wide_in_txn(txn, owner, world, secret, None),
             Err(error) if needs_key => return Err(error),
             Err(_) => return Ok(None),
         };
@@ -277,13 +279,15 @@ impl Vault {
     }
 
     /// [`Vault::ensure_world_key_in_txn`], with a world whose live edits outgrow one
-    /// key record told apart from every other refusal.
-    fn ensure_world_key_or_wide_in_txn(
+    /// key record told apart from every other refusal. Each record names
+    /// `request` when an owner work request names this machine to do it.
+    pub(super) fn ensure_world_key_or_wide_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
         world: EntityId,
         secret: &MachineSecret,
+        request: Option<AuthorityEntryHash>,
     ) -> Result<std::result::Result<WorldKeyStatus, FrontierWide>> {
         let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
         if !self.world_row_live_in_txn(txn, world)? {
@@ -312,6 +316,7 @@ impl Vault {
                 owner,
                 &allowed,
                 &mut seq,
+                request,
             )? {
                 Ok(records) => records,
                 // A first key never leaves the world keyless for a count (Docs
@@ -333,6 +338,7 @@ impl Vault {
                         root.as_ref(),
                         own,
                         &mut seq,
+                        request,
                     )?]
                 }
             };
@@ -365,6 +371,7 @@ impl Vault {
             current.owner,
             &missing,
             &mut seq,
+            request,
         )? {
             Ok(records) => records,
             Err(wide) => return Ok(Err(wide)),
@@ -482,14 +489,16 @@ impl Vault {
     /// Appends `machine`'s wraps of `key` to `recipients` in the caller's
     /// write transaction, as side entries of the key's world. Parents and
     /// the settings revision come from `fold`: the world's live edits, the
-    /// rows each named machine's standing rests on, and the root's record.
-    /// Recipients are split across records so each stays within the codec's
-    /// bounds. Returns the records' hashes; the caller judges the refold. A
-    /// world whose rows outgrow one record raises its OF-520 question and
-    /// writes nothing ([`FrontierWide`]).
+    /// rows each named machine's standing rests on, the root's record, and
+    /// `request`, the owner work request the records do (`None` for an
+    /// eligible reader's own wraps), counted before any split. Recipients are
+    /// split across records so each stays within the codec's bounds. Returns
+    /// the records' hashes; the caller judges the refold. A world whose rows
+    /// outgrow one record raises its OF-520 question and writes nothing
+    /// ([`FrontierWide`]).
     #[expect(
         clippy::too_many_arguments,
-        reason = "one append: the snapshot, the signer, the key and its recipients"
+        reason = "one append: the snapshot, the signer, the key, its recipients and its request"
     )]
     pub(crate) fn append_world_key_wraps_in_txn(
         &self,
@@ -501,6 +510,7 @@ impl Vault {
         owner: EntityId,
         recipients: &[(WrapRecipient, HybridPublicKey)],
         seq: &mut SequenceCounter,
+        request: Option<AuthorityEntryHash>,
     ) -> Result<std::result::Result<Vec<AuthorityEntryHash>, FrontierWide>> {
         if recipients.is_empty() {
             return Ok(Ok(Vec::new()));
@@ -525,6 +535,7 @@ impl Vault {
         if let Some(root) = self.pinned_root_recipient_in_txn(txn, fold)? {
             base.insert(root.entry);
         }
+        base.extend(request);
         // Whether a live edit counts may rest on a later revision of its
         // machine, so name those too while they stay few (as the settings
         // door does).
@@ -586,8 +597,10 @@ impl Vault {
             wraps.push((*recipient, public));
         }
         chunks.push((parents, wraps));
-        self.put_wrap_records_in_txn(txn, fold, signing, machine, key, &binding, chunks, seq)
-            .map(Ok)
+        self.put_wrap_records_in_txn(
+            txn, fold, signing, machine, key, &binding, chunks, seq, request,
+        )
+        .map(Ok)
     }
 
     /// This machine's own record of `key` when no record names the world's
@@ -598,10 +611,11 @@ impl Vault {
     /// record still names; its policy is the revision at those parents. A
     /// later door here opens the key from it whether or not it counts, so a
     /// merge and a re-run reach the same key (Engine, 2026-10-15, on Sol
-    /// S2-R2 S2-F3 and Astra A2-F2).
+    /// S2-R2 S2-F3 and Astra A2-F2). It names `request` as the other
+    /// records do, before the live edits fill the room left.
     #[expect(
         clippy::too_many_arguments,
-        reason = "one append: the snapshot, the signer, the key and its two recipients"
+        reason = "one append: the snapshot, the signer, the key, its two recipients and its request"
     )]
     pub(crate) fn append_bridge_wrap_in_txn(
         &self,
@@ -614,6 +628,7 @@ impl Vault {
         root: Option<&RootRecipient>,
         own: &HybridPublicKey,
         seq: &mut SequenceCounter,
+        request: Option<AuthorityEntryHash>,
     ) -> Result<AuthorityEntryHash> {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let mut parents = standing_rows(fold, machine);
@@ -621,6 +636,7 @@ impl Vault {
         if let Some(pinned) = self.pinned_root_recipient_in_txn(txn, fold)? {
             parents.insert(pinned.entry);
         }
+        parents.extend(request);
         let room = RECORD_PARENTS
             .checked_sub(parents.len())
             .ok_or_else(invalid_authority)?;
@@ -653,16 +669,18 @@ impl Vault {
             &binding,
             vec![(parents, wraps)],
             seq,
+            request,
         )?
         .pop()
         .ok_or_else(invalid_authority)
     }
 
     /// Seals `key` to each chunk's recipients under `binding` and appends one
-    /// signed record per chunk, naming that chunk's parents.
+    /// signed record per chunk, naming that chunk's parents, which hold
+    /// `request` when the records do an owner work request.
     #[expect(
         clippy::too_many_arguments,
-        reason = "one append: the snapshot, the signer, the key and its records"
+        reason = "one append: the snapshot, the signer, the key, its records and their request"
     )]
     fn put_wrap_records_in_txn(
         &self,
@@ -674,6 +692,7 @@ impl Vault {
         binding: &WorldKeyBinding,
         chunks: Vec<WrapChunk<'_>>,
         seq: &mut SequenceCounter,
+        request: Option<AuthorityEntryHash>,
     ) -> Result<Vec<AuthorityEntryHash>> {
         let now = self.instant_in_txn(txn)?.secs();
         let pad = require_pad_in_txn(&self.store, txn, key.id())?;
@@ -689,14 +708,7 @@ impl Vault {
                         .map(|envelope| (recipient, envelope.to_bytes()))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let record = WorldKeyWrapsRecord {
-                key: *key.id(),
-                commitment: binding.commitment,
-                owner: binding.owner,
-                policy: binding.policy,
-                machine,
-                wraps,
-            };
+            let record = provenance::wraps_record(binding, machine, wraps, request);
             let entry = sign_side_entry(
                 fold,
                 signing,
@@ -796,7 +808,7 @@ pub(super) fn world_recovery_state_in(fold: &AuthorityFold, world: EntityId) -> 
 /// This machine is mine here under the key it signs with, and may read
 /// `world`: a recipient limit, the owner's own read choice (mesh contract
 /// §5), never a rule on who decides.
-fn require_mine_reader(
+pub(super) fn require_mine_reader(
     fold: &AuthorityFold,
     world: EntityId,
     machine: EntityId,
