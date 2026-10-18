@@ -179,9 +179,10 @@ impl ServerProbeAuthor<'_> {
             .envelope;
         // A transcription vouches for no world.
         request.envelope.scope.world = None;
+        // The owner's space move, which no room launched, bills the owner.
         let response = self
             .runtime
-            .block_on(self.server.ai.model_runtime().media().run(request))
+            .block_on(self.server.ai.model_runtime().media().run(request, None))
             .map_err(|error| {
                 Error::InvalidConfig(format!("space probe transcription failed: {error}"))
             })?;

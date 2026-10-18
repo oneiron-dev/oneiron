@@ -30,8 +30,9 @@ pub enum Payer {
 /// PERSON whose consent the root carries, that root, and the billing account
 /// the call bills. The host binds it before the run starts, from the scope's
 /// root and its own account map; a caller never names it. Which provider
-/// credential sends the call stays [`Payer`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// credential sends the call stays [`Payer`]. A kept media job keeps the one
+/// it was submitted under, so its take-up bills it again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PayerPerson {
     pub person: EntityId,
     /// The root spend scope whose payer consent names `person`, for audit.
@@ -40,7 +41,7 @@ pub struct PayerPerson {
 }
 
 /// The billing account a room-paid call bills.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "billed", rename_all = "snake_case")]
 pub enum PayerAccount {
     /// The PERSON's own billing account, as the host resolved it.

@@ -12,6 +12,7 @@ use crate::server::{MediaEmbedRefusal, SyncServer};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use oneiron::embed::InputKind;
+use oneiron::llm::run_admission::PayerPerson;
 use serde::Deserialize;
 use utoipa::ToSchema;
 
@@ -156,11 +157,23 @@ impl SeedSource {
 /// the request's own `media`, and, when the vault's text kind slot binds a
 /// declared space (the one-space preset), its text query through that
 /// space's text tower. A `media` that is already a text query into that
-/// space stands for it.
+/// space stands for it. A door's own query is the owner's, which no room
+/// launched, so its calls bill the vault owner.
 pub(crate) async fn embed_media_seeds(
     server: &SyncServer,
     media: Option<DecodedMediaQuery>,
     text_query: Option<&str>,
+) -> Result<Vec<MediaSeed>, ApiError> {
+    embed_media_seeds_for(server, media, text_query, None).await
+}
+
+/// [`embed_media_seeds`] for a funded run's query: its calls bill `payer`,
+/// the run's own (FIX 805).
+pub(crate) async fn embed_media_seeds_for(
+    server: &SyncServer,
+    media: Option<DecodedMediaQuery>,
+    text_query: Option<&str>,
+    payer: Option<&PayerPerson>,
 ) -> Result<Vec<MediaSeed>, ApiError> {
     let text_space = match text_query {
         Some(_) => {
@@ -181,6 +194,7 @@ pub(crate) async fn embed_media_seeds(
             &media.mime,
             media.bytes,
             SeedSource::Media,
+            payer,
         )
         .await?;
         seed.kinds = media.kinds;
@@ -199,6 +213,7 @@ pub(crate) async fn embed_media_seeds(
                 "text/plain",
                 query.as_bytes().to_vec(),
                 SeedSource::TextSlot,
+                payer,
             )
             .await?,
         );
@@ -220,13 +235,14 @@ pub(crate) async fn embed_semantic_text(
         "text/plain",
         text.as_bytes().to_vec(),
         SeedSource::SemanticText,
+        None,
     )
     .await?;
     Ok(seed.vector)
 }
 
 /// Embeds one query into declared space `space` through the `ai.embed` rung
-/// that space's id names.
+/// that space's id names, billed to `payer`.
 async fn embed_seed(
     server: &SyncServer,
     space: String,
@@ -234,10 +250,12 @@ async fn embed_seed(
     mime: &str,
     bytes: Vec<u8>,
     source: SeedSource,
+    payer: Option<&PayerPerson>,
 ) -> Result<MediaSeed, ApiError> {
     let embedder = server
         .media_embedder(&space)
-        .map_err(|refusal| media_query_refusal(refusal, source))?;
+        .map_err(|refusal| media_query_refusal(refusal, source))?
+        .funded_by(payer.cloned());
     let vector = embedder
         .embed_query(kind, mime, bytes)
         .await

@@ -447,7 +447,9 @@ pub(super) fn failure(error: &LlmError) -> Response {
 
 /// The call's answer. A banked voice withdrawn or re-recorded while it
 /// rendered, on the rung that answered, is not handed back; nor is a call
-/// that found the voice withdrawn everywhere while it waited.
+/// that found the voice withdrawn everywhere while it waited. A `/v1/ai`
+/// call is the owner's own, which no room launched, so it bills the vault
+/// owner (FIX 805).
 async fn answered(
     server: &SyncServer,
     request: MediaRequest,
@@ -456,8 +458,8 @@ async fn answered(
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
     let answer = match &voices {
-        Some(voices) => media.run_voiced(request, voices).await,
-        None => media.run(request).await,
+        Some(voices) => media.run_voiced(request, voices, None).await,
+        None => media.run(request, None).await,
     };
     let withdrawn = || {
         refusal(
@@ -519,6 +521,7 @@ media_verb!(transcribe, AiOperation::Transcribe);
 media_verb!(embed, AiOperation::Embed);
 
 /// `ai.video`: the clip renders as a provider job; the answer is its ticket.
+/// The owner's own job, as [`answered`]'s call is, bills the vault owner.
 pub(super) async fn video(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -528,7 +531,13 @@ pub(super) async fn video(
         Ok((request, _)) => request,
         Err(refused) => return refused,
     };
-    match server.ai.model_runtime().media().submit(request).await {
+    match server
+        .ai
+        .model_runtime()
+        .media()
+        .submit(request, None)
+        .await
+    {
         Ok(ticket) => (StatusCode::ACCEPTED, Json(ticket)).into_response(),
         Err(error) => failure(&error),
     }
