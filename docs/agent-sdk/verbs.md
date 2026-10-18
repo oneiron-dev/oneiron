@@ -114,6 +114,9 @@ both bindings and their export-census tests in one change.
 - `vault.scope.ceiling`
 - `vault.export.scoped`
 - `vault.receipts`
+- `vault.assets.ingest`
+- `vault.assets.resolve`
+- `vault.search.vector`
 - `vault.images.view`
 - `vault.receipts.get`
 - `self.admission.status`
