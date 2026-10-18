@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::retrieval_telemetry::RetrievalSignal;
 
 /// Execution health, not the semantic truth of retrieved content.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalQuality {
     Full,
@@ -33,7 +33,7 @@ impl RetrievalQuality {
 }
 
 /// Observed reasons for degraded execution. Absence is not proof of success.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalDegradation {
     PprCacheMiss,

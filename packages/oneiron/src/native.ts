@@ -75,6 +75,15 @@ tasksAccept(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
+vaultRetrievalRecall(input: unknown): unknown
+vaultRetrievalRuns(input: unknown): unknown
+vaultRetrievalRun(input: unknown): unknown
+vaultRetrievalTurn(input: unknown): unknown
+vaultRetrievalOutcomesPut(input: unknown): unknown
+vaultRetrievalOutcomesEnd(input: unknown): unknown
+vaultRetrievalTrace(input: unknown): unknown
+vaultRetrievalExport(input: unknown): unknown
+vaultRetrievalReplay(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown

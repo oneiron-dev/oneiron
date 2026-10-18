@@ -77,6 +77,7 @@ mod project_card_doors;
 mod reaction_doors;
 mod reply_doors;
 mod research_doors;
+mod retrieval_doors;
 mod residence_doors;
 mod result_doors;
 pub(super) mod role_picks;

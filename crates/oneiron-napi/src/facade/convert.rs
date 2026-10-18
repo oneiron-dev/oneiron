@@ -503,6 +503,7 @@ pub(super) fn memory_pack_from_engine(
         pack_version: pack.pack_version,
         rendered: pack.rendered,
         narrowing: read_receipt_from_engine(*pack.narrowing)?,
+        retrieval_run_id: pack.retrieval_run_id.map(|id| id.as_bytes().to_vec()),
     })
 }
 

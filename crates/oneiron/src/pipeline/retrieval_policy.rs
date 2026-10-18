@@ -13,7 +13,7 @@ use crate::store::RetrievalState;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[repr(u8)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalIntent {
@@ -44,7 +44,7 @@ impl RetrievalIntent {
 }
 
 /// These are policy verbs, not the invocation categories in `RetrievalAction`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[repr(u8)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalPolicyAction {
@@ -55,13 +55,13 @@ pub enum RetrievalPolicyAction {
     Abstain = 5,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalPolicyIdentity {
     pub user: EntityId,
     pub persona: Option<EntityId>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalPolicyEnvelope {
     /// Additional retrieval attempts after the initial Search.
     pub max_steps: u8,
@@ -108,7 +108,7 @@ impl RetrievalPolicyOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalPolicyTier {
     User,
@@ -118,14 +118,14 @@ pub enum RetrievalPolicyTier {
     Seed,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalPolicyDecision {
     pub state: RetrievalState,
     pub action: RetrievalPolicyAction,
     pub tier: RetrievalPolicyTier,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalPolicyTrace {
     pub identity: RetrievalPolicyIdentity,
     pub envelope: RetrievalPolicyEnvelope,

@@ -51,6 +51,15 @@ both bindings and their export-census tests in one change.
 - `vault.witness`
 - `vault.claims.upsert`
 - `vault.recall`
+- `vault.retrieval.recall`
+- `vault.retrieval.runs`
+- `vault.retrieval.run`
+- `vault.retrieval.turn`
+- `vault.retrieval.outcomes.put`
+- `vault.retrieval.outcomes.end`
+- `vault.retrieval.trace`
+- `vault.retrieval.export`
+- `vault.retrieval.replay`
 - `vault.export`
 - `self.credential.attenuate`
 - `vault.scope.ceiling`

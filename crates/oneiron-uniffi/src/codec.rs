@@ -1121,6 +1121,7 @@ impl Lift<engine::MemoryPack> for MemoryPack {
             pack_version: pack.pack_version,
             rendered: pack.rendered,
             narrowing: ReadReceipt::lift(*pack.narrowing)?,
+            retrieval_run_id: pack.retrieval_run_id.map(|id| id.as_bytes().to_vec()),
         })
     }
 }

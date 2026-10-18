@@ -624,6 +624,8 @@ pub struct NapiMemoryPack {
     pub rendered: Option<String>,
     /// The actor-scoped read receipt, including applied ceiling and suppression.
     pub narrowing: NapiReadReceipt,
+    /// The finalized serving-run id as sixteen bytes; absent when capture is off.
+    pub retrieval_run_id: Option<Vec<u8>>,
 }
 
 /// One Dreamer consolidation enqueue (BRIDGE-03).

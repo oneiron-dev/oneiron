@@ -364,6 +364,8 @@ export type MemoryPack = {
   rendered?: string
   /** The actor-scoped read receipt for candidates and rendered content. */
   narrowing: ReadReceipt
+  /** Finalized serving-run id bytes; absent when local capture is off. */
+  retrievalRunId?: number[]
 }
 
 /** One governance receipt: a gate decision, or a receipt of another family. */

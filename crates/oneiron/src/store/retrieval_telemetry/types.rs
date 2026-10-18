@@ -29,7 +29,7 @@ pub(in crate::store) const RETRIEVAL_BLEND_TUNER_ALGORITHM: &str =
 
 const RETRIEVAL_BLEND_BOOTSTRAP_SOURCE: &str = "ret010b.bootstrap";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalRunId {
     pub(super) bytes: [u8; 16],
 }
@@ -58,7 +58,7 @@ impl RetrievalRunId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalAction {
     Pipeline,
@@ -84,7 +84,7 @@ impl From<Signal> for RetrievalSignal {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalBlendWeightDataWindow {
     pub run_count: u32,
     pub outcome_count: u32,
@@ -95,7 +95,7 @@ pub struct RetrievalBlendWeightDataWindow {
     pub outcome_updated_at_max: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalBlendWeightTableEntry {
     pub version: u8,
     pub weights: RetrievalBlendWeights,
@@ -140,7 +140,7 @@ impl Default for RetrievalBlendTuningConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalScoreBreakdown {
     pub result_id: [u8; 16],
     pub final_rank: u32,
@@ -167,7 +167,7 @@ pub struct RetrievalScoreBreakdown {
     pub access_factor: Option<f32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalTraceStage {
     PerChannel,
@@ -177,14 +177,14 @@ pub enum RetrievalTraceStage {
     Final,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalTraceChannelRecord {
     pub stage: RetrievalTraceStage,
     pub signal: RetrievalSignal,
     pub candidates: Vec<RetrievalScoreBreakdown>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalTraceStageRecord {
     pub stage: RetrievalTraceStage,
     pub candidates: Vec<RetrievalScoreBreakdown>,
@@ -217,7 +217,7 @@ pub type RetrievalTraceForkHash = [u8; 32];
 /// missing the field decode to the all-zero sentinel, which is treated as
 /// unknown and is not indexed. The trace remains typed msgpack-native;
 /// JSONL/parquet export belongs outside the engine.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalTrace {
     #[serde(default)]
     pub fork_hash: RetrievalTraceForkHash,
@@ -234,7 +234,7 @@ pub struct RetrievalTrace {
     pub fusion_list_length: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalRunRecord {
     pub version: u8,
     pub run_id: RetrievalRunId,
@@ -262,6 +262,7 @@ pub struct RetrievalRunRecord {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub degradation: Vec<RetrievalDegradation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<f32>")]
     pub confidence_adjustment: Option<ConfidenceAdjustment>,
 }
 
@@ -353,7 +354,7 @@ impl RetrievalRunRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalOutcome {
     pub run_id: RetrievalRunId,
     pub key: String,
@@ -365,7 +366,7 @@ pub struct RetrievalOutcome {
 /// End-of-turn judgement supplied by the ARCH-0053 attribution gate. Only the
 /// explicitly named contributing runs receive credit; memory overlap never
 /// selects runs or divides the terminal signal.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalEndOutcome {
     #[serde(rename = "retrievalRunIds")]
     pub retrieval_run_ids: Vec<RetrievalRunId>,
@@ -380,7 +381,7 @@ pub struct RetrievalEndOutcome {
 
 /// Stored evidence for the shaped reward. Only the end-outcome door mints this;
 /// an arbitrary `RetrievalOutcome.reward` remains telemetry, not a label.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalRewardEvidence {
     #[serde(rename = "retrievalRunIds")]
     pub retrieval_run_ids: Vec<RetrievalRunId>,
@@ -431,7 +432,7 @@ impl RetrievalRewardEvidence {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalOutcomeRecord {
     pub version: u8,
     pub run_id: RetrievalRunId,

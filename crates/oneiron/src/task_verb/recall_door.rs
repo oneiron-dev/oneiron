@@ -240,6 +240,7 @@ fn recall_within_ceiling(
         None,
         &crate::retrieval_depth::RecallExecution {
             deadline: deadline.as_ref(),
+            telemetry: input.telemetry.as_ref(),
             embedding,
             media: &media,
             as_of: input.as_of,

@@ -382,6 +382,9 @@ pub struct MemoryPack {
     pub rendered: Option<String>,
     /// The bound actor's requested/ceiling/intersection receipt for every read in this pack.
     pub narrowing: Box<ScopedReadReceipt>,
+    /// The finalized serving run, absent when capture is off or no run published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieval_run_id: Option<crate::store::RetrievalRunId>,
 }
 
 impl Memory<'_> {
@@ -663,6 +666,7 @@ impl Memory<'_> {
                 pack_version: MEMORY_PACK_VERSION,
                 rendered: None,
                 narrowing: Box::new(receipt),
+                retrieval_run_id: None,
             });
         }
         let kinds = recall_kinds(scope)?;
@@ -789,6 +793,7 @@ impl Memory<'_> {
             retrieval_quality,
             vector_completed,
             temporal_hints,
+            retrieval_run_id,
         ) = match &scope.facet {
             Some(facet_ref) => {
                 // Facet-strict narrowing rides the raw retrieval pipeline:
@@ -801,6 +806,12 @@ impl Memory<'_> {
                     .query()
                     .search_text(query, limit)
                     .fold_messages_into_turns(turn_fold);
+                if let Some(telemetry) = execution.telemetry {
+                    pipeline = pipeline.capture_retrieval_trace(telemetry.capture_trace);
+                    if let Some(turn) = telemetry.turn {
+                        pipeline = pipeline.retrieval_turn(turn);
+                    }
+                }
                 if let Some(as_of) = execution.as_of {
                     pipeline = pipeline.with_temporal_now(as_of);
                 }
@@ -893,6 +904,7 @@ impl Memory<'_> {
                     retrieval.retrieval_quality,
                     retrieval.vector_completed,
                     retrieval.temporal_hints,
+                    retrieval.telemetry_run_id,
                 )
             }
             None => {
@@ -902,6 +914,12 @@ impl Memory<'_> {
                     .memory_results_only()
                     .search_text(query, limit)
                     .fold_messages_into_turns(turn_fold);
+                if let Some(telemetry) = execution.telemetry {
+                    builder = builder.capture_retrieval_trace(telemetry.capture_trace);
+                    if let Some(turn) = telemetry.turn {
+                        builder = builder.retrieval_turn(turn);
+                    }
+                }
                 if let Some(as_of) = execution.as_of {
                     builder = builder.with_temporal_now(as_of);
                 }
@@ -1030,6 +1048,7 @@ impl Memory<'_> {
                     pack.retrieval_quality,
                     status.vector_completed,
                     status.temporal_hints,
+                    status.run_id,
                 )
             }
         };
@@ -1056,6 +1075,7 @@ impl Memory<'_> {
             pack_version: MEMORY_PACK_VERSION,
             rendered,
             narrowing: Box::new(receipt),
+            retrieval_run_id,
         };
         if let Some(on_cut) = execution.on_cut {
             // The items are ready. A door that stops waiting during the
@@ -1095,6 +1115,7 @@ fn cut_pack(receipt: &ScopedReadReceipt) -> MemoryPack {
         pack_version: MEMORY_PACK_VERSION,
         rendered: None,
         narrowing: Box::new(receipt.clone()),
+        retrieval_run_id: None,
     }
 }
 

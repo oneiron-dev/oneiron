@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 540 facade rows, 2047 declarations.
-Inputs: 489 of 540 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 483 of 540 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 89; unread shapes: 0.
+Census: 549 facade rows, 2079 declarations.
+Inputs: 498 of 549 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 487 of 549 fully typed, 62 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 90; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1489,6 +1489,13 @@ class QueryAffect(TypedDict):
     valence: float
     arousal: float
     dominance: float
+class RetrievalTurn(TypedDict):
+    turn_id: list[int]
+    episode_id: list[int]
+    turn_idx: int
+class RecallTelemetry(TypedDict):
+    capture_trace: NotRequired[bool]
+    turn: NotRequired[RetrievalTurn | None]
 class RecallRequest(TypedDict):
     query: str
     effort: NotRequired[RecallEffort | None]
@@ -1499,6 +1506,7 @@ class RecallRequest(TypedDict):
     deadline_ms: NotRequired[int | None]
     media: NotRequired[ContextPackMediaQuery | None]
     query_affect: NotRequired[QueryAffect | None]
+    telemetry: NotRequired[RecallTelemetry | None]
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -1579,6 +1587,8 @@ class ScopedReadReceipt(TypedDict):
     narrowed_axes: list[str]
     suppressed_count: int
     replan_hint: list[str]
+class RetrievalRunId(TypedDict):
+    bytes: list[int]
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
     scope_honesty: ScopeHonesty
@@ -1586,6 +1596,152 @@ class MemoryPack(TypedDict):
     pack_version: int
     rendered: NotRequired[str | None]
     narrowing: ScopedReadReceipt
+    retrieval_run_id: NotRequired[RetrievalRunId | None]
+class RetrievalRunsRequest(TypedDict):
+    limit: NotRequired[int | None]
+RetrievalAction = Literal["pipeline", "context_pack", "vault_search", "graph_fs_coreutils", "speculative"]
+class RetrievalState(TypedDict):
+    top_score_norm: NotRequired[float]
+    score_gap_ratio: NotRequired[float]
+    mean_score_norm: NotRequired[float]
+    entity_coverage: NotRequired[float]
+    novelty_vs_prior: NotRequired[float]
+    signal_agreement: NotRequired[int]
+    result_count: NotRequired[int]
+    iteration: NotRequired[int]
+    budget_remaining: NotRequired[int]
+    frontier_size: NotRequired[int]
+    avg_edge_weight: NotRequired[float]
+    graph_degree: NotRequired[int]
+    temporal_spread: NotRequired[float]
+    hops: NotRequired[int]
+    last_action: NotRequired[int]
+    intent_class: NotRequired[int]
+class RetrievalPolicyIdentity(TypedDict):
+    user: EntityId
+    persona: NotRequired[EntityId | None]
+class RetrievalPolicyEnvelope(TypedDict):
+    max_steps: int
+    max_hops: int
+    temporal_rounds: int
+RetrievalPolicyAction = Literal["search", "expand", "widen_temporal", "stop", "abstain"]
+RetrievalPolicyTier = Literal["user", "persona", "global", "seed"]
+class RetrievalPolicyDecision(TypedDict):
+    state: RetrievalState
+    action: RetrievalPolicyAction
+    tier: RetrievalPolicyTier
+class RetrievalPolicyTrace(TypedDict):
+    identity: RetrievalPolicyIdentity
+    envelope: RetrievalPolicyEnvelope
+    bandit_enabled: bool
+    decisions: list[RetrievalPolicyDecision]
+class RetrievalReplayInputs(TypedDict):
+    query_ref: NotRequired[str | None]
+    config: Any
+    corpus_snapshot_ref: NotRequired[str | None]
+RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector"]
+class RetrievalScoreComponent(TypedDict):
+    signal: RetrievalSignal
+    rank: int
+    score: float
+class RetrievalScoreBreakdown(TypedDict):
+    result_id: list[int]
+    final_rank: int
+    final_score: float
+    components: list[RetrievalScoreComponent]
+    access_factor: NotRequired[float | None]
+RetrievalTraceForkHash = list[int]
+RetrievalTraceStage = Literal["per_channel", "fused", "blended", "reranked", "final"]
+class RetrievalTraceChannelRecord(TypedDict):
+    stage: RetrievalTraceStage
+    signal: RetrievalSignal
+    candidates: list[RetrievalScoreBreakdown]
+class RetrievalTraceStageRecord(TypedDict):
+    stage: RetrievalTraceStage
+    candidates: list[RetrievalScoreBreakdown]
+class RetrievalTrace(TypedDict):
+    fork_hash: NotRequired[RetrievalTraceForkHash]
+    per_channel: list[RetrievalTraceChannelRecord]
+    fused: RetrievalTraceStageRecord
+    blended: RetrievalTraceStageRecord
+    reranked: RetrievalTraceStageRecord
+    final: RetrievalTraceStageRecord
+    fusion_list_length: NotRequired[int]
+class RetrievalRunRecord(TypedDict):
+    version: int
+    run_id: RetrievalRunId
+    action: RetrievalAction
+    started_at: int
+    elapsed_us: int
+    state: NotRequired[RetrievalState]
+    policy_trace: NotRequired[RetrievalPolicyTrace | None]
+    replay_inputs: NotRequired[RetrievalReplayInputs | None]
+    turn: NotRequired[RetrievalTurn | None]
+    signals: list[RetrievalSignal]
+    result_ids: list[list[int]]
+    score_breakdown: list[RetrievalScoreBreakdown]
+    total_in_scope: int
+    claims_suppressed: int
+    empty_reason: NotRequired[str | None]
+    trace: NotRequired[RetrievalTrace | None]
+    quality: NotRequired[RetrievalQuality | None]
+    degradation: NotRequired[list[RetrievalDegradation]]
+    confidence_adjustment: NotRequired[ConfidenceAdjustment | None]
+class RetrievalRewardEvidence(TypedDict):
+    retrievalRunIds: list[RetrievalRunId]
+    turn_id: list[int]
+    gate_score: float
+    confirmed_fact_hit: bool
+    latency_scale_us: int
+    cost_weight: float
+class RetrievalOutcomeRecord(TypedDict):
+    version: int
+    run_id: RetrievalRunId
+    key: str
+    reward: NotRequired[float | None]
+    accepted: NotRequired[bool | None]
+    metadata: dict[str, str]
+    updated_at: int
+    reward_evidence: NotRequired[RetrievalRewardEvidence | None]
+class RetrievalRunEvidence(TypedDict):
+    run: RetrievalRunRecord
+    outcomes: list[RetrievalOutcomeRecord]
+class RetrievalRunRequest(TypedDict):
+    run_id: RetrievalRunId
+class RetrievalTurnRequest(TypedDict):
+    turn_id: list[int]
+class RetrievalOutcome(TypedDict):
+    run_id: RetrievalRunId
+    key: str
+    reward: NotRequired[float | None]
+    accepted: NotRequired[bool | None]
+    metadata: dict[str, str]
+class RetrievalEndOutcome(TypedDict):
+    retrievalRunIds: list[RetrievalRunId]
+    key: str
+    turn_id: list[int]
+    gate_score: float
+    confirmed_fact_hit: bool
+    latency_scale_us: int
+    cost_weight: float
+    metadata: dict[str, str]
+class RetrievalTraceRequest(TypedDict):
+    fork_hash: list[int]
+class RetrievalDiagnosticRequest(TypedDict):
+    run_ids: list[RetrievalRunId]
+class RetrievalDiagnosticExport(TypedDict):
+    contract_version: str
+    runs: list[RetrievalRunEvidence]
+class RetrievalReplayRun(TypedDict):
+    source_run_id: RetrievalRunId
+    turn: NotRequired[RetrievalTurn | None]
+    state: RetrievalState
+    result_ids: list[list[int]]
+    pack: list[RetrievalScoreBreakdown]
+    trace: NotRequired[RetrievalTrace | None]
+class RetrievalDiagnosticReplay(TypedDict):
+    contract_version: str
+    runs: list[RetrievalReplayRun]
 class ExportOptions(TypedDict):
     format: NotRequired[str | None]
     include_secrets: NotRequired[bool | None]
@@ -1765,11 +1921,6 @@ class CallReceipt(TypedDict):
 class ExplainMemoryRequest(TypedDict):
     entity: str
     session_id: NotRequired[str | None]
-RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector"]
-class RetrievalScoreComponent(TypedDict):
-    signal: RetrievalSignal
-    rank: int
-    score: float
 class ExplainScoreEvidence(TypedDict):
     result_id: str
     final_rank: int
