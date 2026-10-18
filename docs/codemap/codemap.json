@@ -36401,7 +36401,7 @@
      "purpose": "Named (agent, world) standing blocks compiled from gated persona claims",
      "surface": {
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 4
      }
     },
@@ -50558,7 +50558,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 53,
+      "re-export": 54,
       "struct": 36
      }
     },
@@ -50939,7 +50939,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 676
+      "fn": 685
      }
     },
     {
@@ -51532,6 +51532,30 @@
       "enum": 3,
       "fn": 10,
       "struct": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentDreamingRequest",
+      "AgentDreamingSetRequest",
+      "AgentDreamingView",
+      "DreamingModeInput",
+      "OwnStandingBlockRequest",
+      "StandingBlockConfigureRequest",
+      "StandingBlockEditReceipt",
+      "StandingBlockEditRequest",
+      "StandingBlockRequest",
+      "StandingBlockView",
+      "StandingBlocksRequest"
+     ],
+     "path": "src/task_verb/sdk_standing.rs",
+     "purpose": "Standing-block configuration, gated self-edits and per-agent dreaming choice (BOARD-04)",
+     "surface": {
+      "enum": 1,
+      "fn": 9,
+      "struct": 10
      }
     },
     {
@@ -58056,7 +58080,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 167,
+     "files": 168,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58226,7 +58250,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3552,
+   "source_files": 3553,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66756,7 +66780,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 626
+      "fn": 635
      }
     },
     {
@@ -67805,7 +67829,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 627
+      "fn": 636
      }
     },
     {
@@ -71098,7 +71122,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 118
+      "crate-vis": 119
      }
     },
     {
@@ -71419,6 +71443,16 @@
      "purpose": "Owner-bound lifecycle doors; each transport reaches the same engine transaction",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/standing_doors.rs",
+     "purpose": "Standing-block configuration and per-agent dreaming choice, with the caller's own proof (BOARD-04)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -78807,7 +78841,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 380,
+     "files": 381,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79229,7 +79263,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 718,
+   "source_files": 719,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79445,6 +79479,9 @@
       "AgentDefinitionSpec",
       "AgentDefinitionUpdateRequest",
       "AgentDefinitionView",
+      "AgentDreamingRequest",
+      "AgentDreamingSetRequest",
+      "AgentDreamingView",
       "AgentHealthApplicationState",
       "AgentHealthCard",
       "AgentHealthCardView",
@@ -80064,6 +80101,7 @@
       "DoorsLearningCellView",
       "DoorsLearningEvidenceView",
       "DreamerAttemptView",
+      "DreamingModeInput",
       "EditNoteRequest",
       "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
@@ -80680,6 +80718,7 @@
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
+      "OwnStandingBlockRequest",
       "OwnerPolicyConfiguration",
       "OwnerPolicyConfigurationReceipt",
       "OwnerPolicyConfigurationView",
@@ -81379,6 +81418,12 @@
       "SpendSignal",
       "SpendState",
       "SpentKind",
+      "StandingBlockConfigureRequest",
+      "StandingBlockEditReceipt",
+      "StandingBlockEditRequest",
+      "StandingBlockRequest",
+      "StandingBlockView",
+      "StandingBlocksRequest",
       "StandingGrantBound",
       "StateFamilyRef",
       "StatusDotAtom",
@@ -81707,8 +81752,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 594,
-      "struct": 1686
+      "enum": 595,
+      "struct": 1696
      }
     },
     {
