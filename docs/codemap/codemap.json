@@ -764,17 +764,17 @@
      "surface": {
       "crate-vis": 16,
       "enum": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/comm_widen.rs",
      "purpose": "FIX 1380 phase 2: the one widen signal a running child sends when the comm dial refuses it, and the reach…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -11641,7 +11641,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -12051,6 +12051,7 @@
      "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 7,
       "fn": 1,
       "struct": 22
@@ -18463,7 +18464,7 @@
      "path": "src/dreamer_consolidation/nightly_merge.rs",
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -30916,6 +30917,59 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/code_doors/leases.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_doors/mod.rs",
+     "purpose": "Typed symbol lease, proposal submit and mutation oplog doors (DOOR-137)",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_doors/proposals.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeMutationEntry",
+      "CodeMutationLog",
+      "CodeMutationState",
+      "CodeProposalSubmitRequest",
+      "CodeProposalSubmitted",
+      "CodeRepoRequest",
+      "CodeSymbolLeaseView",
+      "CodeSymbolsDeclareRequest",
+      "CodeSymbolsDeclared",
+      "CodeSymbolsReleased",
+      "CodeSymbolsTaskRequest"
+     ],
+     "path": "src/memory/code_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/codebase_doors/mod.rs",
      "purpose": "Typed code snapshot doors (DOOR-118): the import of one committed local Git tree, its pinned manifest, its…",
      "surface": {
@@ -31306,8 +31360,8 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 5,
-      "re-export": 40
+      "mod": 6,
+      "re-export": 41
      }
     },
     {
@@ -31720,6 +31774,26 @@
      "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and…",
      "surface": {
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProspectiveQueryHint",
+      "SignalExtractionClaim",
+      "SignalExtractionMessage",
+      "SignalExtractionRequest",
+      "SignalExtractionResult",
+      "SignalExtractionResultRequest",
+      "SignalExtractionSource",
+      "SignalExtractionTicket"
+     ],
+     "path": "src/memory/signal_extraction.rs",
+     "purpose": "Typed signal extraction over the production Dreamer partition queue",
+     "surface": {
+      "fn": 2,
+      "struct": 8
      }
     },
     {
@@ -49452,7 +49526,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 500
+      "fn": 508
      }
     },
     {
@@ -53897,7 +53971,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 26,
       "fn": 24,
       "mod": 1,
       "re-export": 1,
@@ -55603,7 +55677,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 152,
+     "files": 157,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56284,7 +56358,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3429,
+   "source_files": 3434,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64697,7 +64771,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 450
+      "fn": 458
      }
     },
     {
@@ -65745,7 +65819,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 451
+      "fn": 459
      }
     },
     {
@@ -68705,6 +68779,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_doors.rs",
+     "purpose": "Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/codebase_doors.rs",
      "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
      "surface": {
@@ -68825,6 +68909,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/extraction_doors.rs",
+     "purpose": "Owner-only extraction doors over the caller's own credential read lane",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/fanout_doors.rs",
      "purpose": "The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and…",
      "surface": {
@@ -68878,7 +68972,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 90
+      "crate-vis": 92
      }
     },
     {
@@ -68918,7 +69012,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -76263,7 +76357,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 346,
+     "files": 348,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76678,7 +76772,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 671,
+   "source_files": 673,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77139,13 +77233,20 @@
       "CodeExportResult",
       "CodeFileChange",
       "CodeFileDiffView",
+      "CodeMutationEntry",
+      "CodeMutationLog",
+      "CodeMutationState",
+      "CodeOpProvenance",
       "CodeOperationView",
+      "CodeProposalSubmitRequest",
+      "CodeProposalSubmitted",
       "CodeProposalView",
       "CodeProposalViewRequest",
       "CodeProposedStamp",
       "CodeRepoDiffRequest",
       "CodeRepoDiffView",
       "CodeRepoPointer",
+      "CodeRepoRequest",
       "CodeSnapshotDefinition",
       "CodeSnapshotDefinitionsRequest",
       "CodeSnapshotDefinitionsView",
@@ -77158,6 +77259,11 @@
       "CodeSpanView",
       "CodeStateRequest",
       "CodeStateView",
+      "CodeSymbolLeaseView",
+      "CodeSymbolsDeclareRequest",
+      "CodeSymbolsDeclared",
+      "CodeSymbolsReleased",
+      "CodeSymbolsTaskRequest",
       "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
@@ -77262,6 +77368,7 @@
       "CredentialCeiling",
       "Criterion",
       "CriticBinding",
+      "CriticLens",
       "CriticPrediction",
       "CriticReviewOutcome",
       "CriticReviewSubmit",
@@ -77352,6 +77459,7 @@
       "DocxRun",
       "DollarBasis",
       "DoneMeans",
+      "DreamerAttemptView",
       "EditNoteRequest",
       "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
@@ -77630,6 +77738,7 @@
       "LensApproval",
       "LensAtomWire",
       "LensBackingTargetKind",
+      "LensCatalog",
       "LensDeactivateRequest",
       "LensDefaultRequest",
       "LensDossierSource",
@@ -77669,6 +77778,7 @@
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
+      "LiveRunRequestMemorySupersedeInput",
       "LlmCapability",
       "LlmError",
       "LlmInputUsage",
@@ -77697,6 +77807,8 @@
       "MembershipConsent",
       "MemoryExport",
       "MemoryProjection",
+      "MemorySupersedeInput",
+      "MemoryWriteOutput",
       "MergeCrossover",
       "MergedFinding",
       "MeshPathDirection",
@@ -77959,6 +78071,7 @@
       "ProposalSettleRequest",
       "ProposalSettlement",
       "ProseSpan",
+      "ProspectiveQueryHint",
       "ProviderPin",
       "PruneReason",
       "PruneReceipt",
@@ -78278,6 +78391,13 @@
       "SharedVaultChange",
       "SharedVaultDeletion",
       "SharedVaultRequest",
+      "SignalExtractionClaim",
+      "SignalExtractionMessage",
+      "SignalExtractionRequest",
+      "SignalExtractionResult",
+      "SignalExtractionResultRequest",
+      "SignalExtractionSource",
+      "SignalExtractionTicket",
       "SignatureRow",
       "SignedAuthorityHistory",
       "SigningStatus",
@@ -78528,8 +78648,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 450,
-      "struct": 1203
+      "enum": 451,
+      "struct": 1228
      }
     },
     {

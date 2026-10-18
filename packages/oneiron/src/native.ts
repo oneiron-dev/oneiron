@@ -276,6 +276,11 @@ vaultArtifactsThreadsState(input: unknown): unknown
 vaultCodeDiff(requestJson: string): string
 vaultCodeBlame(requestJson: string): string
 vaultCodeProposalView(requestJson: string): string
+vaultCodeSymbolsDeclare(input: unknown): unknown
+vaultCodeSymbolsRenew(input: unknown): unknown
+vaultCodeSymbolsRelease(input: unknown): unknown
+vaultCodeProposalSubmit(input: unknown): unknown
+vaultCodeOplog(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
@@ -447,6 +452,8 @@ vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultMemorySignalExtraction(input: unknown): unknown
+vaultMemorySignalExtractionResult(input: unknown): unknown
 vaultClaimsSeed(input: unknown): unknown
 vaultChannelIdentitiesProvision(input: unknown): unknown
 vaultChannelIdentitiesBind(input: unknown): unknown
@@ -482,6 +489,7 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+vaultClaimsSupersede(input: unknown): unknown
 selfFold(input: unknown): unknown
 selfCompact(input: unknown): unknown
 selfUnfold(input: unknown): unknown

@@ -38,6 +38,7 @@ def artifacts():
         "OWNER_BINDING_REQUIRED": "An owner device must bind this human actor in the authority log. Scope changes do not grant ownership.",
         "VAULT_LOCKED_SINGLE_WRITER": "Connect to the process that owns this vault. Do not remove lock files or open a second writer.",
         "INVENTED_REFERENCE": "Name only records this writer can read, by the ref the engine issued. The write was refused and receipted.",
+        "HOST_ACTION_REQUIRES_SUPPORT_GRANT": "A hosted operator's root acts as nobody inside a customer's vault. Ask the customer for a support grant; the operator's admin commands need none.",
         "IDENTITY_UNSETTLED": "The effect named a person through a mention that is not settled yet. Settle it with `self.identity.settle`, then act.",
         "BUDGET_SPENT": "The line a paid call spends on is spent, or the vault's budget policy refuses it. Use light or medium recall, or ask the owner to raise the line.",
         "MODEL_UNAVAILABLE": "The model the request needs did not answer usably; nothing stands in for it. Use light or medium recall, or ask the owner to check the model route.",

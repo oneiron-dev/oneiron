@@ -1321,6 +1321,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.symbols.declare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeSymbolsDeclareRequest,
+                >(),
+            ),
+            (
+                "vault.code.symbols.renew",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeSymbolsTaskRequest,
+                >(),
+            ),
+            (
+                "vault.code.symbols.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeSymbolsTaskRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_submit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalSubmitRequest,
+                >(),
+            ),
+            (
+                "vault.code.oplog",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeRepoRequest,
+                >(),
+            ),
+            (
                 "vault.code.repo_diff",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_document::CodeRepoDiffRequest,
@@ -2367,6 +2397,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConsolidationStatusRequest>(),
             ),
             (
+                "vault.memory.signal_extraction",
+                crate::code_run::vault_read::request_schema::<crate::memory::SignalExtractionRequest>(
+                ),
+            ),
+            (
+                "vault.memory.signal_extraction.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::SignalExtractionResultRequest,
+                >(),
+            ),
+            (
                 "vault.claims.seed",
                 crate::code_run::vault_read::request_schema::<crate::memory::ScopedCommitRequest>(),
             ),
@@ -2551,6 +2592,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.claims.supersede",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>,
+                >(),
+            ),
+            (
                 "self.fold",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_run::fold_api::FoldMarkRequest,
@@ -2599,11 +2646,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.claims.put",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryClaimInput>(),
-            ),
-            (
-                "vault.claims.supersede",
-                crate::code_run::vault_read::request_schema::<crate::code_run::MemorySupersedeInput>(
-                ),
             ),
             (
                 "vault.edges.put",
@@ -2756,6 +2798,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.read",
     "vault.calendar.search",
     "vault.calendar.freebusy",
+    "vault.memory.signal_extraction",
+    "vault.memory.signal_extraction.result",
     "vault.channel_identities.provision",
     "vault.channel_identities.bind",
     "vault.channel_identities.fulfill",
@@ -3081,6 +3125,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.calendar.freebusy" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>,
+        >(),
+        "vault.memory.signal_extraction" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::SignalExtractionTicket>()
+        }
+        "vault.memory.signal_extraction.result" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::SignalExtractionResult>,
         >(),
         "vault.channel_identities.provision" => crate::code_run::vault_read::request_schema::<
             crate::memory::channel_doors::ChannelIdentityLifecycleReceipt,
@@ -4921,6 +4971,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.symbols.declare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.symbols.renew" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.symbols.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_submit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.oplog" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.repo_diff" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6150,6 +6235,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.memory.signal_extraction" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.memory.signal_extraction.result" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.seed" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6389,6 +6488,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.supersede" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7252,6 +7358,23 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.proposal_view" => {
             let _input: crate::code_document::CodeProposalViewRequest = decode(value.clone())?;
         }
+        "vault.code.symbols.declare" => {
+            let _input: crate::memory::code_doors::CodeSymbolsDeclareRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.symbols.renew" => {
+            let _input: crate::memory::code_doors::CodeSymbolsTaskRequest = decode(value.clone())?;
+        }
+        "vault.code.symbols.release" => {
+            let _input: crate::memory::code_doors::CodeSymbolsTaskRequest = decode(value.clone())?;
+        }
+        "vault.code.proposal_submit" => {
+            let _input: crate::memory::code_doors::CodeProposalSubmitRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.oplog" => {
+            let _input: crate::memory::code_doors::CodeRepoRequest = decode(value.clone())?;
+        }
         "vault.code.repo_diff" => {
             let _input: crate::code_document::CodeRepoDiffRequest = decode(value.clone())?;
         }
@@ -7919,6 +8042,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.status" => {
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
         }
+        "vault.memory.signal_extraction" => {
+            let _input: crate::memory::SignalExtractionRequest = decode(value.clone())?;
+        }
+        "vault.memory.signal_extraction.result" => {
+            let _input: crate::memory::SignalExtractionResultRequest = decode(value.clone())?;
+        }
         "vault.claims.seed" => {
             let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
@@ -8039,6 +8168,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.history" => {
             let _input: crate::code_run::fold_api::FoldHistoryRequest = decode(value.clone())?;
+        }
+        "vault.claims.supersede" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::code_run::MemorySupersedeInput,
+            > = decode(value.clone())?;
         }
         "self.fold" => {
             let _input: crate::code_run::fold_api::FoldMarkRequest = decode(value.clone())?;
@@ -8495,6 +8629,11 @@ pub fn invoke(
         "vault.code.diff" => encode(vault_code_diff(memory, decode(value)?)?),
         "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
+        "vault.code.symbols.declare" => encode(vault_code_symbols_declare(memory, decode(value)?)?),
+        "vault.code.symbols.renew" => encode(vault_code_symbols_renew(memory, decode(value)?)?),
+        "vault.code.symbols.release" => encode(vault_code_symbols_release(memory, decode(value)?)?),
+        "vault.code.proposal_submit" => encode(vault_code_proposal_submit(memory, decode(value)?)?),
+        "vault.code.oplog" => encode(vault_code_oplog(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
         "vault.code.origin.authority.get" => {
@@ -8761,6 +8900,13 @@ pub fn invoke(
             encode(vault_consolidation_enqueue(memory, decode(value)?)?)
         }
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
+        "vault.memory.signal_extraction" => {
+            encode(vault_memory_signal_extraction(memory, decode(value)?)?)
+        }
+        "vault.memory.signal_extraction.result" => encode(vault_memory_signal_extraction_result(
+            memory,
+            decode(value)?,
+        )?),
         "vault.claims.seed" => encode(vault_claims_seed(memory, decode(value)?)?),
         "vault.channel_identities.provision" => {
             encode(vault_channel_identities_provision(memory, decode(value)?)?)
@@ -8837,6 +8983,7 @@ pub fn invoke(
         "self.run.attach" => encode(self_run_attach(memory, decode(value)?)?),
         "self.folds.describe" => encode(self_folds_describe(memory, decode(value)?)?),
         "self.history" => encode(self_history(memory, decode(value)?)?),
+        "vault.claims.supersede" => encode(vault_claims_supersede(memory, decode(value)?)?),
         "self.fold" => encode(self_fold(memory, decode(value)?)?),
         "self.compact" => encode(self_compact(memory, decode(value)?)?),
         "self.unfold" => encode(self_unfold(memory, decode(value)?)?),
@@ -11073,6 +11220,36 @@ pub fn vault_code_proposal_view(
 ) -> MemoryResult<Option<crate::code_document::CodeProposalView>> {
     memory.code_proposal_view(&input)
 }
+pub fn vault_code_symbols_declare(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeSymbolsDeclareRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeSymbolsDeclared> {
+    memory.code_symbols_declare_as(&memory.embedded_owner("vault.code.symbols.declare")?, input)
+}
+pub fn vault_code_symbols_renew(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeSymbolsTaskRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeSymbolLeaseView> {
+    memory.code_symbols_renew_as(&memory.embedded_owner("vault.code.symbols.renew")?, input)
+}
+pub fn vault_code_symbols_release(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeSymbolsTaskRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeSymbolsReleased> {
+    memory.code_symbols_release_as(&memory.embedded_owner("vault.code.symbols.release")?, input)
+}
+pub fn vault_code_proposal_submit(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalSubmitRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
+    memory.code_proposal_submit_as(&memory.embedded_owner("vault.code.proposal_submit")?, input)
+}
+pub fn vault_code_oplog(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeRepoRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeMutationLog> {
+    memory.code_mutation_log_as(&memory.embedded_owner("vault.code.oplog")?, input)
+}
 pub fn vault_code_repo_diff(
     memory: &Memory<'_>,
     input: crate::code_document::CodeRepoDiffRequest,
@@ -12748,6 +12925,24 @@ pub fn vault_consolidation_status(
 ) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
     memory_requests::dreamer_attempt_status(memory, input)
 }
+pub fn vault_memory_signal_extraction(
+    memory: &Memory<'_>,
+    input: crate::memory::SignalExtractionRequest,
+) -> MemoryResult<crate::memory::SignalExtractionTicket> {
+    memory.signal_extraction_as_owner(
+        &memory.embedded_owner("vault.memory.signal_extraction")?,
+        &input,
+    )
+}
+pub fn vault_memory_signal_extraction_result(
+    memory: &Memory<'_>,
+    input: crate::memory::SignalExtractionResultRequest,
+) -> MemoryResult<Option<crate::memory::SignalExtractionResult>> {
+    memory.signal_extraction_result_as_owner(
+        &memory.embedded_owner("vault.memory.signal_extraction.result")?,
+        &input,
+    )
+}
 pub fn vault_claims_seed(
     memory: &Memory<'_>,
     input: crate::memory::ScopedCommitRequest,
@@ -13058,6 +13253,12 @@ pub fn self_history(
     input: crate::code_run::fold_api::FoldHistoryRequest,
 ) -> MemoryResult<crate::engine_executor::history::FoldHistory> {
     crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn vault_claims_supersede(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>,
+) -> MemoryResult<crate::code_run::MemoryWriteOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.claims.supersede", &input)
 }
 pub fn self_fold(
     memory: &Memory<'_>,

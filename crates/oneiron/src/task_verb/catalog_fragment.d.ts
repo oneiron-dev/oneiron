@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 516 code-mode rows (495 host rows, 21 run rows), 1842 declarations.
-// Replies: 453 fully typed, 59 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 523 code-mode rows (502 host rows, 21 run rows), 1864 declarations.
+// Replies: 459 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1054,6 +1054,20 @@ declare namespace Sdk {
   type RepoProposalStatus = "Proposed" | "Approved" | "Applied" | "Failed";
   type CodeProposedStamp = { actor_ref: string; session_ref: string; provenance_claim_ref: string; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null };
   type CodeProposalView = { proposal_ref: string; repo: string; path: string; message: string; status: RepoProposalStatus; proposed: CodeProposedStamp; changes: CodeChangeView[]; landed?: CodeOperationView | null; rendered: string };
+  type CodeSymbolsDeclareRequest = { repo: EntityId; task: EntityId; symbols: EntityId[]; ttl_seconds: number };
+  type CodeSymbolLeaseView = { task: EntityId; holder: EntityId; symbols: EntityId[]; expires_at: number; held: boolean };
+  type CodeSymbolsDeclared = { declaration: CodeSymbolLeaseView; blockers: EntityId[] };
+  type CodeSymbolsTaskRequest = { task: EntityId };
+  type CodeSymbolsReleased = { task: EntityId; released: boolean };
+  type CodeOpProvenance = { turn?: EntityId | null; activity?: EntityId | null; intent?: EntityId | null; substrate_ref?: EntityId | null; reasoning_effort?: string | null };
+  type CriticLens = { id: string; prompt_contract: string; output_schema: string; hard_check: boolean; domain: string };
+  type LensCatalog = { schema_version: number; lenses: CriticLens[] };
+  type CodeProposalSubmitRequest = { repo: EntityId; session: EntityId; provenance_claim: EntityId; path: string; content: number[]; message: string; op_provenance: CodeOpProvenance; catalog: LensCatalog };
+  type CodeProposalSubmitted = { proposal: EntityId; repo: EntityId; actor: EntityId; session: EntityId; provenance_claim: EntityId; base: string; status: RepoProposalStatus };
+  type CodeRepoRequest = { repo: EntityId };
+  type CodeMutationState = "prepared" | "applied" | "failed";
+  type CodeMutationEntry = { repo_ref: string; seq: number; operation_kind: string; operation_subject?: string | null; actor?: EntityId | null; session?: EntityId | null; started_at_ms: number; finished_at_ms?: number | null; pre_action_fork_hash: string; expected_post_action_fork_hash?: string | null; status: CodeMutationState; failure?: string | null };
+  type CodeMutationLog = { repo: EntityId; entries: CodeMutationEntry[] };
   type CodeTreeRequest = { revision_ref?: string | null; repo?: string | null; snapshot_ref?: string | null };
   type CodeRepoDiffRequest = { before: CodeTreeRequest; after: CodeTreeRequest };
   type CodeFileChange = "added" | "removed" | "modified" | "renamed";
@@ -1699,6 +1713,14 @@ declare namespace Sdk {
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type SignalExtractionRequest = { turn_refs: string[] };
+  type SignalExtractionTicket = { job_refs: string[] };
+  type SignalExtractionResultRequest = { job_ref: string };
+  type SignalExtractionMessage = { message_ref: string; byte_range: [number, number]; revision: string };
+  type SignalExtractionSource = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: string; messages: SignalExtractionMessage[] };
+  type ProspectiveQueryHint = { hint_ref: string; target_ref: string; query: string; source: string };
+  type SignalExtractionClaim = { claim: ClaimView; sources: SignalExtractionSource[]; prospective_queries: ProspectiveQueryHint[] };
+  type SignalExtractionResult = { job: DreamerAttemptView; claims: SignalExtractionClaim[] };
   type SelfHeldShape = "dedicated_address" | "dedicated_handle" | "shared_presence";
   type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet_ref?: EntityId | null } | { kind: "vault"; vault_id: number };
   type ChannelIdentityFulfillment = "api" | "manual" | "review";
@@ -2383,6 +2405,8 @@ declare const vault: Sdk.VaultHost & {
     diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;
     /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
     export(input: Sdk.CodeExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
+    /** Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal. */
+    oplog(input: Sdk.CodeRepoRequest): Promise<Sdk.CodeMutationLog | StoredResult>;
     origin: {
       authority: {
         /** Read one served origin authority and this host identity under the owner credential. */
@@ -2393,6 +2417,8 @@ declare const vault: Sdk.VaultHost & {
       /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
       publications(input: Sdk.OriginPublicationsRequest): Promise<Sdk.OriginPublicationsView | StoredResult>;
     };
+    /** Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed. */
+    proposal_submit(input: Sdk.CodeProposalSubmitRequest): Promise<Sdk.CodeProposalSubmitted | StoredResult>;
     /** One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied. */
     proposal_view(input: Sdk.CodeProposalViewRequest): Promise<Sdk.CodeProposalView | null | StoredResult>;
     /** Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it. */
@@ -2406,8 +2432,14 @@ declare const vault: Sdk.VaultHost & {
       read(input: Sdk.CodeSnapshotReadRequest): Promise<Sdk.CodeSnapshotPinnedFile | null | StoredResult>;
     };
     symbols: {
+      /** Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing. */
+      declare(input: Sdk.CodeSymbolsDeclareRequest): Promise<Sdk.CodeSymbolsDeclared | StoredResult>;
       /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
       definitions(input: Sdk.CodeSnapshotDefinitionsRequest): Promise<Sdk.CodeSnapshotDefinitionsView | StoredResult>;
+      /** Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing. */
+      release(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolsReleased | StoredResult>;
+      /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
+      renew(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolLeaseView | StoredResult>;
     };
   };
   /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
@@ -2684,6 +2716,13 @@ declare const vault: Sdk.VaultHost & {
     remove(input: Sdk.SharedMemberRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
     /** An Admin with the add_member power takes back a pending invitation. */
     withdraw_invitation(input: Sdk.SharedInvitationWithdrawRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
+  };
+  memory: {
+    /** Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates. */
+    signal_extraction: ((input: Sdk.SignalExtractionRequest) => Promise<Sdk.SignalExtractionTicket | StoredResult>) & {
+      /** Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them. */
+      result(input: Sdk.SignalExtractionResultRequest): Promise<Sdk.SignalExtractionResult | null | StoredResult>;
+    };
   };
   mesh: {
     /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */

@@ -252,6 +252,11 @@ both bindings and their export-census tests in one change.
 - `vault.code.diff`
 - `vault.code.blame`
 - `vault.code.proposal_view`
+- `vault.code.symbols.declare`
+- `vault.code.symbols.renew`
+- `vault.code.symbols.release`
+- `vault.code.proposal_submit`
+- `vault.code.oplog`
 - `vault.code.repo_diff`
 - `vault.code.export`
 - `vault.code.origin.authority.get`
@@ -423,6 +428,8 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.read`
 - `vault.consolidation.enqueue`
 - `vault.consolidation.status`
+- `vault.memory.signal_extraction`
+- `vault.memory.signal_extraction.result`
 - `vault.claims.seed`
 - `vault.channel_identities.provision`
 - `vault.channel_identities.bind`

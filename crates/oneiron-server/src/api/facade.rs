@@ -36,6 +36,7 @@ mod campaign_split_doors;
 mod research_doors;
 mod channel_doors;
 mod claim_settle_doors;
+mod code_doors;
 mod codebase_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
@@ -48,6 +49,7 @@ mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
 mod embedding_space_doors;
+mod extraction_doors;
 mod fanout_doors;
 mod fold_doors;
 mod gate_policy_doors;
@@ -1385,9 +1387,11 @@ impl From<MemoryError> for FacadeApiError {
             // `FORBIDDEN` is: the authority log refuses this actor the verb.
             // It carries its own code so a client can tell the authority door
             // from the gate door, but the status is the same honest 403.
+            // FIX 2222: a host credential where no host acts as a person.
             MEMORY_CODE_FORBIDDEN
             | MEMORY_CODE_LEASE_REQUIRED
-            | MEMORY_CODE_OWNER_BINDING_REQUIRED => StatusCode::FORBIDDEN,
+            | MEMORY_CODE_OWNER_BINDING_REQUIRED
+            | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => StatusCode::FORBIDDEN,
             // Both are "the store is not in a state that admits this", which
             // is the conflict family the rest of this plane already maps to
             // 409. `VAULT_LOCKED_SINGLE_WRITER` cannot arise server-side — it
