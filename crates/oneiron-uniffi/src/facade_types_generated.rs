@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 486 facade rows, 1782 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 450.
+// UniFFI census: 494 facade rows, 1795 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 458.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -17266,6 +17266,179 @@ pub struct AgentDefinitionUpdateRequest {
     pub definition: AgentDefinitionSpec,
 }
 
+/// `oneiron::task_verb::sdk_workflows::WorkflowSaveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowSaveRequest {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "steps")]
+    pub steps: Vec<String>,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WorkflowView {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "steps")]
+    pub steps: Vec<String>,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(
+        rename = "forked_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub forked_from: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowRequest {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowUpdateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowUpdateRequest {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+    #[serde(rename = "expected_revision")]
+    pub expected_revision: u64,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "steps")]
+    pub steps: Vec<String>,
+}
+
+/// `oneiron::context_projection::spec::MemoryProjection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum MemoryProjection {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "exclude")]
+    Exclude,
+    #[serde(rename = "scoped")]
+    Scoped {
+        #[serde(rename = "domains")]
+        domains: Vec<String>,
+        #[serde(rename = "limit")]
+        limit: u64,
+    },
+}
+
+/// `oneiron::context_projection::spec::ChatProjection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum ChatProjection {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "exclude")]
+    Exclude,
+    #[serde(rename = "recent")]
+    Recent {
+        #[serde(rename = "last_n")]
+        last_n: u64,
+    },
+}
+
+/// `oneiron::context_projection::spec::ContextSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ContextSpec {
+    #[serde(rename = "layers", default, skip_serializing_if = "Option::is_none")]
+    pub layers: Option<Vec<String>>,
+    #[serde(rename = "memory", default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<MemoryProjection>,
+    #[serde(rename = "chat", default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<ChatProjection>,
+    #[serde(rename = "briefing", default, skip_serializing_if = "Option::is_none")]
+    pub briefing: Option<String>,
+    #[serde(
+        rename = "_annotation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub annotation: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowDispatchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowDispatchRequest {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "briefing")]
+    pub briefing: String,
+    #[serde(
+        rename = "context_spec",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub context_spec: Option<ContextSpec>,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowStepCapture`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WorkflowStepCapture {
+    #[serde(rename = "requested_agent_ref")]
+    pub requested_agent_ref: String,
+    #[serde(rename = "agent_def_ref")]
+    pub agent_def_ref: String,
+    #[serde(rename = "definition")]
+    pub definition: AgentDefinitionSpec,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowStepRun`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WorkflowStepRun {
+    #[serde(rename = "ordinal")]
+    pub ordinal: u64,
+    #[serde(rename = "requested_agent_ref")]
+    pub requested_agent_ref: String,
+    #[serde(rename = "dispatched_agent_ref")]
+    pub dispatched_agent_ref: String,
+    #[serde(rename = "attempt_ref")]
+    pub attempt_ref: String,
+    #[serde(rename = "result_ref")]
+    pub result_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowRunView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WorkflowRunView {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+    #[serde(rename = "workflow_revision")]
+    pub workflow_revision: u64,
+    #[serde(rename = "root_attempt_ref")]
+    pub root_attempt_ref: String,
+    #[serde(rename = "active_attempt_ref")]
+    pub active_attempt_ref: String,
+    #[serde(rename = "steps")]
+    pub steps: Vec<WorkflowStepCapture>,
+    #[serde(rename = "results")]
+    pub results: Vec<WorkflowStepRun>,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowRunRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowRunRequest {
+    #[serde(rename = "root_attempt_ref")]
+    pub root_attempt_ref: String,
+}
+
 /// `oneiron::workspace_roster::intent::WorkspaceRosterPreset`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -27378,6 +27551,62 @@ pub struct ScopedReadResultOptionalNoteHistoryView {
     pub narrowing: ScopedReadReceipt,
 }
 
+/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteHistoryPurgeRequest {
+    #[serde(rename = "note_ref")]
+    pub note_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteHistoryPurgeReceipt {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "entity")]
+    pub entity: String,
+    #[serde(rename = "document")]
+    pub document: String,
+    #[serde(rename = "actor", default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+    #[serde(rename = "requested")]
+    pub requested: Vec<u8>,
+    #[serde(rename = "applied")]
+    pub applied: Vec<u8>,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "live_text_hash")]
+    pub live_text_hash: Vec<u8>,
+}
+
+/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum NoteHistoryPurgeOutcome {
+    #[serde(rename = "erased")]
+    Erased {
+        #[serde(rename = "receipt")]
+        receipt: NoteHistoryPurgeReceipt,
+    },
+    #[serde(rename = "waiting")]
+    Waiting {
+        #[serde(rename = "note_ref")]
+        note_ref: String,
+        #[serde(rename = "act_id")]
+        act_id: String,
+    },
+}
+
+/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeExecuteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteHistoryPurgeExecuteRequest {
+    #[serde(rename = "act_id")]
+    pub act_id: String,
+}
+
 /// `oneiron::note::reads::NoteEditorBinding`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct NoteEditorBinding {
@@ -28326,57 +28555,6 @@ pub enum SpawnKnobU64 {
         #[serde(rename = "value")]
         value: u64,
     },
-}
-
-/// `oneiron::context_projection::spec::MemoryProjection`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "mode")]
-pub enum MemoryProjection {
-    #[serde(rename = "default")]
-    Default,
-    #[serde(rename = "exclude")]
-    Exclude,
-    #[serde(rename = "scoped")]
-    Scoped {
-        #[serde(rename = "domains")]
-        domains: Vec<String>,
-        #[serde(rename = "limit")]
-        limit: u64,
-    },
-}
-
-/// `oneiron::context_projection::spec::ChatProjection`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "mode")]
-pub enum ChatProjection {
-    #[serde(rename = "default")]
-    Default,
-    #[serde(rename = "exclude")]
-    Exclude,
-    #[serde(rename = "recent")]
-    Recent {
-        #[serde(rename = "last_n")]
-        last_n: u64,
-    },
-}
-
-/// `oneiron::context_projection::spec::ContextSpec`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ContextSpec {
-    #[serde(rename = "layers", default, skip_serializing_if = "Option::is_none")]
-    pub layers: Option<Vec<String>>,
-    #[serde(rename = "memory", default, skip_serializing_if = "Option::is_none")]
-    pub memory: Option<MemoryProjection>,
-    #[serde(rename = "chat", default, skip_serializing_if = "Option::is_none")]
-    pub chat: Option<ChatProjection>,
-    #[serde(rename = "briefing", default, skip_serializing_if = "Option::is_none")]
-    pub briefing: Option<String>,
-    #[serde(
-        rename = "_annotation",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub annotation: Option<String>,
 }
 
 /// `oneiron::agent_dispatch::comm::CommReach`.

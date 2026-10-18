@@ -288,6 +288,11 @@ pub enum AgentVerb {
     VaultAgentsCreate,
     VaultAgentsGet,
     VaultAgentsUpdate,
+    VaultWorkflowsSave,
+    VaultWorkflowsGet,
+    VaultWorkflowsUpdate,
+    VaultWorkflowsDispatch,
+    VaultWorkflowsStatus,
     VaultWorkspaceEstablish,
     VaultWorkspaceMembersOnboard,
     VaultWorkspaceRoster,
@@ -510,6 +515,9 @@ pub enum AgentVerb {
     VaultNotesFromEntity,
     VaultNotesRead,
     VaultNotesHistory,
+    VaultNotesHistoryPurge,
+    VaultNotesHistoryPurgeExecute,
+    VaultNotesHistoryPurgeReceipts,
     VaultNotesEditorBind,
     VaultNotesEditorClose,
     VaultNotesEdit,
@@ -820,6 +828,11 @@ impl AgentVerb {
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
         Self::VaultAgentsUpdate,
+        Self::VaultWorkflowsSave,
+        Self::VaultWorkflowsGet,
+        Self::VaultWorkflowsUpdate,
+        Self::VaultWorkflowsDispatch,
+        Self::VaultWorkflowsStatus,
         Self::VaultWorkspaceEstablish,
         Self::VaultWorkspaceMembersOnboard,
         Self::VaultWorkspaceRoster,
@@ -1042,6 +1055,9 @@ impl AgentVerb {
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
         Self::VaultNotesHistory,
+        Self::VaultNotesHistoryPurge,
+        Self::VaultNotesHistoryPurgeExecute,
+        Self::VaultNotesHistoryPurgeReceipts,
         Self::VaultNotesEditorBind,
         Self::VaultNotesEditorClose,
         Self::VaultNotesEdit,
@@ -1361,6 +1377,11 @@ impl AgentVerb {
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
             Self::VaultAgentsUpdate => "vault.agents.update",
+            Self::VaultWorkflowsSave => "vault.workflows.save",
+            Self::VaultWorkflowsGet => "vault.workflows.get",
+            Self::VaultWorkflowsUpdate => "vault.workflows.update",
+            Self::VaultWorkflowsDispatch => "vault.workflows.dispatch",
+            Self::VaultWorkflowsStatus => "vault.workflows.status",
             Self::VaultWorkspaceEstablish => "vault.workspace.establish",
             Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
             Self::VaultWorkspaceRoster => "vault.workspace.roster",
@@ -1587,6 +1608,9 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
             Self::VaultNotesHistory => "vault.notes.history",
+            Self::VaultNotesHistoryPurge => "vault.notes.history_purge",
+            Self::VaultNotesHistoryPurgeExecute => "vault.notes.history_purge_execute",
+            Self::VaultNotesHistoryPurgeReceipts => "vault.notes.history_purge_receipts",
             Self::VaultNotesEditorBind => "vault.notes.editor.bind",
             Self::VaultNotesEditorClose => "vault.notes.editor.close",
             Self::VaultNotesEdit => "vault.notes.edit",
@@ -1896,6 +1920,11 @@ impl AgentVerb {
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
                 | Self::VaultAgentsUpdate
+                | Self::VaultWorkflowsSave
+                | Self::VaultWorkflowsGet
+                | Self::VaultWorkflowsUpdate
+                | Self::VaultWorkflowsDispatch
+                | Self::VaultWorkflowsStatus
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2078,6 +2107,9 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultNotesEditorBind
                 | Self::VaultNotesEditorClose
                 | Self::VaultNotesEdit
@@ -2435,6 +2467,11 @@ impl AgentVerb {
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
                 | Self::VaultAgentsUpdate
+                | Self::VaultWorkflowsSave
+                | Self::VaultWorkflowsGet
+                | Self::VaultWorkflowsUpdate
+                | Self::VaultWorkflowsDispatch
+                | Self::VaultWorkflowsStatus
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2617,6 +2654,9 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultNotesEditorBind
                 | Self::VaultNotesEditorClose
                 | Self::VaultNotesEdit
@@ -2705,6 +2745,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultArtifactsBodyCommits
                 | Self::VaultClaimsSeed
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultTasksLinearProvenance
         )
     }
@@ -3018,6 +3059,11 @@ impl AgentVerb {
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
                 | Self::VaultAgentsUpdate
+                | Self::VaultWorkflowsSave
+                | Self::VaultWorkflowsGet
+                | Self::VaultWorkflowsUpdate
+                | Self::VaultWorkflowsDispatch
+                | Self::VaultWorkflowsStatus
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3223,6 +3269,9 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
@@ -3428,6 +3477,9 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueRecover
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
+                | Self::VaultWorkflowsSave
+                | Self::VaultWorkflowsUpdate
+                | Self::VaultWorkflowsDispatch
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultArtifactsReleaseWait
@@ -3554,6 +3606,8 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
@@ -3885,6 +3939,11 @@ impl AgentVerb {
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
             Self::VaultAgentsUpdate => &["spec"],
+            Self::VaultWorkflowsSave => &["spec"],
+            Self::VaultWorkflowsGet => &["spec"],
+            Self::VaultWorkflowsUpdate => &["spec"],
+            Self::VaultWorkflowsDispatch => &["spec"],
+            Self::VaultWorkflowsStatus => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -4107,6 +4166,9 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesHistoryPurge => &["spec"],
+            Self::VaultNotesHistoryPurgeExecute => &["spec"],
+            Self::VaultNotesHistoryPurgeReceipts => &["spec"],
             Self::VaultNotesEditorBind => &["spec"],
             Self::VaultNotesEditorClose => &["spec"],
             Self::VaultNotesEdit => &["spec"],
@@ -4418,6 +4480,11 @@ impl AgentVerb {
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
             Self::VaultAgentsUpdate => &["spec"],
+            Self::VaultWorkflowsSave => &["spec"],
+            Self::VaultWorkflowsGet => &["spec"],
+            Self::VaultWorkflowsUpdate => &["spec"],
+            Self::VaultWorkflowsDispatch => &["spec"],
+            Self::VaultWorkflowsStatus => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -4640,6 +4707,9 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesHistoryPurge => &["spec"],
+            Self::VaultNotesHistoryPurgeExecute => &["spec"],
+            Self::VaultNotesHistoryPurgeReceipts => &["spec"],
             Self::VaultNotesEditorBind => &["spec"],
             Self::VaultNotesEditorClose => &["spec"],
             Self::VaultNotesEdit => &["spec"],
@@ -5488,6 +5558,21 @@ impl AgentVerb {
             Self::VaultAgentsUpdate => {
                 "The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."
             }
+            Self::VaultWorkflowsSave => {
+                "The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."
+            }
+            Self::VaultWorkflowsGet => {
+                "The owner reads one saved workflow, its steps, revision and fork lineage."
+            }
+            Self::VaultWorkflowsUpdate => {
+                "The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps."
+            }
+            Self::VaultWorkflowsDispatch => {
+                "The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."
+            }
+            Self::VaultWorkflowsStatus => {
+                "The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."
+            }
             Self::VaultWorkspaceEstablish => {
                 "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."
             }
@@ -6089,6 +6174,15 @@ impl AgentVerb {
             }
             Self::VaultNotesHistory => {
                 "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."
+            }
+            Self::VaultNotesHistoryPurge => {
+                "The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."
+            }
+            Self::VaultNotesHistoryPurgeExecute => {
+                "Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt."
+            }
+            Self::VaultNotesHistoryPurgeReceipts => {
+                "The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier."
             }
             Self::VaultNotesEditorBind => {
                 "Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."

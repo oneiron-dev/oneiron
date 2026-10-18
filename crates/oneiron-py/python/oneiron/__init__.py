@@ -687,6 +687,9 @@ class Oneiron:
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         @property
+        def workflows(self) -> "Oneiron._VaultWorkflowsVerbs":
+            return Oneiron._VaultWorkflowsVerbs(self._client)
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
         @property
@@ -2075,6 +2078,24 @@ class Oneiron:
         def export_pack(self, request: dict[str, Any]) -> dict[str, Any]:
             """The agent's travelling AgentPack folder (files base64) and what stayed home."""
             return json.loads(_translate(lambda: self._client.vault_agents_export_pack(json.dumps(request, allow_nan=False))))
+    class _VaultWorkflowsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def save(self, spec):
+            """The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."""
+            return json.loads(_translate(lambda: self._client.vault_workflows_save(json.dumps(spec))))
+        def get(self, spec):
+            """The owner reads one saved workflow, its steps, revision and fork lineage."""
+            return json.loads(_translate(lambda: self._client.vault_workflows_get(json.dumps(spec))))
+        def update(self, spec):
+            """The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps."""
+            return json.loads(_translate(lambda: self._client.vault_workflows_update(json.dumps(spec))))
+        def dispatch(self, spec):
+            """The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."""
+            return json.loads(_translate(lambda: self._client.vault_workflows_dispatch(json.dumps(spec))))
+        def status(self, spec):
+            """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
+            return json.loads(_translate(lambda: self._client.vault_workflows_status(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2567,6 +2588,15 @@ class Oneiron:
         def history(self, input: dict[str, Any]) -> Any:
             """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
             return json.loads(_translate(lambda: self._client.vault_notes_history(json.dumps(input, allow_nan=False))))
+        def history_purge(self, spec):
+            """The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."""
+            return json.loads(_translate(lambda: self._client.vault_notes_history_purge(json.dumps(spec))))
+        def history_purge_execute(self, spec):
+            """Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt."""
+            return json.loads(_translate(lambda: self._client.vault_notes_history_purge_execute(json.dumps(spec))))
+        def history_purge_receipts(self, spec):
+            """The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier."""
+            return json.loads(_translate(lambda: self._client.vault_notes_history_purge_receipts(json.dumps(spec))))
         @property
         def editor(self) -> "Oneiron._VaultNotesEditorVerbs":
             return Oneiron._VaultNotesEditorVerbs(self._client)

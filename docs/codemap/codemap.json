@@ -663,7 +663,7 @@
      "purpose": "Saved ordered agent compositions",
      "surface": {
       "crate-vis": 1,
-      "fn": 7,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -49403,7 +49403,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 39,
+      "re-export": 41,
       "struct": 36
      }
     },
@@ -49714,7 +49714,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 534
+      "fn": 542
      }
     },
     {
@@ -49885,6 +49885,23 @@
       "const": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NoteHistoryPurgeExecuteRequest",
+      "NoteHistoryPurgeOutcome",
+      "NoteHistoryPurgeReceipt",
+      "NoteHistoryPurgeRequest"
+     ],
+     "path": "src/task_verb/sdk_note_history.rs",
+     "purpose": "Typed owner actions over NOTE history",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -50188,6 +50205,27 @@
       "enum": 1,
       "fn": 8,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkflowDispatchRequest",
+      "WorkflowRequest",
+      "WorkflowRunRequest",
+      "WorkflowRunView",
+      "WorkflowSaveRequest",
+      "WorkflowStepCapture",
+      "WorkflowStepRun",
+      "WorkflowUpdateRequest",
+      "WorkflowView"
+     ],
+     "path": "src/task_verb/sdk_workflows.rs",
+     "purpose": "Typed saved workflows: ordered AGENT_DEF compositions the owner keeps",
+     "surface": {
+      "fn": 5,
+      "struct": 9
      }
     },
     {
@@ -56405,7 +56443,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 151,
+     "files": 153,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56575,7 +56613,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3448,
+   "source_files": 3450,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64989,7 +65027,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 484
+      "fn": 492
      }
     },
     {
@@ -66038,7 +66076,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 485
+      "fn": 493
      }
     },
     {
@@ -68899,9 +68937,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/agent_definition_doors.rs",
-     "purpose": "Custom definitions and workspace onboarding, with the caller's own proof",
+     "purpose": "Custom definitions, saved workflows and workspace onboarding, with the caller's own proof",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 11
      }
     },
     {
@@ -69271,7 +69309,7 @@
      "path": "src/api/facade/note_doors.rs",
      "purpose": "Host-held NOTE editor bindings beside the ordinary scoped NOTE reads",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -78162,6 +78200,10 @@
       "NoteEditorBinding",
       "NoteEditorCloseRequest",
       "NoteEditorClosed",
+      "NoteHistoryPurgeExecuteRequest",
+      "NoteHistoryPurgeOutcome",
+      "NoteHistoryPurgeReceipt",
+      "NoteHistoryPurgeRequest",
       "NoteHistoryView",
       "NoteKindDescriptor",
       "NoteLifecycleStatus",
@@ -78955,6 +78997,15 @@
       "WitnessAssertions",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
+      "WorkflowDispatchRequest",
+      "WorkflowRequest",
+      "WorkflowRunRequest",
+      "WorkflowRunView",
+      "WorkflowSaveRequest",
+      "WorkflowStepCapture",
+      "WorkflowStepRun",
+      "WorkflowUpdateRequest",
+      "WorkflowView",
       "WorkspaceCompanionInput",
       "WorkspaceMemberOnboardRequest",
       "WorkspacePresetReceipt",
@@ -78991,8 +79042,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 466,
-      "struct": 1286
+      "enum": 467,
+      "struct": 1298
      }
     },
     {

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 543 code-mode rows (522 host rows, 21 run rows), 1946 declarations.
-// Replies: 478 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 551 code-mode rows (530 host rows, 21 run rows), 1959 declarations.
+// Replies: 486 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 93; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1185,6 +1185,18 @@ declare namespace Sdk {
   type AgentDefinitionView = { agent_def_ref: EntityId; definition: AgentDefinitionSpec; approval_status: ClaimApprovalStatus; lifecycle_status: AgentDefinitionLifecycle };
   type AgentDefinitionRequest = { agent_def_ref: EntityId };
   type AgentDefinitionUpdateRequest = { agent_def_ref: EntityId; expected_version: string; definition: AgentDefinitionSpec };
+  type WorkflowSaveRequest = { workflow_ref: EntityId; name: string; steps: EntityId[] };
+  type WorkflowView = { workflow_ref: EntityId; name: string; steps: EntityId[]; revision: number; forked_from?: EntityId | null };
+  type WorkflowRequest = { workflow_ref: EntityId };
+  type WorkflowUpdateRequest = { workflow_ref: EntityId; expected_revision: number; name: string; steps: EntityId[] };
+  type MemoryProjection = { mode: "default" } | { mode: "exclude" } | { mode: "scoped"; domains: string[]; limit: number };
+  type ChatProjection = { mode: "default" } | { mode: "exclude" } | { mode: "recent"; last_n: number };
+  type ContextSpec = { layers?: string[]; memory?: MemoryProjection; chat?: ChatProjection; briefing?: string | null; _annotation?: string | null };
+  type WorkflowDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null };
+  type WorkflowStepCapture = { requested_agent_ref: EntityId; agent_def_ref: EntityId; definition: AgentDefinitionSpec };
+  type WorkflowStepRun = { ordinal: number; requested_agent_ref: EntityId; dispatched_agent_ref: EntityId; attempt_ref: EntityId; result_ref: string };
+  type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[] };
+  type WorkflowRunRequest = { root_attempt_ref: EntityId };
   type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
   type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
@@ -1859,6 +1871,10 @@ declare namespace Sdk {
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
   type NoteAuthorship = { operation: string; actor: string; actor_class: string; grant?: string | null; command_hash: number[] };
   type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean };
+  type NoteHistoryPurgeRequest = { note_ref: string };
+  type NoteHistoryPurgeReceipt = { receipt: string; entity: string; document: string; actor?: string | null; requested: number[]; applied: number[]; at: number; live_text_hash: number[] };
+  type NoteHistoryPurgeOutcome = { state: "erased"; receipt: NoteHistoryPurgeReceipt } | { state: "waiting"; note_ref: string; act_id: string };
+  type NoteHistoryPurgeExecuteRequest = { act_id: string };
   type NoteEditorBinding = { binding: string; note: NoteReadView };
   type NoteEditorCloseRequest = { binding: string };
   type NoteEditorClosed = { closed: boolean };
@@ -1928,9 +1944,6 @@ declare namespace Sdk {
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
-  type MemoryProjection = { mode: "default" } | { mode: "exclude" } | { mode: "scoped"; domains: string[]; limit: number };
-  type ChatProjection = { mode: "default" } | { mode: "exclude" } | { mode: "recent"; last_n: number };
-  type ContextSpec = { layers?: string[]; memory?: MemoryProjection; chat?: ChatProjection; briefing?: string | null; _annotation?: string | null };
   type CommReach = "parent" | "subtree" | "project" | "vault";
   type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: ContextSpec | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null };
   type AgentSpawnKind = "agent_spawn";
@@ -2883,6 +2896,12 @@ declare const vault: Sdk.VaultHost & {
     from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
     history(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteHistoryView | null> | StoredResult>;
+    /** The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action. */
+    history_purge(input: Sdk.NoteHistoryPurgeRequest): Promise<Sdk.NoteHistoryPurgeOutcome | StoredResult>;
+    /** Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt. */
+    history_purge_execute(input: Sdk.NoteHistoryPurgeExecuteRequest): Promise<Sdk.NoteHistoryPurgeReceipt | StoredResult>;
+    /** The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier. */
+    history_purge_receipts(input: Sdk.NoteHistoryPurgeRequest): Promise<Sdk.NoteHistoryPurgeReceipt[] | StoredResult>;
     /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
     lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.NoteLifecycleView | StoredResult>;
     /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
@@ -3309,6 +3328,18 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch. */
   witness(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
+  workflows: {
+    /** The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run. */
+    dispatch(input: Sdk.WorkflowDispatchRequest): Promise<Sdk.WorkflowRunView | StoredResult>;
+    /** The owner reads one saved workflow, its steps, revision and fork lineage. */
+    get(input: Sdk.WorkflowRequest): Promise<Sdk.WorkflowView | StoredResult>;
+    /** The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched. */
+    save(input: Sdk.WorkflowSaveRequest): Promise<Sdk.WorkflowView | StoredResult>;
+    /** The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result. */
+    status(input: Sdk.WorkflowRunRequest): Promise<Sdk.WorkflowRunView | StoredResult>;
+    /** The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps. */
+    update(input: Sdk.WorkflowUpdateRequest): Promise<Sdk.WorkflowView | StoredResult>;
+  };
   workspace: {
     /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
     establish(input: Sdk.WorkspacePresetRequest): Promise<Sdk.WorkspacePresetReceipt | StoredResult>;

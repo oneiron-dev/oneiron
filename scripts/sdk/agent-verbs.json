@@ -4474,6 +4474,81 @@
       "openapi": true
     },
     {
+      "name": "vault.workflows.save",
+      "description": "The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched.",
+      "input": "crate::task_verb::sdk::WorkflowSaveRequest",
+      "output": "crate::task_verb::sdk::WorkflowView",
+      "call": "crate::task_verb::sdk::save_workflow_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.save\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.workflows.get",
+      "description": "The owner reads one saved workflow, its steps, revision and fork lineage.",
+      "input": "crate::task_verb::sdk::WorkflowRequest",
+      "output": "crate::task_verb::sdk::WorkflowView",
+      "call": "crate::task_verb::sdk::read_workflow_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.workflows.update",
+      "description": "The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps.",
+      "input": "crate::task_verb::sdk::WorkflowUpdateRequest",
+      "output": "crate::task_verb::sdk::WorkflowView",
+      "call": "crate::task_verb::sdk::update_workflow_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.update\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.workflows.dispatch",
+      "description": "The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run.",
+      "input": "crate::task_verb::sdk::WorkflowDispatchRequest",
+      "output": "crate::task_verb::sdk::WorkflowRunView",
+      "call": "crate::task_verb::sdk::dispatch_workflow_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.dispatch\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.workflows.status",
+      "description": "The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result.",
+      "input": "crate::task_verb::sdk::WorkflowRunRequest",
+      "output": "crate::task_verb::sdk::WorkflowRunView",
+      "call": "crate::task_verb::sdk::read_workflow_run_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.status\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.workspace.establish",
       "description": "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted.",
       "input": "crate::task_verb::sdk::WorkspacePresetRequest",
@@ -8528,6 +8603,51 @@
         "native": "agent_verb",
         "request": true
       },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.history_purge",
+      "description": "The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action.",
+      "input": "crate::task_verb::sdk::NoteHistoryPurgeRequest",
+      "output": "crate::task_verb::sdk::NoteHistoryPurgeOutcome",
+      "call": "crate::task_verb::sdk::purge_note_history_as_owner(memory.vault(), &memory.embedded_owner(\"vault.notes.history_purge\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.history_purge_execute",
+      "description": "Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt.",
+      "input": "crate::task_verb::sdk::NoteHistoryPurgeExecuteRequest",
+      "output": "crate::task_verb::sdk::NoteHistoryPurgeReceipt",
+      "call": "crate::task_verb::sdk::execute_note_history_purge_as_owner(memory.vault(), &memory.embedded_owner(\"vault.notes.history_purge_execute\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.history_purge_receipts",
+      "description": "The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier.",
+      "input": "crate::task_verb::sdk::NoteHistoryPurgeRequest",
+      "output": "Vec<crate::task_verb::sdk::NoteHistoryPurgeReceipt>",
+      "call": "crate::task_verb::sdk::note_history_purge_receipts_as_owner(memory.vault(), &memory.embedded_owner(\"vault.notes.history_purge_receipts\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
       "openapi": true
     },
     {

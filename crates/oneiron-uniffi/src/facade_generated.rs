@@ -1421,6 +1421,31 @@ export_facade! {
     let output = client.vault_agents_update(&input)?;
     crate::codec::lift_record("vault.agents.update", &output)
 };
+"vault.workflows.save" => fn vault_workflows_save(&self, input: WorkflowSaveRequest) -> WorkflowView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowSaveRequest = crate::codec::lower_record("vault.workflows.save", input)?;
+    let output = client.vault_workflows_save(&input)?;
+    crate::codec::lift_record("vault.workflows.save", &output)
+};
+"vault.workflows.get" => fn vault_workflows_get(&self, input: WorkflowRequest) -> WorkflowView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowRequest = crate::codec::lower_record("vault.workflows.get", input)?;
+    let output = client.vault_workflows_get(&input)?;
+    crate::codec::lift_record("vault.workflows.get", &output)
+};
+"vault.workflows.update" => fn vault_workflows_update(&self, input: WorkflowUpdateRequest) -> WorkflowView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowUpdateRequest = crate::codec::lower_record("vault.workflows.update", input)?;
+    let output = client.vault_workflows_update(&input)?;
+    crate::codec::lift_record("vault.workflows.update", &output)
+};
+"vault.workflows.dispatch" => fn vault_workflows_dispatch(&self, input: WorkflowDispatchRequest) -> WorkflowRunView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowDispatchRequest = crate::codec::lower_record("vault.workflows.dispatch", input)?;
+    let output = client.vault_workflows_dispatch(&input)?;
+    crate::codec::lift_record("vault.workflows.dispatch", &output)
+};
+"vault.workflows.status" => fn vault_workflows_status(&self, input: WorkflowRunRequest) -> WorkflowRunView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowRunRequest = crate::codec::lower_record("vault.workflows.status", input)?;
+    let output = client.vault_workflows_status(&input)?;
+    crate::codec::lift_record("vault.workflows.status", &output)
+};
 "vault.workspace.establish" => fn vault_workspace_establish(&self, input: WorkspacePresetRequest) -> WorkspacePresetReceipt = |client| {
     let input: oneiron::task_verb::sdk::WorkspacePresetRequest = crate::codec::lower_record("vault.workspace.establish", input)?;
     let output = client.vault_workspace_establish(&input)?;
@@ -2330,6 +2355,21 @@ export_facade! {
     let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.history", input)?;
     let output = client.vault_notes_history(&input)?;
     crate::codec::lift_record("vault.notes.history", &output)
+};
+"vault.notes.history_purge" => fn vault_notes_history_purge(&self, input: NoteHistoryPurgeRequest) -> NoteHistoryPurgeOutcome = |client| {
+    let input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest = crate::codec::lower_record("vault.notes.history_purge", input)?;
+    let output = client.vault_notes_history_purge(&input)?;
+    crate::codec::lift_record("vault.notes.history_purge", &output)
+};
+"vault.notes.history_purge_execute" => fn vault_notes_history_purge_execute(&self, input: NoteHistoryPurgeExecuteRequest) -> NoteHistoryPurgeReceipt = |client| {
+    let input: oneiron::task_verb::sdk::NoteHistoryPurgeExecuteRequest = crate::codec::lower_record("vault.notes.history_purge_execute", input)?;
+    let output = client.vault_notes_history_purge_execute(&input)?;
+    crate::codec::lift_record("vault.notes.history_purge_execute", &output)
+};
+"vault.notes.history_purge_receipts" => fn vault_notes_history_purge_receipts(&self, input: NoteHistoryPurgeRequest) -> Vec<NoteHistoryPurgeReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest = crate::codec::lower_record("vault.notes.history_purge_receipts", input)?;
+    let output = client.vault_notes_history_purge_receipts(&input)?;
+    crate::codec::lift_record("vault.notes.history_purge_receipts", &output)
 };
 "vault.notes.editor.bind" => fn vault_notes_editor_bind(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteEditorBinding = |client| {
     let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.editor.bind", input)?;
