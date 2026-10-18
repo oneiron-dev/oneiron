@@ -18,6 +18,10 @@ side_tables! {
     AGENT_DISPATCH_COMM_WIDEN: VaultMeta b"agent.dispatch.comm.v1\0" Named Engine;
     /// Resumable partial-result hold for one gracefully stopped spawn (OF-541). Key: id16.
     AGENT_DISPATCH_PLAN_HOLD: VaultMeta b"agent.dispatch.hold.v1\0" LegacyJson;
+    /// FIX 3694: the owner's applied prompt continuation of one failed agent attempt: the card,
+    /// ask and diagnostic it answered, the approving owner and when, the approval's fingerprint
+    /// and id, and the successor attempt it enqueued. Key: id16(failed attempt).
+    AGENT_DISPATCH_PROMPT_INJECT: VaultMeta b"agent.dispatch.prompt_inject.v1\0" Named Engine;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
     AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson Authored;
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.

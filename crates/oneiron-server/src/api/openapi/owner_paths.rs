@@ -762,6 +762,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/inbox/concern/apply-prompt-inject",
+        summary: "Applies the Coach's prompt injection on one card as the owner approves it: the failed attempt goes on as a new one, from its pre-fail checkpoint.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/inbox/concern/move",
         summary: "Takes one of the card's moves.",
         row: None,

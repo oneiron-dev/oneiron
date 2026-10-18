@@ -22,6 +22,9 @@
 //! It calls the vault's callable skills (OF-353). Its model calls spend under
 //! its attempt's spend scope (OF-533), and it may spawn reader children
 //! under that scope.
+//!
+//! A successor that carries the owner's approved prompt continuation of its
+//! failed predecessor (FIX 3694) runs as the fork of that run, from its cut.
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -32,15 +35,19 @@ use oneiron::agent_dispatch::{
     PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
     agent_dispatch_actor,
 };
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttemptResult};
+use oneiron::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult,
+};
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
-    AgentVerbDoor, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat,
-    TaskExposure, finalize_step_captures, park_and_bind_wait_trap,
+    AgentVerbDoor, CodeRunReplayRecord, HostPlannerBinding, HostPlannerDecisions,
+    HostSelfDispatcher, SpawnHostSeat, TaskExposure, finalize_step_captures,
+    park_and_bind_wait_trap,
 };
 use oneiron::compaction::output::{OutputContextEntry, restore_output};
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
+use oneiron::engine_executor::continuation::{fork_executor_run, run_continuation};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
 };
@@ -50,7 +57,7 @@ use oneiron::failure_ladder::{
 };
 use oneiron::learning::TypeRef;
 use oneiron::llm::SpentKind;
-use oneiron::llm::seat::ModelSeat;
+use oneiron::llm::seat::{ModelSeat, SeatKind, SeatTask};
 use oneiron::llm::{
     DurableStepContext, open_trap, register_wait, trap_for_durable_wait, trap_park_owner,
 };
@@ -68,6 +75,7 @@ use crate::config::models::PlannerSettings;
 use crate::decision_host::DecisionHost;
 use crate::mcp::{
     EngineRunError, McpCodeModeProvider, ScopeMeter, engine_run_seat, enter_engine_native_run,
+    run_seat,
 };
 
 /// The pump's lease owner, and the owner of the park a run stopped by a
@@ -97,6 +105,15 @@ const WINDOW_FULL_TRIES: u32 = 30;
 const RUN_MAX_TRIES: NonZeroU16 = NonZeroU16::new(3).expect("three is nonzero");
 /// How long such a retry waits per try when its provider named no reset.
 const RUN_RETRY_BACKOFF_SECS: u64 = 30;
+/// The codes a continuation's fork refuses with at lease time (FIX 3694),
+/// each the stable reason its successor fails under.
+const FORK_REFUSALS: [&str; 5] = [
+    "continuation_no_checkpoint",
+    "continuation_effect_tail",
+    "continuation_source_missing",
+    "continuation_occupied",
+    "continuation_storage",
+];
 
 /// What one pass found: the ready runs, and what it could not serve, keyed
 /// by what it was for.
@@ -417,9 +434,17 @@ fn run_bound(
     // The run is the attempt's own: a retry is a fresh attempt, and so a
     // fresh run.
     let run_id = EntityId::from_bytes(*status.attempt.id.as_bytes()).map_err(text)?;
-    let mut config = provider
+    let template = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
+    // FIX 3694: a successor that carries the owner's approved prompt
+    // continuation goes on as the fork of its failed predecessor's run, from
+    // its cut, on the task, model and effort that run had. It is born on a
+    // seat of its own bound to them, and its task takes no skill again: the
+    // source's task already holds it.
+    let continued = continued_config(vault, &status.attempt, &template)?;
+    let continues = continued.is_some();
+    let mut config = continued.unwrap_or_else(|| template.clone());
     // OF-541: the run is born on its seat once, from its own task, before
     // its skill adds to it, and each entry runs on that seat. A run its
     // parent planned is born on the model its plan picked. The attempt is
@@ -427,13 +452,17 @@ fn run_bound(
     // its host configured, and its pack loads and planner take that model.
     // A vault with no manifest bears no seat, so the template stays the
     // stamp its pack loads write.
-    let model_seat = engine_run_seat(
-        vault,
-        provider,
-        &config,
-        format!("agent-run:{}", run_id.to_hex()),
-        status.input.plan.as_ref(),
-    )?;
+    let model_seat = if continues {
+        continued_seat(vault, provider, &config)?
+    } else {
+        engine_run_seat(
+            vault,
+            provider,
+            &config,
+            format!("agent-run:{}", run_id.to_hex()),
+            status.input.plan.as_ref(),
+        )?
+    };
     if let Some(seat) = &model_seat {
         let lease_owner = status
             .attempt
@@ -446,7 +475,7 @@ fn run_bound(
                 lease_owner,
                 status.attempt.attempt_count,
                 seat.model().as_str(),
-                config.model.as_str(),
+                template.model.as_str(),
                 // The native code-mode template is the chat seat
                 // (`ai_host/code_mode.rs`, `runtime.seat(CHAT_ROLE)`).
                 crate::ai_host::CHAT_ROLE,
@@ -457,7 +486,8 @@ fn run_bound(
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
     // run whose skill does not load is refused, never run unskilled. The
     // body is tagged where it went, so the run's first step is captured with
-    // it marked for a contribution check (FIX 3028).
+    // it marked for a contribution check (FIX 3028). A continued run loads
+    // it too, and its task already holds the body.
     let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
     let mut exposures = Vec::new();
     if let Some(skill) = AgentDispatcher::new(vault)
@@ -468,6 +498,7 @@ fn run_bound(
             unix_now(),
         )
         .map_err(text)?
+        && !continues
         && let Some(body) = skill
             .source_files
             .iter()
@@ -559,6 +590,48 @@ fn run_bound(
             _ => return Ok(outcome),
         }
     }
+}
+
+/// The config a leased successor runs under when it carries the owner's
+/// approved prompt continuation (FIX 3694): its fork of the failed
+/// predecessor's run, seeded from the cut, or re-opened on a later entry.
+/// `None` for any other run. A fork that refuses fails the run under the
+/// refusal's code.
+fn continued_config(
+    vault: &Vault,
+    attempt: &AttemptRecord,
+    template: &EngineExecutorConfig,
+) -> Result<Option<EngineExecutorConfig>, EngineRunError> {
+    if run_continuation(vault, attempt.id).map_err(text)?.is_none() {
+        return Ok(None);
+    }
+    fork_executor_run(vault, attempt, template)
+        .map(|prepared| Some(prepared.config))
+        .map_err(|refusal| EngineRunError::Binding(refusal.to_string()))
+}
+
+/// The seat a continued run is born on (FIX 3694): one of its own, under its
+/// own run's receipt, bound to the model, locality and effort its source ran
+/// on, so the fork's config marker holds on every entry.
+fn continued_seat(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    config: &EngineExecutorConfig,
+) -> Result<Option<ModelSeat>, String> {
+    run_seat(vault, provider, config.run_id, |facet| SeatTask {
+        kind: SeatKind::Attempt,
+        warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
+        task: config.task.clone(),
+        purpose: oneiron::CallPurpose::Other {
+            name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+        },
+        facet: facet.to_owned(),
+        required: Vec::new(),
+        min_context_tokens: 1,
+        locality: config.model_locality,
+        override_model: Some(config.model.clone()),
+        override_effort: config.seat_effort,
+    })
 }
 
 /// One entry of the run, as `execute_code` enters its runs, but bound to the
@@ -848,7 +921,7 @@ fn settle(
                     });
                     reason
                 }
-                None => "agent_run_failed",
+                None => fork_refusal(&error).unwrap_or("agent_run_failed"),
             }
         }
     };
@@ -897,6 +970,16 @@ fn settle(
 /// door's, after which it goes on from its next step. Either parks it.
 fn parks_on_outage(error: &EngineRunError) -> bool {
     error.provider_outage().is_some() || error.llm().is_some_and(LlmError::is_provider_unavailable)
+}
+
+/// The code a continuation's fork refused with (FIX 3694), when that is why
+/// the run stopped.
+fn fork_refusal(error: &EngineRunError) -> Option<&'static str> {
+    let EngineRunError::Binding(text) = error else {
+        return None;
+    };
+    let code = text.split(':').next()?;
+    FORK_REFUSALS.into_iter().find(|refusal| *refusal == code)
 }
 
 /// Whether a run's model call failed for a reason that passes, with its
@@ -950,12 +1033,10 @@ fn complete(
 ) -> oneiron::Result<()> {
     let attempt = &claimed.status.attempt;
     // A run that settled its TASK itself (tasks.refuse; tasks.update once a
-    // run may report) is owed no Done from its result.
-    let settled_itself = outcome
-        .replay_record
-        .bridge_calls
-        .iter()
-        .any(|call| matches!(call.effect.as_str(), "tasks.refuse" | "tasks.update"));
+    // run may report) is owed no Done from its result. A continued run's
+    // calls its source made are history, never its own (FIX 3694).
+    let settled_itself =
+        settling_calls(&outcome.replay_record) > inherited_settling_calls(vault, attempt.id)?;
     if settled_itself {
         let body =
             serde_json::json!({ "run_id": outcome.replay_record.run_id.to_hex() }).to_string();
@@ -1010,6 +1091,28 @@ fn complete(
     )?;
     AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
     Ok(())
+}
+
+/// How many of `record`'s bridge calls settle the TASK its run realizes.
+fn settling_calls(record: &CodeRunReplayRecord) -> usize {
+    record
+        .bridge_calls
+        .iter()
+        .filter(|call| matches!(call.effect.as_str(), "tasks.refuse" | "tasks.update"))
+        .count()
+}
+
+/// How many TASK-settling calls a continued run took over from its source
+/// run (FIX 3694); 0 for any other run. A continuation is written and forked
+/// only when no call after its cut may have committed an effect, so every
+/// settling call its source made is in the prefix the child holds.
+fn inherited_settling_calls(vault: &Vault, attempt: AttemptId) -> oneiron::Result<usize> {
+    let Some(continuation) = run_continuation(vault, attempt)? else {
+        return Ok(0);
+    };
+    Ok(vault
+        .get_code_run_replay_record(&continuation.checkpoint.source_run)?
+        .map_or(0, |source| settling_calls(&source)))
 }
 
 /// The objectives a run confesses against (OF-544): the caller's, verbatim,

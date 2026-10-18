@@ -12,6 +12,7 @@ mod place;
 mod prune;
 mod reads;
 mod redirect;
+mod successor;
 mod task_lease;
 mod workflow;
 
