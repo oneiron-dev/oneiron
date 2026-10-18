@@ -18,13 +18,20 @@ use crate::sync::schema::read_window_list;
 use crate::sync::transport;
 use crate::sync::transport::TransportError;
 use crate::sync::types::{WindowKey, parse_window_key_str};
-use crate::sync::window::{LoadedWindow, UpdateVerdict};
+use crate::sync::window::{LoadedWindow, UpdateVerdict, Withhold};
 use crate::sync::window_rows::{
     LAST_SYNC, ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE,
 };
 use crate::sync::{
     EphemeralEventTrigger, EphemeralStore, EphemeralStoreEvent, LoroValue, Subscription,
 };
+
+/// FIX 922 item 11 call: no vector request names a world window to a home that may not read the
+/// world.
+const ITEM11_UNREADABLE_HOME_DISCOVERY: bool = true;
+/// FIX 922 item 11 call: a home that may not read a window's world is not asked to promote it; the
+/// `rp:w:` intent stays, and a first-edit promotion reports the home unavailable.
+pub(super) const ITEM11_UNREADABLE_HOME_PROMOTION: bool = true;
 
 /// Client-side sync engine.
 pub struct SyncClient {
@@ -251,6 +258,18 @@ impl SyncClient {
                 });
         }
         crate::sync::documents::document_frame_withheld_for(&self.vault, self.home_peer, frame)
+    }
+
+    /// Whether a vector request may name window `key` to the home this
+    /// connection proved (`ITEM11_UNREADABLE_HOME_DISCOVERY`).
+    pub(crate) fn home_may_request(&self, key: &WindowKey) -> bool {
+        !ITEM11_UNREADABLE_HOME_DISCOVERY || home_reads_window(&self.vault, self.home_peer, key)
+    }
+
+    /// Whether the home this connection proved may be asked to promote window
+    /// `key` (`ITEM11_UNREADABLE_HOME_PROMOTION`).
+    pub(crate) fn home_may_promote(&self, key: &WindowKey) -> bool {
+        !ITEM11_UNREADABLE_HOME_PROMOTION || home_reads_window(&self.vault, self.home_peer, key)
     }
 
     /// Returns the live window for `key` if loaded — registry lookup only,
@@ -493,6 +512,21 @@ impl SyncClient {
         }
         Ok(())
     }
+}
+
+/// Whether `home` may read the world of window `key`, judged now by the rule
+/// window egress withholds by ([`Withhold::Peer`]): a base window always may,
+/// an unknown home is an unknown destination, and settings that cannot be
+/// judged keep every world window off it (FIX 922 item 11).
+pub(super) fn home_reads_window(
+    vault: &Vault,
+    home: crate::authority::PeerMachine,
+    key: &WindowKey,
+) -> bool {
+    key.world().is_none()
+        || Withhold::Peer(home)
+            .withholds_window(vault, key)
+            .is_ok_and(|withheld| !withheld)
 }
 
 /// Loads the persisted root doc: `d:root` snapshot + pending `u:root:*`

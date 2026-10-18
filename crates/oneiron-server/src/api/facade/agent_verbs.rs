@@ -108,6 +108,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.research.weave", post(facade_route))
         .route("/vault.research.measure_search", post(facade_route))
         .route("/vault.research.measure_held_out", post(facade_route))
+        .route("/vault.research.evaluate_split", post(facade_route))
         .route("/vault.research.mark_invalid", post(facade_route))
         .route("/vault.research.prune", post(facade_route))
         .route("/vault.research.select", post(facade_route))

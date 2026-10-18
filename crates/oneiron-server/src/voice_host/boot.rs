@@ -28,7 +28,7 @@ use oneiron::claim::CallerLocality;
 use oneiron::disclosure::RoomParty;
 use oneiron::interlocutor::InterlocutorResolutionInput;
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, VoiceChunkPolicy};
-use oneiron::voice_cascade::uds::{MAX_FRAME_BYTES, SocketGuard};
+use oneiron::voice_cascade::uds::SocketGuard;
 use oneiron::voice_cascade::{
     VOICE_IDENTITY_ASK_SECONDS, VoiceContainerBinding, VoiceSessionConfig,
 };
@@ -384,9 +384,6 @@ async fn hello(stream: &mut UnixStream) -> io::Result<Hello> {
         let byte = stream.read_u8().await?;
         if byte == b'\n' {
             break;
-        }
-        if frame.len() >= MAX_FRAME_BYTES {
-            return Err(refused("hello exceeds the frame limit"));
         }
         frame.push(byte);
     }

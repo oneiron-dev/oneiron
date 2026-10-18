@@ -1087,6 +1087,8 @@ class Oneiron:
             """Records a node's search-split evidence, its selection signal, once."""
         def measure_held_out(self, spec: Facade.ResearchHeldOutWire) -> Facade.ExperimentNode:
             """Records a node's held-out evidence, once; only the promotion basis reads it."""
+        def evaluate_split(self, spec: Facade.CampaignSplitWire) -> Facade.CampaignSplitReport:
+            """The owner scores one arm of a bound claim-authoring campaign on one split under its bound config; the blind taste questions go through the host's decision ladder, and the report is returned, not stored."""
         def mark_invalid(self, spec: Facade.ResearchInvalidWire) -> Facade.ExperimentNode:
             """Marks a node buggy: it stays as evidence and takes debug children."""
         def prune(self, spec: Facade.ResearchPruneWire) -> Facade.ExperimentNode:
