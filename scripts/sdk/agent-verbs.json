@@ -1016,6 +1016,81 @@
       "openapi": true
     },
     {
+      "name": "vault.budgets.rsi.configure",
+      "description": "The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend.",
+      "input": "crate::llm::RsiBudgetConfig",
+      "output": "crate::llm::rsi_doors::RsiLineView",
+      "call": "crate::llm::rsi_doors::configure_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.configure\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.budgets.rsi",
+      "description": "The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure.",
+      "input": "crate::llm::rsi_doors::RsiLineRequest",
+      "output": "crate::llm::rsi_doors::RsiLineView",
+      "call": "crate::llm::rsi_doors::rsi_line_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.budgets.rsi.top_up",
+      "description": "The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself.",
+      "input": "crate::llm::RsiTopUp",
+      "output": "crate::llm::rsi_doors::RsiLineView",
+      "call": "crate::llm::rsi_doors::top_up_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.top_up\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.budgets.rsi.hold",
+      "description": "The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay.",
+      "input": "crate::llm::rsi_doors::RsiLineRequest",
+      "output": "crate::llm::rsi_doors::RsiLineView",
+      "call": "crate::llm::rsi_doors::hold_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.hold\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.budgets.rsi.hold.resume",
+      "description": "The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt.",
+      "input": "crate::llm::rsi_doors::RsiLineRequest",
+      "output": "crate::llm::rsi_doors::RsiLineView",
+      "call": "crate::llm::rsi_doors::resume_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.hold.resume\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.fanout.resume",
       "description": "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible.",
       "input": "crate::task_verb::sdk::FanoutResumeRequest",
@@ -3397,7 +3472,7 @@
     },
     {
       "name": "vault.packs.put",
-      "description": "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks.",
+      "description": "The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks.",
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
@@ -3527,6 +3602,54 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "ai.chat.completions",
+      "description": "Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling.",
+      "input": "ChatCompletionRequest",
+      "output": "crate::task_verb::sdk::ChatCompletionResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.chat.completions\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door_session": true,
+      "proposes": true,
+      "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.connectors.proxy.admit",
+      "description": "The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key.",
+      "input": "ProxyConnectorAdmitRequest",
+      "output": "crate::task_verb::sdk::ProxyConnectorRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.connectors.proxy.admit\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.proxy.revoke_write",
+      "description": "The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact.",
+      "input": "ProxyConnectorRevokeWriteRequest",
+      "output": "crate::task_verb::sdk::ProxyConnectorRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.connectors.proxy.revoke_write\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.connectors.subscriptions.put",
@@ -5538,6 +5661,32 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "vault.research.reserve_exploration",
+      "description": "Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work.",
+      "input": "crate::task_verb::sdk::ResearchExplorationWire",
+      "output": "crate::entity_id::EntityId",
+      "call": "crate::task_verb::sdk::research_reserve_exploration(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.budget",
+      "description": "Reads the campaign's lease, every reservation it holds or held with its settlement and soft-share overdraft receipt, and the vault RSI lines behind them, including the observable hold state.",
+      "input": "crate::task_verb::sdk::ResearchArchiveWire",
+      "output": "crate::task_verb::sdk::ResearchBudgetView",
+      "call": "crate::task_verb::sdk::research_budget(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.research.record_benchmark",

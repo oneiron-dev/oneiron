@@ -1,11 +1,11 @@
 //! Typed identity-topology calls over the engine's append-only op family.
 use serde::{Deserialize, Serialize};
 
+use crate::EntityId;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::identity_topology as topology;
 use crate::memory::{MemoryError, MemoryResult};
-use crate::EntityId;
 
 mod ops;
 pub use ops::*;
@@ -19,13 +19,19 @@ pub struct IdentityEvidence {
 
 impl From<IdentityEvidence> for topology::IdentityOpEvidence {
     fn from(value: IdentityEvidence) -> Self {
-        Self { refs: value.refs, rationale: value.rationale }
+        Self {
+            refs: value.refs,
+            rationale: value.rationale,
+        }
     }
 }
 
 impl From<topology::IdentityOpEvidence> for IdentityEvidence {
     fn from(value: topology::IdentityOpEvidence) -> Self {
-        Self { refs: value.refs, rationale: value.rationale }
+        Self {
+            refs: value.refs,
+            rationale: value.rationale,
+        }
     }
 }
 
@@ -39,9 +45,15 @@ pub enum IdentitySurvivorshipPlan {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IdentityReassignmentItem {
-    Claim { claim: EntityId },
+    Claim {
+        claim: EntityId,
+    },
     /// Recorded in the ledger; the engine currently applies claim assignments only.
-    Edge { source: EntityId, edge_kind: String, target: EntityId },
+    Edge {
+        source: EntityId,
+        edge_kind: String,
+        target: EntityId,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -63,7 +75,11 @@ impl IdentityReassignment {
     fn into_engine(self) -> MemoryResult<topology::ReassignmentEntry> {
         let item = match self.item {
             IdentityReassignmentItem::Claim { claim } => ClaimSubject::Entity(claim),
-            IdentityReassignmentItem::Edge { source, edge_kind, target } => ClaimSubject::Edge {
+            IdentityReassignmentItem::Edge {
+                source,
+                edge_kind,
+                target,
+            } => ClaimSubject::Edge {
                 source,
                 kind: EdgeKind::from_name(&edge_kind)
                     .ok_or_else(|| MemoryError::bad_request("unknown reassignment edge_kind"))?,
@@ -72,7 +88,9 @@ impl IdentityReassignment {
         };
         let target = match self.target {
             IdentityReassignmentTarget::Head { head } => topology::ReassignmentTarget::Head(head),
-            IdentityReassignmentTarget::Facet { index } => topology::ReassignmentTarget::Facet { index },
+            IdentityReassignmentTarget::Facet { index } => {
+                topology::ReassignmentTarget::Facet { index }
+            }
             IdentityReassignmentTarget::Residue => topology::ReassignmentTarget::Residue,
         };
         Ok(topology::ReassignmentEntry { item, target })
@@ -83,13 +101,21 @@ impl From<topology::ReassignmentEntry> for IdentityReassignment {
     fn from(value: topology::ReassignmentEntry) -> Self {
         let item = match value.item {
             ClaimSubject::Entity(claim) => IdentityReassignmentItem::Claim { claim },
-            ClaimSubject::Edge { source, kind, target } => IdentityReassignmentItem::Edge {
-                source, edge_kind: kind.name().to_owned(), target,
+            ClaimSubject::Edge {
+                source,
+                kind,
+                target,
+            } => IdentityReassignmentItem::Edge {
+                source,
+                edge_kind: kind.name().to_owned(),
+                target,
             },
         };
         let target = match value.target {
             topology::ReassignmentTarget::Head(head) => IdentityReassignmentTarget::Head { head },
-            topology::ReassignmentTarget::Facet { index } => IdentityReassignmentTarget::Facet { index },
+            topology::ReassignmentTarget::Facet { index } => {
+                IdentityReassignmentTarget::Facet { index }
+            }
             topology::ReassignmentTarget::Residue => IdentityReassignmentTarget::Residue,
         };
         Self { item, target }
@@ -98,7 +124,10 @@ impl From<topology::ReassignmentEntry> for IdentityReassignment {
 
 fn map_into_engine(entries: Vec<IdentityReassignment>) -> MemoryResult<topology::ReassignmentMap> {
     Ok(topology::ReassignmentMap {
-        entries: entries.into_iter().map(IdentityReassignment::into_engine).collect::<MemoryResult<_>>()?,
+        entries: entries
+            .into_iter()
+            .map(IdentityReassignment::into_engine)
+            .collect::<MemoryResult<_>>()?,
     })
 }
 
@@ -115,7 +144,8 @@ impl IdentityMergeRequest {
     fn into_engine(self) -> topology::MergeOp {
         let IdentitySurvivorshipPlan::ReadThrough = self.survivorship_plan;
         topology::MergeOp {
-            sources: self.sources, survivor: self.survivor,
+            sources: self.sources,
+            survivor: self.survivor,
             evidence: self.evidence.into(),
             survivorship_plan: topology::SurvivorshipPlan::ReadThrough,
         }
@@ -135,7 +165,8 @@ pub struct IdentitySplitRequest {
 impl IdentitySplitRequest {
     fn into_engine(self) -> MemoryResult<topology::SplitOp> {
         Ok(topology::SplitOp {
-            entity: self.entity, heads: self.heads,
+            entity: self.entity,
+            heads: self.heads,
             reassignment: map_into_engine(self.reassignment_map)?,
             evidence: self.evidence.into(),
         })
@@ -161,7 +192,11 @@ impl IdentityFacetRequest {
     fn into_engine(self) -> MemoryResult<topology::FacetOp> {
         Ok(topology::FacetOp {
             entity: self.entity,
-            facets: self.facets.into_iter().map(|spec| topology::FacetSpec { label: spec.label }).collect(),
+            facets: self
+                .facets
+                .into_iter()
+                .map(|spec| topology::FacetSpec { label: spec.label })
+                .collect(),
             reassignment: map_into_engine(self.reassignment_map)?,
             evidence: self.evidence.into(),
         })
@@ -178,7 +213,12 @@ pub struct IdentityAssertDistinctRequest {
 
 /// Only merge and split have resolvable parked events in the engine.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "op", content = "spec", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(
+    tag = "op",
+    content = "spec",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum IdentityProposedOp {
     Merge(IdentityMergeRequest),
     Split(IdentitySplitRequest),
@@ -241,19 +281,29 @@ impl IdentityAmendment {
     fn into_engine(self) -> MemoryResult<topology::IdentityTopologyOp> {
         let evidence = topology::IdentityOpEvidence::default();
         Ok(match self {
-            Self::Merge { sources, survivor, survivorship_plan } => {
+            Self::Merge {
+                sources,
+                survivor,
+                survivorship_plan,
+            } => {
                 let IdentitySurvivorshipPlan::ReadThrough = survivorship_plan;
                 topology::IdentityTopologyOp::Merge(topology::MergeOp {
-                    sources, survivor, evidence,
+                    sources,
+                    survivor,
+                    evidence,
                     survivorship_plan: topology::SurvivorshipPlan::ReadThrough,
                 })
             }
-            Self::Split { entity, heads, reassignment_map } => {
-                topology::IdentityTopologyOp::Split(topology::SplitOp {
-                    entity, heads, evidence,
-                    reassignment: map_into_engine(reassignment_map)?,
-                })
-            }
+            Self::Split {
+                entity,
+                heads,
+                reassignment_map,
+            } => topology::IdentityTopologyOp::Split(topology::SplitOp {
+                entity,
+                heads,
+                evidence,
+                reassignment: map_into_engine(reassignment_map)?,
+            }),
         })
     }
 }
@@ -322,23 +372,45 @@ impl From<topology::ProposalOutcome> for IdentityProposalOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum IdentityEventAction {
-    Merge { sources: Vec<EntityId>, survivor: EntityId },
+    Merge {
+        sources: Vec<EntityId>,
+        survivor: EntityId,
+    },
     Split {
-        entity: EntityId, heads: Vec<EntityId>, reassignment_map: Vec<IdentityReassignment>,
-        applied_assigned: u64, applied_residue: u64,
+        entity: EntityId,
+        heads: Vec<EntityId>,
+        reassignment_map: Vec<IdentityReassignment>,
+        applied_assigned: u64,
+        applied_residue: u64,
     },
     Facet {
-        entity: EntityId, facets: Vec<EntityId>, reassignment_map: Vec<IdentityReassignment>,
-        applied_assigned: u64, applied_residue: u64, forked: Vec<EntityId>,
+        entity: EntityId,
+        facets: Vec<EntityId>,
+        reassignment_map: Vec<IdentityReassignment>,
+        applied_assigned: u64,
+        applied_residue: u64,
+        forked: Vec<EntityId>,
     },
-    AssertDistinct { a: EntityId, b: EntityId, claim: EntityId },
-    Undo { target: EntityId },
+    AssertDistinct {
+        a: EntityId,
+        b: EntityId,
+        claim: EntityId,
+    },
+    Undo {
+        target: EntityId,
+    },
     ProposalResolution {
-        proposal: EntityId, outcome: IdentityProposalOutcome,
-        op_kind: String, target_class: String, proposer: String,
+        proposal: EntityId,
+        outcome: IdentityProposalOutcome,
+        op_kind: String,
+        target_class: String,
+        proposer: String,
         amendment: Option<IdentityAmendment>,
     },
-    ProposalCancellation { proposal: EntityId, participant: EntityId },
+    ProposalCancellation {
+        proposal: EntityId,
+        participant: EntityId,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -361,22 +433,43 @@ impl IdentityTopologyReceipt {
     pub fn rows(&self) -> Vec<EntityId> {
         let mut rows = vec![self.event];
         rows.extend(self.actor);
-        if let Some(evidence) = &self.evidence { rows.extend(&evidence.refs); }
+        if let Some(evidence) = &self.evidence {
+            rows.extend(&evidence.refs);
+        }
         match &self.action {
             IdentityEventAction::Merge { sources, survivor } => {
-                rows.extend(sources); rows.push(*survivor);
+                rows.extend(sources);
+                rows.push(*survivor);
             }
-            IdentityEventAction::Split { entity, heads, reassignment_map, .. } => {
-                rows.push(*entity); rows.extend(heads); map_rows(reassignment_map, &mut rows);
+            IdentityEventAction::Split {
+                entity,
+                heads,
+                reassignment_map,
+                ..
+            } => {
+                rows.push(*entity);
+                rows.extend(heads);
+                map_rows(reassignment_map, &mut rows);
             }
-            IdentityEventAction::Facet { entity, facets, reassignment_map, forked, .. } => {
-                rows.push(*entity); rows.extend(facets); rows.extend(forked);
+            IdentityEventAction::Facet {
+                entity,
+                facets,
+                reassignment_map,
+                forked,
+                ..
+            } => {
+                rows.push(*entity);
+                rows.extend(facets);
+                rows.extend(forked);
                 map_rows(reassignment_map, &mut rows);
             }
             IdentityEventAction::AssertDistinct { a, b, claim } => rows.extend([*a, *b, *claim]),
             IdentityEventAction::Undo { target } => rows.push(*target),
             IdentityEventAction::ProposalResolution { proposal, .. } => rows.push(*proposal),
-            IdentityEventAction::ProposalCancellation { proposal, participant } => rows.extend([*proposal, *participant]),
+            IdentityEventAction::ProposalCancellation {
+                proposal,
+                participant,
+            } => rows.extend([*proposal, *participant]),
         }
         rows
     }
@@ -386,17 +479,26 @@ fn map_rows(entries: &[IdentityReassignment], rows: &mut Vec<EntityId>) {
     for entry in entries {
         match &entry.item {
             IdentityReassignmentItem::Claim { claim } => rows.push(*claim),
-            IdentityReassignmentItem::Edge { source, target, .. } => rows.extend([*source, *target]),
+            IdentityReassignmentItem::Edge { source, target, .. } => {
+                rows.extend([*source, *target])
+            }
         }
-        if let IdentityReassignmentTarget::Head { head } = &entry.target { rows.push(*head); }
+        if let IdentityReassignmentTarget::Head { head } = &entry.target {
+            rows.push(*head);
+        }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum IdentityTopologyResult {
-    Applied { receipt: IdentityTopologyReceipt, transitions: Vec<IdentityTransition> },
-    Parked { receipt: IdentityTopologyReceipt },
+    Applied {
+        receipt: IdentityTopologyReceipt,
+        transitions: Vec<IdentityTransition>,
+    },
+    Parked {
+        receipt: IdentityTopologyReceipt,
+    },
     Noop,
 }
 
@@ -424,10 +526,15 @@ pub struct IdentityResolution {
 
 impl IdentityResolution {
     pub fn rows(&self) -> Vec<EntityId> {
-        std::iter::once(self.entity).chain(self.heads.iter().copied())
-            .chain(self.merged_into.iter().copied()).chain(self.split_into.iter().copied())
-            .chain(self.facets.iter().copied()).chain(self.assigned_claims.iter().copied())
-            .chain(self.ambiguous_residue.iter().copied()).chain(self.remaining_claims.iter().copied()).collect()
+        std::iter::once(self.entity)
+            .chain(self.heads.iter().copied())
+            .chain(self.merged_into.iter().copied())
+            .chain(self.split_into.iter().copied())
+            .chain(self.facets.iter().copied())
+            .chain(self.assigned_claims.iter().copied())
+            .chain(self.ambiguous_residue.iter().copied())
+            .chain(self.remaining_claims.iter().copied())
+            .collect()
     }
 }
 
@@ -448,8 +555,11 @@ pub struct IdentityPairProposals {
 
 impl IdentityPairProposals {
     pub fn rows(&self) -> Vec<EntityId> {
-        [self.a, self.b].into_iter().chain(self.proposals.iter().copied())
-            .chain(self.distinct_claims.iter().copied()).collect()
+        [self.a, self.b]
+            .into_iter()
+            .chain(self.proposals.iter().copied())
+            .chain(self.distinct_claims.iter().copied())
+            .collect()
     }
 }
 
@@ -463,7 +573,9 @@ pub struct IdentityProposalResolutionResult {
 impl IdentityProposalResolutionResult {
     pub fn rows(&self) -> Vec<EntityId> {
         let mut rows = self.receipt.rows();
-        if let Some(applied) = &self.applied { rows.extend(applied.rows()); }
+        if let Some(applied) = &self.applied {
+            rows.extend(applied.rows());
+        }
         rows
     }
 }
