@@ -3,9 +3,9 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 580 facade rows, 2150 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 542.
-// WireJson rows: none.
+// UniFFI census: 588 facade rows, 2167 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 548.
+// WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
@@ -4318,6 +4318,143 @@ pub struct ScopedClaimInput {
     pub salience: Option<f64>,
 }
 
+/// `oneiron::gate::policy_manifest_doors::retrieval_weights::RetrievalWeights`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RetrievalWeights {
+    #[serde(rename = "affect")]
+    pub affect: f64,
+    #[serde(rename = "arousal")]
+    pub arousal: f64,
+    #[serde(rename = "community")]
+    pub community: f64,
+    #[serde(rename = "vad")]
+    pub vad: f64,
+}
+
+/// `oneiron::gate::policy_manifest_doors::retrieval_weights::RetrievalWeightsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalWeightsView {
+    #[serde(rename = "manifest_ref")]
+    pub manifest_ref: String,
+    #[serde(rename = "body_hash")]
+    pub body_hash: String,
+    #[serde(rename = "weights")]
+    pub weights: RetrievalWeights,
+}
+
+/// `oneiron::gate::policy_manifest_doors::retrieval_weights::RetrievalWeightsConfigureRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RetrievalWeightsConfigureRequest {
+    #[serde(rename = "expected_body_hash")]
+    pub expected_body_hash: String,
+    #[serde(rename = "weights")]
+    pub weights: RetrievalWeights,
+}
+
+/// `oneiron::gate::policy_manifest_doors::retrieval_weights::RetrievalWeightsReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalWeightsReceipt {
+    #[serde(rename = "configuration")]
+    pub configuration: RetrievalWeightsView,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+}
+
+/// `oneiron::task_verb::sdk::QueryAffect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WireQueryAffect {
+    #[serde(rename = "valence")]
+    pub valence: f64,
+    #[serde(rename = "arousal")]
+    pub arousal: f64,
+    #[serde(rename = "dominance")]
+    pub dominance: f64,
+}
+
+/// `oneiron_contracts::affect::vad::VadAnnotationSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum VadAnnotationSource {
+    #[serde(rename = "model_inference")]
+    ModelInference,
+    #[serde(rename = "user_self_report")]
+    UserSelfReport,
+}
+
+/// `oneiron::memory::affect::AffectAnnotationPut`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AffectAnnotationPut {
+    #[serde(rename = "turn_ref")]
+    pub turn_ref: String,
+    #[serde(rename = "vad")]
+    pub vad: WireQueryAffect,
+    #[serde(rename = "source")]
+    pub source: VadAnnotationSource,
+    #[serde(rename = "annotated_at")]
+    pub annotated_at: u64,
+    #[serde(rename = "scope")]
+    pub scope: ClaimScope,
+    #[serde(
+        rename = "sensitivity",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sensitivity: Option<u8>,
+}
+
+/// `oneiron::memory::affect::AffectClaimConsolidateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AffectClaimConsolidateRequest {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+}
+
+/// `oneiron::memory::affect::AffectTurnEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AffectTurnEvidence {
+    #[serde(rename = "turn_ref")]
+    pub turn_ref: String,
+    #[serde(rename = "vad")]
+    pub vad: WireQueryAffect,
+    #[serde(rename = "source")]
+    pub source: VadAnnotationSource,
+    #[serde(rename = "annotated_at")]
+    pub annotated_at: u64,
+}
+
+/// `oneiron::memory::affect::AffectClaimConsolidation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AffectClaimConsolidation {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "vad", default, skip_serializing_if = "Option::is_none")]
+    pub vad: Option<WireQueryAffect>,
+    #[serde(rename = "evidence_turns")]
+    pub evidence_turns: Vec<AffectTurnEvidence>,
+    #[serde(rename = "semantic_edges_updated")]
+    pub semantic_edges_updated: u64,
+    #[serde(rename = "structural_edges_skipped")]
+    pub structural_edges_skipped: u64,
+    #[serde(
+        rename = "active_state_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub active_state_ref: Option<String>,
+    #[serde(
+        rename = "created_state_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub created_state_ref: Option<String>,
+    #[serde(rename = "superseded_state_refs")]
+    pub superseded_state_refs: Vec<String>,
+}
+
 /// `oneiron::memory::recall::call_mode::RecallEffort`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RecallEffort {
@@ -4402,18 +4539,6 @@ pub struct ContextPackMediaQuery {
     pub bytes_b64: String,
     #[serde(rename = "kinds", default, skip_serializing_if = "Option::is_none")]
     pub kinds: Option<Vec<MediaQueryKind>>,
-}
-
-/// `oneiron::task_verb::sdk::QueryAffect`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct WireQueryAffect {
-    #[serde(rename = "valence")]
-    pub valence: f64,
-    #[serde(rename = "arousal")]
-    pub arousal: f64,
-    #[serde(rename = "dominance")]
-    pub dominance: f64,
 }
 
 /// `oneiron::store::retrieval_telemetry::state::RetrievalTurn`.
@@ -20287,6 +20412,16 @@ pub enum AgentCeilingInput {
     Proposed,
 }
 
+/// `oneiron::agent_def::models::AgentModel`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentModel {
+    #[serde(rename = "model_ref")]
+    pub model_ref: String,
+    #[serde(rename = "when")]
+    pub when: String,
+}
+
 /// `oneiron::task_verb::sdk_agents::AgentDefinitionSpec`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -20341,6 +20476,14 @@ pub struct AgentDefinitionSpec {
         skip_serializing_if = "Option::is_none"
     )]
     pub display_name: Option<String>,
+    #[serde(rename = "models", default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<AgentModel>>,
+    #[serde(
+        rename = "compaction_model",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub compaction_model: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_agents::AgentDefinitionCreateRequest`.
@@ -25472,6 +25615,64 @@ pub struct CallableCardView {
     pub arguments: crate::WireJson,
     #[serde(rename = "returns")]
     pub returns: crate::WireJson,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackReceiptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPackReceiptRequest {
+    #[serde(rename = "attempt_receipt")]
+    pub attempt_receipt: String,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillPackReceipt {
+    #[serde(rename = "receipt")]
+    pub receipt: ReceiptRecord,
+    #[serde(rename = "loaded_skills")]
+    pub loaded_skills: Vec<String>,
+    #[serde(rename = "attribution")]
+    pub attribution: PackAttributionFields,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackOutcomeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPackOutcomeRequest {
+    #[serde(rename = "attempt_receipt")]
+    pub attempt_receipt: String,
+    #[serde(rename = "outcome_receipt")]
+    pub outcome_receipt: String,
+    #[serde(rename = "succeeded")]
+    pub succeeded: bool,
+    #[serde(rename = "axis")]
+    pub axis: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(
+        rename = "goal_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub goal_revision: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackOutcomeProjection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillPackOutcomeProjection {
+    #[serde(rename = "receipt")]
+    pub receipt: LateCreditReceipt,
+    #[serde(rename = "persisted")]
+    pub persisted: bool,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackCreditRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPackCreditRequest {
+    #[serde(rename = "receipt_id")]
+    pub receipt_id: String,
 }
 
 /// `oneiron_model::llm::call::CallPurpose`.
@@ -34760,4 +34961,24 @@ pub struct LeaderSplitOutput {
     pub leader: String,
     #[serde(rename = "depth_remaining")]
     pub depth_remaining: u8,
+}
+
+/// `oneiron::code_run::run_verbs::SkillCallInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillCallInput {
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "args")]
+    pub args: crate::WireJson,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SkillCallInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestSkillCallInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: SkillCallInput,
 }

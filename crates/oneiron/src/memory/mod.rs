@@ -24,6 +24,7 @@
 //! unchanged from the flat-file era.
 
 mod answer_boundary;
+pub mod affect;
 mod archive_purge;
 mod asset_resolve;
 mod authorship;

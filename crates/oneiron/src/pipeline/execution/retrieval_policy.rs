@@ -202,9 +202,9 @@ impl PipelineBuilder<'_> {
                 RetrievalPolicyAction::Expand => {
                     // One graph step from the admitted working set, not an
                     // ever-deeper rerun from an unfiltered raw candidate set.
-                    crate::config::validate_ppr_vad_alpha(self.vault.config.ppr_vad_alpha)?;
-                    if self.vault.config.ppr_community.beta != 0.0 {
-                        crate::config::validate_ppr_community(&self.vault.config.ppr_community)?;
+                    crate::config::validate_ppr_vad_alpha(self.ppr_vad_alpha)?;
+                    if self.ppr_community.beta != 0.0 {
+                        crate::config::validate_ppr_community(&self.ppr_community)?;
                     }
                     let mut seeds: Vec<EntityId> =
                         attempt.scores.iter().map(|score| score.id).collect();

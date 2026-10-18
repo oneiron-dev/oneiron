@@ -230,7 +230,9 @@ impl Oneiron {
     /// `{"$state": ...}` for a local action or `{outcome, readReceipt}` for a
     /// deterministic tool. A card the server no longer holds fails
     /// `NOT_FOUND`: render the lens again. An embedded handle fails
-    /// `BAD_REQUEST`: lens frames live on the server that rendered the card.
+    /// `BAD_REQUEST`: lens frames live on the served host that rendered the
+    /// card, so render the lens through `EmbeddedEngine.client(key:)` (or a
+    /// connected handle) and send its events on that same handle.
     pub fn lens_frame_event(
         &self,
         card_id: String,

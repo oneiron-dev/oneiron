@@ -501,6 +501,7 @@ pub(super) fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
     if let Some(dial) = def.refusal {
         super::refusal::validate_refusal_dial(dial)?;
     }
+    super::models::validate_agent_models(def)?;
     Ok(())
 }
 
