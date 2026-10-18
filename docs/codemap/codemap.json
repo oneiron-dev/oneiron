@@ -47872,7 +47872,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 358
+      "fn": 359
      }
     },
     {
@@ -50725,8 +50725,8 @@
      "path": "src/workspace_roster/join_door.rs",
      "purpose": "The room join and consent doors (OF-531)",
      "surface": {
-      "crate-vis": 6,
-      "fn": 5,
+      "crate-vis": 7,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -62601,7 +62601,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 309
+      "fn": 310
      }
     },
     {
@@ -63621,7 +63621,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 310
+      "fn": 311
      }
     },
     {
