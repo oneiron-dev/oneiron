@@ -6,7 +6,7 @@ use super::document_store::{
 };
 use super::pin_index::NOTE_PIN_SOURCE;
 use super::side_keys::HexPair;
-use super::sync_rows::{EntityIdWire, NOTE_RECEIPT_BY_REQUEST, SYNC_DS_E};
+use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_DS_E};
 use super::{NoteEdit, NoteEditOutcome, NotePin};
 use crate::memory::{CommitReceipt, Memory, MemoryResult};
 use crate::provenance::birth::RowBirth;
@@ -253,7 +253,8 @@ impl Memory<'_> {
         let hash = operation.hash()?;
         let receipt_key = HexPair(HexId(note), HexId(operation.request_id));
         if let Some(saved) = NOTE_RECEIPT_BY_REQUEST.get(&self.vault().store, txn, &receipt_key)? {
-            if saved.0.0 != self.actor() || saved.1.command_hash != hash {
+            // An erased actor's receipt matches no one's replay (FIX 3879).
+            if !saved.0.is(self.actor()) || saved.1.command_hash != hash {
                 return Err(invalid("NOTE request identity reused").into());
             }
             return Ok(saved.1);
@@ -324,7 +325,7 @@ impl Memory<'_> {
             &self.vault().store,
             txn,
             &receipt_key,
-            &(EntityIdWire(self.actor()), receipt.clone()),
+            &(super::NoteActor::Actor(self.actor()), receipt.clone()),
         )?;
         Ok(receipt)
     }

@@ -21,4 +21,4 @@ pub use self::types::{
 pub(crate) use self::affiliated::append_agent_diary_in_txn;
 use self::codec::registered_edge_weight;
 pub(super) use self::codec::{kind_string_for_type, type_byte_for_kind};
-use self::guards::ensure_structural_create_in_txn;
+pub(super) use self::guards::ensure_structural_create_in_txn;

@@ -326,6 +326,26 @@ impl OneironClient {
                 "vault.affect.wellness.get" => remote_agent_verb_output::<
                     oneiron::memory::wellness_doors::WellnessProjection,
                 >(client, verb, &input),
+                "vault.cluster" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::memory::clustering::ClusterProposal>,
+                >(client, verb, &input),
+                "vault.cluster.proposal" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<
+                        oneiron::memory::clustering::ClusterProposalView,
+                    >,
+                >(client, verb, &input),
+                "vault.cluster.propose" => remote_agent_verb_output::<
+                    oneiron::memory::clustering::ClusterTopologyReceipt,
+                >(client, verb, &input),
+                "vault.cluster.merge" => remote_agent_verb_output::<
+                    oneiron::memory::clustering::ClusterTopologyReceipt,
+                >(client, verb, &input),
+                "vault.cluster.split" => remote_agent_verb_output::<
+                    oneiron::memory::clustering::ClusterTopologyReceipt,
+                >(client, verb, &input),
+                "vault.cluster.resolve_proposal" => remote_agent_verb_output::<
+                    oneiron::memory::clustering::ClusterTopologyReceipt,
+                >(client, verb, &input),
                 "vault.retrieval.recall" => {
                     remote_agent_verb_output::<oneiron::memory::MemoryPack>(client, verb, &input)
                 }
@@ -373,6 +393,15 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.assets.ingest" => remote_agent_verb_output::<
+                    oneiron::memory::AssetIngestReceipt,
+                >(client, verb, &input),
+                "vault.assets.resolve" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::memory::AssetResolved>,
+                >(client, verb, &input),
+                "vault.search.vector" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Vec<oneiron::memory::VectorSearchHit>>,
+                >(client, verb, &input),
                 "vault.images.view" => {
                     remote_agent_verb_output::<oneiron::memory::PulledImage>(client, verb, &input)
                 }
@@ -3956,6 +3985,84 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.affect.wellness.get", value)
     }
+    pub fn vault_cluster(
+        &self,
+        input: &oneiron::memory::clustering::ClusterRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<oneiron::memory::clustering::ClusterProposal>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster", value)
+    }
+    pub fn vault_cluster_proposal(
+        &self,
+        input: &oneiron::memory::clustering::ClusterProposalRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<oneiron::memory::clustering::ClusterProposalView>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster.proposal", value)
+    }
+    pub fn vault_cluster_propose(
+        &self,
+        input: &oneiron::memory::clustering::ClusterProposeRequest,
+    ) -> Result<oneiron::memory::clustering::ClusterTopologyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster.propose", value)
+    }
+    pub fn vault_cluster_merge(
+        &self,
+        input: &oneiron::memory::clustering::ClusterMergeRequest,
+    ) -> Result<oneiron::memory::clustering::ClusterTopologyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster.merge", value)
+    }
+    pub fn vault_cluster_split(
+        &self,
+        input: &oneiron::memory::clustering::ClusterSplitRequest,
+    ) -> Result<oneiron::memory::clustering::ClusterTopologyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster.split", value)
+    }
+    pub fn vault_cluster_resolve_proposal(
+        &self,
+        input: &oneiron::memory::clustering::ClusterResolveRequest,
+    ) -> Result<oneiron::memory::clustering::ClusterTopologyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster.resolve_proposal", value)
+    }
     pub fn vault_retrieval_recall(
         &self,
         input: &oneiron::task_verb::sdk::RecallRequest,
@@ -4156,6 +4263,44 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts", value)
+    }
+    pub fn vault_assets_ingest(
+        &self,
+        input: &oneiron::memory::AssetIngestRequest,
+    ) -> Result<oneiron::memory::AssetIngestReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.assets.ingest", value)
+    }
+    pub fn vault_assets_resolve(
+        &self,
+        input: &oneiron::memory::AssetResolveRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::memory::AssetResolved>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.assets.resolve", value)
+    }
+    pub fn vault_search_vector(
+        &self,
+        input: &oneiron::memory::VectorSearchRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::VectorSearchHit>>, MemoryError>
+    {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.search.vector", value)
     }
     /// The full pixels behind an image's view handle: the whole image, a crop or a zoom, recorded as a pull.
     pub fn vault_images_view(

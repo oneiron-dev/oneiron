@@ -57,7 +57,8 @@ pub(super) fn normalize(vault: &Vault, txn: &heed::RoTxn<'_>, fork: &NoteFork) -
     {
         return Err(invalid("proposal requires canonical value basis"));
     }
-    Ok(fork.clone())
+    // The artifact names no one this vault erased (FIX 3878).
+    fork.clone().erased_here(vault, txn)
 }
 
 pub(super) fn capture(
@@ -109,6 +110,9 @@ pub(super) fn capture(
             }
             *fork = normalize(vault, txn, fork)?;
         }
+        for receipt in &mut bundle.landed {
+            receipt.actor = receipt.actor.erased_here(vault, txn)?;
+        }
         budget.take(
             16 + bundle.explainer.len()
                 + bundle.waiting.iter().map(fork_bytes).sum::<usize>()
@@ -118,6 +122,49 @@ pub(super) fn capture(
     }
     snapshot.note_forks.sort_by_key(|fork| fork.fork);
     snapshot.note_proposals.sort_by_key(|bundle| bundle.id);
+    Ok(())
+}
+
+/// An artifact's NOTE workflow rows as this vault recovers them (FIX 3878):
+/// each actor this vault erased reads as no one, and a fork no one decided
+/// goes with its erase, with its proposal value and its place in a bundle,
+/// as the erase takes them out of this vault's own rows. Recovery checks and
+/// installs only this form, so an older artifact never writes the actor back.
+#[cfg(feature = "sync")]
+pub(super) fn erase_actors_here(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    snapshot: &mut CanonicalSnapshot,
+) -> Result<()> {
+    let mut gone = BTreeSet::new();
+    for fork in std::mem::take(&mut snapshot.note_forks) {
+        let place = (*fork.note.as_bytes(), *fork.fork.as_bytes());
+        match fork.carried_here(vault, txn)? {
+            Some(fork) => snapshot.note_forks.push(fork),
+            None => {
+                gone.insert(place);
+            }
+        }
+    }
+    if !gone.is_empty() {
+        snapshot
+            .doc_snapshots
+            .retain(|row| !gone.contains(&(row.entity_id, row.head)));
+        snapshot.refresh_containers();
+    }
+    for bundle in std::mem::take(&mut snapshot.note_proposals) {
+        snapshot
+            .note_proposals
+            .extend(bundle.carried_here(vault, txn)?);
+    }
+    for row in &mut snapshot.head_move_receipts {
+        let mut receipt = row.decode()?;
+        let actor = receipt.actor.erased_here(vault, txn)?;
+        if actor != receipt.actor {
+            receipt.actor = actor;
+            row.receipt = pack(&receipt)?;
+        }
+    }
     Ok(())
 }
 

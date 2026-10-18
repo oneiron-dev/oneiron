@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 911 code-mode rows (887 host rows, 24 run rows), 3056 declarations.
-// Replies: 820 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 920 code-mode rows (896 host rows, 24 run rows), 3085 declarations.
+// Replies: 829 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -401,10 +401,12 @@ declare namespace Sdk {
   type RetrievalTurn = { turn_id: number[]; episode_id: number[]; turn_idx: number };
   type RecallTelemetry = { capture_trace?: boolean; turn?: RetrievalTurn | null };
   type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null };
+  type InputKind = "text" | "image" | "audio";
+  type EmbeddingMatchEvidence = { space: string; embedding_kind: InputKind; query_kind: InputKind; score: number; floor: number; strong: number; matched: boolean };
   type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] };
   type MemoryStaleStamp = { stale_since?: number | null; age_secs?: number | null; reason: string; pact_epoch: number };
   type CitedMessage = { short_id: string; value_text: string; record?: RecordRef | null };
-  type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; stale?: MemoryStaleStamp | null; world?: string | null; facet?: string | null; project_ref?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
+  type MemoryItem = { asset_ref?: string | null; embedding_matches?: EmbeddingMatchEvidence[]; short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; stale?: MemoryStaleStamp | null; world?: string | null; facet?: string | null; project_ref?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
   type ScopeHonesty = { out_of_scope_worlds: string[]; census_capped?: boolean };
   type RetrievalQuality = "full" | "degraded" | "passthrough";
   type RetrievalDegradation = "ppr_cache_miss" | "embedding_timeout" | "bm25_stale" | "temporal_signal_skipped";
@@ -483,6 +485,27 @@ declare namespace Sdk {
   type ModeGateInputs = { affect: number; goal_velocity: number; engagement: number };
   type StateIndex = { value: number; inputs?: ModeGateInputs | null; claim?: string | null; observed_at?: number | null };
   type WellnessProjection = { affected_person_ref: string; policy?: ActionModePolicy | null; state_index: StateIndex; mode?: ActionModeRule | null; coping: CopingAggregate; source_refs: string[]; receipt_ref?: string | null };
+  type ClusterClaimInput = { claim_ref: string; embedding: number[] };
+  type ClusterRequest = { claims: ClusterClaimInput[]; cohesion_threshold?: number | null };
+  type ClusterPartition = { subject_ref: string; predicate_root: string; world_ref?: string | null; facet_ref?: string | null };
+  type ClusterCohort = { cohort_id: number[]; partition: ClusterPartition; member_refs: string[]; cohesion: number };
+  type ClusterProposal = { cohorts: ClusterCohort[] };
+  type ClusterProposalRequest = { proposal_ref: string };
+  type ClusterEvidence = { refs: string[]; rationale: string };
+  type ClusterSurvivorship = "read_through";
+  type ClusterMerge = { sources: string[]; survivor: string; evidence: ClusterEvidence; survivorship_plan?: ClusterSurvivorship };
+  type ClusterReassignmentTarget = { kind: "head"; entity_ref: string } | { kind: "residue" };
+  type ClusterReassignment = { item: string; target: ClusterReassignmentTarget };
+  type ClusterSplit = { entity: string; heads: string[]; reassignment_map: ClusterReassignment[]; evidence: ClusterEvidence };
+  type ClusterOperation = (ClusterMerge & { kind: "merge" }) | (ClusterSplit & { kind: "split" });
+  type ClusterTopologyOutcome = "applied" | "proposed" | "approved_untouched" | "approved_amended" | "rejected";
+  type ClusterProposalView = { proposal_ref: string; operation: ClusterOperation; seen: number[]; resolution?: ClusterTopologyOutcome | null; moot: boolean };
+  type ClusterProposeRequest = { operation: ClusterOperation; grant_ref?: string | null };
+  type ClusterTopologyReceipt = { receipt_ref: string; proposal_ref?: string | null; outcome: ClusterTopologyOutcome };
+  type ClusterMergeRequest = { merge: ClusterMerge; grant_ref?: string | null };
+  type ClusterSplitRequest = { split: ClusterSplit; grant_ref?: string | null };
+  type ClusterRuling = { verdict: "approve" } | { verdict: "amend_then_approve"; operation: ClusterOperation } | { verdict: "reject" };
+  type ClusterResolveRequest = { proposal_ref: string; seen: number[]; ruling: ClusterRuling; grant_ref?: string | null };
   type RetrievalRunsRequest = { limit?: number | null };
   type RetrievalAction = "pipeline" | "context_pack" | "vault_search" | "graph_fs_coreutils" | "speculative";
   type RetrievalState = { top_score_norm?: number; score_gap_ratio?: number; mean_score_norm?: number; entity_coverage?: number; novelty_vs_prior?: number; signal_agreement?: number; result_count?: number; iteration?: number; budget_remaining?: number; frontier_size?: number; avg_edge_weight?: number; graph_degree?: number; temporal_spread?: number; hops?: number; last_action?: number; intent_class?: number };
@@ -545,6 +568,13 @@ declare namespace Sdk {
   type ScopedExport = { selector: RecordSelector; credential: CredentialCeiling; channel: ExportChannel; applied: Scope; records: ScopedExportRecord[] };
   type VaultReceiptsRequest = { limit?: number | null; kinds?: string[] };
   type MemoryReceipt = { receipt_ref: string; kind: string; outcome: string; created_at: number; reason_codes: string[]; actor_class: string; actor_ref?: string | null; content_kind: string; claim_ref?: string | null; claim?: RecordRef | null; fields?: Record<string, string> };
+  type AssetIngestRequest = { asset_ref?: string | null; embedding_kind: InputKind; mime_type: string; bytes_b64: string; text?: string | null; occurred_at: number };
+  type AssetIngestReceipt = { asset_ref: string; asset_text_ref?: string | null; embedding_kind: InputKind; mime_type: string; blake3: string; byte_size: number };
+  type AssetResolveRequest = { asset_ref: string; image_input?: boolean; audio_input?: boolean; room_bytes?: number | null };
+  type ServedAssetForm = "image" | "audio" | "thumbnail" | "asset_text" | "ask";
+  type AssetResolved = { asset_ref: string; form: ServedAssetForm; mime_type?: string | null; bytes_b64?: string | null; text?: string | null; asset_text_ref?: string | null; handle?: string | null; receipt_refs: string[] };
+  type VectorSearchRequest = { space?: string | null; query_kind?: InputKind | null; query: number[]; kinds?: InputKind[]; limit: number };
+  type VectorSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; embedding_matches: EmbeddingMatchEvidence[] };
   type PixelRegion = { x: number; y: number; width: number; height: number };
   type ImageViewRequest = { handle: string; region?: PixelRegion | null; edge?: number | null };
   type PulledImage = { asset_ref: string; pull: string; mime_type: string; bytes: string; width?: number | null; height?: number | null };
@@ -1375,7 +1405,6 @@ declare namespace Sdk {
   type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string };
   type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null };
   type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null };
-  type InputKind = "text" | "image" | "audio";
   type EvidenceFloors = { floor: number; strong: number };
   type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: EvidenceFloors | null };
   type SpaceRef = "text_index" | { declared: string };
@@ -3654,6 +3683,12 @@ declare const vault: Sdk.VaultHost & {
     /** The organ calls held beside one artifact until one of the owner's nodes can run them, each with why it waits. */
     waits(input: Sdk.ArtifactRefRequest): Promise<Sdk.OrganWaitView[] | StoredResult>;
   };
+  assets: {
+    /** Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate. */
+    ingest(input: Sdk.AssetIngestRequest): Promise<Sdk.AssetIngestReceipt | StoredResult>;
+    /** Serves an admitted ASSET in the reader's declared image, audio or text form, with a handle and committed served-form receipt refs. */
+    resolve(input: Sdk.AssetResolveRequest): Promise<Sdk.ScopedReadResult<Sdk.AssetResolved> | StoredResult>;
+  };
   authority: {
     /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
     audit(input: Sdk.AuthorityAuditQuery): Promise<Sdk.AuthorityAuditPage | StoredResult>;
@@ -3846,6 +3881,19 @@ declare const vault: Sdk.VaultHost & {
   cleanup: {
     /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
     run(input: Sdk.CleanupRunRequest): Promise<Sdk.CleanupRunView | StoredResult>;
+  };
+  /** Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth. */
+  cluster: ((input: Sdk.ClusterRequest) => Promise<Sdk.ScopedReadResult<Sdk.ClusterProposal> | StoredResult>) & {
+    /** Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt. */
+    merge(input: Sdk.ClusterMergeRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
+    /** Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable. */
+    proposal(input: Sdk.ClusterProposalRequest): Promise<Sdk.ScopedReadResult<Sdk.ClusterProposalView> | StoredResult>;
+    /** Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant. */
+    propose(input: Sdk.ClusterProposeRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
+    /** Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically. */
+    resolve_proposal(input: Sdk.ClusterResolveRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
+    /** Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue. */
+    split(input: Sdk.ClusterSplitRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
   };
   coach: {
     /** Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane. */
@@ -4944,6 +4992,8 @@ declare const vault: Sdk.VaultHost & {
     hybrid(input: Sdk.HybridSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.HybridSearchHit[]> | StoredResult>;
     /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
     temporal(input: Sdk.TemporalSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.TemporalSearchResult> | StoredResult>;
+    /** Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt. */
+    vector(input: Sdk.VectorSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.VectorSearchHit[]> | StoredResult>;
   };
   secrets: {
     /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */

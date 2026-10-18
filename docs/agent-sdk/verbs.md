@@ -99,6 +99,12 @@ both bindings and their export-census tests in one change.
 - `vault.affect.wellness.policy.configure`
 - `vault.affect.wellness.derive`
 - `vault.affect.wellness.get`
+- `vault.cluster`
+- `vault.cluster.proposal`
+- `vault.cluster.propose`
+- `vault.cluster.merge`
+- `vault.cluster.split`
+- `vault.cluster.resolve_proposal`
 - `vault.retrieval.recall`
 - `vault.retrieval.runs`
 - `vault.retrieval.run`
@@ -114,6 +120,9 @@ both bindings and their export-census tests in one change.
 - `vault.scope.ceiling`
 - `vault.export.scoped`
 - `vault.receipts`
+- `vault.assets.ingest`
+- `vault.assets.resolve`
+- `vault.search.vector`
 - `vault.images.view`
 - `vault.receipts.get`
 - `self.admission.status`
@@ -690,6 +699,12 @@ both bindings and their export-census tests in one change.
 - `vault.calendar.read`
 - `vault.calendar.search`
 - `vault.calendar.freebusy`
+- `vault.calendar.prep`
+- `vault.calendar.event_outcome`
+- `vault.calendar.check_in.due`
+- `vault.calendar.check_in.answer`
+- `vault.calendar.outcome_policy.get`
+- `vault.calendar.outcome_policy.set`
 - `vault.calendar.transcript.ingest`
 - `vault.claims.list`
 - `vault.claims.demote`
