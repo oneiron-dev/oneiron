@@ -229,6 +229,11 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
         if landed && let (Some(id), Some(blob)) = (step.written(), value) {
             owe_landed_turn_in_txn(ctx.vault, &mut savepoint, id, blob)?;
         }
+        // FIX 3821: a landed machine-history row may advance its target's pin.
+        if let Some(id) = step.written() {
+            ctx.vault
+                .receive_own_machine_history_row_in_txn(&mut savepoint, &id)?;
+        }
         savepoint.commit()?;
     }
     Ok(step)

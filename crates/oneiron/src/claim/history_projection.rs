@@ -307,6 +307,22 @@ pub(crate) fn chain_transitions(
     Ok(transitions)
 }
 
+const TIP_HEAD_MISSING: &str = "handoff-chain tip authority head missing";
+const PRIOR_HEAD_MISSING: &str = "handoff-chain prior authority head missing";
+
+/// Whether a [`verified_handoff_chain`] error waits on what this vault does
+/// not hold yet, an ancestor packet or an authority head, rather than on a
+/// wrong chain (FIX 3823).
+fn chain_awaits(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Claim(ClaimError::MachineClaimHistoryIncomplete)
+    ) || matches!(
+        error,
+        Error::InvalidClaimBody(reason) if [TIP_HEAD_MISSING, PRIOR_HEAD_MISSING].contains(reason)
+    )
+}
+
 /// Require an exact signed predecessor chain for all archived handoff pins.
 /// The present pin may advance only from an authenticated previously accepted
 /// closure; a peer cannot splice an older/re-rooted packet into a new head.
@@ -333,9 +349,9 @@ pub(crate) fn verified_handoff_chain(
             )?
         {
             return Err(Error::InvalidClaimBody(if index + 1 == chain.len() {
-                "handoff-chain tip authority head missing"
+                TIP_HEAD_MISSING
             } else {
-                "handoff-chain prior authority head missing"
+                PRIOR_HEAD_MISSING
             }));
         }
         if !verify_handoff_signature(current) {
@@ -359,7 +375,7 @@ pub(crate) fn trusted_machine_handoff(
     ClaimHistoryHandoff::decode(&raw).map_err(|_| bad())
 }
 
-fn verify_handoff_signature(packet: &ClaimHistoryHandoff) -> bool {
+pub(crate) fn verify_handoff_signature(packet: &ClaimHistoryHandoff) -> bool {
     let signature = crate::authority::AuthoritySignature {
         suite: packet.signer.suite(),
         public_key: packet.signer.clone(),
@@ -431,6 +447,24 @@ pub(crate) fn restricts_held_machine_history(
             || incoming.approval == super::ClaimApprovalStatus::Rejected))
 }
 
+/// Whether the resident events are exactly the chain's union: one event per
+/// listed transition, each with the predecessor set the chain lists for its
+/// hash (a root event lists the birth digest).
+fn events_match_chain(rows: &MachineHistoryRows) -> bool {
+    rows.transitions.len() == rows.events.len()
+        && rows.events.iter().all(|event| {
+            let Ok(hash) = machine_claim_transition_event_hash(event) else {
+                return false;
+            };
+            let expected_parents = if event.predecessors.is_empty() {
+                vec![rows.birth.digest]
+            } else {
+                event.predecessors.clone()
+            };
+            rows.transitions.get(&hash) == Some(&expected_parents)
+        })
+}
+
 /// The verified, folded history of `target`, and the ids of every carrier it
 /// was folded from: the birth, the present pin, each handoff in its chain
 /// and each transition of the chain's union.
@@ -447,7 +481,7 @@ fn machine_history(
         || packet.births.len() != 1
         || packet.births[0].id != target
         || packet.births[0].digest != rows.birth.digest
-        || rows.transitions.len() != rows.events.len()
+        || !events_match_chain(&rows)
     {
         return Err(missing());
     }
@@ -626,6 +660,19 @@ impl Vault {
     }
 }
 
+/// How an adopted candidate must stand to the stored pin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Succession {
+    /// The out-of-band door: a stored pin is required, and the candidate is
+    /// that pin or its immediate successor on the pin's own heads.
+    Strict,
+    /// A device receiving its own vault's history
+    /// (`history_pin_exchange`): the stored pin, if any, must lie on the
+    /// candidate's verified chain, so the trusted prefix is kept; with none,
+    /// the chain from genesis is the first pin.
+    OwnReceive,
+}
+
 /// Adopt a host/pairing-authenticated exact closure. The untrusted packet
 /// cannot select its own signer, scope, predecessor pin, previous heads or
 /// challenge. Its whole chain and every signed CLAIM control the chain names
@@ -638,28 +685,43 @@ impl Vault {
         pin: &ClaimHistoryHandoffPin<'_>,
     ) -> Result<VerifiedClaimHistoryHandoff> {
         let mut txn = self.store.env.write_txn()?;
+        let verified = self.adopt_machine_history_handoff_in_txn(
+            &mut txn,
+            target,
+            packet,
+            pin,
+            Succession::Strict,
+        )?;
+        txn.commit()?;
+        Ok(verified)
+    }
+
+    /// The one adoption core, in the caller's writer: verify `packet`'s
+    /// whole chain and closure against `pin`, check it succeeds the stored
+    /// pin as `succession` says, store it, and heal the live CLAIM row under
+    /// it. On an error the caller drops whatever this staged.
+    pub(crate) fn adopt_machine_history_handoff_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        target: EntityId,
+        packet: &ClaimHistoryHandoff,
+        pin: &ClaimHistoryHandoffPin<'_>,
+        succession: Succession,
+    ) -> Result<VerifiedClaimHistoryHandoff> {
         // The candidate's own chain names the rows: its whole history, not
         // its delta and not the old pin's.
-        let rows = machine_history_rows_at(&self.store, &txn, target, packet)?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let rows = machine_history_rows_at(&self.store, txn, target, packet)?;
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         let original = super::decode_claim_body(&rows.birth.initial_body, true)?;
         let exact = packet.births.len() == 1
             && packet.births[0].id == target
             && packet.births[0].digest == rows.birth.digest
             && packet.vault_id == rows.birth.vault_id
             && packet.scope == super::history_store::machine_history_scope_bytes(&original)?
-            && rows.transitions.len() == rows.events.len()
-            && rows.events.iter().all(|event| {
-                let Ok(hash) = machine_claim_transition_event_hash(event) else {
-                    return false;
-                };
-                let expected_parents = if event.predecessors.is_empty() {
-                    vec![rows.birth.digest]
-                } else {
-                    event.predecessors.clone()
-                };
-                rows.transitions.get(&hash) == Some(&expected_parents)
-            });
+            && events_match_chain(&rows);
+        // A local storage error inside the callback leaves through this.
+        let mut local = None;
+        let read: &heed::RoTxn<'_> = txn;
         let verdict = verify_claim_history_handoff(packet, pin, |handoff| {
             if !exact
                 || fold.vault_id != Some(handoff.vault_id)
@@ -668,9 +730,18 @@ impl Vault {
                 return HandoffStanding::MissingParents;
             }
             // The chain's shape already proved itself above: a wrong chain
-            // refused there. What fails here is authority not yet held.
-            let Ok(chain) = verified_handoff_chain(&self.store, &txn, handoff, &fold) else {
-                return HandoffStanding::MissingParents;
+            // refused there. An absent ancestor or authority not yet held
+            // waits; a bad signature or vault refuses (FIX 3823).
+            let chain = match verified_handoff_chain(&self.store, read, handoff, &fold) {
+                Ok(chain) => chain,
+                Err(error) if chain_awaits(&error) => return HandoffStanding::MissingParents,
+                Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
+                    return HandoffStanding::Refused;
+                }
+                Err(error) => {
+                    local = Some(error);
+                    return HandoffStanding::MissingParents;
+                }
             };
             if !chain
                 .iter()
@@ -686,35 +757,60 @@ impl Vault {
             }
             HandoffStanding::OwnerAndComplete
         });
+        if let Some(error) = local {
+            return Err(error);
+        }
         let HandoffVerification::Verified(verified) = verdict else {
             return Err(match verdict {
                 HandoffVerification::MissingParents => missing(),
                 _ => bad(),
             });
         };
-        let previous = self
+        let bytes = packet.encode().map_err(|_| bad())?;
+        let stored = self
             .store
             .vault_meta
-            .get(&txn, &pin_key(target))?
-            .ok_or_else(missing)?;
-        let prior = ClaimHistoryHandoff::decode(&previous).map_err(|_| bad())?;
-        if packet.encode().map_err(|_| bad())?.as_slice() != previous.as_ref()
-            && (packet.previous_handoff_hash != Some(prior.content_hash().map_err(|_| bad())?)
-                || pin.previous_heads != prior.heads.as_slice())
-        {
-            return Err(bad());
+            .get(txn, &pin_key(target))?
+            .map(std::borrow::Cow::into_owned);
+        match succession {
+            Succession::Strict => {
+                let previous = stored.ok_or_else(missing)?;
+                let prior = ClaimHistoryHandoff::decode(&previous).map_err(|_| bad())?;
+                if bytes != previous
+                    && (packet.previous_handoff_hash
+                        != Some(prior.content_hash().map_err(|_| bad())?)
+                        || pin.previous_heads != prior.heads.as_slice())
+                {
+                    return Err(bad());
+                }
+            }
+            // The stored pin is a packet of the candidate's verified chain,
+            // or the candidate is another branch and the pin stays.
+            Succession::OwnReceive => {
+                if let Some(previous) = stored
+                    && !rows
+                        .chain
+                        .iter()
+                        .any(|link| link.encode().is_ok_and(|encoded| encoded == previous))
+                {
+                    return Err(bad());
+                }
+            }
         }
-        self.store.vault_meta.put(
-            &mut txn,
-            &pin_key(target),
-            &packet.encode().map_err(|_| bad())?,
-        )?;
+        self.store.vault_meta.put(txn, &pin_key(target), &bytes)?;
         // The live claim id is a derived view. Heal a stale or missing LWW
         // snapshot under the SAME authenticated pin before publishing it.
-        let projection = resolved_machine_history(&self.store, &txn, &fold, target)?;
+        let projection = resolved_machine_history(&self.store, txn, &fold, target)?;
         let projected = project_machine_claim(&projection);
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &target)?
-            .ok_or_else(missing)?;
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &target)?
+        else {
+            // Own receive pins a verified history before its live row lands,
+            // so the row is admitted under the pin when it does.
+            return match succession {
+                Succession::OwnReceive => Ok(verified),
+                Succession::Strict => Err(missing()),
+            };
+        };
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("machine projection header"))?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -723,13 +819,13 @@ impl Vault {
         let previous = super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         // A superseded history's same-id successor owns the live row.
         let successor = projection.admits_successor_by(crate::memory::claim_author(&previous))
-            && !crate::authority::machine_claim_needs_history(&self.store, &txn, &previous)?;
+            && !crate::authority::machine_claim_needs_history(&self.store, txn, &previous)?;
         if previous != projected && !successor {
             crate::batch::apply_ops(
                 &self.store,
                 &self.config,
                 &self.analyzer,
-                &mut txn,
+                txn,
                 vec![crate::batch::BatchOp::Put {
                     id: target,
                     entity_type: crate::registry::ENTITY_TYPE_CLAIM,
@@ -752,7 +848,6 @@ impl Vault {
                 false,
             )?;
         }
-        txn.commit()?;
         Ok(verified)
     }
 }
