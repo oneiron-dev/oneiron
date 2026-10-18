@@ -309,9 +309,7 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_shareNative(
     engine: JObject<'_>,
 ) {
     run(&mut env, |env| {
-        let vault = NativeVault {
-            vault: engine_of(env, &engine)?.vault().map_err(chain)?,
-        };
+        let vault = NativeVault::unbound(engine_of(env, &engine)?.vault().map_err(chain)?);
         // SAFETY: Kotlin owns the private long field, initialized to zero.
         // All native hooks execute under that instance's synchronized monitor.
         unsafe { env.set_rust_field(&object, "nativeHandle", vault) }.map_err(display)

@@ -96,6 +96,26 @@ public final class Vault {
         return Vault(handle: handle)
     }
 
+    /// A NEW handle over this same open vault, from `open` or `Engine.vault()`, whose
+    /// writes run as one caller (OF-063): the principal `actorKey` names (`human:<ref>`,
+    /// `agent:<ref>` or `system:<ref>`), or the embedded owner when it is nil, inside the
+    /// off-record session `session` names, or outside any when it is nil. This handle is
+    /// unchanged.
+    public func bound(actorKey: String? = nil, session: String? = nil) throws -> Vault {
+        if actorKey?.isEmpty == true || session?.isEmpty == true {
+            throw OneironStorageError.invalidArgument
+        }
+        var rawVault: OpaquePointer?
+        let status = withOptionalUTF8(actorKey) { actorPtr, actorLen in
+            withOptionalUTF8(session) { sessionPtr, sessionLen in
+                oneiron_vault_bind(handle, actorPtr, actorLen, sessionPtr, sessionLen, &rawVault)
+            }
+        }
+        try OneironStorageError.check(status)
+        guard let vaultHandle = rawVault else { throw OneironStorageError.missingHandle }
+        return Vault(handle: vaultHandle)
+    }
+
     public func healthJSONData() throws -> Data {
         var buffer = OneironBuffer(ptr: nil, len: 0, cap: 0)
         try OneironStorageError.check(oneiron_vault_health_json(handle, &buffer))
@@ -203,6 +223,14 @@ public final class Engine {
 
 private func slice(_ raw: UnsafeRawBufferPointer) -> OneironByteSlice {
     OneironByteSlice(ptr: raw.bindMemory(to: UInt8.self).baseAddress, len: raw.count)
+}
+
+/// `text`'s UTF-8 bytes borrowed for `body`, or a null pointer and 0 when it is nil.
+private func withOptionalUTF8<R>(_ text: String?, _ body: (UnsafePointer<UInt8>?, Int) -> R) -> R {
+    guard let text else { return body(nil, 0) }
+    return Data(text.utf8).withUnsafeBytes { raw in
+        body(raw.bindMemory(to: UInt8.self).baseAddress, raw.count)
+    }
 }
 
 private func bytes(_ buffer: OneironBuffer) -> Data {

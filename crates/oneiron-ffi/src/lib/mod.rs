@@ -89,7 +89,7 @@ pub use self::engine::{
 };
 pub use self::entity::{
     oneiron_buffer_free, oneiron_edge_info_array_free, oneiron_scored_entity_array_free,
-    oneiron_subtree_entry_array_free, oneiron_vault_batch_put_entities,
+    oneiron_subtree_entry_array_free, oneiron_vault_batch_put_entities, oneiron_vault_bind,
     oneiron_vault_delete_entity, oneiron_vault_entity_exists, oneiron_vault_free,
     oneiron_vault_get_entity, oneiron_vault_health_json, oneiron_vault_open,
     oneiron_vault_put_entity,

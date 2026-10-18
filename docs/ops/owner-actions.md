@@ -733,7 +733,10 @@ A call on any other door that names an anonymous session in its `x-oneiron-sessi
 no call or refusal receipt only when its caller is in that session: the person who entered it,
 or a member of its room. Every door acts inside the session its request names (facade rows, host
 doors, the context board, MCP), and the SDK handles do too (`inOffRecordSession` /
-`in_off_record_session`; embedded, the app host's actor is the caller). A credential that names
+`in_off_record_session`; embedded, the app host's actor is the caller). The raw native vaults
+(the C ABI, Kotlin `EmbeddedVault`, the raw Node vault) write as the host unless bound: a bound
+one (`oneiron_vault_bind`, Swift `Vault.bound`, Kotlin and Node `bound`) writes as the actor it
+names, or the embedded owner, inside the session it names, if any. A credential that names
 no person (the host root, the shared secret) binds no session, and a stretch entered without a
 person binds no caller, so those calls are receipted as usual.
 

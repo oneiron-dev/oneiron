@@ -437,7 +437,8 @@ pub unsafe extern "C" fn oneiron_engine_stop(engine: *mut OneironEngine) -> Onei
 /// A storage handle over the engine's SAME open vault, so every
 /// `oneiron_vault_*` function works on it; the path is never opened again.
 /// Release it with `oneiron_vault_free`. It keeps the vault open, not the
-/// engine serving.
+/// engine serving. It writes as the host; `oneiron_vault_bind` opens one
+/// that writes as the app's principal, inside its session.
 ///
 /// # Safety
 ///
@@ -457,7 +458,7 @@ pub unsafe extern "C" fn oneiron_engine_vault(
             let dimensions = handle.engine.dimensions();
             write_out(
                 out_vault,
-                Box::into_raw(Box::new(OneironVault { vault, dimensions })),
+                Box::into_raw(Box::new(OneironVault::unbound(vault, dimensions))),
             )
         }))
     })

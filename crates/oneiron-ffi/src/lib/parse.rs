@@ -2,6 +2,9 @@
 
 use std::str;
 
+use oneiron::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVENTED_REFERENCE, MEMORY_CODE_NOT_FOUND, MemoryResult,
+};
 use oneiron::{EdgeKind, EntityId, PackFormat};
 
 use super::guard::{with_optional_slice, with_required_slice};
@@ -86,6 +89,17 @@ pub(super) fn ts_to_u64(ts: i64) -> u64 {
 
 pub(super) fn engine<T>(result: Result<T, oneiron::Error>) -> Result<T, OneironStatus> {
     result.map_err(|_| OneironStatus::EngineError)
+}
+
+/// A bound handle's typed refusal as a status (OF-063): a malformed input
+/// is `InvalidArg`, an id or ref naming no record is `NotFound`, and every
+/// other refusal (the actor, its grants, the owner gate) is `EngineError`.
+pub(super) fn memory_result<T>(result: MemoryResult<T>) -> Result<T, OneironStatus> {
+    result.map_err(|error| match error.code.as_str() {
+        MEMORY_CODE_BAD_REQUEST => OneironStatus::InvalidArg,
+        MEMORY_CODE_NOT_FOUND | MEMORY_CODE_INVENTED_REFERENCE => OneironStatus::NotFound,
+        _ => OneironStatus::EngineError,
+    })
 }
 
 pub(super) fn id_array(id: &EntityId) -> [u8; ENTITY_ID_LEN] {

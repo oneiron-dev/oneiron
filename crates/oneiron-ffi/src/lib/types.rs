@@ -2,7 +2,7 @@
 
 use std::{ptr, sync::Arc};
 
-use oneiron::Vault;
+use oneiron::{EdgeActorClass, EntityId, Memory, Vault};
 
 pub(super) const DEFAULT_FFI_SEARCH_LIMIT: u32 = 10;
 
@@ -177,10 +177,47 @@ impl OneironSubtreeEntryArray {
     }
 }
 
-/// Opaque vault handle returned by `oneiron_vault_open`.
+/// Opaque vault handle returned by `oneiron_vault_open`,
+/// `oneiron_engine_vault` and `oneiron_vault_bind`.
 ///
 /// Release the handle with `oneiron_vault_free` exactly once.
 pub struct OneironVault {
     pub(super) vault: Arc<Vault>,
     pub(super) dimensions: usize,
+    /// The caller a bound handle writes as (`oneiron_vault_bind`); `None`
+    /// writes as the host, through the bare vault doors.
+    pub(super) binding: Option<VaultBinding>,
+}
+
+/// The caller one bound handle names (OF-063, FIX 3387): the principal its
+/// app host bound and the off-record session it named, if any. It lives on
+/// this handle alone, never in process or engine state.
+pub(super) struct VaultBinding {
+    pub(super) actor: EntityId,
+    pub(super) actor_class: EdgeActorClass,
+    pub(super) session: Option<String>,
+}
+
+impl OneironVault {
+    /// A handle over `vault` that writes as the host, as every handle did
+    /// before `oneiron_vault_bind`.
+    pub(super) fn unbound(vault: Arc<Vault>, dimensions: usize) -> Self {
+        Self {
+            vault,
+            dimensions,
+            binding: None,
+        }
+    }
+
+    /// The bound caller's memory surface, its session bound, through which
+    /// a bound handle's writes run; `None` for an unbound handle.
+    pub(super) fn bound_memory(&self) -> Option<Memory<'_>> {
+        self.binding.as_ref().map(|binding| {
+            let memory = self.vault.memory(binding.actor, binding.actor_class);
+            match binding.session.as_deref() {
+                Some(session) => memory.in_off_record_session(session),
+                None => memory,
+            }
+        })
+    }
 }

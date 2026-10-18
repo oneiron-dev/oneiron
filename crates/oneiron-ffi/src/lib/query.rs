@@ -8,9 +8,9 @@ use super::alloc::{
 };
 use super::guard::{ffi_guard, with_optional_slice, with_required_slice, with_vault, write_out};
 use super::parse::{
-    convert_query_vector, created_at_to_i64, engine, id_array, parse_edge_kind, parse_entity_id,
-    parse_pack_format, parse_search_limit, parse_u8, string_from_optional, string_from_required,
-    validate_query_len,
+    convert_query_vector, created_at_to_i64, engine, id_array, memory_result, parse_edge_kind,
+    parse_entity_id, parse_pack_format, parse_search_limit, parse_u8, string_from_optional,
+    string_from_required, validate_query_len,
 };
 use super::types::{
     DEFAULT_FFI_SEARCH_LIMIT, OneironBuffer, OneironEdgeInfo, OneironEdgeInfoArray,
@@ -18,7 +18,8 @@ use super::types::{
     OneironSubtreeEntryArray, OneironVault,
 };
 
-/// Store a directed edge between two entities.
+/// Store a directed edge between two entities. A bound handle stores it as
+/// its caller (`oneiron_vault_bind`).
 ///
 /// # Safety
 ///
@@ -40,7 +41,10 @@ pub unsafe extern "C" fn oneiron_vault_put_edge(
             let src = parse_entity_id(src_ptr, src_len)?;
             let tgt = parse_entity_id(tgt_ptr, tgt_len)?;
             let kind = parse_edge_kind(kind)?;
-            engine(handle.vault.put_edge(&src, kind, &tgt, weight as f32))
+            match handle.bound_memory() {
+                Some(memory) => memory_result(memory.raw_put_edge(&src, kind, &tgt, weight as f32)),
+                None => engine(handle.vault.put_edge(&src, kind, &tgt, weight as f32)),
+            }
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)
     })
@@ -220,7 +224,8 @@ pub unsafe extern "C" fn oneiron_vault_search_text(
 
 /// Store a vector embedding for an entity.
 ///
-/// `vector_len` must equal the vault dimensions.
+/// `vector_len` must equal the vault dimensions. A bound handle stores it as
+/// its caller (`oneiron_vault_bind`).
 ///
 /// # Safety
 ///
@@ -241,7 +246,10 @@ pub unsafe extern "C" fn oneiron_vault_put_vector(
             let vector = with_required_slice(vector_ptr, vector_len, |values| {
                 convert_query_vector(values, handle.dimensions)
             })?;
-            engine(handle.vault.put_vector(&id, &vector))
+            match handle.bound_memory() {
+                Some(memory) => memory_result(memory.raw_put_vector(&id, &vector)),
+                None => engine(handle.vault.put_vector(&id, &vector)),
+            }
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)
     })
