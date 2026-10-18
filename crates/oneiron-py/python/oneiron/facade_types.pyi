@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 446 facade rows, 1719 declarations.
-Inputs: 397 of 446 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 394 of 446 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 450 facade rows, 1729 declarations.
+Inputs: 401 of 450 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 398 of 450 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 86; unread shapes: 0.
 """
 
@@ -5076,6 +5076,53 @@ class CheckoutDoorBinding(TypedDict):
     epoch: int
     checkout_path: str
     remote_url: str
+class CodeRepoPointer(TypedDict):
+    local_folder: str
+    commit: str
+class CodeSnapshotIngestRequest(TypedDict):
+    project_id: str
+    pointer: CodeRepoPointer
+class CodeSnapshotFile(TypedDict):
+    path: str
+    content_hash_blake3: str
+    size_bytes: int
+class CodeSnapshotView(TypedDict):
+    repo: EntityId
+    repo_ref: str
+    project_id: str
+    commit: NotRequired[str | None]
+    snapshot: str
+    scope_key: str
+    files: list[CodeSnapshotFile]
+class CodeSnapshotRequest(TypedDict):
+    repo: EntityId
+    snapshot: str
+class CodeSnapshotReadRequest(TypedDict):
+    repo: EntityId
+    snapshot: str
+    path: str
+class CodeSnapshotPinnedFile(TypedDict):
+    repo: EntityId
+    snapshot: str
+    file: CodeSnapshotFile
+    content: str
+    text_sha256: str
+class CodeSnapshotDefinitionsRequest(TypedDict):
+    repo: EntityId
+    snapshot: str
+    name: str
+class CodeSnapshotDefinition(TypedDict):
+    symbol: EntityId
+    path: str
+    name: str
+    kind: str
+    fingerprint: str
+    start_line: int
+    end_line: int
+class CodeSnapshotDefinitionsView(TypedDict):
+    repo: EntityId
+    snapshot: str
+    definitions: list[CodeSnapshotDefinition]
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]

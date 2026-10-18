@@ -107,6 +107,8 @@ pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
+// The owner's code snapshot doors (DOOR-118), likewise.
+pub(crate) use super::codebase_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
@@ -1146,6 +1148,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
+        | "vault.code.snapshots.ingest"
+        | "vault.code.snapshots.get"
+        | "vault.code.snapshots.read"
+        | "vault.code.symbols.definitions"
         | "vault.off_record.start"
         | "vault.off_record.status"
         | "vault.off_record.witness"

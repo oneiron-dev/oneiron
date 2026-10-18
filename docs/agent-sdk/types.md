@@ -1679,6 +1679,10 @@ class Oneiron:
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs": ...
         @property
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs": ...
+        @property
+        def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs": ...
+        @property
+        def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs": ...
     class _VaultCodeOriginVerbs:
         @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs": ...
@@ -1692,6 +1696,16 @@ class Oneiron:
     class _VaultCodeCheckoutVerbs:
         def bind(self, spec: Facade.CheckoutDoorBindRequest) -> Facade.CheckoutDoorBinding:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
+    class _VaultCodeSnapshotsVerbs:
+        def ingest(self, spec: Facade.CodeSnapshotIngestRequest) -> Facade.CodeSnapshotView:
+            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
+        def get(self, spec: Facade.CodeSnapshotRequest) -> Facade.CodeSnapshotView | None:
+            """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
+        def read(self, spec: Facade.CodeSnapshotReadRequest) -> Facade.CodeSnapshotPinnedFile | None:
+            """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
+    class _VaultCodeSymbolsVerbs:
+        def definitions(self, spec: Facade.CodeSnapshotDefinitionsRequest) -> Facade.CodeSnapshotDefinitionsView:
+            """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
             """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""

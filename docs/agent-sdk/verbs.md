@@ -250,6 +250,10 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
 - `vault.code.checkout.bind`
+- `vault.code.snapshots.ingest`
+- `vault.code.snapshots.get`
+- `vault.code.snapshots.read`
+- `vault.code.symbols.definitions`
 - `vault.artifacts.export`
 - `vault.agents.create`
 - `vault.agents.get`

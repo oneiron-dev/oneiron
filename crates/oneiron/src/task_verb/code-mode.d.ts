@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 504 code-mode rows (483 host rows, 21 run rows), 1810 declarations.
-// Replies: 441 fully typed, 59 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 508 code-mode rows (487 host rows, 21 run rows), 1820 declarations.
+// Replies: 445 fully typed, 59 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1050,6 +1050,16 @@ declare namespace Sdk {
   type OriginPublicationsView = { repo: string; publications: OriginPublicationView[] };
   type CheckoutDoorBindRequest = { repo: string; checkout: string; epoch: number; endpoint: string };
   type CheckoutDoorBinding = { repo: string; checkout: string; epoch: number; checkout_path: string; remote_url: string };
+  type CodeRepoPointer = { local_folder: string; commit: string };
+  type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
+  type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number };
+  type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[] };
+  type CodeSnapshotRequest = { repo: EntityId; snapshot: string };
+  type CodeSnapshotReadRequest = { repo: EntityId; snapshot: string; path: string };
+  type CodeSnapshotPinnedFile = { repo: EntityId; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
+  type CodeSnapshotDefinitionsRequest = { repo: EntityId; snapshot: string; name: string };
+  type CodeSnapshotDefinition = { symbol: EntityId; path: string; name: string; kind: string; fingerprint: string; start_line: number; end_line: number };
+  type CodeSnapshotDefinitionsView = { repo: EntityId; snapshot: string; definitions: CodeSnapshotDefinition[] };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type AgentSkillInput = { skill_id: string; min_version?: string | null };
@@ -2365,6 +2375,18 @@ declare const vault: Sdk.VaultHost & {
     proposal_view(input: Sdk.CodeProposalViewRequest): Promise<Sdk.CodeProposalView | null | StoredResult>;
     /** Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it. */
     repo_diff(input: Sdk.CodeRepoDiffRequest): Promise<Sdk.CodeRepoDiffView | null | StoredResult>;
+    snapshots: {
+      /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
+      get(input: Sdk.CodeSnapshotRequest): Promise<Sdk.CodeSnapshotView | null | StoredResult>;
+      /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */
+      ingest(input: Sdk.CodeSnapshotIngestRequest): Promise<Sdk.CodeSnapshotView | StoredResult>;
+      /** Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only. */
+      read(input: Sdk.CodeSnapshotReadRequest): Promise<Sdk.CodeSnapshotPinnedFile | null | StoredResult>;
+    };
+    symbols: {
+      /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
+      definitions(input: Sdk.CodeSnapshotDefinitionsRequest): Promise<Sdk.CodeSnapshotDefinitionsView | StoredResult>;
+    };
   };
   /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
   commit(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;

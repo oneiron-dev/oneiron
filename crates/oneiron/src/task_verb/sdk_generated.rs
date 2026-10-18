@@ -1309,6 +1309,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.snapshots.ingest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotIngestRequest,
+                >(),
+            ),
+            (
+                "vault.code.snapshots.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotRequest,
+                >(),
+            ),
+            (
+                "vault.code.snapshots.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotReadRequest,
+                >(),
+            ),
+            (
+                "vault.code.symbols.definitions",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotDefinitionsRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactExportRequest,
@@ -4413,6 +4437,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.snapshots.ingest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.snapshots.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.snapshots.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.symbols.definitions" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6669,6 +6721,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::origin_doors::CheckoutDoorBindRequest =
                 decode(value.clone())?;
         }
+        "vault.code.snapshots.ingest" => {
+            let _input: crate::memory::codebase_doors::CodeSnapshotIngestRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.snapshots.get" => {
+            let _input: crate::memory::codebase_doors::CodeSnapshotRequest = decode(value.clone())?;
+        }
+        "vault.code.snapshots.read" => {
+            let _input: crate::memory::codebase_doors::CodeSnapshotReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.symbols.definitions" => {
+            let _input: crate::memory::codebase_doors::CodeSnapshotDefinitionsRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
         }
@@ -7864,6 +7931,14 @@ pub fn invoke(
             encode(vault_code_origin_publications(memory, decode(value)?)?)
         }
         "vault.code.checkout.bind" => encode(vault_code_checkout_bind(memory, decode(value)?)?),
+        "vault.code.snapshots.ingest" => {
+            encode(vault_code_snapshots_ingest(memory, decode(value)?)?)
+        }
+        "vault.code.snapshots.get" => encode(vault_code_snapshots_get(memory, decode(value)?)?),
+        "vault.code.snapshots.read" => encode(vault_code_snapshots_read(memory, decode(value)?)?),
+        "vault.code.symbols.definitions" => {
+            encode(vault_code_symbols_definitions(memory, decode(value)?)?)
+        }
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
         "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
@@ -10385,6 +10460,36 @@ pub fn vault_code_checkout_bind(
     input: crate::memory::origin_doors::CheckoutDoorBindRequest,
 ) -> MemoryResult<crate::memory::origin_doors::CheckoutDoorBinding> {
     memory.checkout_door_bind_as(&memory.embedded_owner("vault.code.checkout.bind")?, input)
+}
+pub fn vault_code_snapshots_ingest(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotIngestRequest,
+) -> MemoryResult<crate::memory::codebase_doors::CodeSnapshotView> {
+    memory.code_snapshot_ingest_as(
+        &memory.embedded_owner("vault.code.snapshots.ingest")?,
+        input,
+    )
+}
+pub fn vault_code_snapshots_get(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotRequest,
+) -> MemoryResult<Option<crate::memory::codebase_doors::CodeSnapshotView>> {
+    memory.code_snapshot_get_as(&memory.embedded_owner("vault.code.snapshots.get")?, input)
+}
+pub fn vault_code_snapshots_read(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotReadRequest,
+) -> MemoryResult<Option<crate::memory::codebase_doors::CodeSnapshotPinnedFile>> {
+    memory.code_snapshot_read_as(&memory.embedded_owner("vault.code.snapshots.read")?, input)
+}
+pub fn vault_code_symbols_definitions(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotDefinitionsRequest,
+) -> MemoryResult<crate::memory::codebase_doors::CodeSnapshotDefinitionsView> {
+    memory.code_snapshot_definitions_as(
+        &memory.embedded_owner("vault.code.symbols.definitions")?,
+        input,
+    )
 }
 pub fn vault_artifacts_export(
     memory: &Memory<'_>,
