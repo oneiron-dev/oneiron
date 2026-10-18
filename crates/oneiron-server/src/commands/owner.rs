@@ -1530,7 +1530,10 @@ pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
                 &vault,
                 owner_actor(&vault)?,
                 "vault.guests.revoke",
-                oneiron::task_verb::sdk::GuestRevokeRequest { grant_ref: grant },
+                oneiron::task_verb::sdk::GuestRevokeRequest {
+                    grant_ref: grant,
+                    peer: None,
+                },
                 |request: oneiron::task_verb::sdk::GuestRevokeRequest| {
                     let outcome = vault.revoke_guest_access(&owner, &issuer, request.grant_ref)?;
                     Ok(oneiron::receipt::project_guest_revoke(outcome))

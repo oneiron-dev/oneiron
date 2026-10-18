@@ -13,6 +13,7 @@ pub(crate) mod embedder;
 pub(crate) mod federation_connect;
 pub(crate) mod feedback;
 pub(crate) mod graph_fs;
+pub(crate) mod guest_revoke;
 pub(crate) mod healer;
 pub(crate) mod history;
 pub(crate) mod house;

@@ -5,7 +5,8 @@
 //! the vault owner's proof, as `/v1/owner/guests/revoke` takes it
 //! (`owner_routes::owner`). The engine rechecks that proof in its own
 //! writer. It signs each pact disconnect with the host's slip issuer, the one
-//! `api/pairing.rs` builds for its own slip doors.
+//! `api/pairing.rs` builds for its own slip doors. With `peer` it then
+//! queues the courtesy deletes the route queues (`owner::guest_revoke`).
 //!
 //! It lists its rows (`host_door_lists`): the grant it withdrew and the
 //! guest it conferred on. The pact standing its answer reports is the
@@ -19,11 +20,12 @@ use oneiron::task_verb::sdk::{self, GuestRevokeRequest};
 
 use super::host_doors::{Listed, internal, refused};
 use crate::auth::CoreAuth;
+use crate::owner::guest_revoke;
 use crate::server::SyncServer;
 
 /// `vault.guests.revoke`: the owner withdraws one guest's access (an ask
 /// guest's or a Connect peer's) at this host, with the copied-bytes
-/// disclosure.
+/// disclosure, and queues a courtesy delete per ended pact to `peer`.
 pub(crate) async fn vault_guests_revoke(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -42,10 +44,13 @@ pub(crate) async fn vault_guests_revoke(
     };
     let server = Arc::clone(server);
     let answer = tokio::task::spawn_blocking(move || -> MemoryResult<GuestRevokeResponse> {
-        crate::api::pairing::with_issuer(&server, |issuer| {
+        let peer = input.peer.clone();
+        let mut revoked = crate::api::pairing::with_issuer(&server, |issuer| {
             Ok(sdk::revoke_guest_as(server.vault(), &owner, issuer, input))
         })
-        .map_err(|_| internal(VERB))?
+        .map_err(|_| internal(VERB))??;
+        guest_revoke::queue_courtesy_deletes(&server, &owner, peer.as_deref(), &mut revoked);
+        Ok(revoked)
     })
     .await
     .unwrap_or_else(|_| Err(internal(VERB)));
