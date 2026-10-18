@@ -52,6 +52,7 @@ both bindings and their export-census tests in one change.
 - `vault.claims.upsert`
 - `vault.recall`
 - `vault.export`
+- `self.credential.attenuate`
 - `vault.scope.ceiling`
 - `vault.export.scoped`
 - `vault.receipts`
@@ -269,6 +270,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.symbols.release`
 - `vault.code.proposal_submit`
 - `vault.code.oplog`
+- `vault.code.model_heal_count`
 - `vault.code.repo_diff`
 - `vault.code.export`
 - `vault.code.origin.authority.get`
@@ -365,6 +367,11 @@ both bindings and their export-census tests in one change.
 - `ai.options`
 - `ai.image`
 - `ai.speech`
+- `vault.voices.packs.put`
+- `vault.voices.render_consent`
+- `vault.voices.targets.provision`
+- `vault.voices.targets.evict`
+- `vault.voices.inspect`
 - `ai.transcribe`
 - `ai.embed`
 - `ai.video`
@@ -416,6 +423,8 @@ both bindings and their export-census tests in one change.
 - `vault.neighbors`
 - `vault.structural.put`
 - `vault.habits.checkin`
+- `vault.productivity.create`
+- `vault.productivity.tree`
 - `vault.claims.admit`
 - `vault.artifacts.create`
 - `vault.esign.create`
@@ -453,6 +462,10 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.read`
 - `vault.consolidation.enqueue`
 - `vault.consolidation.status`
+- `vault.consolidation.promote`
+- `vault.consolidation.evidence`
+- `vault.claims.vet`
+- `vault.claims.vetting`
 - `vault.memory.signal_extraction`
 - `vault.memory.signal_extraction.result`
 - `vault.claims.seed`

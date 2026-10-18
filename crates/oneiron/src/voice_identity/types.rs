@@ -62,7 +62,7 @@ impl VoicePrintPurpose {
 }
 
 /// Whether a consent record grants or withdraws.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VoiceConsentState {
     Granted,
@@ -172,7 +172,7 @@ impl VoicePrintCalibration {
 }
 
 /// How a consent decision was captured.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum VoiceConsentBasis {
     ConversationalNotice {
         notice: String,
