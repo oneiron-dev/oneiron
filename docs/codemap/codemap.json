@@ -10560,13 +10560,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/edge_admission.rs",
      "purpose": "The one scoped graph projection: exact relation + both endpoints, then limits",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -32005,7 +32005,26 @@
      "purpose": "Structural puts (habit checkins, imported-claim admission, blob artifacts) and `author_take`",
      "surface": {
       "crate-vis": 2,
-      "re-export": 1
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProductivityCreateRequest",
+      "ProductivityCreateRole",
+      "ProductivityNode",
+      "ProductivityRole",
+      "ProductivityTree",
+      "ProductivityTreeRequest"
+     ],
+     "path": "src/memory/structural/productivity.rs",
+     "purpose": "Typed productivity roles (DOOR-113): an inert Goal, Milestone or Habit TASK under its checked `ChildOf`…",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -49775,7 +49794,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 552
+      "fn": 554
      }
     },
     {
@@ -56039,7 +56058,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 164,
+     "files": 165,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56720,7 +56739,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3456,
+   "source_files": 3457,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65134,7 +65153,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 502
+      "fn": 504
      }
     },
     {
@@ -66183,7 +66202,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 503
+      "fn": 505
      }
     },
     {
@@ -78552,6 +78571,12 @@
       "PriorRung",
       "PriorSeed",
       "ProbeRequest",
+      "ProductivityCreateRequest",
+      "ProductivityCreateRole",
+      "ProductivityNode",
+      "ProductivityRole",
+      "ProductivityTree",
+      "ProductivityTreeRequest",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -78796,6 +78821,7 @@
       "ScopedReadResultOptionalNoteEditorBinding",
       "ScopedReadResultOptionalNoteHistoryView",
       "ScopedReadResultOptionalNoteReadView",
+      "ScopedReadResultOptionalProductivityTree",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
       "ScratchpadAppendRequest",
@@ -79228,8 +79254,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 473,
-      "struct": 1331
+      "enum": 475,
+      "struct": 1336
      }
     },
     {
