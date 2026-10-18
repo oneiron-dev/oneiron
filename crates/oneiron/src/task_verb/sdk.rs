@@ -536,6 +536,7 @@ pub use super::sdk_shared::*;
 pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
 pub use super::sdk_trusted_contact::*;
+pub use super::sdk_workflows::*;
 pub use super::sdk_workspace::*;
 
 /// `vault.writes.pending`'s one input.
