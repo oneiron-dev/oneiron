@@ -1463,6 +1463,9 @@ fn mcp_agent_verb_input(
         "vault.questions.read" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.answers" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.refresh" => a.spec.clone().ok_or_else(invalid),
+        "vault.questions.outcomes" => a.spec.clone().ok_or_else(invalid),
+        "vault.questions.outcomes.project" => a.spec.clone().ok_or_else(invalid),
+        "vault.questions.schedule" => a.spec.clone().ok_or_else(invalid),
         "vault.decisions.bands.read" => a.spec.clone().ok_or_else(invalid),
         "vault.decisions.bands.learn" => a.spec.clone().ok_or_else(invalid),
         "vault.decisions.bands.enforce" => a.spec.clone().ok_or_else(invalid),
@@ -3232,6 +3235,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.questions.refresh" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.questions.outcomes" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.questions.outcomes.project" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.questions.schedule" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.decisions.bands.read" => {
@@ -11886,6 +11898,63 @@ async fn execute_agent_verb_row(
             );
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.questions.outcomes" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.questions.outcomes", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::QuestionOutcomesRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_questions_outcomes(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.questions.outcomes.project" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.questions.outcomes.project", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::QuestionOutcomesProjectRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_questions_outcomes_project(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.questions.schedule" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.questions.schedule", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::QuestionScheduleRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_questions_schedule(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.decisions.bands.read" => {

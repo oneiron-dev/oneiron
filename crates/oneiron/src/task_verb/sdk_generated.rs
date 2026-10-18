@@ -2706,6 +2706,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.questions.outcomes",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::QuestionOutcomesRequest,
+                >(),
+            ),
+            (
+                "vault.questions.outcomes.project",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::QuestionOutcomesProjectRequest,
+                >(),
+            ),
+            (
+                "vault.questions.schedule",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::QuestionScheduleRequest,
+                >(),
+            ),
+            (
                 "vault.decisions.bands.read",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::decision::DecisionBandReadRequest,
@@ -3993,6 +4011,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.voices.targets.provision",
     "vault.voices.targets.evict",
     "vault.voices.inspect",
+    "vault.questions.outcomes",
+    "vault.questions.outcomes.project",
+    "vault.questions.schedule",
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
@@ -4761,6 +4782,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.voices.inspect" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::VoiceBankInspection,
+        >(),
+        "vault.questions.outcomes" => {
+            crate::code_run::vault_read::request_schema::<crate::receipt::QuestionOutcomes>()
+        }
+        "vault.questions.outcomes.project" => crate::code_run::vault_read::request_schema::<
+            crate::receipt::QuestionOutcomesProjected,
+        >(),
+        "vault.questions.schedule" => crate::code_run::vault_read::request_schema::<
+            Option<crate::llm::decision::questions::QuestionScheduleHead>,
         >(),
         "vault.decisions.bands.read" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
@@ -8587,6 +8617,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.questions.outcomes" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.outcomes.project" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.schedule" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.decisions.bands.read" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11393,6 +11444,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.questions.refresh" => {
             let _input: crate::receipt::QuestionRefreshRequest = decode(value.clone())?;
         }
+        "vault.questions.outcomes" => {
+            let _input: crate::receipt::QuestionOutcomesRequest = decode(value.clone())?;
+        }
+        "vault.questions.outcomes.project" => {
+            let _input: crate::receipt::QuestionOutcomesProjectRequest = decode(value.clone())?;
+        }
+        "vault.questions.schedule" => {
+            let _input: crate::receipt::QuestionScheduleRequest = decode(value.clone())?;
+        }
         "vault.decisions.bands.read" => {
             let _input: crate::llm::decision::DecisionBandReadRequest = decode(value.clone())?;
         }
@@ -13023,6 +13083,11 @@ pub fn invoke(
         "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
         "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
         "vault.questions.refresh" => encode(vault_questions_refresh(memory, decode(value)?)?),
+        "vault.questions.outcomes" => encode(vault_questions_outcomes(memory, decode(value)?)?),
+        "vault.questions.outcomes.project" => {
+            encode(vault_questions_outcomes_project(memory, decode(value)?)?)
+        }
+        "vault.questions.schedule" => encode(vault_questions_schedule(memory, decode(value)?)?),
         "vault.decisions.bands.read" => encode(vault_decisions_bands_read(memory, decode(value)?)?),
         "vault.decisions.bands.learn" => {
             encode(vault_decisions_bands_learn(memory, decode(value)?)?)
@@ -17650,6 +17715,24 @@ pub fn vault_questions_refresh(
     input: crate::receipt::QuestionRefreshRequest,
 ) -> MemoryResult<Vec<crate::llm::decision::questions::AnswerRecord>> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.refresh", &input)
+}
+pub fn vault_questions_outcomes(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionOutcomesRequest,
+) -> MemoryResult<crate::receipt::QuestionOutcomes> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.outcomes", &input)
+}
+pub fn vault_questions_outcomes_project(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionOutcomesProjectRequest,
+) -> MemoryResult<crate::receipt::QuestionOutcomesProjected> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.outcomes.project", &input)
+}
+pub fn vault_questions_schedule(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionScheduleRequest,
+) -> MemoryResult<Option<crate::llm::decision::questions::QuestionScheduleHead>> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.schedule", &input)
 }
 pub fn vault_decisions_bands_read(
     memory: &Memory<'_>,
