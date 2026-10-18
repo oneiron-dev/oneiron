@@ -500,8 +500,8 @@ fn admit_window_update(
             )?,
         }
         // Its born-with text never enters the admitted bytes: the import keeps
-        // it beside the rows that land.
-        let born_with = super::born_with::admitted_born_with(&remote, &admitted);
+        // it beside the rows that land, a renamed row's under its id here.
+        let born_with = super::born_with::admitted_born_with(&remote, &admitted, &renamed);
         let births = match &lane {
             Some(lane) => pending_births(
                 vault,
@@ -555,11 +555,14 @@ fn admit_window_update(
 /// source, member content among them, routes nothing.
 ///
 /// A WORLD row the guest sends lands under its foreign id, the one its CLAIMs
-/// in that world now name, in the window it came in (FIX 3657). Each InWorld
-/// or SetIn edge endpoint naming such a WORLD names that id, and so does a
-/// CLAIM about such an edge. An edge whose two endpoints are proven to sit in
-/// two different foreign WORLDs is quarantined alone
-/// ([`contains_cross_world_edge`], FIX 3660).
+/// in that world now name, in the window it came in (FIX 3657). The target of
+/// an InWorld or SetIn edge is a WORLD by the edge's kind (ARCH-0022), so it
+/// names that foreign id even before its WORLD row arrives, and so does the
+/// target of the edge a CLAIM is about (FIX 3891). A source names it only
+/// once its WORLD row is proven. A target the same update carries as a row of
+/// another kind refuses that edge, or that CLAIM, alone. An edge whose two
+/// endpoints are proven to sit in two different worlds, one of them foreign,
+/// is quarantined alone ([`contains_cross_world_edge`], FIX 3660, FIX 3893).
 #[cfg(feature = "sync")]
 struct Routes<'a> {
     /// The window each part imports into, part 0 first.
@@ -568,7 +571,8 @@ struct Routes<'a> {
     guest: Option<&'a [u8; 32]>,
     /// The part each moved CLAIM lands in.
     claims: BTreeMap<EntityId, usize>,
-    /// The guest CLAIMs withheld whole.
+    /// The guest CLAIMs withheld whole, and those a WORLD target the update
+    /// carries as another kind refuses (FIX 3891).
     withheld: BTreeSet<EntityId>,
     /// The part each moved edge lands in, by its key; `None` drops it.
     edges: BTreeMap<String, Option<usize>>,
@@ -604,9 +608,10 @@ impl<'a> Routes<'a> {
     }
 
     /// The routes of a guest's update from the source vault `guest`. Each
-    /// withheld CLAIM and each contained cross-world edge is recorded in
-    /// `terminal`. A row or edge whose bytes do not read routes to part 0,
-    /// where admission refuses it.
+    /// withheld CLAIM, each contained cross-world edge, and each edge or
+    /// CLAIM whose WORLD target the update carries as another kind is
+    /// recorded in `terminal`. A row or edge whose bytes do not read routes
+    /// to part 0, where admission refuses it.
     fn plan(
         vault: &Vault,
         key: &WindowKey,
@@ -628,10 +633,19 @@ impl<'a> Routes<'a> {
         };
         let mut placed = Placement::new(guest);
         let mut moved = Vec::new();
-        // The WORLD rows the update carries, and the ids an InWorld or SetIn
-        // edge, or a CLAIM about one, names: those that may be WORLDs.
-        let mut carried_worlds = Vec::new();
+        // The kind of each row the update carries, its WORLD rows among them.
+        // Only these say an edge's WORLD target is no WORLD (FIX 3891).
+        let carried = carried_kinds(&remote.get_map("entities"));
+        let carried_worlds = carried
+            .iter()
+            .filter(|(_, kind)| **kind == ENTITY_TYPE_WORLD)
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        // The ids an InWorld or SetIn edge, or a CLAIM about one, names as
+        // its source, which may be WORLDs, and as its target, which its kind
+        // types a WORLD (FIX 3891).
         let mut named = BTreeSet::new();
+        let mut typed_world_targets = BTreeSet::new();
         map_for_each_value_bytes(&remote.get_map("entities"), |raw, blob| {
             let (Some(blob), Ok(id)) = (blob, EntityId::from_hex(raw)) else {
                 return;
@@ -639,14 +653,7 @@ impl<'a> Routes<'a> {
             let Some(header) = EntityMetadataHeader::parse(blob) else {
                 return;
             };
-            if id.to_hex() != raw {
-                return;
-            }
-            if header.entity_type == ENTITY_TYPE_WORLD {
-                carried_worlds.push(id);
-                return;
-            }
-            if header.entity_type != ENTITY_TYPE_CLAIM {
+            if id.to_hex() != raw || header.entity_type != ENTITY_TYPE_CLAIM {
                 return;
             }
             let Ok(body) =
@@ -664,7 +671,20 @@ impl<'a> Routes<'a> {
                 routes.withheld.insert(id);
                 return;
             }
-            named.extend(world_edge_subject(&body.subject).into_iter().flatten());
+            if let Some([source, target]) = world_edge_subject(&body.subject) {
+                if carried_as_non_world(&carried, target) {
+                    terminal.push(
+                        crate::sync::quarantine::QuarantineContainer::Entities,
+                        raw,
+                        &typed_world_target_refusal(),
+                        blob,
+                    );
+                    routes.withheld.insert(id);
+                    return;
+                }
+                named.insert(source);
+                typed_world_targets.insert(target);
+            }
             placed.claims.insert(id, body.world);
             if key.world().is_none() && body.world.is_none() {
                 moved.push((id, header.learned_at));
@@ -679,23 +699,40 @@ impl<'a> Routes<'a> {
         }
         let remote_edges = remote.get_map("edges");
         let mut edges = Vec::new();
-        map_for_each_value_bytes(&remote_edges, |raw, _| {
-            if let Some((src, kind, tgt)) = super::bridge::parse_edge_key(raw) {
-                if is_world_edge(kind) {
-                    named.extend([src, tgt]);
+        map_for_each_value_bytes(&remote_edges, |raw, value| {
+            let Some((src, kind, tgt)) = super::bridge::parse_edge_key(raw) else {
+                return;
+            };
+            // An edge naming a withheld CLAIM is dropped below, and names
+            // nothing.
+            if is_world_edge(kind)
+                && !routes.withheld.contains(&src)
+                && !routes.withheld.contains(&tgt)
+            {
+                if carried_as_non_world(&carried, tgt) {
+                    terminal.push(
+                        crate::sync::quarantine::QuarantineContainer::Edges,
+                        raw,
+                        &typed_world_target_refusal(),
+                        value.unwrap_or_default(),
+                    );
+                    routes.edges.insert(raw.to_owned(), None);
+                    return;
                 }
-                edges.push((raw.to_owned(), (src, kind, tgt)));
+                named.insert(src);
+                typed_world_targets.insert(tgt);
             }
+            edges.push((raw.to_owned(), (src, kind, tgt)));
         });
-        routes.rename_worlds(vault, guest, carried_worlds, named)?;
+        routes.rename_worlds(vault, guest, carried_worlds, typed_world_targets, named)?;
         for (raw, (src, kind, tgt)) in edges {
             if routes.withheld.contains(&src) || routes.withheld.contains(&tgt) {
                 routes.edges.insert(raw, None);
                 continue;
             }
-            let src_world = placed.foreign_world(vault, src)?;
+            let src_world = placed.proven_world(vault, src)?;
             let tgt_world = match src_world {
-                Some(_) => placed.foreign_world(vault, tgt)?,
+                Some(_) => placed.proven_world(vault, tgt)?,
                 None => None,
             };
             if contains_cross_world_edge(src_world, tgt_world) {
@@ -713,13 +750,19 @@ impl<'a> Routes<'a> {
                 continue;
             }
             // A world edge rides its world endpoint's window, the source's
-            // first (`edge_belongs_to_window`).
+            // first (`edge_belongs_to_window`): a moved CLAIM's, or a foreign
+            // WORLD's this vault stores the endpoint in.
             for end in [src, tgt] {
                 let moved = routes.claims.get(&end).copied();
                 let part = match moved {
                     Some(part) => Some(part),
                     None => placed
                         .stored_window(vault, end)?
+                        .filter(|window| {
+                            window
+                                .world()
+                                .is_some_and(crate::entity_id::is_foreign_world_id_range)
+                        })
                         .map(|window| routes.part(window)),
                 };
                 if let Some(part) = part {
@@ -731,21 +774,31 @@ impl<'a> Routes<'a> {
         Ok(routes)
     }
 
-    /// Names the guest's WORLDs that land under foreign ids here (FIX 3657):
-    /// each `carried` WORLD row, and each `named` id whose foreign copy this
-    /// vault already stores as a WORLD row, which only that WORLD's earlier
-    /// copy from `guest` puts there. Any other id keeps its own, PERSON and
-    /// CLAIM ids among them, and so does a WORLD whose row has not arrived.
+    /// Names the guest's WORLDs that land under foreign ids here (FIX 3657,
+    /// FIX 3891): each `carried` WORLD row; each id in `typed_world_targets`,
+    /// the target an InWorld or SetIn edge, or a CLAIM about one, names,
+    /// which the edge's kind types a WORLD (ARCH-0022) before its row
+    /// arrives; and each other `named` id whose foreign copy this vault
+    /// already stores as a WORLD row, which only that WORLD's earlier copy
+    /// from `guest` puts there. Any other id keeps its own, PERSON and CLAIM
+    /// sources among them.
     fn rename_worlds(
         &mut self,
         vault: &Vault,
         guest: &[u8; 32],
         carried: Vec<EntityId>,
+        typed_world_targets: BTreeSet<EntityId>,
         named: BTreeSet<EntityId>,
     ) -> Result<()> {
         for id in carried {
             let here = crate::federation::foreign_world_for(guest, id)?.entity_id();
             self.worlds.insert(id, here);
+        }
+        for id in typed_world_targets {
+            self.worlds.insert(
+                id,
+                crate::federation::foreign_world_for(guest, id)?.entity_id(),
+            );
         }
         for id in named {
             if self.worlds.contains_key(&id) {
@@ -836,8 +889,8 @@ impl<'a> Routes<'a> {
 
 /// Where the endpoints of a guest's edges sit here once its CLAIMs land in
 /// their foreign WORLDs (FIX 3660): a carried CLAIM in the foreign WORLD its
-/// sender's world maps to, any other in the foreign WORLD this vault stores
-/// it in. Each is read once.
+/// sender's world maps to, any other in the world this vault stores it in,
+/// a foreign WORLD or one of its own (FIX 3893). Each is read once.
 #[cfg(feature = "sync")]
 struct Placement<'a> {
     guest: &'a [u8; 32],
@@ -846,7 +899,7 @@ struct Placement<'a> {
     claims: BTreeMap<EntityId, Option<EntityId>>,
     /// Each sender world's foreign WORLD, once derived.
     foreign: BTreeMap<Option<EntityId>, EntityId>,
-    /// Each stored row's foreign window, once read.
+    /// Each stored row's world window, once read.
     stored: BTreeMap<EntityId, Option<WindowKey>>,
 }
 
@@ -871,9 +924,10 @@ impl<'a> Placement<'a> {
         Ok(here)
     }
 
-    /// The foreign WORLD `id` is proven to sit in here; `None` when it sits in
-    /// none, or nothing here proves where it sits.
-    fn foreign_world(&mut self, vault: &Vault, id: EntityId) -> Result<Option<EntityId>> {
+    /// The world `id` is proven to sit in here, a foreign WORLD or one of
+    /// this vault's own (FIX 3893); `None` when it sits in none, or nothing
+    /// here proves where it sits.
+    fn proven_world(&mut self, vault: &Vault, id: EntityId) -> Result<Option<EntityId>> {
         if let Some(world) = self.claims.get(&id).copied() {
             return self.foreign_of(world).map(Some);
         }
@@ -882,12 +936,12 @@ impl<'a> Placement<'a> {
             .and_then(|window| window.world()))
     }
 
-    /// The window a CLAIM this vault stores in a foreign WORLD resides in.
+    /// The window a CLAIM this vault stores in a world resides in.
     fn stored_window(&mut self, vault: &Vault, id: EntityId) -> Result<Option<WindowKey>> {
         if let Some(window) = self.stored.get(&id) {
             return Ok(window.clone());
         }
-        let window = stored_foreign_window(vault, &id)?;
+        let window = stored_world_window(vault, &id)?;
         self.stored.insert(id, window.clone());
         Ok(window)
     }
@@ -913,6 +967,33 @@ const fn world_edge_subject(subject: &ClaimSubject) -> Option<[EntityId; 2]> {
     }
 }
 
+/// The kind of each row `entities` carries, by its canonical hex id.
+#[cfg(feature = "sync")]
+fn carried_kinds(entities: &loro::LoroMap) -> BTreeMap<EntityId, u8> {
+    let mut kinds = BTreeMap::new();
+    map_for_each_value_bytes(entities, |raw, blob| {
+        if let (Some(header), Ok(id)) = (
+            blob.and_then(EntityMetadataHeader::parse),
+            EntityId::from_hex(raw),
+        ) && id.to_hex() == raw
+        {
+            kinds.insert(id, header.entity_type);
+        }
+    });
+    kinds
+}
+
+/// Whether the update carries `target`, the target of an InWorld or SetIn
+/// edge, as a row of another kind than WORLD (FIX 3891). Only the update's
+/// own rows say so: a row this vault stores at the sender's id is not the
+/// sender's.
+#[cfg(feature = "sync")]
+fn carried_as_non_world(carried: &BTreeMap<EntityId, u8>, target: EntityId) -> bool {
+    carried
+        .get(&target)
+        .is_some_and(|kind| *kind != ENTITY_TYPE_WORLD)
+}
+
 /// A guest CLAIM about an InWorld or SetIn edge names the edge by the ids
 /// its copy lands under (FIX 3657).
 #[cfg(feature = "sync")]
@@ -932,18 +1013,24 @@ fn rename_world_edge_subject(subject: &mut ClaimSubject, worlds: &BTreeMap<Entit
     }
 }
 
-/// The policy hook for a guest's edge whose endpoints sit in two different
-/// foreign WORLDs here (FIX 3660, CALLS "FIX 3660 cross-world edge
-/// containment"). Such an edge fits no window (`edge_worlds_match`), and the
-/// Engine keeps it refused (CALLS "FIX 3497 base-window guest split"). Given
-/// the foreign WORLD each endpoint is proven to sit in, this says whether the
-/// refusal stops at the edge: it is quarantined terminally before it enters
-/// the copied doc, so the rows and edges beside it still land, rather than
-/// left in its part for window residence to refuse the part whole. An
-/// endpoint nothing proves (`None`) is never taken as base or as any world.
+/// The policy hook for a guest's edge whose endpoints are proven to sit in
+/// two different worlds here, at least one of them a foreign WORLD (FIX 3660,
+/// FIX 3893; CALLS "FIX 3660 cross-world edge containment" and "FIX 3893
+/// foreign/local edge containment"). Such an edge fits no window
+/// (`edge_worlds_match`), and the Engine keeps it refused (CALLS "FIX 3497
+/// base-window guest split"): a guest's join into one of this vault's own
+/// worlds stays refused. Given the world each endpoint is proven to sit in,
+/// this says whether the refusal stops at the edge: it is quarantined
+/// terminally before it enters the copied doc, so the rows and edges beside
+/// it still land, rather than left in its part for window residence to
+/// refuse the part whole. An endpoint nothing proves (`None`) is never taken
+/// as base or as any world, and an edge between two of this vault's own
+/// worlds is left as it was.
 #[cfg(feature = "sync")]
 fn contains_cross_world_edge(src: Option<EntityId>, tgt: Option<EntityId>) -> bool {
-    matches!((src, tgt), (Some(src), Some(tgt)) if src != tgt)
+    matches!((src, tgt), (Some(src), Some(tgt)) if src != tgt
+        && (crate::entity_id::is_foreign_world_id_range(src)
+            || crate::entity_id::is_foreign_world_id_range(tgt)))
 }
 
 /// The refusal a contained cross-world edge is quarantined under: the one
@@ -953,9 +1040,18 @@ fn cross_world_edge_refusal() -> Error {
     Error::InvalidConfig("edge outside window residence".into())
 }
 
-/// The window a CLAIM this vault stores in a foreign WORLD resides in.
+/// The refusal an InWorld or SetIn edge, or a guest CLAIM about one, is
+/// quarantined under when the same update carries its target as a row of
+/// another kind than WORLD (FIX 3891).
 #[cfg(feature = "sync")]
-fn stored_foreign_window(vault: &Vault, id: &EntityId) -> Result<Option<WindowKey>> {
+fn typed_world_target_refusal() -> Error {
+    Error::InvalidConfig("world edge target is not a WORLD".into())
+}
+
+/// The window a CLAIM this vault stores in a world, a foreign WORLD or one
+/// of its own, resides in; `None` for a base row or a row it does not store.
+#[cfg(feature = "sync")]
+fn stored_world_window(vault: &Vault, id: &EntityId) -> Result<Option<WindowKey>> {
     let Some(raw) = vault.get_raw_unsealed(id)? else {
         return Ok(None);
     };
@@ -965,7 +1061,6 @@ fn stored_foreign_window(vault: &Vault, id: &EntityId) -> Result<Option<WindowKe
     Ok(crate::sync::types::entity_world(&raw)
         .ok()
         .flatten()
-        .filter(|world| crate::entity_id::is_foreign_world_id_range(*world))
         .map(|world| WindowKey::for_world(header.learned_at, world)))
 }
 
@@ -1064,7 +1159,9 @@ fn recheck_admitted_claim_blob(
 /// The doc one part of an admission is authored in. Its op ids derive from
 /// the window it lands in, the update, the role and, for a guest's update, the
 /// source vault its CLAIMs are remapped under (FIX 3497), so one op id never
-/// carries two payloads.
+/// carries two payloads. The domain is v1 since a WORLD target lands under its
+/// foreign id before its row arrives (FIX 3891): the same update now admits
+/// other bytes.
 #[cfg(feature = "sync")]
 fn create_admission_doc(
     key: &WindowKey,
@@ -1090,13 +1187,13 @@ fn federated_admission_peer_id(
     guest: Option<&[u8; 32]>,
 ) -> u64 {
     let mut material = Vec::with_capacity(
-        b"oneiron.federation.admission.peer.v0".len()
+        b"oneiron.federation.admission.peer.v1".len()
             + role.origin().len()
             + key.as_str().len()
             + std::mem::size_of::<u64>()
             + update.len(),
     );
-    material.extend_from_slice(b"oneiron.federation.admission.peer.v0");
+    material.extend_from_slice(b"oneiron.federation.admission.peer.v1");
     material.extend_from_slice(&(role.origin().len() as u64).to_le_bytes());
     material.extend_from_slice(role.origin().as_bytes());
     material.extend_from_slice(&(key.as_str().len() as u64).to_le_bytes());
