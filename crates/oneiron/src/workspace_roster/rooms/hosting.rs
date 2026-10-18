@@ -34,6 +34,7 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::side_table::Named;
 use crate::store::Store;
 use crate::workspace_roster::join_consent::JoinSubject;
+use crate::workspace_roster::join_receipt::{RosterActor, RosterErase, names_no_actor};
 use crate::{EdgeActorClass, WriteActor};
 
 /// How a member speaks in a room. Engine upkeep holds neither role.
@@ -62,8 +63,9 @@ pub enum HostPinKind {
 #[serde(deny_unknown_fields)]
 pub struct HostPin {
     pub agent: EntityId,
-    /// Who pinned it, or the host who handed it on.
-    pub by: EntityId,
+    /// Who pinned it, or the host who handed it on; no one once that actor
+    /// was erased.
+    pub by: RosterActor,
     pub kind: HostPinKind,
     /// When it was recorded, on the store's recorded-at clock (unix seconds).
     pub at: u64,
@@ -72,6 +74,46 @@ pub struct HostPin {
 /// Each room's stored host, latest write wins. Key: id16 (room).
 pub(super) const HOST_PINS: SideTable<EntityId, HostPin, Named> =
     SideTable::new(&side_table::ROOMS_HOST_PIN);
+
+/// A stored host whose agent is erased can never host again, so an erase of
+/// that agent deletes it, and the room's host is chosen by presence (FIX
+/// 3520). The erase of the one who pinned it only takes their name out.
+pub const ACTOR_ERASE_HOST_PIN: RosterErase = RosterErase::Delete;
+
+/// Erasing `actor` from the rooms' stored hosts (FIX 3520): a pin or handoff
+/// whose agent is the actor goes, when [`ACTOR_ERASE_HOST_PIN`] says so. One
+/// the actor pinned or handed on keeps its agent, its kind and its time, and
+/// names no one who pinned it. One-way, in the erase's own transaction. An
+/// id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a pin row that cannot be read.
+pub(crate) fn erase_host_pin_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut doomed = Vec::new();
+    let mut erased = Vec::new();
+    for (room, mut pin) in HOST_PINS.scan(&vault.store, wtxn)? {
+        if pin.agent == *actor && ACTOR_ERASE_HOST_PIN == RosterErase::Delete {
+            doomed.push(room);
+        } else if pin.by.forget(*actor) {
+            erased.push((room, pin));
+        }
+    }
+    for room in &doomed {
+        HOST_PINS.delete(&vault.store, wtxn, room)?;
+    }
+    for (room, pin) in &erased {
+        HOST_PINS.put(&vault.store, wtxn, room, pin)?;
+    }
+    Ok(())
+}
 
 /// Who holds a room's speaking duty now.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -457,7 +499,7 @@ impl Memory<'_> {
                         &pin.room,
                         &HostPin {
                             agent,
-                            by: caller.entity_ref(),
+                            by: RosterActor::Actor(caller.entity_ref()),
                             kind: HostPinKind::Pinned,
                             at,
                         },
@@ -518,7 +560,7 @@ impl Memory<'_> {
                 &hand.room,
                 &HostPin {
                     agent: hand.to,
-                    by: caller.entity_ref(),
+                    by: RosterActor::Actor(caller.entity_ref()),
                     kind: HostPinKind::HandedOff,
                     at,
                 },
