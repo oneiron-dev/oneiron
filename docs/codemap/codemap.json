@@ -11660,7 +11660,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ResultFacet"
@@ -11669,9 +11669,19 @@
      "purpose": "Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`…",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 1,
-      "fn": 4
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/result_read/outside.rs",
+     "purpose": "Reads of a code run's results for a caller outside the run: the cards of its named results, and one read of…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -11853,7 +11863,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 33,
       "fn": 11,
       "struct": 2
      }
@@ -11876,7 +11886,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -11886,7 +11896,7 @@
      "path": "src/code_run/storage/speech_identity.rs",
      "purpose": "Deterministic conversation, turn and message ids derived from a run's identity",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -22029,7 +22039,7 @@
      "path": "src/engine_executor/driver.rs",
      "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 10,
       "struct": 1
      }
@@ -22093,7 +22103,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 44
+      "crate-vis": 49
      }
     },
     {
@@ -30537,12 +30547,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/message_result.rs",
+     "purpose": "The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
       "mod": 2,
-      "re-export": 36
+      "re-export": 37
      }
     },
     {
@@ -30825,6 +30846,22 @@
      "purpose": "A report files evidence, not authority",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MessageResultAttachment",
+      "MessageResultSource"
+     ],
+     "path": "src/memory/result_attachment.rs",
+     "purpose": "The typed result a MESSAGE carries in place of an answer too large to say (FIX 365): a bounded preview of…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -32363,9 +32400,19 @@
      "purpose": "Explicit promotion from an off-record session into the durable vault",
      "surface": {
       "const": 3,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/promote/result_holds.rs",
+     "purpose": "A saved result MESSAGE's hold on its body (FIX 365): the body comes out of the room it was said in, and the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -36502,7 +36549,8 @@
       "BodyLocation",
       "BodyRef",
       "BodyState",
-      "OwnedBody"
+      "OwnedBody",
+      "RetainedResultProvenance"
      ],
      "path": "src/provenance/body.rs",
      "purpose": "Who owns a body and whether it is whole",
@@ -36510,7 +36558,7 @@
       "crate-vis": 9,
       "enum": 2,
       "fn": 3,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -38561,7 +38609,7 @@
      "path": "src/result_body/promote.rs",
      "purpose": "Bringing an off-record result body into the vault's `bodies/`",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -53591,7 +53639,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 73,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54193,7 +54241,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 133,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54221,7 +54269,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54872,9 +54920,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 190,
+   "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3339,
+   "source_files": 3343,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67754,6 +67802,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/message_result.rs",
+     "purpose": "`POST /v1/core/messages/{message}/result`: the result a MESSAGE carries in place of an answer too large to…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -74274,7 +74332,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 317,
+     "files": 318,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74682,7 +74740,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 633,
+   "source_files": 634,
    "test_files": 182
   },
   "oneiron-spawn": {
