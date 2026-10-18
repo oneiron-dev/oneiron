@@ -3522,6 +3522,60 @@ async fn vault_widen_proposals_decline(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_claims_review(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.claims.review")?;
+    let caller = facade_actor(auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.claims.review", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.claims.review", value).await?;
+    let (output, listed) = super::host_doors::vault_claims_review(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_claims_settle(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.claims.settle")?;
+    let caller = facade_actor(auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.claims.settle", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.claims.settle", value).await?;
+    let (output, listed) = super::host_doors::vault_claims_settle(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_craft_candidates(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -7775,6 +7829,8 @@ pub(crate) async fn call_verb(
         "vault.widen_proposals" => vault_widen_proposals(server, call, input).await,
         "vault.widen_proposals.approve" => vault_widen_proposals_approve(server, call, input).await,
         "vault.widen_proposals.decline" => vault_widen_proposals_decline(server, call, input).await,
+        "vault.claims.review" => vault_claims_review(server, call, input).await,
+        "vault.claims.settle" => vault_claims_settle(server, call, input).await,
         "vault.craft_candidates" => vault_craft_candidates(server, call, input).await,
         "vault.craft_candidates.answer" => vault_craft_candidates_answer(server, call, input).await,
         "vault.settings.wake_policy.set" => {

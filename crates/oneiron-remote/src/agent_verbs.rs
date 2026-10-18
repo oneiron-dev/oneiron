@@ -514,6 +514,14 @@ impl OneironClient {
                 "vault.widen_proposals.decline" => remote_agent_verb_output::<
                     oneiron::agent_dispatch::widen_doors::WidenProposalView,
                 >(client, verb, &input),
+                "vault.claims.review" => remote_agent_verb_output::<
+                    oneiron::memory::ClaimProposalReview,
+                >(client, verb, &input),
+                "vault.claims.settle" => {
+                    remote_agent_verb_output::<oneiron::memory::ClaimSettlement>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.craft_candidates" => remote_agent_verb_output::<
                     oneiron::actor_claims::CraftCandidatesView,
                 >(client, verb, &input),
@@ -3001,6 +3009,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.widen_proposals.decline", value)
+    }
+    pub fn vault_claims_review(
+        &self,
+        input: &oneiron::memory::ClaimProposalReviewRequest,
+    ) -> Result<oneiron::memory::ClaimProposalReview, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.claims.review", value)
+    }
+    pub fn vault_claims_settle(
+        &self,
+        input: &oneiron::memory::ClaimSettleRequest,
+    ) -> Result<oneiron::memory::ClaimSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.claims.settle", value)
     }
     pub fn vault_craft_candidates(
         &self,

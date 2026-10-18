@@ -27,7 +27,7 @@ const SNIPPET_MAX_CHARS: usize = 160;
 const CLAIM_LIST_READ_CHUNK: usize = 256;
 
 /// Typed read-back view of one claim.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClaimView {
     /// 32-hex claim id.
     pub claim_ref: String,

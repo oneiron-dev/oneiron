@@ -37,6 +37,9 @@ use super::resolution::{
 };
 use crate::error::GateError;
 
+// One proposed claim settled by its id (DOOR-115), with these members' mechanics.
+mod claim_settle;
+
 /// Gate `content_kind` of the ONE durable receipt a bundle resolution appends.
 pub const GATE_BUNDLE_CONTENT_KIND: &str = "consent_bundle";
 
