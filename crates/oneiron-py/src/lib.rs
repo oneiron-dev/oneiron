@@ -1386,6 +1386,97 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_trusted_contacts_name(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.name")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.trusted_contacts.name", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.trusted_contacts.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_consent(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.consent")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.consent", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.revoke")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.revoke", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_dial_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.dial.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.dial.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_tier_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.tier.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.tier.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_concern_asks(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.concern.asks")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.concern.asks", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_concern_authorize(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.trusted_contacts.concern.authorize")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.concern.authorize", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_guests_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.guests.revoke")?;
         let output = py

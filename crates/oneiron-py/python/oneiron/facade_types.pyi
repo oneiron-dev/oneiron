@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 458 facade rows, 1753 declarations.
-Inputs: 409 of 458 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 405 of 458 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 466 facade rows, 1775 declarations.
+Inputs: 417 of 466 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 413 of 466 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 86; unread shapes: 0.
 """
 
@@ -3236,6 +3236,89 @@ class SharedActPolicyAnswerRequest(TypedDict):
     approve: bool
 class SharedActPolicyChangeRequest(TypedDict):
     change_id: str
+class TrustedContactReach(TypedDict):
+    sender: EntityId
+    channel: str
+    verb: str
+    target: str
+TrustedContactDial = Literal["ask_first", "just_call"]
+class TrustedContactNameRequest(TypedDict):
+    contact_ref: str
+    reach: TrustedContactReach
+    dial: TrustedContactDial
+class TrustedContactAcceptance(TypedDict):
+    at: int
+    adult: bool
+TrustedContactParty = Literal["person", "contact"]
+class TrustedContactRevocation(TypedDict):
+    at: int
+    by: TrustedContactParty
+class TrustedContact(TypedDict):
+    person: EntityId
+    contact: EntityId
+    reach: TrustedContactReach
+    dial: TrustedContactDial
+    version: int
+    named_at: int
+    accepted: NotRequired[TrustedContactAcceptance | None]
+    revoked: NotRequired[TrustedContactRevocation | None]
+class TrustedContactsRequest(TypedDict):
+    ...
+class TrustedContactConsentRequest(TypedDict):
+    person_ref: str
+    version: int
+    adult: bool
+class TrustedContactRevokeRequest(TypedDict):
+    person_ref: str
+    contact_ref: str
+class TrustedContactDialRequest(TypedDict):
+    contact_ref: str
+    dial: TrustedContactDial
+TrustedContactTier = Literal["concern", "imminent"]
+class TrustedContactTierRequest(TypedDict):
+    row_ref: str
+    tier: TrustedContactTier
+class TrustedContactTierSet(TypedDict):
+    row_ref: str
+    tier: TrustedContactTier
+class TrustedContactAsksRequest(TypedDict):
+    ...
+class TrustedContactAnswer(TypedDict):
+    yes: bool
+    at: int
+    notified: bool
+class TrustedContactAsk(TypedDict):
+    ask: EntityId
+    person: EntityId
+    contact: EntityId
+    version: int
+    tier: TrustedContactTier
+    asked_at: int
+    answer: NotRequired[TrustedContactAnswer | None]
+    superseded: NotRequired[int | None]
+class TrustedContactAuthorizeRequest(TypedDict):
+    ask_ref: str
+    yes: bool
+TrustedContactAuthorizationOutcome = Literal["staged", "declined", "superseded"]
+class GateSystemNoticeAction(TypedDict):
+    label: str
+    target: str
+class GateSystemNoticeRecord(TypedDict):
+    notice_type: str
+    channel: str
+    voice: str
+    audience: str
+    body: str
+    row_ref: NotRequired[str | None]
+    setting_change_offer: NotRequired[GateSystemNoticeAction | None]
+    policy_plane: NotRequired[str | None]
+    policy_version: NotRequired[str | None]
+    docs_url: NotRequired[str | None]
+class TrustedContactAuthorization(TypedDict):
+    ask_ref: str
+    yes: bool
+    outcome: TrustedContactAuthorizationOutcome
+    system_notices: list[GateSystemNoticeRecord]
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]
