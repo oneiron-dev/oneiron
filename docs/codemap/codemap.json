@@ -50122,7 +50122,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 49,
+      "re-export": 50,
       "struct": 36
      }
     },
@@ -50463,7 +50463,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 640
+      "fn": 644
      }
     },
     {
@@ -50878,6 +50878,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "SecretGrantCleanup",
+      "SecretGrantMintRequest",
+      "SecretGrantPurpose",
+      "SecretGrantRegistration",
+      "SecretGrantRenewRequest",
+      "SecretGrantTeardownRequest",
+      "SecretGrantUseRequest",
+      "SecretGrantView",
+      "SecretGrantViewStatus"
+     ],
+     "path": "src/task_verb/sdk_secret_grant.rs",
+     "purpose": "`self.secrets.*` (DOOR-124, e2e SECRETS-03): the typed lifecycle of a secret grant, over the engine's grant…",
+     "surface": {
+      "enum": 3,
+      "fn": 4,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "SecretUseAnswer",
       "SecretUseRecord",
       "SecretUseRequest",
@@ -50886,6 +50908,7 @@
      "path": "src/task_verb/sdk_secret_use.rs",
      "purpose": "`self.use`: an agent hands a secret to one trusted operation by its handle, and reads the operation's…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -57455,7 +57478,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 163,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57625,7 +57648,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3511,
+   "source_files": 3512,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66132,7 +66155,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 590
+      "fn": 594
      }
     },
     {
@@ -67181,7 +67204,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 591
+      "fn": 595
      }
     },
     {
@@ -70414,7 +70437,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 113
+      "crate-vis": 114
      }
     },
     {
@@ -70615,6 +70638,16 @@
      "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/secret_grant_doors.rs",
+     "purpose": "The host doors of `self.secrets.*` (DOOR-124, e2e SECRETS-03): an agent run's secret grants, minted…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -76817,7 +76850,7 @@
      "purpose": "—",
      "surface": {
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -76879,6 +76912,23 @@
      "surface": {
       "fn": 10,
       "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunSecretDestinations",
+      "SecretDestination",
+      "SecretDestinations",
+      "ServedSecretDelivery"
+     ],
+     "path": "src/runtime/secret_destinations.rs",
+     "purpose": "T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the…",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -77045,7 +77095,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -78034,7 +78084,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 373,
+     "files": 374,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78370,7 +78420,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78456,7 +78506,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 704,
+   "source_files": 706,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79602,6 +79652,10 @@
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
       "LiveRunRequestMemorySupersedeInput",
+      "LiveRunRequestSecretGrantMintRequest",
+      "LiveRunRequestSecretGrantRenewRequest",
+      "LiveRunRequestSecretGrantTeardownRequest",
+      "LiveRunRequestSecretGrantUseRequest",
       "LiveRunRequestSkillCallInput",
       "LiveRunRequestTaskRefuseInput",
       "LiveVoiceAckKind",
@@ -80308,6 +80362,15 @@
       "SearchAxis",
       "SearchEvidence",
       "SeatInventory",
+      "SecretGrantCleanup",
+      "SecretGrantMintRequest",
+      "SecretGrantPurpose",
+      "SecretGrantRegistration",
+      "SecretGrantRenewRequest",
+      "SecretGrantTeardownRequest",
+      "SecretGrantUseRequest",
+      "SecretGrantView",
+      "SecretGrantViewStatus",
       "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
@@ -80832,8 +80895,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 570,
-      "struct": 1608
+      "enum": 573,
+      "struct": 1618
      }
     },
     {
