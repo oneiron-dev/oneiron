@@ -349,6 +349,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_standing_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.standing.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.standing.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_standing_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.standing.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.standing.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_standing_edit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.standing.edit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.standing.edit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_identity_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.identity.answer")?;
         let output = py
@@ -698,6 +719,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.affect.annotations.put")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.affect.annotations.put", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_tagging_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.tagging.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.tagging.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_tagging_tags(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.tagging.tags")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.tagging.tags", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_tagging_history(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.tagging.history")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.tagging.history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_tagging_mentions(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.tagging.mentions")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.tagging.mentions", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -2545,6 +2594,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_consent_deny(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consent.deny")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consent.deny", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consent_create_standing_grant(
         &self,
         py: Python<'_>,
@@ -3387,6 +3443,62 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.agents.update")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.agents.update", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_agents_dreaming_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.dreaming.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.dreaming.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_agents_dreaming_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.dreaming.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.dreaming.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_standing_blocks_configure(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.standing_blocks.configure")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.standing_blocks.configure", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_standing_blocks_reconfigure(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.standing_blocks.reconfigure")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.standing_blocks.reconfigure", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_standing_blocks_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.standing_blocks.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.standing_blocks.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_standing_blocks_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.standing_blocks.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.standing_blocks.list", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -4374,6 +4486,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_booking_constraint_turn(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.booking.constraint_turn")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.booking.constraint_turn", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_booking_page_token(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.booking.page_token")?;
         let output = py
@@ -4507,6 +4629,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.search.hybrid")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.search.hybrid", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_search_temporal(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.search.temporal")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.search.temporal", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -5308,6 +5437,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_notes_author_take(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.author_take")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.author_take", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_notes_from_entity(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.notes.from_entity")?;
         let output = py
@@ -5518,6 +5654,111 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.history")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_observe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.observe")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.observe", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_find(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.find")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.find", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_click(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.click")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.click", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_click_at(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.click_at")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.click_at", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_type(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.type")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.type", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_select(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.select")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.select", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_wait_for(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.wait_for")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.wait_for", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_expect(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.expect")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.expect", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_screenshot(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.screenshot")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.screenshot", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_view(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.view")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.view", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_crop(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.crop")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.crop", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_zoom(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.zoom")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.zoom", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_batch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.batch")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.batch", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_handover(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.handover")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.handover", input))
             .map_err(raise)?;
         encode(&output)
     }

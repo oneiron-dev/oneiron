@@ -82,7 +82,10 @@ pub trait CompactionBackend: Send + Sync {
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
     ) -> std::result::Result<
-        (CompactionProduct, Option<crate::compaction::CompactionExecution>),
+        (
+            CompactionProduct,
+            Option<crate::compaction::CompactionExecution>,
+        ),
         CompactionRefusal,
     > {
         self.compact(request, retry).map(|product| (product, None))

@@ -7,18 +7,21 @@
 //! authenticated (the mesh ruling, 10-19), carried by any live linked machine
 //! of the vault, and each change lands its receipt and a typed event in the
 //! same transaction as the edit. The receipt carries ids only, and says
-//! honestly whether a holder still has to do the world's key work.
+//! honestly whether a holder still has to do the world's key work. When one
+//! does, the same commit records an owner work request naming that holder
+//! (`world_keys::owner_work`), and the receipt carries where it stands.
 use serde::{Deserialize, Serialize};
 
 use super::ledger::{PolicyChangedEvent, put_event_in_txn};
 use crate::authority::{
-    ActSurface, EffectiveRead, EffectiveWorldPrivacy, KeyWork, PolicyRevision, WorldPrivacy,
+    ActSurface, EffectiveRead, EffectiveWorldPrivacy, KeyWork, OwnerWorkBody, PolicyRevision,
+    WorldPrivacy,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::PolicyRowScope;
 use crate::side_table::{self, Named, SideTable};
-use crate::world_keys::WorldKeyStatus;
+use crate::world_keys::{OwnerWorkReceipt, WorldKeyStatus};
 use crate::{EntityId, Vault};
 
 /// Event kind on the shared owner-policy stream for a settings change.
@@ -47,8 +50,14 @@ pub struct WorldPrivacyReceipt {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub orphaned_from: Vec<String>,
     /// Whether the world's key work is done here, needs none, or awaits a
-    /// holder. Never "enacted" while a holder still has to act.
+    /// holder. Never "enacted" while a holder still has to act. The commit's
+    /// snapshot.
     pub key_work: KeyWork,
+    /// When the key work awaits a holder: the owner work request this commit
+    /// recorded for one (or why none could be named), and where it stands,
+    /// read from the fold. `None` when no holder is needed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_work: Option<OwnerWorkReceipt>,
     pub at: u64,
 }
 
@@ -126,7 +135,7 @@ impl Vault {
                 .as_ref()
                 .ok_or_else(|| unavailable.expect("an absent secret has its error"));
             let status = self.world_key_for_edit_in_txn(txn, actor, world, secret)?;
-            let receipt = self.settle_world_key_work_in_txn(txn, receipt, status)?;
+            let receipt = self.settle_world_key_work_in_txn(txn, owner, receipt, status)?;
             Ok((release, receipt))
         })?;
         Ok(receipt)
@@ -177,6 +186,7 @@ impl Vault {
                 .collect(),
             orphaned_from: change.orphaned_from.iter().map(EntityId::to_hex).collect(),
             key_work,
+            owner_work: None,
             at: self.instant_in_txn(txn)?.secs(),
         };
         RECEIPTS.put(&self.store, txn, &revision, &receipt)?;
@@ -199,17 +209,21 @@ impl Vault {
     /// transaction (mesh contract §5, the honest receipt). Key work counts as
     /// enacted only once every reader the settings allow, and the pinned
     /// root, holds a wrap of the world's current key: a first key minted on
-    /// a bridge record (Docs Q06) still awaits the holder's next wrap.
+    /// a bridge record (Docs Q06) still awaits the holder's next wrap. Key
+    /// work that awaits a holder names one in the same commit: an owner work
+    /// request for the settings revision right after the edit, signed by this
+    /// install as the carrier of `owner`'s act.
     pub(crate) fn settle_world_key_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
         mut receipt: WorldPrivacyReceipt,
         status: Option<WorldKeyStatus>,
     ) -> Result<WorldPrivacyReceipt> {
         let mut key_work = key_work_of(&receipt.next, status);
+        let world = EntityId::from_hex(&receipt.world)
+            .map_err(|_| Error::InvariantViolation("world privacy receipt world"))?;
         if key_work == KeyWork::Enacted {
-            let world = EntityId::from_hex(&receipt.world)
-                .map_err(|_| Error::InvariantViolation("world privacy receipt world"))?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             let root = self.pinned_root_recipient_in_txn(txn, &fold)?;
             let wrapped = fold.current_world_key(world).is_some_and(|current| {
@@ -222,17 +236,42 @@ impl Vault {
             }
         }
         receipt.key_work = key_work;
+        if key_work == KeyWork::AwaitingHolder {
+            let seen = self
+                .authority_view_readonly_in_txn(txn)?
+                .world_policy_revision(world);
+            receipt.owner_work = Some(self.record_owner_work_in_txn(
+                txn,
+                owner,
+                receipt.surface,
+                world,
+                seen.0,
+                OwnerWorkBody::WorldKey,
+            )?);
+        }
         RECEIPTS.put(&self.store, txn, &receipt.revision, &receipt)?;
         Ok(receipt)
     }
 
-    /// Every world-settings change made on this machine, in revision order.
+    /// Every world-settings change made on this machine, in revision order,
+    /// each one's owner work as the fold reads it now.
     pub fn world_privacy_change_log(&self) -> Result<Vec<WorldPrivacyReceipt>> {
         let txn = self.store.env.read_txn()?;
-        Ok(RECEIPTS
+        let receipts: Vec<WorldPrivacyReceipt> = RECEIPTS
             .scan(&self.store, &txn)?
             .into_iter()
             .map(|(_, receipt)| receipt)
+            .collect();
+        if receipts.iter().all(|receipt| receipt.owner_work.is_none()) {
+            return Ok(receipts);
+        }
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(receipts
+            .into_iter()
+            .map(|mut receipt| {
+                receipt.owner_work = receipt.owner_work.map(|work| work.refreshed(&fold));
+                receipt
+            })
             .collect())
     }
 }

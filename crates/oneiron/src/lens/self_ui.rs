@@ -18,7 +18,8 @@ use super::wire_limits::{deserialize_limited_vec, serialize_tagged};
 /// Fraction of one slider step a value may sit off the grid before it is rejected.
 const SLIDER_STEP_TOLERANCE: f64 = 1e-6;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, schemars::JsonSchema)]
+#[schemars(tag = "control", content = "props", rename_all = "snake_case")]
 pub enum SelfUiControl {
     Button(ButtonControl),
     Toggle(ToggleControl),
@@ -102,7 +103,7 @@ impl Serialize for SelfUiControl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ButtonControl {
     pub id: SelfUiControlId,
@@ -110,7 +111,7 @@ pub struct ButtonControl {
     pub action: SelfUiAction,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToggleControl {
     pub id: SelfUiControlId,
@@ -119,7 +120,7 @@ pub struct ToggleControl {
     pub action: SelfUiAction,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SegmentedControl {
     pub id: SelfUiControlId,
     pub label: LensText,
@@ -171,7 +172,7 @@ impl SegmentedControl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SelectControl {
     pub id: SelfUiControlId,
     pub label: LensText,
@@ -223,7 +224,7 @@ impl SelectControl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SliderControl {
     pub id: SelfUiControlId,
     pub label: LensText,
@@ -303,7 +304,7 @@ impl<'de> Deserialize<'de> for SliderControl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextInputControl {
     pub id: SelfUiControlId,
@@ -315,14 +316,14 @@ pub struct TextInputControl {
     pub action: SelfUiAction,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SelfUiOption {
     pub value: SelfUiOptionValue,
     pub label: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SelfUiAction {
     pub command: SelfUiActionId,
@@ -353,7 +354,7 @@ impl<'de> Deserialize<'de> for SelfUiAction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "type",
     content = "value",
