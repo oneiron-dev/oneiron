@@ -342,6 +342,7 @@ pub(crate) fn propose_skill_repair_in_txn(
     if let Some(owner) = stamp.owner {
         vault.verify_owner_write_actor_in_txn(wtxn, &owner)?;
     }
+    validate_skill_draft(brief, desc, rationale)?;
     // Resolved at the WRITE door, not carried from the ranking: the
     // author ran outside this transaction, so the target may have been
     // superseded, quarantined or re-proposed in that window. A proposal
@@ -350,11 +351,31 @@ pub(crate) fn propose_skill_repair_in_txn(
     let target = vault.read_skill_record_in_txn(&*wtxn, &brief.skill)?;
     if target.lifecycle_status != SkillLifecycle::Active
         || target.version != brief.version
+        || target.desc != brief.desc
         || crate::skill::resident_of(&target)? != stamp.resident
     {
         return Err(invalid(
             "optimization target moved while the author was drafting",
         ));
+    }
+    use crate::ports::EntityStoreRead;
+    for id in vault.store.port_entity_ids_by_type(wtxn, crate::registry::ENTITY_TYPE_SKILL, None)? {
+        let id = id?;
+        let Some(other) = vault.get_skill_record_in_txn(wtxn, &id)? else {
+            continue;
+        };
+        if matches!(&other.provenance, Value::Map(fields) if
+            fields.iter().any(|(key, value)| key.as_str() == Some(PROVENANCE_OPTIMIZE_ATTEMPT_KEY)
+                && value.as_str() == Some(bytes_to_hex_lower(stamp.attempt.as_bytes()).as_str()))) {
+            return Err(invalid("this drafting attempt already landed an optimizer proposal"));
+        }
+        if other.lifecycle_status == SkillLifecycle::Candidate
+            && other.approval_status == ClaimApprovalStatus::Proposed
+            && other.skill_id == target.skill_id
+            && crate::skill::resident_of(&other)? == stamp.resident
+        {
+            return Err(invalid("the optimization target already has an open proposed revision"));
+        }
     }
     let mut record = proposal_record(
         &target,
@@ -398,6 +419,54 @@ pub(crate) fn propose_skill_repair_in_txn(
         vault.persist_hub_package_in_txn(wtxn, proposal_id, &package)?;
     }
     Ok(())
+}
+
+/// An explicit candidate submitted by the owner against one fixed baseline.
+/// A real queued optimize attempt proves its cycle; the owner, not the Coach,
+/// is its author stamp. It remains an ordinary generated, proposed candidate.
+#[expect(clippy::too_many_arguments, reason = "the candidate binds its baseline, drafting cycle and text")]
+pub(crate) fn propose_skill_edit_as_owner(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    attempt: AttemptId,
+    skill: &EntityId,
+    expected_version: &str,
+    desc: &str,
+    rationale: &str,
+) -> Result<EntityId> {
+    owner.revalidate(vault)?;
+    let now = vault.now_recorded_at();
+    let brief = skill_repair_brief(vault, skill, now)?;
+    if brief.version != expected_version {
+        return Err(invalid("the submitted candidate's baseline version changed"));
+    }
+    let proposal = vault.store.clock.entity_id()?;
+    vault.with_write_txn_grouped(|txn| {
+        let principal = owner.revalidate_in_txn(vault, txn)?;
+        let queued = AttemptQueue::new(vault).get_in_txn(txn, attempt)?
+            .ok_or(invalid("a submitted candidate needs a stored optimize attempt"))?;
+        if queued.kind != crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND {
+            return Err(invalid("a submitted candidate needs a skill_optimize attempt"));
+        }
+        let cycle = proven_cycle_in_txn(vault, txn, attempt)?;
+        let actor = crate::write_envelope::WriteActor::new(
+            principal, crate::edge::EdgeActorClass::Human,
+        );
+        let target = vault.read_skill_record_in_txn(txn, skill)?;
+        let stamp = SkillRepairStamp {
+            actor,
+            facet: "vault.skills.optimize.propose",
+            attempt,
+            cycle: &cycle,
+            owner: Some(actor),
+            resident: crate::skill::resident_of(&target)?,
+        };
+        propose_skill_repair_in_txn(
+            vault, txn, &brief, desc, rationale, &stamp, &proposal,
+            TimeRange { start: now, end: now }, now,
+        )?;
+        Ok(proposal)
+    })
 }
 
 /// Healthy skills do not buy an LLM call or a revision. They still produce a
@@ -464,7 +533,16 @@ fn affirm_healthy_skill(vault: &Vault, resident: Option<EntityId>) -> Result<Ski
 /// Storage/decode errors from the queue; [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when no
 /// row for `attempt` is stored.
 pub(crate) fn proven_cycle(vault: &Vault, attempt: AttemptId) -> Result<SkillEditCycle> {
-    let Some(record) = AttemptQueue::new(vault).get(attempt)? else {
+    let txn = vault.store.env.read_txn()?;
+    proven_cycle_in_txn(vault, &txn, attempt)
+}
+
+fn proven_cycle_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<SkillEditCycle> {
+    let Some(record) = AttemptQueue::new(vault).get_in_txn(txn, attempt)? else {
         return Err(invalid(
             "no stored attempt row proves this cycle; a cap counted against an unprovable label is not a cap",
         ));
