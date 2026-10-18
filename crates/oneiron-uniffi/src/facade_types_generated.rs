@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 769 facade rows, 2666 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 725.
+// UniFFI census: 780 facade rows, 2686 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 736.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -19986,6 +19986,243 @@ pub struct ConsentRegistry {
 pub struct RevokeGrantRequest {
     #[serde(rename = "grant")]
     pub grant: String,
+}
+
+/// `oneiron::consent_graduation::api::GraduationScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationScope {
+    #[serde(rename = "op_kind")]
+    pub op_kind: String,
+    #[serde(rename = "target_class")]
+    pub target_class: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+}
+
+/// `oneiron::consent_graduation::api::GraduationPolicyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationPolicyRequest {
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<GraduationScope>,
+}
+
+/// `oneiron::consent_graduation::api::GraduationPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationPolicy {
+    #[serde(rename = "scope_pattern")]
+    pub scope_pattern: String,
+    #[serde(rename = "required_streak")]
+    pub required_streak: u32,
+    #[serde(rename = "posterior_guard")]
+    pub posterior_guard: f64,
+    #[serde(rename = "snooze_backoff_seconds")]
+    pub snooze_backoff_seconds: Vec<u64>,
+}
+
+/// `oneiron::consent_graduation::api::GraduationPolicies`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationPolicies {
+    #[serde(rename = "rows")]
+    pub rows: Vec<GraduationPolicy>,
+    #[serde(rename = "effective", default, skip_serializing_if = "Option::is_none")]
+    pub effective: Option<GraduationPolicy>,
+}
+
+/// `oneiron::consent_graduation::api::GraduationPolicySetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationPolicySetRequest {
+    #[serde(rename = "policy")]
+    pub policy: GraduationPolicy,
+}
+
+/// `oneiron::consent_graduation::api::GraduationChanged`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationChanged {
+    #[serde(rename = "changed")]
+    pub changed: bool,
+}
+
+/// `oneiron::consent_graduation::api::GraduationPolicyClearRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationPolicyClearRequest {
+    #[serde(rename = "scope_pattern")]
+    pub scope_pattern: String,
+}
+
+/// `oneiron::consent_graduation::api::GraduationScopeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationScopeRequest {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+}
+
+/// `oneiron::consent_graduation::api::GraduationOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraduationOutcome {
+    #[serde(rename = "approved_untouched")]
+    ApprovedUntouched,
+    #[serde(rename = "approved_amended")]
+    ApprovedAmended,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// `oneiron::consent_graduation::api::GraduationMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraduationMode {
+    #[serde(rename = "propose")]
+    Propose,
+    #[serde(rename = "offered")]
+    Offered,
+    #[serde(rename = "auto")]
+    Auto,
+}
+
+/// `oneiron::consent_graduation::api::GraduationStats`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationStats {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "untouched_streak")]
+    pub untouched_streak: u32,
+    #[serde(rename = "amended")]
+    pub amended: u32,
+    #[serde(rename = "rejected")]
+    pub rejected: u32,
+    #[serde(
+        rename = "last_outcome",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_outcome: Option<GraduationOutcome>,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+    #[serde(rename = "state")]
+    pub state: GraduationMode,
+}
+
+/// `oneiron::consent_graduation::api::GraduationOutcomeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationOutcomeRequest {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "outcome")]
+    pub outcome: GraduationOutcome,
+}
+
+/// `oneiron::consent_graduation::api::GraduationOffer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationOffer {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "stats")]
+    pub stats: GraduationStats,
+    #[serde(rename = "threshold")]
+    pub threshold: GraduationPolicy,
+    #[serde(rename = "reach")]
+    pub reach: ShapePlanReach,
+}
+
+/// `oneiron::consent_graduation::api::GraduationAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraduationAnswer {
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "not-now")]
+    NotNow,
+    #[serde(rename = "manual_pinned")]
+    ManualPinned,
+}
+
+/// `oneiron::consent_graduation::api::GraduationAnswerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationAnswerRequest {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "answer")]
+    pub answer: GraduationAnswer,
+}
+
+/// `oneiron::consent_graduation::api::GraduationSnooze`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum GraduationSnooze {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "snoozed")]
+    Snoozed {
+        #[serde(rename = "count")]
+        count: u8,
+        #[serde(rename = "next_eligible_at")]
+        next_eligible_at: u64,
+    },
+    #[serde(rename = "manual_pinned")]
+    ManualPinned,
+}
+
+/// `oneiron::consent_graduation::api::GraduationAnswerReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationAnswerReceipt {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "answer")]
+    pub answer: GraduationAnswer,
+    #[serde(rename = "grant", default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<ConsentActReceipt>,
+    #[serde(rename = "snooze")]
+    pub snooze: GraduationSnooze,
+}
+
+/// `oneiron::consent_graduation::api::GraduationTrustRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationTrustRow {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "stats")]
+    pub stats: GraduationStats,
+    #[serde(rename = "threshold")]
+    pub threshold: GraduationPolicy,
+    #[serde(rename = "snooze")]
+    pub snooze: GraduationSnooze,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+    #[serde(rename = "offer_is_earned")]
+    pub offer_is_earned: bool,
+    #[serde(
+        rename = "offer_reach",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub offer_reach: Option<String>,
+}
+
+/// `oneiron::consent_graduation::api::GraduationDemotionReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraduationDemotionReason {
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "amended")]
+    Amended,
+    #[serde(rename = "agent_judgment")]
+    AgentJudgment,
+}
+
+/// `oneiron::consent_graduation::api::GraduationDemoteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationDemoteRequest {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "reason")]
+    pub reason: GraduationDemotionReason,
 }
 
 /// `oneiron::gate::policy_manifest_doors::types::PolicyManifestRead`.

@@ -5036,6 +5036,166 @@
       "openapi": true
     },
     {
+      "name": "vault.consent.graduation.policy",
+      "description": "Reads runtime consent-graduation policy rows and the effective row for an optional exact scope.",
+      "input": "crate::consent_graduation::api::GraduationPolicyRequest",
+      "output": "crate::consent_graduation::api::GraduationPolicies",
+      "call": "crate::consent_graduation::api::policies(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.policy\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.policy.set",
+      "description": "The owner sets a scope-pattern streak, posterior guard and two snooze backoffs; zero-second backoff is supported.",
+      "input": "crate::consent_graduation::api::GraduationPolicySetRequest",
+      "output": "crate::consent_graduation::api::GraduationChanged",
+      "call": "crate::consent_graduation::api::set_policy(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.policy.set\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.policy.clear",
+      "description": "The owner clears one runtime graduation policy row; scopes fall back to the next matching policy.",
+      "input": "crate::consent_graduation::api::GraduationPolicyClearRequest",
+      "output": "crate::consent_graduation::api::GraduationChanged",
+      "call": "crate::consent_graduation::api::clear_policy(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.policy.clear\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.stats",
+      "description": "Reads one exact graduation scope outcome history and current consent posture.",
+      "input": "crate::consent_graduation::api::GraduationScopeRequest",
+      "output": "Option<crate::consent_graduation::api::GraduationStats>",
+      "call": "crate::consent_graduation::api::stats(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.stats\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.outcome",
+      "description": "The owner records an untouched, amended or rejected proposal ruling, receipted and folded through the existing ramp.",
+      "input": "crate::consent_graduation::api::GraduationOutcomeRequest",
+      "output": "crate::consent_graduation::api::GraduationStats",
+      "call": "crate::consent_graduation::api::record_outcome(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.outcome\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.offers",
+      "description": "Reads earned, unsuppressed graduation offers with thresholds, streaks and before/after reach; reading grants nothing.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<crate::consent_graduation::api::GraduationOffer>",
+      "call": "crate::consent_graduation::api::offers(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.offers\")?)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.answer",
+      "description": "The owner answers auto, not-now or manual_pinned; only auto mints the existing standing grant, and not-now resets the streak.",
+      "input": "crate::consent_graduation::api::GraduationAnswerRequest",
+      "output": "crate::consent_graduation::api::GraduationAnswerReceipt",
+      "call": "crate::consent_graduation::api::answer(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.answer\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.trust_table",
+      "description": "Reads the owner trust table: scope, counts, effective threshold, snooze or manual pin, live grant and offer reach.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<crate::consent_graduation::api::GraduationTrustRow>",
+      "call": "crate::consent_graduation::api::trust_table(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.trust_table\")?)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.settings.unpin",
+      "description": "The owner reopens a pinned or snoozed graduation scope in settings; no grant is created.",
+      "input": "crate::consent_graduation::api::GraduationScopeRequest",
+      "output": "crate::consent_graduation::api::GraduationChanged",
+      "call": "crate::consent_graduation::api::unpin(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.settings.unpin\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.demote",
+      "description": "The owner demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt.",
+      "input": "crate::consent_graduation::api::GraduationDemoteRequest",
+      "output": "crate::consent_graduation::api::GraduationChanged",
+      "call": "crate::consent_graduation::api::demote(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.demote\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "self.consent.graduation.demote",
+      "description": "The bound actor transparently gives up only its own ramp scope authority, with the existing durable demotion receipt.",
+      "input": "crate::consent_graduation::api::GraduationScopeRequest",
+      "output": "crate::consent_graduation::api::GraduationChanged",
+      "call": "crate::consent_graduation::api::demote_own(memory, input)?",
+      "scope": "Write",
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.gate.policy.get",
       "description": "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions.",
       "input": "crate::policy_manifest_doors::PolicyManifestRead",

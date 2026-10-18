@@ -13,21 +13,11 @@ use crate::vault::Vault;
 // Offer answers + snooze state
 // ---------------------------------------------------------------------------
 
-/// The compiled snooze backoff: the `N`th "not now" holds the offer for
-/// `SNOOZE_BACKOFF_SECONDS[N - 1]`.
-///
-/// A snooze past the end of the schedule is no longer "later" — it is the owner
-/// saying *stop asking*, so the ladder's LENGTH is what defines the pin
-/// threshold. There is no separate maximum to drift from it.
-const SNOOZE_BACKOFF_SECONDS: [u64; 2] = [7 * 86_400, 30 * 86_400];
-
 /// What the owner answered when the engine offered to stop asking.
 ///
 /// [`Self::GoAuto`] carries the [`AuthenticatedOwner`] because it, and only it,
-/// mints authority: DEC-0006 invariant 5 is enforced here by the type system
-/// rather than by review, exactly as MS-06 enforces it on
-/// [`Vault::accept_graduation_offer`]. Declining needs no authority — reducing
-/// what the engine may ask never did.
+/// mints authority: DEC-0006 invariant 5 is enforced here by the type system.
+/// The public owner door also authenticates declines and manual pins.
 #[derive(Debug, Clone, Copy)]
 pub enum OfferAnswer<'owner> {
     /// Accept: mint the standing grant and let this scope run auto.
@@ -35,6 +25,8 @@ pub enum OfferAnswer<'owner> {
     /// Decline for now: hold the offer for the next backoff step, or — on the
     /// answer past the end of the ladder — pin the scope to manual.
     NotNow,
+    /// Stop offering until the owner unpins the scope in settings.
+    ManualPinned,
 }
 
 impl OfferAnswer<'_> {
@@ -44,6 +36,7 @@ impl OfferAnswer<'_> {
         match self {
             Self::GoAuto(_) => ANSWER_GO_AUTO,
             Self::NotNow => ANSWER_NOT_NOW,
+            Self::ManualPinned => ANSWER_MANUAL_PINNED,
         }
     }
 }
@@ -53,6 +46,8 @@ const ANSWER_GO_AUTO: &str = "go_auto";
 pub(super) const ANSWER_NOT_NOW: &str = "not_now";
 
 const ANSWER_UNPIN: &str = "unpin";
+
+const ANSWER_MANUAL_PINNED: &str = "manual_pinned";
 
 /// Whether, and until when, the engine has been told to hold this scope's
 /// graduation offer.
@@ -86,7 +81,7 @@ impl SnoozeState {
     }
 
     /// The state one more "not now" at `at` produces.
-    fn declined_at(self, at: u64) -> Self {
+    fn declined_at(self, at: u64, backoffs: [u64; 2]) -> Self {
         let prior = match self {
             Self::ManualPinned => return Self::ManualPinned,
             Self::Snoozed { count, .. } => count,
@@ -94,7 +89,7 @@ impl SnoozeState {
         };
         // Indexed by declines ALREADY given, so the ladder's length is the pin
         // threshold and a decline past its end is the owner saying stop.
-        match SNOOZE_BACKOFF_SECONDS.get(usize::from(prior)) {
+        match backoffs.get(usize::from(prior)) {
             Some(backoff) => Self::Snoozed {
                 count: prior.saturating_add(1),
                 next_eligible_at: at.saturating_add(*backoff),
@@ -114,6 +109,8 @@ pub(super) struct StoredAnswer {
     pub(super) actor: String,
     pub(super) answer: String,
     pub(super) at: u64,
+    pub(super) after_seq: u64,
+    pub(super) snooze_backoff_seconds: [u64; 2],
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +146,8 @@ pub(super) fn snooze_state_in_txn(
 /// the question, supersedes every earlier "not now".
 fn replay_snooze(state: SnoozeState, row: &StoredAnswer) -> Result<SnoozeState> {
     match row.answer.as_str() {
-        ANSWER_NOT_NOW => Ok(state.declined_at(row.at)),
+        ANSWER_NOT_NOW => Ok(state.declined_at(row.at, row.snooze_backoff_seconds)),
+        ANSWER_MANUAL_PINNED => Ok(SnoozeState::ManualPinned),
         ANSWER_GO_AUTO | ANSWER_UNPIN => Ok(SnoozeState::None),
         _ => Err(Error::CorruptedIndex(ANSWER_ROW_LABEL)),
     }
@@ -180,8 +178,8 @@ pub enum OfferAnswerOutcome {
 /// [`OfferAnswer::GoAuto`] mints the standing grant through
 /// [`Vault::accept_graduation_offer`]'s own door — this module adds a record of
 /// the answer, never a second way to create authority — and it is accepted
-/// whenever the offer is EARNED, including while snoozed or pinned: suppression
-/// silences the engine, not the owner.
+/// whenever the offer is earned and not manually pinned. A manual pin is
+/// cleared only through the settings unpin door.
 ///
 /// [`OfferAnswer::NotNow`] requires an offer that is actually being made. An
 /// offer already snoozed is not being made, which is what keeps the ladder
@@ -208,34 +206,73 @@ pub(super) fn answer_graduation_offer_at(
     answer: OfferAnswer<'_>,
     at: u64,
 ) -> Result<OfferAnswerOutcome> {
-    scope.validate()?;
     vault.with_write_txn_grouped(|wtxn| {
-        if !crate::consent_graduation::offer_is_standing_in_txn(vault, &*wtxn, scope)? {
-            return Err(Error::Gate(GateError::InvalidConsentBound(
-                "no graduation offer is standing for this scope",
-            )));
-        }
-        match answer {
-            OfferAnswer::GoAuto(owner) => {
-                // The go-auto row is appended by the grant door itself, not
-                // here — see [`record_go_auto_answer_in_txn`].
-                let receipt = crate::consent_graduation::accept_graduation_offer_in_txn(
-                    vault, wtxn, owner, scope, at,
-                )?;
-                Ok(OfferAnswerOutcome::Graduated(receipt))
-            }
-            OfferAnswer::NotNow => {
-                let state = snooze_state_in_txn(&vault.store, &*wtxn, scope)?;
-                if state.suppresses_asks_at(at) {
-                    return Err(Error::Gate(GateError::InvalidConsentBound(
-                        "this scope's graduation offer is already held; there is nothing to decline",
-                    )));
-                }
-                append_answer_in_txn(vault, wtxn, scope, ANSWER_NOT_NOW, at)?;
-                Ok(OfferAnswerOutcome::Snoozed(state.declined_at(at)))
-            }
-        }
+        answer_graduation_offer_in_txn(vault, wtxn, scope, answer, at)
     })
+}
+
+/// The public owner door: every answer is the owner's, not only acceptance.
+pub fn answer_graduation_offer_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    scope: &RampScope,
+    answer: OfferAnswer<'_>,
+) -> Result<OfferAnswerOutcome> {
+    let at = vault.store.clock.now_recorded_at();
+    vault.with_write_txn_grouped(|wtxn| {
+        owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
+        answer_graduation_offer_in_txn(vault, wtxn, scope, answer, at)
+    })
+}
+
+fn answer_graduation_offer_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: &RampScope,
+    answer: OfferAnswer<'_>,
+    at: u64,
+) -> Result<OfferAnswerOutcome> {
+    scope.validate()?;
+    if !crate::consent_graduation::offer_is_standing_in_txn(vault, &*wtxn, scope)? {
+        return Err(Error::Gate(GateError::InvalidConsentBound(
+            "no graduation offer is standing for this scope",
+        )));
+    }
+    match answer {
+        OfferAnswer::GoAuto(owner) => {
+            let receipt = crate::consent_graduation::accept_graduation_offer_in_txn(
+                vault, wtxn, owner, scope, at,
+            )?;
+            Ok(OfferAnswerOutcome::Graduated(receipt))
+        }
+        OfferAnswer::NotNow | OfferAnswer::ManualPinned => {
+            let state = snooze_state_in_txn(&vault.store, &*wtxn, scope)?;
+            if state.suppresses_asks_at(at) {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "this scope's graduation offer is already held; there is nothing to decline",
+                )));
+            }
+            let backoffs = super::threshold_policy::graduation_policy_in_txn(
+                &vault.store, &*wtxn, scope,
+            )?.snooze_backoff_seconds;
+            append_answer_in_txn(vault, wtxn, scope, answer.as_str(), at)?;
+            crate::consent_graduation::reset_ramp_streak_in_txn(vault, wtxn, scope, at)?;
+            let next = match answer {
+                OfferAnswer::ManualPinned => SnoozeState::ManualPinned,
+                _ => state.declined_at(at, backoffs),
+            };
+            Ok(OfferAnswerOutcome::Snoozed(next))
+        }
+    }
+}
+
+/// A manual pin can only be cleared by the settings unpin door.
+pub(crate) fn scope_is_manual_pinned_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    scope: &RampScope,
+) -> Result<bool> {
+    Ok(snooze_state_in_txn(store, txn, scope)? == SnoozeState::ManualPinned)
 }
 
 /// Unpins a scope: the settings door out of [`SnoozeState::ManualPinned`], and
@@ -255,8 +292,39 @@ pub fn unpin_scope(vault: &Vault, scope: &RampScope) -> Result<()> {
 
 /// [`unpin_scope`] against a caller-supplied clock.
 fn unpin_scope_at(vault: &Vault, scope: &RampScope, at: u64) -> Result<()> {
-    scope.validate()?;
-    vault.with_write_txn_grouped(|wtxn| append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at))
+    vault.with_write_txn_grouped(|wtxn| {
+        scope.validate()?;
+        append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at)
+    })
+}
+
+/// The owner's settings-only unpin, checked in the same write transaction.
+pub fn unpin_scope_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    scope: &RampScope,
+) -> Result<()> {
+    let at = vault.store.clock.now_recorded_at();
+    vault.with_write_txn_grouped(|wtxn| {
+        owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
+        scope.validate()?;
+        append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at)
+    })
+}
+
+/// Declines reset the ramp projection on rebuild just as they do on write.
+pub(crate) fn streak_resets_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(u64, crate::entity_id::EntityId, RampScope, u64)>> {
+    let mut resets = Vec::new();
+    for ((_, id), row) in ANSWER.scan(store, txn)? {
+        if matches!(row.answer.as_str(), ANSWER_NOT_NOW | ANSWER_MANUAL_PINNED) {
+            let scope = RampScope::new(row.op_kind, row.target_class, row.actor)?;
+            resets.push((row.after_seq, id, scope, row.at));
+        }
+    }
+    Ok(resets)
 }
 
 /// Records an accepted offer, called by MS-06's grant door inside the
@@ -296,6 +364,10 @@ fn append_answer_in_txn(
         actor: scope.actor.clone(),
         answer: answer.to_owned(),
         at,
+        after_seq: vault.read_identity_topology_seq_in_txn(&*wtxn)?,
+        snooze_backoff_seconds: super::threshold_policy::graduation_policy_in_txn(
+            &vault.store, &*wtxn, scope,
+        )?.snooze_backoff_seconds,
     };
     let key = (scope.key(), vault.store.clock.entity_id()?);
     ANSWER.put(&vault.store, wtxn, &key, &row)?;

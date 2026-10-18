@@ -78,11 +78,9 @@ pub(crate) fn active_grant_ref_in_txn(
 /// posterior guard that tells a spotless streak apart from an equally long one
 /// with corrections behind it.
 ///
-/// Snooze and pin do NOT appear here. They govern whether the engine ASKS,
-/// which is [`Vault::graduation_offers`]'s question; this one is what authority
-/// is live, and an offer the owner has declined for now is still an offer they
-/// may accept. Keeping them orthogonal is why a snooze can never quietly cost
-/// the owner a graduation they wanted.
+/// Snooze and pin govern whether the engine asks, separately from live
+/// authority. A decline also resets the counters; an offer must be re-earned
+/// before backoff expiry can surface it again.
 pub(super) fn derive_state_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -131,6 +129,18 @@ pub(crate) fn ramp_stats_in_txn(
         rows.push(stats_view(scope, counters, state));
     }
     Ok(rows)
+}
+
+/// Reset a declined offer's streak; the answer log witnesses this reset.
+pub(crate) fn reset_ramp_streak_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: &RampScope,
+    at: u64,
+) -> Result<()> {
+    let mut counters = read_counters_in_txn(&vault.store, &*wtxn, scope)?;
+    counters.apply_demotion(at);
+    write_counters_in_txn(&vault.store, wtxn, scope, counters)
 }
 
 pub(super) fn stats_view(
@@ -342,6 +352,16 @@ impl Vault {
             });
         }
 
+        for (after_seq, id, scope, at) in
+            crate::edit_distance::graduation::streak_resets_in_txn(&self.store, rtxn)?
+        {
+            events.push(RampFoldEvent {
+                key: (after_seq, FOLD_RANK_RAMP_ROW, id),
+                scope,
+                at,
+                outcome: None,
+            });
+        }
         events.sort_unstable_by_key(|event| event.key);
         Ok(events)
     }

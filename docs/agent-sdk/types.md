@@ -1861,6 +1861,35 @@ class Oneiron:
             """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
         def revoke(self, spec: Facade.RevokeGrantRequest) -> Facade.ConsentActReceipt:
             """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
+        @property
+        def graduation(self) -> "Oneiron._VaultConsentGraduationVerbs": ...
+    class _VaultConsentGraduationVerbs:
+        @property
+        def policy(self) -> "Oneiron._VaultConsentGraduationPolicyVerbs": ...
+        def stats(self, spec: Facade.GraduationScopeRequest) -> Facade.GraduationStats | None:
+            """Reads one exact graduation scope outcome history and current consent posture."""
+        def outcome(self, spec: Facade.GraduationOutcomeRequest) -> Facade.GraduationStats:
+            """The owner records an untouched, amended or rejected proposal ruling, receipted and folded through the existing ramp."""
+        def offers(self, spec: Facade.EmptyRequest) -> list[Facade.GraduationOffer]:
+            """Reads earned, unsuppressed graduation offers with thresholds, streaks and before/after reach; reading grants nothing."""
+        def answer(self, spec: Facade.GraduationAnswerRequest) -> Facade.GraduationAnswerReceipt:
+            """The owner answers auto, not-now or manual_pinned; only auto mints the existing standing grant, and not-now resets the streak."""
+        def trust_table(self, spec: Facade.EmptyRequest) -> list[Facade.GraduationTrustRow]:
+            """Reads the owner trust table: scope, counts, effective threshold, snooze or manual pin, live grant and offer reach."""
+        @property
+        def settings(self) -> "Oneiron._VaultConsentGraduationSettingsVerbs": ...
+        def demote(self, spec: Facade.GraduationDemoteRequest) -> Facade.GraduationChanged:
+            """The owner demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt."""
+    class _VaultConsentGraduationPolicyVerbs:
+        def __call__(self, spec: Facade.GraduationPolicyRequest) -> Facade.GraduationPolicies:
+            """Reads runtime consent-graduation policy rows and the effective row for an optional exact scope."""
+        def set(self, spec: Facade.GraduationPolicySetRequest) -> Facade.GraduationChanged:
+            """The owner sets a scope-pattern streak, posterior guard and two snooze backoffs; zero-second backoff is supported."""
+        def clear(self, spec: Facade.GraduationPolicyClearRequest) -> Facade.GraduationChanged:
+            """The owner clears one runtime graduation policy row; scopes fall back to the next matching policy."""
+    class _VaultConsentGraduationSettingsVerbs:
+        def unpin(self, spec: Facade.GraduationScopeRequest) -> Facade.GraduationChanged:
+            """The owner reopens a pinned or snoozed graduation scope in settings; no grant is created."""
     class _VaultGateVerbs:
         @property
         def policy(self) -> "Oneiron._VaultGatePolicyVerbs": ...
@@ -2695,6 +2724,8 @@ class Oneiron:
         def credential(self) -> "Oneiron._SelfCredentialVerbs": ...
         @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
+        @property
+        def consent(self) -> "Oneiron._SelfConsentVerbs": ...
         def use(self, spec: Facade.SecretUseRequest) -> Facade.SecretUseAnswer:
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
         @property
@@ -2784,6 +2815,12 @@ class Oneiron:
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+    class _SelfConsentVerbs:
+        @property
+        def graduation(self) -> "Oneiron._SelfConsentGraduationVerbs": ...
+    class _SelfConsentGraduationVerbs:
+        def demote(self, spec: Facade.GraduationScopeRequest) -> Facade.GraduationChanged:
+            """The bound actor transparently gives up only its own ramp scope authority, with the existing durable demotion receipt."""
     class _SelfSecretsVerbs:
         def materialize(self, spec: Facade.LiveRunRequest[Facade.SecretGrantMintRequest]) -> Facade.SecretGrantView:
             """Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value."""
