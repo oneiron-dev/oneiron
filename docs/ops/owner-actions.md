@@ -42,6 +42,11 @@ Both also print an `embedder` section, which keeps three things apart:
 running server's `GET /v1/owner/status` is what says which model serves, and `serve` logs the same
 facts once the vault admits the model (`embedder model loaded and admitted`).
 
+The server's status also carries `link_bytes`: what every sync link moved since the process
+started, one row per inner frame tag (`tag`; 63 also holds every higher tag). Each row has
+`out_frames`, `out_raw` and `out_sent` (bytes before and after the link's codec), and
+`in_frames`, `in_raw` and `in_received`. `doctor` has no such field: it runs no links.
+
 ## Back up
 
 ```sh
