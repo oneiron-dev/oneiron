@@ -55,6 +55,7 @@ pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
+pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
@@ -1103,6 +1104,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "calendar.imip.get"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
+        | "vault.campaign.compliance.install"
+        | "vault.campaign.compliance.approve"
+        | "vault.campaign.compliance.reject"
+        | "vault.campaign.compliance.verify"
         | "vault.companions.access_requests.answer"
         | "vault.personas.preview"
         | "vault.personas.export"

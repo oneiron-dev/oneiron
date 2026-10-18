@@ -100,6 +100,12 @@ pub enum AgentVerb {
     VaultKvDelete,
     VaultKvSearch,
     VaultKvNamespaces,
+    VaultCampaignComplianceInstall,
+    VaultCampaignComplianceAmend,
+    VaultCampaignComplianceApprove,
+    VaultCampaignComplianceReject,
+    VaultCampaignComplianceVerify,
+    VaultCampaignComplianceResult,
     VaultCampaignEnroll,
     VaultCampaignStageEvidence,
     VaultCampaignUnsubscribe,
@@ -889,6 +895,12 @@ impl AgentVerb {
         Self::VaultKvDelete,
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
+        Self::VaultCampaignComplianceInstall,
+        Self::VaultCampaignComplianceAmend,
+        Self::VaultCampaignComplianceApprove,
+        Self::VaultCampaignComplianceReject,
+        Self::VaultCampaignComplianceVerify,
+        Self::VaultCampaignComplianceResult,
         Self::VaultCampaignEnroll,
         Self::VaultCampaignStageEvidence,
         Self::VaultCampaignUnsubscribe,
@@ -1681,6 +1693,12 @@ impl AgentVerb {
             Self::VaultKvDelete => "vault.kv.delete",
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
+            Self::VaultCampaignComplianceInstall => "vault.campaign.compliance.install",
+            Self::VaultCampaignComplianceAmend => "vault.campaign.compliance.amend",
+            Self::VaultCampaignComplianceApprove => "vault.campaign.compliance.approve",
+            Self::VaultCampaignComplianceReject => "vault.campaign.compliance.reject",
+            Self::VaultCampaignComplianceVerify => "vault.campaign.compliance.verify",
+            Self::VaultCampaignComplianceResult => "vault.campaign.compliance.result",
             Self::VaultCampaignEnroll => "vault.campaign.enroll",
             Self::VaultCampaignStageEvidence => "vault.campaign.stage.evidence",
             Self::VaultCampaignUnsubscribe => "vault.campaign.unsubscribe",
@@ -2491,6 +2509,12 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignComplianceInstall
+                | Self::VaultCampaignComplianceAmend
+                | Self::VaultCampaignComplianceApprove
+                | Self::VaultCampaignComplianceReject
+                | Self::VaultCampaignComplianceVerify
+                | Self::VaultCampaignComplianceResult
                 | Self::VaultCampaignEnroll
                 | Self::VaultCampaignStageEvidence
                 | Self::VaultCampaignUnsubscribe
@@ -3307,6 +3331,12 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignComplianceInstall
+                | Self::VaultCampaignComplianceAmend
+                | Self::VaultCampaignComplianceApprove
+                | Self::VaultCampaignComplianceReject
+                | Self::VaultCampaignComplianceVerify
+                | Self::VaultCampaignComplianceResult
                 | Self::VaultCampaignEnroll
                 | Self::VaultCampaignStageEvidence
                 | Self::VaultCampaignUnsubscribe
@@ -4191,6 +4221,12 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignComplianceInstall
+                | Self::VaultCampaignComplianceAmend
+                | Self::VaultCampaignComplianceApprove
+                | Self::VaultCampaignComplianceReject
+                | Self::VaultCampaignComplianceVerify
+                | Self::VaultCampaignComplianceResult
                 | Self::VaultCampaignEnroll
                 | Self::VaultCampaignStageEvidence
                 | Self::VaultCampaignUnsubscribe
@@ -4901,6 +4937,11 @@ impl AgentVerb {
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
+                | Self::VaultCampaignComplianceInstall
+                | Self::VaultCampaignComplianceAmend
+                | Self::VaultCampaignComplianceApprove
+                | Self::VaultCampaignComplianceReject
+                | Self::VaultCampaignComplianceVerify
                 | Self::VaultCampaignEnroll
                 | Self::VaultCampaignStageEvidence
                 | Self::VaultCampaignUnsubscribe
@@ -5463,6 +5504,12 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignComplianceInstall => &["spec"],
+            Self::VaultCampaignComplianceAmend => &["spec"],
+            Self::VaultCampaignComplianceApprove => &["spec"],
+            Self::VaultCampaignComplianceReject => &["spec"],
+            Self::VaultCampaignComplianceVerify => &["spec"],
+            Self::VaultCampaignComplianceResult => &["spec"],
             Self::VaultCampaignEnroll => &["spec"],
             Self::VaultCampaignStageEvidence => &["spec"],
             Self::VaultCampaignUnsubscribe => &["spec"],
@@ -6253,6 +6300,12 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignComplianceInstall => &["spec"],
+            Self::VaultCampaignComplianceAmend => &["spec"],
+            Self::VaultCampaignComplianceApprove => &["spec"],
+            Self::VaultCampaignComplianceReject => &["spec"],
+            Self::VaultCampaignComplianceVerify => &["spec"],
+            Self::VaultCampaignComplianceResult => &["spec"],
             Self::VaultCampaignEnroll => &["spec"],
             Self::VaultCampaignStageEvidence => &["spec"],
             Self::VaultCampaignUnsubscribe => &["spec"],
@@ -7229,6 +7282,24 @@ impl AgentVerb {
             }
             Self::VaultKvNamespaces => {
                 "The caller's distinct live namespaces, with exact segment prefix and suffix matching."
+            }
+            Self::VaultCampaignComplianceInstall => {
+                "The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval."
+            }
+            Self::VaultCampaignComplianceAmend => {
+                "Proposes cited compliance rows against the active version. Tightening activates with a notice only within the caller ceiling; loosening waits for the owner stamp."
+            }
+            Self::VaultCampaignComplianceApprove => {
+                "The owner approves the exact pending compliance proposal hash against the active version, with a durable authority receipt."
+            }
+            Self::VaultCampaignComplianceReject => {
+                "The owner rejects the exact pending compliance proposal hash without changing the effective rules."
+            }
+            Self::VaultCampaignComplianceVerify => {
+                "The owner records cited verification dates for existing compliance rows, including an explicitly stale date, without changing requirements or freshness policy."
+            }
+            Self::VaultCampaignComplianceResult => {
+                "Reads the active compliance pack, exact pending proposal, activation notices and amendment or owner-verification receipts from one snapshot."
             }
             Self::VaultCampaignEnroll => {
                 "Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."

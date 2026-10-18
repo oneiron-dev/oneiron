@@ -341,6 +341,24 @@ impl OneironClient {
                 "vault.kv.namespaces" => {
                     remote_agent_verb_output::<Vec<Vec<String>>>(client, verb, &input)
                 }
+                "vault.campaign.compliance.install" => remote_agent_verb_output::<
+                    oneiron::campaign::compliance::ComplianceReceipt,
+                >(client, verb, &input),
+                "vault.campaign.compliance.amend" => remote_agent_verb_output::<
+                    oneiron::campaign::compliance::ComplianceReceipt,
+                >(client, verb, &input),
+                "vault.campaign.compliance.approve" => remote_agent_verb_output::<
+                    oneiron::campaign::compliance::ComplianceReceipt,
+                >(client, verb, &input),
+                "vault.campaign.compliance.reject" => remote_agent_verb_output::<
+                    oneiron::campaign::compliance::ComplianceReceipt,
+                >(client, verb, &input),
+                "vault.campaign.compliance.verify" => remote_agent_verb_output::<
+                    oneiron::campaign::compliance::ComplianceReceipt,
+                >(client, verb, &input),
+                "vault.campaign.compliance.result" => remote_agent_verb_output::<
+                    oneiron::campaign::compliance::ComplianceResult,
+                >(client, verb, &input),
                 "vault.campaign.enroll" => remote_agent_verb_output::<
                     oneiron::campaign::surface::CampaignEnrollmentReceipt,
                 >(client, verb, &input),
@@ -3664,6 +3682,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.kv.namespaces", value)
+    }
+    pub fn vault_campaign_compliance_install(
+        &self,
+        input: &oneiron::campaign::compliance::ComplianceAmendRequest,
+    ) -> Result<oneiron::campaign::compliance::ComplianceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.compliance.install", value)
+    }
+    pub fn vault_campaign_compliance_amend(
+        &self,
+        input: &oneiron::campaign::compliance::ComplianceAmendRequest,
+    ) -> Result<oneiron::campaign::compliance::ComplianceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.compliance.amend", value)
+    }
+    pub fn vault_campaign_compliance_approve(
+        &self,
+        input: &oneiron::campaign::compliance::ComplianceApprovalRequest,
+    ) -> Result<oneiron::campaign::compliance::ComplianceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.compliance.approve", value)
+    }
+    pub fn vault_campaign_compliance_reject(
+        &self,
+        input: &oneiron::campaign::compliance::ComplianceApprovalRequest,
+    ) -> Result<oneiron::campaign::compliance::ComplianceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.compliance.reject", value)
+    }
+    pub fn vault_campaign_compliance_verify(
+        &self,
+        input: &oneiron::campaign::compliance::ComplianceVerifyRequest,
+    ) -> Result<oneiron::campaign::compliance::ComplianceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.compliance.verify", value)
+    }
+    pub fn vault_campaign_compliance_result(
+        &self,
+        input: &oneiron::campaign::compliance::ComplianceResultRequest,
+    ) -> Result<oneiron::campaign::compliance::ComplianceResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.compliance.result", value)
     }
     pub fn vault_campaign_enroll(
         &self,

@@ -1078,6 +1078,9 @@ class Oneiron:
     class _VaultCampaignVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def compliance(self) -> "Oneiron._VaultCampaignComplianceVerbs":
+            return Oneiron._VaultCampaignComplianceVerbs(self._client)
         def enroll(self, spec):
             """Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."""
             return json.loads(_translate(lambda: self._client.vault_campaign_enroll(json.dumps(spec))))
@@ -1090,6 +1093,27 @@ class Oneiron:
         @property
         def program(self) -> "Oneiron._VaultCampaignProgramVerbs":
             return Oneiron._VaultCampaignProgramVerbs(self._client)
+    class _VaultCampaignComplianceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def install(self, spec):
+            """The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_compliance_install(json.dumps(spec))))
+        def amend(self, spec):
+            """Proposes cited compliance rows against the active version. Tightening activates with a notice only within the caller ceiling; loosening waits for the owner stamp."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_compliance_amend(json.dumps(spec))))
+        def approve(self, spec):
+            """The owner approves the exact pending compliance proposal hash against the active version, with a durable authority receipt."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_compliance_approve(json.dumps(spec))))
+        def reject(self, spec):
+            """The owner rejects the exact pending compliance proposal hash without changing the effective rules."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_compliance_reject(json.dumps(spec))))
+        def verify(self, spec):
+            """The owner records cited verification dates for existing compliance rows, including an explicitly stale date, without changing requirements or freshness policy."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_compliance_verify(json.dumps(spec))))
+        def result(self, spec):
+            """Reads the active compliance pack, exact pending proposal, activation notices and amendment or owner-verification receipts from one snapshot."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_compliance_result(json.dumps(spec))))
     class _VaultCampaignStageVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
