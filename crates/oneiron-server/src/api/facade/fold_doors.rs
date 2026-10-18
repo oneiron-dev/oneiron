@@ -3,13 +3,13 @@
 use std::sync::Arc;
 
 use axum::http::{Extensions, HeaderMap};
+use oneiron::code_run::SelfDispatchOutcome;
 use oneiron::code_run::actions::{ActionArgument, ActionJson};
 use oneiron::code_run::fold_api::{
-    FoldCompactRequest, FoldHistoryRequest, FoldMarkRequest, FoldRunRequest,
-    FoldUnfoldRequest, RunAttachRequest, RunAttached,
+    FoldCompactRequest, FoldHistoryRequest, FoldMarkRequest, FoldRunRequest, FoldUnfoldRequest,
+    RunAttachRequest, RunAttached,
 };
 use oneiron::code_run::live_run::LiveRunCredential;
-use oneiron::code_run::SelfDispatchOutcome;
 use oneiron::compaction::{
     FoldCompactAsked, FoldDescription, FoldList, FoldMarked, FoldReply, FoldUnfolded,
 };
@@ -20,9 +20,9 @@ use oneiron::{EdgeActorClass, EntityId};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
+use super::FacadeApiError;
 use super::action_routes::{ActionRequest, action_bound, attach_run_as, invoke_action_dispatch};
 use super::host_doors::{Listed, credential_listing, internal};
-use super::FacadeApiError;
 use crate::auth::CoreAuth;
 use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer};
 
@@ -44,7 +44,8 @@ pub(crate) async fn self_run_attach(
     input: RunAttachRequest,
 ) -> MemoryResult<RunAttached> {
     let live_run = attach_run_as(server, auth, &input.run, input.rebind)
-        .await.map_err(facade_error)?;
+        .await
+        .map_err(facade_error)?;
     Ok(RunAttached { live_run })
 }
 
@@ -65,59 +66,105 @@ async fn fold_action<T: DeserializeOwned>(
     };
     let args = ActionJson::new(args)?;
     let dispatch = invoke_action_dispatch(
-        server, auth, HeaderMap::new(), Extensions::new(), verb.to_owned(),
+        server,
+        auth,
+        HeaderMap::new(),
+        Extensions::new(),
+        verb.to_owned(),
         ActionRequest {
             args: vec![ActionArgument::Json(args)],
             idempotency_key: key,
             live_run: Some(live_run),
         },
-    ).await.map_err(facade_error)?;
+    )
+    .await
+    .map_err(facade_error)?;
     match dispatch.outcome {
-        SelfDispatchOutcome::Fold(answer) => serde_json::from_str(&answer)
-            .map_err(|_| internal(verb)),
+        SelfDispatchOutcome::Fold(answer) => {
+            serde_json::from_str(&answer).map_err(|_| internal(verb))
+        }
         SelfDispatchOutcome::Denied(denied) => Err(MemoryError::new(
-            &denied.outcome, "the run action was refused", &[],
+            &denied.outcome,
+            "the run action was refused",
+            &[],
         )),
-        SelfDispatchOutcome::Failed(failed) => Err(MemoryError::new(
-            MEMORY_CODE_INTERNAL, failed.error, &[],
-        )),
+        SelfDispatchOutcome::Failed(failed) => {
+            Err(MemoryError::new(MEMORY_CODE_INTERNAL, failed.error, &[]))
+        }
         _ => Err(internal(verb)),
     }
 }
 
 pub(crate) async fn self_fold(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    _caller: (EntityId, EdgeActorClass), invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
     input: FoldMarkRequest,
 ) -> MemoryResult<FoldReply<FoldMarked>> {
-    fold_action(server, auth, invocation, "self.fold", input.live_run,
-        json!([[input.from, input.through], {"note": input.note}])).await
+    fold_action(
+        server,
+        auth,
+        invocation,
+        "self.fold",
+        input.live_run,
+        json!([[input.from, input.through], {"note": input.note}]),
+    )
+    .await
 }
 
 pub(crate) async fn self_compact(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    _caller: (EntityId, EdgeActorClass), invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
     input: FoldCompactRequest,
 ) -> MemoryResult<FoldReply<FoldCompactAsked>> {
-    fold_action(server, auth, invocation, "self.compact", input.live_run,
-        json!({"note": input.note})).await
+    fold_action(
+        server,
+        auth,
+        invocation,
+        "self.compact",
+        input.live_run,
+        json!({"note": input.note}),
+    )
+    .await
 }
 
 pub(crate) async fn self_unfold(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    _caller: (EntityId, EdgeActorClass), invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
     input: FoldUnfoldRequest,
 ) -> MemoryResult<FoldReply<FoldUnfolded>> {
-    fold_action(server, auth, invocation, "self.unfold", input.live_run,
-        json!({"fold": input.fold})).await
+    fold_action(
+        server,
+        auth,
+        invocation,
+        "self.unfold",
+        input.live_run,
+        json!({"fold": input.fold}),
+    )
+    .await
 }
 
 pub(crate) async fn self_folds(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    _caller: (EntityId, EdgeActorClass), invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
     input: FoldRunRequest,
 ) -> MemoryResult<FoldReply<FoldList>> {
-    fold_action(server, auth, invocation, "self.folds", input.live_run, json!({})).await
+    fold_action(
+        server,
+        auth,
+        invocation,
+        "self.folds",
+        input.live_run,
+        json!({}),
+    )
+    .await
 }
 
 /// The run's guard makes this a durable boundary, never a snapshot of the
@@ -129,17 +176,36 @@ async fn fold_read<T: Send + 'static>(
     caller: (EntityId, EdgeActorClass),
     verb: &'static str,
     live_run: &str,
-    read: impl FnOnce(&oneiron::Vault, &oneiron::task_verb::HostBinding)
-        -> oneiron::Result<(T, Vec<EntityId>)> + Send + 'static,
+    read: impl FnOnce(
+        &oneiron::Vault,
+        &oneiron::task_verb::HostBinding,
+    ) -> oneiron::Result<(T, Vec<EntityId>)>
+    + Send
+    + 'static,
 ) -> Listed<T> {
     let resolved = (|| {
-        let bound = action_bound(server, auth).map_err(facade_error)?.ok_or_else(|| {
-            MemoryError::new(MEMORY_CODE_FORBIDDEN, "history requires the caller's read key", &[])
-        })?;
-        server.live_runs.resolve(live_run, LiveRunCaller {
-            actor: bound.writes_as(),
-            credential: LiveRunCredential::of(&auth.idempotency_principal(), auth.locality()),
-        }).map_err(run_error)
+        let bound = action_bound(server, auth)
+            .map_err(facade_error)?
+            .ok_or_else(|| {
+                MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "history requires the caller's read key",
+                    &[],
+                )
+            })?;
+        server
+            .live_runs
+            .resolve(
+                live_run,
+                LiveRunCaller {
+                    actor: bound.writes_as(),
+                    credential: LiveRunCredential::of(
+                        &auth.idempotency_principal(),
+                        auth.locality(),
+                    ),
+                },
+            )
+            .map_err(run_error)
     })();
     let resolved = match resolved {
         Ok(run) => run,
@@ -155,30 +221,51 @@ async fn fold_read<T: Send + 'static>(
         for source in sources {
             if memory.get_entity(&source.to_hex())?.value.is_none() {
                 return Err(MemoryError::new(
-                    MEMORY_CODE_FORBIDDEN, "a run history source is no longer readable", &[],
+                    MEMORY_CODE_FORBIDDEN,
+                    "a run history source is no longer readable",
+                    &[],
                 ));
             }
         }
         Ok(answer)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn self_history(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass), _invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
     input: FoldHistoryRequest,
 ) -> Listed<FoldHistory> {
     let handle = input.live_run.clone();
-    fold_read(server, auth, caller, "self.history", &handle,
-        move |vault, proof| read_fold_history(vault, proof, &input)).await
+    fold_read(
+        server,
+        auth,
+        caller,
+        "self.history",
+        &handle,
+        move |vault, proof| read_fold_history(vault, proof, &input),
+    )
+    .await
 }
 
 pub(crate) async fn self_folds_describe(
-    server: &Arc<SyncServer>, auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass), _invocation: Option<InvocationId>,
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
     input: FoldUnfoldRequest,
 ) -> Listed<FoldReply<FoldDescription>> {
     let handle = input.live_run.clone();
-    fold_read(server, auth, caller, "self.folds.describe", &handle,
-        move |vault, proof| read_fold_description(vault, proof, &input)).await
+    fold_read(
+        server,
+        auth,
+        caller,
+        "self.folds.describe",
+        &handle,
+        move |vault, proof| read_fold_description(vault, proof, &input),
+    )
+    .await
 }

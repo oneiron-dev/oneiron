@@ -449,7 +449,11 @@ impl<'a> ScopedRead<'a> {
             // Generic records have no proved channel context. Channel-bound
             // credentials must use their typed adapter instead of losing a caveat.
             (claims.channels.is_empty()
-                || self.actor_key.channel.as_ref().is_some_and(|channel| claims.channels.contains(channel)))
+                || self
+                    .actor_key
+                    .channel
+                    .as_ref()
+                    .is_some_and(|channel| claims.channels.contains(channel)))
                 && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
         })
     }

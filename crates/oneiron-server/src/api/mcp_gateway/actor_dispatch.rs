@@ -599,7 +599,9 @@ fn mcp_credential_gate(
         // takes Write: a Propose-only grant would rest on a ceiling read
         // outside the transaction that commits the TASK.
         McpRecordBounds::Born => auth.require_granted(crate::auth::CoreScope::Write),
-        McpRecordBounds::Filtered => auth.require_granted(mcp_call_scope(server, actor, auth, effect)),
+        McpRecordBounds::Filtered => {
+            auth.require_granted(mcp_call_scope(server, actor, auth, effect))
+        }
         McpRecordBounds::Unrestricted => auth.require(mcp_call_scope(server, actor, auth, effect)),
     }
     .map_err(|_| mcp_proof_error())

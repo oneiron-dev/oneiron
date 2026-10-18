@@ -6,8 +6,8 @@ use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::memory::{Memory, MemoryResult};
 use crate::skill_hub::pack_catalog::{PackHookBinding, PackInstallReceipt};
 use crate::skill_hub::{
-    HubAdmissionReceipt, HubImportReceipt, HubRef, HubSyncDisposition, HubSyncPolicy,
-    SkillHubKind, SkillHubRecord, SkillHubTrustTier, TrackedHubRef,
+    HubAdmissionReceipt, HubImportReceipt, HubRef, HubSyncDisposition, HubSyncPolicy, SkillHubKind,
+    SkillHubRecord, SkillHubTrustTier, TrackedHubRef,
 };
 use crate::{EntityId, TimeRange, Vault};
 
@@ -154,7 +154,10 @@ impl From<HubSyncDisposition> for HubSkillSyncReceipt {
                 proposal: None,
                 approval: None,
             },
-            HubSyncDisposition::Proposed { proposal_id, approval } => Self {
+            HubSyncDisposition::Proposed {
+                proposal_id,
+                approval,
+            } => Self {
                 outcome: HubSkillSyncOutcome::Proposed,
                 proposal: Some(proposal_id),
                 approval: Some(approval),
@@ -232,7 +235,10 @@ pub fn skill_hub_put_as_owner(
         TimeRange { start: at, end: at },
         at,
     )?;
-    Ok(SkillHubConfigured { hub: input.hub, consent: consent.into() })
+    Ok(SkillHubConfigured {
+        hub: input.hub,
+        consent: consent.into(),
+    })
 }
 
 pub fn skill_hub_get_as_owner(
@@ -261,7 +267,9 @@ pub fn skill_publisher_revoke_as_owner(
     owner: &AuthenticatedOwner,
     input: &SkillPublisherRequest,
 ) -> MemoryResult<HubConsentReceipt> {
-    Ok(vault.revoke_skill_publisher(owner, &input.identity, input.hub)?.into())
+    Ok(vault
+        .revoke_skill_publisher(owner, &input.identity, input.hub)?
+        .into())
 }
 
 pub fn hub_ref_get_as_owner(
@@ -285,13 +293,15 @@ pub fn hub_pack_install_as_owner(
     owner: &AuthenticatedOwner,
     input: &HubImportRequest,
 ) -> MemoryResult<PackPutReceipt> {
-    Ok(vault.install_pack_from_hub(
-        owner,
-        input.hub_ref.hub_id,
-        &input.hub_ref.ref_string,
-        input.hub_ref.pin.clone(),
-        &input.publisher,
-    )?.into())
+    Ok(vault
+        .install_pack_from_hub(
+            owner,
+            input.hub_ref.hub_id,
+            &input.hub_ref.ref_string,
+            input.hub_ref.pin.clone(),
+            &input.publisher,
+        )?
+        .into())
 }
 
 pub fn hub_pack_sync_as_owner(
@@ -359,13 +369,15 @@ pub fn hub_skill_permissions_as_owner(
     input: &HubSkillPermissionRequest,
 ) -> MemoryResult<HubConsentReceipt> {
     let at = vault.now_recorded_at();
-    Ok(vault.approve_marketplace_permission_ask(
-        owner,
-        &input.entity,
-        &input.hub_ref,
-        TimeRange { start: at, end: at },
-        at,
-    )?.into())
+    Ok(vault
+        .approve_marketplace_permission_ask(
+            owner,
+            &input.entity,
+            &input.hub_ref,
+            TimeRange { start: at, end: at },
+            at,
+        )?
+        .into())
 }
 
 pub fn hub_hooks_bind_as_owner(
@@ -381,9 +393,11 @@ pub fn hub_hooks_list_as_owner(
     _owner: &AuthenticatedOwner,
     _input: &super::sdk::EmptyRequest,
 ) -> MemoryResult<Vec<HubHookBindingRow>> {
-    Ok(vault.pack_hook_bindings()?.into_iter().map(|(id, binding)| {
-        HubHookBindingRow { id, binding }
-    }).collect())
+    Ok(vault
+        .pack_hook_bindings()?
+        .into_iter()
+        .map(|(id, binding)| HubHookBindingRow { id, binding })
+        .collect())
 }
 
 pub fn hub_hooks_qualify_as_owner(
@@ -395,10 +409,18 @@ pub fn hub_hooks_qualify_as_owner(
     let qualified = vault.qualify_pack_hooks(owner, runtime, input.source)?;
     Ok(HubHookQualificationReceipt {
         put: qualified.disposition.into(),
-        replays: qualified.replays.into_iter().map(|replay| HubHookReplay {
-            hook: replay.hook,
-            entries: replay.entries.into_iter().map(super::sdk::HookReplayRow::from).collect(),
-        }).collect(),
+        replays: qualified
+            .replays
+            .into_iter()
+            .map(|replay| HubHookReplay {
+                hook: replay.hook,
+                entries: replay
+                    .entries
+                    .into_iter()
+                    .map(super::sdk::HookReplayRow::from)
+                    .collect(),
+            })
+            .collect(),
     })
 }
 

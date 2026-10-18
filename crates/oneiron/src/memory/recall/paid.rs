@@ -566,7 +566,10 @@ impl Memory<'_> {
     ) -> MemoryResult<(Vec<String>, RerankEgress<'_>)> {
         let worlds = self.recall_worlds(scope)?;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let lane = match worlds { Some(worlds) => lane.within_worlds(worlds), None => lane };
+        let lane = match worlds {
+            Some(worlds) => lane.within_worlds(worlds),
+            None => lane,
+        };
         let mut receipt = lane.read_receipt(None, 0)?;
         let mut texts = Vec::with_capacity(block.len());
         let mut pinned_worlds = Vec::with_capacity(block.len());

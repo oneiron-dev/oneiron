@@ -1,7 +1,19 @@
 //! ChannelIdentity addressability shapes with wire serde.
 
 /// ChannelIdentity addressability shape (OF-347 R1, ARCH-0063 R2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelIdentityShape {
@@ -55,7 +67,19 @@ impl ChannelIdentityShape {
 /// `DelegatedGrant` variant, so a caller cannot hand it a delegated shape for
 /// the door to silently degrade — see that constructor for what the degrade
 /// actually cost.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum SelfHeldShape {
@@ -86,4 +110,3 @@ impl SelfHeldShape {
         }
     }
 }
-

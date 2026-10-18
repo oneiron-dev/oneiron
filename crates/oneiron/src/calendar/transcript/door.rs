@@ -1,11 +1,11 @@
 //! Caller-bound file-drop ingestion over the calendar transcript landing.
 use serde::{Deserialize, Serialize};
 
+use crate::EntityId;
 use crate::claim::ClaimReadStatus;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult};
 use crate::note::TakeTarget;
 use crate::session_lifecycle::SessionKey;
-use crate::EntityId;
 
 use super::{TranscriptFileDropRequest, TranscriptIngestOutcome, TranscriptParse};
 

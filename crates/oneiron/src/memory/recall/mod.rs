@@ -1061,7 +1061,8 @@ impl Memory<'_> {
             on_cut(ready);
         }
         if let Some(worlds) = &worlds {
-            pack.scope_honesty = self.out_of_scope_worlds(&census, &mut pack.narrowing, worlds, execution.deadline)?;
+            pack.scope_honesty =
+                self.out_of_scope_worlds(&census, &mut pack.narrowing, worlds, execution.deadline)?;
         }
         Ok(pack)
     }

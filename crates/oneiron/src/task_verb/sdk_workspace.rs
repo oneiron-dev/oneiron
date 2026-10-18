@@ -88,8 +88,12 @@ pub fn onboard_workspace_member_as(
     let author = holder.revalidate_person(vault)?;
     let companion = match input.companion {
         WorkspaceCompanionInput::Work {
-            person_ref, actor_ref, work_facet_ref, profile_grant_ref,
-            actor_definition, display_name,
+            person_ref,
+            actor_ref,
+            work_facet_ref,
+            profile_grant_ref,
+            actor_definition,
+            display_name,
         } => CompanionChoice::Work(CompanionBirthIntent {
             person_ref,
             actor_ref,
@@ -98,14 +102,16 @@ pub fn onboard_workspace_member_as(
             actor_definition: actor_definition.definition(author),
             display_name,
         }),
-        WorkspaceCompanionInput::Bring { person_ref, actor_ref, work_facet_ref } => {
-            CompanionChoice::Bring {
-                person: person_ref,
-                actor: actor_ref,
-                work_facet: work_facet_ref,
-                proof: holder.clone(),
-            }
-        }
+        WorkspaceCompanionInput::Bring {
+            person_ref,
+            actor_ref,
+            work_facet_ref,
+        } => CompanionChoice::Bring {
+            person: person_ref,
+            actor: actor_ref,
+            work_facet: work_facet_ref,
+            proof: holder.clone(),
+        },
     };
     let profile_grant_ref = companion.birth().map(|birth| birth.profile_grant_ref);
     let intent = MemberOnboardingIntent {
@@ -125,7 +131,11 @@ pub fn onboard_workspace_member_as(
         delegated_mailbox: None,
         occurred_at: input.occurred_at,
     };
-    Ok(vault.onboard_workspace_member(intent, &WriteActor::new(author, EdgeActorClass::Human), None)?)
+    Ok(vault.onboard_workspace_member(
+        intent,
+        &WriteActor::new(author, EdgeActorClass::Human),
+        None,
+    )?)
 }
 
 /// The unfiltered roster is the owner's read. Onboarding itself still needs

@@ -8,7 +8,8 @@ use crate::channel_identity::{
 use crate::channel_identity_lifecycle::{
     BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor,
     ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent, ChannelIdentityLifecycleRequest,
-    ChannelIdentityLifecycleResult, ProvisionIntent, ReleaseIntent, RotateIntent, RouteInboundIntent,
+    ChannelIdentityLifecycleResult, ProvisionIntent, ReleaseIntent, RotateIntent,
+    RouteInboundIntent,
 };
 
 /// Creates an engine-held address, handle or shared presence. Delegated
@@ -106,15 +107,26 @@ impl Memory<'_> {
         Ok(())
     }
 
-    pub fn channel_identity_get(&self, input: ChannelIdentityRequest) -> MemoryResult<ChannelIdentityView> {
+    pub fn channel_identity_get(
+        &self,
+        input: ChannelIdentityRequest,
+    ) -> MemoryResult<ChannelIdentityView> {
         self.channel_readable(input.identity_ref)?;
-        let row = self.vault.get_channel_identity(&input.identity_ref)?
+        let row = self
+            .vault
+            .get_channel_identity(&input.identity_ref)?
             .ok_or_else(|| MemoryError::not_found("channel identity not found"))?;
         self.channel_identity_view(input.identity_ref, &row)
     }
 
-    fn channel_identity_view(&self, id: EntityId, row: &ChannelIdentity) -> MemoryResult<ChannelIdentityView> {
-        let facts = self.vault.channel_identity_facts(&id)?
+    fn channel_identity_view(
+        &self,
+        id: EntityId,
+        row: &ChannelIdentity,
+    ) -> MemoryResult<ChannelIdentityView> {
+        let facts = self
+            .vault
+            .channel_identity_facts(&id)?
             .ok_or_else(|| MemoryError::not_found("channel identity has no live facts"))?;
         Ok(ChannelIdentityView {
             identity_ref: id,
@@ -122,7 +134,11 @@ impl Memory<'_> {
             address_or_handle: facts.address_or_handle,
             shape: facts.shape,
             binding: facts.binding,
-            custody: if row.is_delegated() { ChannelIdentityCustody::Delegated } else { ChannelIdentityCustody::SelfHeld },
+            custody: if row.is_delegated() {
+                ChannelIdentityCustody::Delegated
+            } else {
+                ChannelIdentityCustody::SelfHeld
+            },
             state: facts.state,
             pending_fulfillment: facts.pending_fulfillment,
             state_changed_at: facts.state_changed_at,
@@ -132,10 +148,18 @@ impl Memory<'_> {
         })
     }
 
-    fn channel_lifecycle_receipt(&self, id: EntityId, result: ChannelIdentityLifecycleResult) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
+    fn channel_lifecycle_receipt(
+        &self,
+        id: EntityId,
+        result: ChannelIdentityLifecycleResult,
+    ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         // A held provision has a requested snapshot, but no stored identity.
         let identity = if self.vault.get_channel_identity(&id)?.is_some() {
-            result.identity.as_ref().map(|row| self.channel_identity_view(id, row)).transpose()?
+            result
+                .identity
+                .as_ref()
+                .map(|row| self.channel_identity_view(id, row))
+                .transpose()?
         } else {
             None
         };
@@ -152,7 +176,10 @@ impl Memory<'_> {
         })
     }
 
-    fn channel_lifecycle_actor(&self, owner: &AuthenticatedOwner) -> MemoryResult<ChannelIdentityLifecycleActor> {
+    fn channel_lifecycle_actor(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> MemoryResult<ChannelIdentityLifecycleActor> {
         let actor = self.channel_owner(owner)?;
         Ok(ChannelIdentityLifecycleActor {
             actor_class: "human".to_owned(),
@@ -161,74 +188,153 @@ impl Memory<'_> {
         })
     }
 
-    fn channel_lifecycle_as(&self, owner: &AuthenticatedOwner, intent: ChannelIdentityLifecycleIntent) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
+    fn channel_lifecycle_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        intent: ChannelIdentityLifecycleIntent,
+    ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         let actor = self.channel_lifecycle_actor(owner)?;
         let id = intent.identity_id();
-        let result = self.vault.apply_channel_identity_lifecycle_intent(ChannelIdentityLifecycleRequest {
-            actor,
-            // Opt-in and permission come from the owner's live proof, not
-            // request flags. The existing ExternalEffect gate still decides.
-            gate: ChannelIdentityLifecycleGate::allow_when_policy_grants(),
-            requested_at: self.vault.now_recorded_at(),
-            intent,
-        })?;
+        let result = self.vault.apply_channel_identity_lifecycle_intent(
+            ChannelIdentityLifecycleRequest {
+                actor,
+                // Opt-in and permission come from the owner's live proof, not
+                // request flags. The existing ExternalEffect gate still decides.
+                gate: ChannelIdentityLifecycleGate::allow_when_policy_grants(),
+                requested_at: self.vault.now_recorded_at(),
+                intent,
+            },
+        )?;
         self.channel_lifecycle_receipt(id, result)
     }
 
-    pub fn channel_identity_provision_as(&self, owner: &AuthenticatedOwner, input: ChannelIdentityProvisionRequest) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
+    pub fn channel_identity_provision_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: ChannelIdentityProvisionRequest,
+    ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         self.channel_owner(owner)?;
         self.channel_binding_readable(input.binding)?;
         let identity_id = self.vault.store.clock.entity_id()?;
-        let identity = ChannelIdentity::requested(input.channel, input.address_or_handle, input.shape, input.binding, self.vault.now_recorded_at());
-        self.channel_lifecycle_as(owner, ChannelIdentityLifecycleIntent::Provision(ProvisionIntent {
-            identity_id,
-            identity,
-            fulfillment_mode: input.fulfillment_mode,
-        }))
+        let identity = ChannelIdentity::requested(
+            input.channel,
+            input.address_or_handle,
+            input.shape,
+            input.binding,
+            self.vault.now_recorded_at(),
+        );
+        self.channel_lifecycle_as(
+            owner,
+            ChannelIdentityLifecycleIntent::Provision(ProvisionIntent {
+                identity_id,
+                identity,
+                fulfillment_mode: input.fulfillment_mode,
+            }),
+        )
     }
 
-    pub fn channel_identity_bind_as(&self, owner: &AuthenticatedOwner, input: ChannelIdentityBindRequest) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
+    pub fn channel_identity_bind_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: ChannelIdentityBindRequest,
+    ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         self.channel_owner(owner)?;
         let (identity_id, fulfillment_mode) = match input {
-            ChannelIdentityBindRequest::Existing { identity_ref, fulfillment_mode } => {
+            ChannelIdentityBindRequest::Existing {
+                identity_ref,
+                fulfillment_mode,
+            } => {
                 self.channel_readable(identity_ref)?;
                 (identity_ref, fulfillment_mode)
             }
-            ChannelIdentityBindRequest::Delegated { channel, address_or_handle, binding, grant, fulfillment_mode } => {
+            ChannelIdentityBindRequest::Delegated {
+                channel,
+                address_or_handle,
+                binding,
+                grant,
+                fulfillment_mode,
+            } => {
                 self.channel_binding_readable(binding)?;
                 let id = self.vault.store.clock.entity_id()?;
-                self.vault.provision_delegated_identity(&id, DelegatedProvisionRequest {
-                    channel, address_or_handle, binding, grant,
-                }, self.vault.now_recorded_at())?;
+                self.vault.provision_delegated_identity(
+                    &id,
+                    DelegatedProvisionRequest {
+                        channel,
+                        address_or_handle,
+                        binding,
+                        grant,
+                    },
+                    self.vault.now_recorded_at(),
+                )?;
                 (id, fulfillment_mode)
             }
         };
-        self.channel_lifecycle_as(owner, ChannelIdentityLifecycleIntent::Bind(BindIntent { identity_id, fulfillment_mode }))
+        self.channel_lifecycle_as(
+            owner,
+            ChannelIdentityLifecycleIntent::Bind(BindIntent {
+                identity_id,
+                fulfillment_mode,
+            }),
+        )
     }
 
-    pub fn channel_identity_fulfill_as(&self, owner: &AuthenticatedOwner, input: ChannelIdentityRequest) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
+    pub fn channel_identity_fulfill_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: ChannelIdentityRequest,
+    ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         let actor = self.channel_lifecycle_actor(owner)?;
         self.channel_readable(input.identity_ref)?;
-        let result = self.vault.fulfill_channel_identity(ChannelIdentityFulfillmentInput {
-            actor,
-            identity_id: input.identity_ref,
-            fulfilled_at: self.vault.now_recorded_at(),
-        })?;
+        let result = self
+            .vault
+            .fulfill_channel_identity(ChannelIdentityFulfillmentInput {
+                actor,
+                identity_id: input.identity_ref,
+                fulfilled_at: self.vault.now_recorded_at(),
+            })?;
         self.channel_lifecycle_receipt(input.identity_ref, result)
     }
 
-    pub fn channel_identity_rotate_as(&self, owner: &AuthenticatedOwner, input: ChannelIdentityRequest) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
+    pub fn channel_identity_rotate_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: ChannelIdentityRequest,
+    ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         self.channel_readable(input.identity_ref)?;
-        self.channel_lifecycle_as(owner, ChannelIdentityLifecycleIntent::Rotate(RotateIntent { identity_id: input.identity_ref }))
+        self.channel_lifecycle_as(
+            owner,
+            ChannelIdentityLifecycleIntent::Rotate(RotateIntent {
+                identity_id: input.identity_ref,
+            }),
+        )
     }
 
-    pub fn channel_identity_release_as(&self, owner: &AuthenticatedOwner, input: ChannelIdentityReleaseRequest) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
+    pub fn channel_identity_release_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: ChannelIdentityReleaseRequest,
+    ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         self.channel_readable(input.identity_ref)?;
-        self.channel_lifecycle_as(owner, ChannelIdentityLifecycleIntent::Release(ReleaseIntent { identity_id: input.identity_ref, quarantine_until: input.quarantine_until }))
+        self.channel_lifecycle_as(
+            owner,
+            ChannelIdentityLifecycleIntent::Release(ReleaseIntent {
+                identity_id: input.identity_ref,
+                quarantine_until: input.quarantine_until,
+            }),
+        )
     }
 
-    pub fn channel_identity_route_inbound_as(&self, owner: &AuthenticatedOwner, input: ChannelIdentityRequest) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
+    pub fn channel_identity_route_inbound_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: ChannelIdentityRequest,
+    ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         self.channel_readable(input.identity_ref)?;
-        self.channel_lifecycle_as(owner, ChannelIdentityLifecycleIntent::RouteInbound(RouteInboundIntent { identity_id: input.identity_ref }))
+        self.channel_lifecycle_as(
+            owner,
+            ChannelIdentityLifecycleIntent::RouteInbound(RouteInboundIntent {
+                identity_id: input.identity_ref,
+            }),
+        )
     }
 }

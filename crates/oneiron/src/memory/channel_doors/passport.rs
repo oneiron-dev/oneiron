@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::thread_passport::{StickyMaskDecision, ThreadMask, ThreadPassport, canonical_message_id};
+use crate::thread_passport::{
+    StickyMaskDecision, ThreadMask, ThreadPassport, canonical_message_id,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -25,7 +27,11 @@ pub struct ThreadMaskView {
 
 impl From<ThreadMask> for ThreadMaskView {
     fn from(mask: ThreadMask) -> Self {
-        Self { identity_ref: mask.identity_ref, actor_ref: mask.actor_ref, facet_ref: mask.facet_ref }
+        Self {
+            identity_ref: mask.identity_ref,
+            actor_ref: mask.actor_ref,
+            facet_ref: mask.facet_ref,
+        }
     }
 }
 
@@ -74,24 +80,48 @@ impl Memory<'_> {
     pub(super) fn channel_thread_mask(&self, thread_ref: &str) -> MemoryResult<Option<ThreadMask>> {
         let mask = match self.vault.sticky_thread_mask(thread_ref, None)? {
             StickyMaskDecision::Unset => return Ok(None),
-            StickyMaskDecision::Keep(mask) | StickyMaskDecision::Conflict { pinned: mask, .. } => mask,
+            StickyMaskDecision::Keep(mask) | StickyMaskDecision::Conflict { pinned: mask, .. } => {
+                mask
+            }
         };
         self.channel_mask_readable(mask)?;
         Ok(Some(mask))
     }
 
-    pub fn channel_thread_passport(&self, input: ThreadPassportRequest) -> MemoryResult<ThreadPassportLookup> {
+    pub fn channel_thread_passport(
+        &self,
+        input: ThreadPassportRequest,
+    ) -> MemoryResult<ThreadPassportLookup> {
         self.channel_readable(input.identity_ref)?;
-        let passport = self.vault.thread_passport(&input.identity_ref, &canonical_message_id(&input.message_id)?)?
-            .map(|passport| self.channel_passport_view(passport)).transpose()?;
+        let passport = self
+            .vault
+            .thread_passport(
+                &input.identity_ref,
+                &canonical_message_id(&input.message_id)?,
+            )?
+            .map(|passport| self.channel_passport_view(passport))
+            .transpose()?;
         Ok(ThreadPassportLookup { passport })
     }
 
-    pub fn channel_thread_passports(&self, input: ThreadPassportsRequest) -> MemoryResult<ThreadPassportsView> {
+    pub fn channel_thread_passports(
+        &self,
+        input: ThreadPassportsRequest,
+    ) -> MemoryResult<ThreadPassportsView> {
         let canonical_thread_ref = self.vault.canonical_thread_ref(&input.thread_ref)?;
-        let passports = self.vault.thread_passports(&canonical_thread_ref)?.into_iter()
-            .map(|passport| self.channel_passport_view(passport)).collect::<MemoryResult<Vec<_>>>()?;
-        let pinned_mask = self.channel_thread_mask(&canonical_thread_ref)?.map(ThreadMaskView::from);
-        Ok(ThreadPassportsView { canonical_thread_ref, passports, pinned_mask })
+        let passports = self
+            .vault
+            .thread_passports(&canonical_thread_ref)?
+            .into_iter()
+            .map(|passport| self.channel_passport_view(passport))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        let pinned_mask = self
+            .channel_thread_mask(&canonical_thread_ref)?
+            .map(ThreadMaskView::from);
+        Ok(ThreadPassportsView {
+            canonical_thread_ref,
+            passports,
+            pinned_mask,
+        })
     }
 }

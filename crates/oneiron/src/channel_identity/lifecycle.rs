@@ -27,7 +27,17 @@ use crate::error::{Error, RecordError, Result};
 /// state itself: it is what the codec writes, what `channel_identity.state`
 /// claims carry, and what lifecycle receipts name. It has no edge table —
 /// admission belongs to the machine that owns the row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelIdentityState {

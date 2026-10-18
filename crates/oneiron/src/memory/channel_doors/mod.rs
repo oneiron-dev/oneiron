@@ -13,14 +13,16 @@ pub use policy::*;
 pub use selection::*;
 
 use super::{Memory, MemoryError, MemoryResult};
-use crate::consent::AuthenticatedOwner;
 use crate::EntityId;
+use crate::consent::AuthenticatedOwner;
 
 impl Memory<'_> {
     fn channel_readable(&self, id: EntityId) -> MemoryResult<()> {
         self.produced_from([id]);
         if self.get_entity(&id.to_hex())?.value.is_none() {
-            return Err(MemoryError::not_found("channel door record is absent or withheld"));
+            return Err(MemoryError::not_found(
+                "channel door record is absent or withheld",
+            ));
         }
         Ok(())
     }

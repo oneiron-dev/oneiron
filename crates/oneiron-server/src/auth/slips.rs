@@ -295,7 +295,10 @@ impl CoreAuth {
     /// Every record axis is enforced by the credential's own engine read lane.
     /// A channel caveat still requires its dedicated channel-bound door.
     pub(crate) fn require_lane_record_scope(&self) -> Result<(), ApiError> {
-        if self.verified_slip().is_some_and(|proof| !proof.claims().channels.is_empty()) {
+        if self
+            .verified_slip()
+            .is_some_and(|proof| !proof.claims().channels.is_empty())
+        {
             return Err(ApiError::forbidden_scope("record-scope"));
         }
         Ok(())
