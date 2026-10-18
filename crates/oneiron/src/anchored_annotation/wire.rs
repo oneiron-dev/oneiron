@@ -79,14 +79,14 @@ pub struct ArtifactUnitsRequest {
 
 /// A unit's locator and the text it actually holds. A null quote means the
 /// place has no readable text or its identity is ambiguous; it cannot be pinned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ArtifactUnitView {
     pub locator: AnnotationLocator,
     pub quote: Option<String>,
 }
 
 /// Support comes from a unit reader, never from artifact-kind enum membership.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ArtifactUnitsView {
     Supported {
@@ -114,7 +114,7 @@ pub struct AnnotationPinRequest {
     pub locator: AnnotationLocator,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AnnotationAnchorView {
     pub artifact_id: EntityId,
     pub version: u64,
@@ -192,7 +192,7 @@ pub struct AnnotationStateRequest {
     pub state: AnnotationThreadState,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AnnotationResolution {
     /// Still at the opening version and locator.
@@ -203,7 +203,7 @@ pub enum AnnotationResolution {
     Drifted,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AnnotationDriftView {
     pub drifted_at_version: u64,
     pub pinned_version: u64,
@@ -218,7 +218,7 @@ impl From<DriftMarker> for AnnotationDriftView {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AnnotationCommentView {
     pub thread_id: EntityId,
     pub author: EntityId,
@@ -239,7 +239,7 @@ impl From<AnnotationComment> for AnnotationCommentView {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AnnotationBriefView {
     pub brief_ref: String,
     pub task_id: EntityId,
@@ -252,7 +252,7 @@ pub struct AnnotationBriefView {
 
 /// A live thread, its durable opening pin and current mapped or drifted
 /// anchor, append-only comments and the latest assignment's stable transcript.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AnnotationThreadView {
     pub thread_id: EntityId,
     pub origin: AnnotationAnchorView,

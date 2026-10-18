@@ -30,7 +30,7 @@ pub use oneiron_contracts::claim::{ReadScope, ScopedReadReceipt};
 /// On the wire the pair is `{"value": .., "narrowing": ..}`: `narrowing` is the
 /// one name every read result gives its receipt.
 #[must_use = "scoped results include a mandatory narrowing receipt"]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScopedReadResult<T> {
     pub value: T,
     #[serde(rename = "narrowing")]

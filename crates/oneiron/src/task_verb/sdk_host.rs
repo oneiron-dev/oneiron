@@ -50,7 +50,7 @@ impl PackPutRequest {
 }
 
 /// What one pack put did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PackPutOutcome {
     Installed,
@@ -62,7 +62,7 @@ pub enum PackPutOutcome {
 
 /// `vault.packs.put`'s answer: the outcome, and the install receipt unless
 /// the put was blocked.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PackPutReceipt {
     pub outcome: PackPutOutcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -685,14 +685,14 @@ impl HooksReplayRequest {
 
 /// One past fact or saved verb run a hook takes, and what its body returns
 /// for it now. Nothing landed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HookReplayRow {
     pub case: crate::runtime_hooks::HookReplayCase,
     pub result: HookReplayOutcome,
 }
 
 /// What a replayed entry gave: the body's outcome, or the history it lacks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum HookReplayOutcome {
     /// The body ran on this entry. Nothing landed.

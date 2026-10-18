@@ -37,7 +37,9 @@ const MAX_HOOK_BUDGET_MS: u32 = 60_000;
 const MAX_SELECTOR_ENTRIES: usize = 64;
 
 /// When a hook fires (ARCH-0080 §2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum HookPhase {
     /// Before a verb, inside the call; it may stop the act.
@@ -60,7 +62,9 @@ impl HookPhase {
 }
 
 /// The closed actor classes a selector may name (ARCH-0067 §4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum HookActorClass {
     Human,
@@ -70,7 +74,9 @@ pub enum HookActorClass {
 
 /// How a hook's body may spend model time (ARCH-0035 render classes;
 /// ARCH-0080 §4 Its shape).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum HookRenderClass {
     /// No model call: the body stays deterministic inside its budget.
@@ -88,7 +94,9 @@ impl HookRenderClass {
 }
 
 /// The one outcome set; the phase decides which kinds apply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum HookOutcomeKind {
     Continue,
@@ -122,7 +130,7 @@ impl HookOutcomeKind {
 }
 
 /// What a HOOK.md declares: the selector table of ARCH-0080 §3.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HookSelector {
     /// Globs over row names and SelfEffect labels; for a fact hook, over
@@ -464,18 +472,21 @@ pub(super) fn parse_source_hooks(
 }
 
 /// A hook's binding: the claim payload under the subscription predicate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackHookBinding {
     /// [`HOOK_BINDING_VERSION`].
     pub version: u8,
     /// The CODE entity the binding names; the claim's subject.
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub code: EntityId,
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub owner: EntityId,
     /// The exact pack source the body came from.
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub source: EntityId,
     pub pack: String,
     pub hook: String,
@@ -498,7 +509,7 @@ pub const FOREIGN_SKILL_PUBLISHER: &str = "skill_publisher";
 /// foreign-actor admission: the actor's kind, its identity record, the hub
 /// it offers from and the one Grant that admits it, plus the vault-resident
 /// actor its outcomes stamp. Hub trust never chains to it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HookAuthor {
     Owner,
@@ -506,10 +517,12 @@ pub enum HookAuthor {
         actor_kind: String,
         identity: String,
         #[serde(with = "crate::serialize::entity_ref")]
+        #[schemars(with = "String")]
         hub: EntityId,
         /// The digest of the publisher's standing Grant.
         grant: String,
         #[serde(with = "crate::serialize::entity_ref")]
+        #[schemars(with = "String")]
         actor: EntityId,
     },
 }

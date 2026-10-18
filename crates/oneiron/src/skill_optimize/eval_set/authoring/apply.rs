@@ -124,7 +124,7 @@ pub fn setup_eval_cohorts(
 }
 
 /// One decision a door or the inventory did not let through.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EvalAuthoringSkip {
     /// The group, candidate, cut or cohort it named.
     pub item: String,
@@ -132,7 +132,7 @@ pub struct EvalAuthoringSkip {
 }
 
 /// What one applied plan did.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EvalAuthoringReport {
     pub families_assigned: usize,
     pub families_extended: usize,

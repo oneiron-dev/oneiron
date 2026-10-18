@@ -37,12 +37,14 @@ pub enum NoteChange {
 
 /// Durable provenance authored only by the admission door. Commit messages
 /// remain diagnostic text; neither grants nor actor classes are read from them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NoteAuthorship {
     #[serde(with = "super::id_codec")]
+    #[schemars(with = "String")]
     pub operation: EntityId,
     #[serde(with = "super::id_codec")]
+    #[schemars(with = "String")]
     pub actor: EntityId,
     pub actor_class: String,
     pub grant: Option<String>,
