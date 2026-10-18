@@ -96,6 +96,20 @@ const SLOT_PLAINTEXT_LEN: usize = SLOT_LABEL.len() + GENERATION_LEN + 32;
 const PART_HEADER_LEN: usize = PART_LABEL.len() + 32 + 4 + 4;
 const KEEP_SLOTS: u64 = SEALED_BUNDLE_KEEP as u64;
 
+/// A key erase opens a kept pad object with.
+enum EraseKey {
+    /// This machine's.
+    Machine,
+    /// The recovery kit the owner hands that one erase; nothing keeps it.
+    Kit,
+}
+
+/// The keys erase opens each kept pad object with, in order (CALLS:
+/// SEALED_BUNDLE_ERASE_KEY_SOURCE): this machine's, then a kit the owner hands
+/// it, so a machine added after older generations were sealed can sweep them
+/// too (FIX 3355).
+const SEALED_BUNDLE_ERASE_KEY_SOURCE: &[EraseKey] = &[EraseKey::Machine, EraseKey::Kit];
+
 /// A bundle or a pad object: its frame magic, its envelope purpose, its size step.
 #[derive(Clone, Copy)]
 struct Kind {
@@ -904,6 +918,41 @@ impl Vault {
         pads.open_with(&self.bundle_vault_id()?, &secret.secret)
     }
 
+    /// Opens `pads`, a kept pad object, as erase's rewrite opens it
+    /// ([`SEALED_BUNDLE_ERASE_KEY_SOURCE`]): with this machine's capsule, or
+    /// else with `kit`, the owner's kit for this erase.
+    #[cfg(feature = "sync")]
+    pub(crate) fn open_key_pads_to_erase(
+        &self,
+        pads: &SealedKeyPads,
+        kit: Option<&RecoveryRootSeed>,
+    ) -> Result<OpenedKeyPads> {
+        open_to_erase(&self.bundle_vault_id()?, &self.erase_secrets(kit)?, pads)
+    }
+
+    /// The secrets erase opens kept pad objects with, in the order of
+    /// [`SEALED_BUNDLE_ERASE_KEY_SOURCE`].
+    fn erase_secrets(&self, kit: Option<&RecoveryRootSeed>) -> Result<Vec<HybridSecretKey>> {
+        let mut secrets = Vec::new();
+        for key in SEALED_BUNDLE_ERASE_KEY_SOURCE {
+            match key {
+                // A kit restore runs before this install has a machine of its
+                // own.
+                EraseKey::Machine => {
+                    if let Ok(machine) = self.machine_secret_outside_txn() {
+                        secrets.push(machine.secret);
+                    }
+                }
+                EraseKey::Kit => {
+                    if let Some(seed) = kit {
+                        secrets.push(seed.recovery_secret()?);
+                    }
+                }
+            }
+        }
+        Ok(secrets)
+    }
+
     /// Erase's rewrite, in one call: every kept pad object, the current one and
     /// every older one, without `world`'s pads, each opened with this machine's
     /// capsule or else the kit's. A pad object holds pads only. The root wraps of
@@ -923,22 +972,10 @@ impl Vault {
         kit: Option<&RecoveryRootSeed>,
     ) -> Result<Vec<SealedKeyPads>> {
         let vault_id = self.bundle_vault_id()?;
-        let mut secrets = Vec::new();
-        // A kit restore runs before this install has a machine of its own.
-        if let Ok(machine) = self.machine_secret_outside_txn() {
-            secrets.push(machine.secret);
-        }
-        if let Some(seed) = kit {
-            secrets.push(seed.recovery_secret()?);
-        }
+        let secrets = self.erase_secrets(kit)?;
         let opened = kept
             .iter()
-            .map(|pads| {
-                secrets
-                    .iter()
-                    .find_map(|secret| pads.open_with(&vault_id, secret).ok())
-                    .ok_or_else(|| refused("a kept pad object opens neither here nor with the kit"))
-            })
+            .map(|pads| open_to_erase(&vault_id, &secrets, pads))
             .collect::<Result<Vec<_>>>()?;
         opened
             .iter()
@@ -971,6 +1008,18 @@ fn bundle_carries(fold: &AuthorityFold, world: EntityId, holder: Destination) ->
             ),
             SealedCopies::CloudAndMyMachines => true,
         }
+}
+
+/// `pads` opened with the first of `secrets` that opens it.
+fn open_to_erase(
+    vault_id: &[u8; 32],
+    secrets: &[HybridSecretKey],
+    pads: &SealedKeyPads,
+) -> Result<OpenedKeyPads> {
+    secrets
+        .iter()
+        .find_map(|secret| pads.open_with(vault_id, secret).ok())
+        .ok_or_else(|| refused("a kept pad object opens neither here nor with the kit"))
 }
 
 fn open_sections(

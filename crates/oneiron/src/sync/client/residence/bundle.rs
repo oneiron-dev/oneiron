@@ -10,7 +10,10 @@
 //!
 //! Erase rewrites every kept pad: each upkeep tick strips every world whose
 //! keys were destroyed here, and that this machine has not swept yet, from
-//! every pad object the home keeps (`Vault::drop_world_from_key_pads`).
+//! every pad object the home keeps (`Vault::drop_world_from_key_pads`). A pad
+//! object sealed before this machine was added does not open with its key;
+//! the owner's recovery kit sweeps it from here on request
+//! ([`SyncClient::sweep_sealed_bundle_erases_with_kit`]).
 //!
 //! A commit names the recovery root this machine pins, so a kit-only restore
 //! can read the generation through the home's kit door (`kit_fetch`).
@@ -41,8 +44,8 @@ use crate::sync::residence::{
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
-    RecoveryRootId, SEALED_BUNDLE_KEEP, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle,
-    sealed_bundle_slot,
+    RecoveryRootId, RecoveryRootSeed, SEALED_BUNDLE_KEEP, SealedBundleGeneration, SealedKeyPads,
+    SealedVaultBundle, sealed_bundle_slot,
 };
 use crate::{EntityId, Vault};
 
@@ -232,6 +235,43 @@ impl SyncClient {
         relay_sealed_bundle(&self.manager, &self.config).await
     }
 
+    /// Erase's sweep of every pad object the home keeps, opened with this
+    /// machine's key or else `seed`, the owner's recovery kit (FIX 3355): a
+    /// pad object sealed before this machine was added does not open with its
+    /// key, and holds every erased world back each slot. The kit serves this
+    /// call alone; nothing keeps it. Sweeps every world erased here not swept
+    /// yet, held back this slot or not, and returns how many a kept object
+    /// held. A federation lane and a machine not mine here sweep nothing, nor
+    /// does a home known to be a phone, which keeps none.
+    pub async fn sweep_sealed_bundle_erases_with_kit(
+        &self,
+        seed: &RecoveryRootSeed,
+    ) -> Result<usize, TransportError> {
+        let vault = &self.vault;
+        if self.config.federation_peer.is_some()
+            || !vault
+                .local_machine()
+                .map_err(storage)?
+                .is_some_and(|machine| machine.mine)
+        {
+            return Ok(0);
+        }
+        let now_slot = sealed_bundle_slot(vault.store.clock.now_recorded_at());
+        // Held back in this slot counts as owed too.
+        let erased = erased_due(vault, now_slot.saturating_add(1)).map_err(storage)?;
+        if erased.is_empty() {
+            return Ok(0);
+        }
+        let budgets = residence_budgets(vault)?;
+        let Some(mut rpc) = ResidenceRpc::connect(vault, &self.config, budgets).await? else {
+            return Err(TransportError::Storage("home node offline".into()));
+        };
+        if !home_holds_sealed_bundle(vault, rpc.home).map_err(storage)? {
+            return Ok(0);
+        }
+        sweep_erased(vault, &mut rpc, &erased, now_slot, Some(seed)).await
+    }
+
     /// One generation's bundle and pad object as the home keeps them, for a
     /// restore from the cloud copy: `generation` names one, `None` the newest.
     /// `None` when the home keeps no such generation.
@@ -289,7 +329,7 @@ pub(crate) async fn relay_sealed_bundle(
         return Ok(relay);
     }
     if !erased.is_empty() {
-        relay.erased = sweep_erased(vault, &mut rpc, &erased, now_slot).await?;
+        relay.erased = sweep_erased(vault, &mut rpc, &erased, now_slot, None).await?;
     }
     if slot_due {
         let slot = SlotRelay {
@@ -465,14 +505,17 @@ impl SlotRelay<'_> {
 
 /// Strips each of `erased` from every pad object the home keeps, rewriting
 /// every kept object whether it held the world or not; returns how many
-/// worlds a kept object held. A world is swept once every kept object is
-/// rewritten without it, or once none holds it. A kept object that does not
-/// open here holds every world back until the next slot.
+/// worlds a kept object held. Each object opens with this machine's key, or
+/// else `kit`, a recovery kit the owner handed this sweep. A world is swept
+/// once every kept object is rewritten without it, or once none holds it. A
+/// kept object that opens with neither holds every world back until the next
+/// slot.
 async fn sweep_erased(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
     erased: &[EntityId],
     now_slot: u64,
+    kit: Option<&RecoveryRootSeed>,
 ) -> Result<usize, TransportError> {
     let mut kept = Vec::new();
     for generation in list_generations(rpc).await? {
@@ -493,7 +536,7 @@ async fn sweep_erased(
     }
     let mut held = BTreeSet::new();
     for pads in &kept {
-        match vault.open_key_pads(pads) {
+        match vault.open_key_pads_to_erase(pads, kit) {
             Ok(opened) => held.extend(opened.keys().map(|key| key.world)),
             Err(_) => {
                 for world in erased {
@@ -507,7 +550,7 @@ async fn sweep_erased(
     for world in erased {
         if held.contains(world) {
             let rewritten = vault
-                .drop_world_from_key_pads(*world, &kept, None)
+                .drop_world_from_key_pads(*world, &kept, kit)
                 .map_err(storage)?;
             for (old, new) in kept.iter().zip(&rewritten) {
                 if !replace_pads(rpc, old, new).await? {
