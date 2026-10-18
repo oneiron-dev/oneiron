@@ -8,7 +8,7 @@ use crate::error::SyncProtocolValidation;
 use crate::sync::federation_burst::{
     FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
-use crate::sync::ingest::watch_births;
+use crate::sync::ingest::{Delivery, watch_births, with_delivery};
 use crate::sync::selector::{
     AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update_as,
     encode_selector_vv_request, revalidate_admitted_facet_stamps,
@@ -373,7 +373,8 @@ impl SyncClient {
     /// facet stamps it sent ahead of their rows, records the rows whose door
     /// judges a peer's row apart from this vault's own, imports it, then
     /// releases each stamp whose row that import's entity door birthed from
-    /// the peer's bytes.
+    /// the peer's bytes. Under a pact-bound grant, each row the import writes
+    /// is attributed to the pact and its epoch as it is written (FIX 321).
     pub(super) fn import_peer_update(
         &mut self,
         window_key: &str,
@@ -386,10 +387,28 @@ impl SyncClient {
             .map_err(map_federated_admission_err)?;
         crate::sync::ingest::record_peer_rows(&self.vault, window_key, admitted.peer_rows())
             .map_err(map_federated_admission_err)?;
+        // The pact the grant delivers through, and its epoch. An unpacted
+        // grant, or one bound to several pacts, delivers unattributed.
+        let delivery = {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(|e| map_federated_admission_err(e.into()))?;
+            self.vault
+                .authority_view_readonly_in_txn(&txn)
+                .map_err(map_federated_admission_err)?
+                .active_pact_delivery_context(&grant)
+                .ok()
+        }
+        .map(|context| Delivery::new(&self.vault, context, admitted.delivered()));
         let window = self.ensure_window(window_key)?;
         let vault = std::sync::Arc::clone(&self.vault);
         let born = watch_births(&vault, admitted.births(), || {
-            self.import_accepted_window_update(window_key, &window, admitted.bytes())
+            with_delivery(delivery, || {
+                self.import_accepted_window_update(window_key, &window, admitted.bytes())
+            })
         })?;
         admitted
             .keep_born_with(&self.vault)

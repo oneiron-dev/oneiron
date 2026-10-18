@@ -6,8 +6,6 @@ use rmpv::Value;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
-use crate::provenance::made_by::MadeByClass;
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -618,31 +616,7 @@ pub(super) fn mint_epoch_summary_guarded(
     // when it happened to be minted.
     let at = request.watermark.learned_at;
     let summary_id = vault.store.clock.entity_id()?;
-    // Rule A: the summary is concluded from the window it read: each message
-    // and its turn, then the request's sources, the first MAX_BIRTH_INPUTS of
-    // them in that order, over the rendered text it summarized.
-    let birth = {
-        let inputs: Vec<EntityId> = request
-            .window
-            .iter()
-            .flat_map(|message| [message.message_id, message.turn_id])
-            .chain(request.sources.iter().copied())
-            .take(MAX_BIRTH_INPUTS)
-            .collect();
-        let read: Vec<&[u8]> = request
-            .window
-            .iter()
-            .map(|message| message.content.as_bytes())
-            .collect();
-        RowBirth::written(
-            byline,
-            MadeByClass::Concluded,
-            "compaction.epoch",
-            &inputs,
-            &read,
-            at,
-        )
-    };
+    let intent_id = vault.store.clock.entity_id()?;
 
     let epoch = vault.with_write_txn_grouped(|wtxn| {
         landing(wtxn)?;
@@ -679,7 +653,6 @@ pub(super) fn mint_epoch_summary_guarded(
             at,
             &body,
         );
-        batch = batch.made_by(&summary_id, birth);
         // A source erased or withdrawn before this mint has already run its
         // invalidation, so the summary is born withdrawn, as it would be had
         // the erasure come after it: never indexed, never embedded, its row
@@ -687,6 +660,7 @@ pub(super) fn mint_epoch_summary_guarded(
         // row; the summary is stale for good, withdrawn for where that
         // source's words sat.
         let mut born_withdrawn = None::<crate::settings::CarriedWorlds>;
+        let mut live = Vec::with_capacity(derived.len());
         for target in derived {
             let state =
                 crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, wtxn, target)?;
@@ -700,8 +674,32 @@ pub(super) fn mint_epoch_summary_guarded(
                     )?);
             } else {
                 batch = batch.edge(&summary_id, EdgeKind::DerivedFrom, target, 1.0);
+                live.push(*target);
             }
         }
+        // Rule A: the pass's intent NOTE is the prompt the summary is born
+        // from, and the run that sealed it, while its record stands here,
+        // the trigger.
+        let intent = super::epoch_intent::intent_note_body(
+            request,
+            byline.entity_ref(),
+            summary_id,
+            born_withdrawn.is_some(),
+        )?;
+        batch = super::epoch_intent::stage_intent(
+            batch,
+            intent_id,
+            byline.entity_ref(),
+            summary_id,
+            at,
+            &intent,
+            &live,
+        );
+        let trigger = super::epoch_intent::run_trigger_in(&vault.store, wtxn, request)?;
+        batch = batch.made_by(
+            &summary_id,
+            super::epoch_intent::epoch_birth(request, byline, at, intent_id, trigger),
+        );
         batch.apply(wtxn)?;
         // Explicitly scheduled for embedding inside the mint transaction, so
         // the ratified "vector-indexed, RAPTOR-retrievable" contract is a
@@ -806,10 +804,11 @@ fn next_epoch(prior: Option<PriorEpoch>) -> Result<u64> {
 /// the landing.
 ///
 /// Nothing reaches base: no pending embedding (a room has no `pe:`
-/// keyspace), no withdrawal marker and no birth stamp (overlay rows carry no
-/// record scope, and export and sync stay base-only). Each op is journaled
-/// under the run's compaction session and the summary itself, a turn no
-/// promotion names, so promoting the room's turns never carries it.
+/// keyspace) and no withdrawal marker; the pass's intent NOTE and the
+/// summary's birth (Rule A) stamp in the overlay, and export and sync stay
+/// base-only. Each op is journaled under the run's compaction session and
+/// the summary itself, a turn no promotion names, so promoting the room's
+/// turns never carries it.
 ///
 /// A source withdrawn before the mint keeps its edge: base erasure cannot
 /// mark an overlay summary, so the room's render walks the lineage and the
@@ -842,6 +841,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
     let at = request.watermark.learned_at;
     let occurred = TimeRange { start: at, end: at };
     let summary_id = session.read_view()?.clock().entity_id()?;
+    let intent_id = session.read_view()?.clock().entity_id()?;
     let body = encode_epoch_summary_body(&EpochSummaryBody {
         v: EPOCH_SUMMARY_BODY_VERSION,
         session: session_ref.to_hex(),
@@ -902,8 +902,33 @@ pub(super) fn mint_epoch_summary_in_overlay(
                 },
             ),
         )?;
+        // Rule A, as the base mint names it: the pass's intent NOTE is the
+        // summary's prompt, and the run its trigger while its record stands.
+        let view = session.read_view()?;
+        let intent = super::epoch_intent::intent_note_body(
+            request,
+            byline.entity_ref(),
+            summary_id,
+            super::epoch_intent::any_withdrawn_in(&view, wtxn, &request.sources)?,
+        )?;
+        for op in super::epoch_intent::intent_ops(
+            intent_id,
+            byline.entity_ref(),
+            summary_id,
+            at,
+            intent,
+            &request.sources,
+        ) {
+            apply(wtxn, entry(JournalRole::TurnOwnedArtifact, op))?;
+        }
+        let trigger = super::epoch_intent::run_trigger_in(&view, wtxn, request)?;
+        if let Some(birth) =
+            super::epoch_intent::epoch_birth(request, byline, at, intent_id, trigger)
+        {
+            crate::provenance::birth::stamp_row_birth_in_txn(&view, wtxn, &summary_id, &birth)?;
+        }
         extra(
-            &session.read_view()?,
+            &view,
             wtxn,
             &EpochMint {
                 summary_id,
