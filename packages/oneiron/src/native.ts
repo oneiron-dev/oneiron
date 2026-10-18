@@ -182,6 +182,8 @@ vaultTrustedContactsDialSet(input: unknown): unknown
 vaultTrustedContactsTierSet(input: unknown): unknown
 vaultTrustedContactsConcernAsks(input: unknown): unknown
 vaultTrustedContactsConcernAuthorize(input: unknown): unknown
+vaultTrustedContactsConcernPropose(input: unknown): unknown
+vaultTrustedContactsConcernDeliver(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultSupportGrantsMint(input: unknown): unknown
