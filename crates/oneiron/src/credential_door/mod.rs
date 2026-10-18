@@ -28,6 +28,7 @@ mod door_service;
 mod door_types;
 mod verb_class;
 
+pub(crate) use self::checkout_ticket::require_checkout_lease;
 pub(crate) use self::door_credential::DoorCredential;
 pub(crate) use self::door_policy::admit_materialization_in_txn;
 pub(crate) use self::door_service::CredentialDoorService;

@@ -54,6 +54,7 @@ mod hub_doors;
 mod legal_hold_doors;
 mod live_run_doors;
 mod note_doors;
+mod origin_doors;
 mod policy_doors;
 mod project_card_doors;
 mod reaction_doors;

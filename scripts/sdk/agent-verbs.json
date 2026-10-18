@@ -3263,6 +3263,76 @@
       }
     },
     {
+      "name": "vault.code.export",
+      "description": "Export one already-finalized and reviewed document revision through the existing origin publication protocol.",
+      "input": "crate::memory::origin_doors::CodeExportRequest",
+      "output": "crate::memory::origin_doors::CodeExportResult",
+      "call": "memory.code_export_as(&memory.embedded_owner(\"vault.code.export\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.origin.authority.get",
+      "description": "Read one served origin authority and this host identity under the owner credential.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::memory::origin_doors::OriginAuthorityView",
+      "call": "memory.origin_authority_get_as(&memory.embedded_owner(\"vault.code.origin.authority.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.origin.authority.set",
+      "description": "Cut over one existing served origin under the owner proof and expected authority epoch.",
+      "input": "crate::memory::origin_doors::OriginAuthoritySetRequest",
+      "output": "crate::memory::origin_doors::OriginAuthorityView",
+      "call": "memory.origin_authority_set_as(&memory.embedded_owner(\"vault.code.origin.authority.set\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.origin.publications",
+      "description": "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement.",
+      "input": "crate::memory::origin_doors::OriginPublicationsRequest",
+      "output": "crate::memory::origin_doors::OriginPublicationsView",
+      "call": "memory.origin_publications_as(&memory.embedded_owner(\"vault.code.origin.publications\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.checkout.bind",
+      "description": "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential.",
+      "input": "crate::memory::origin_doors::CheckoutDoorBindRequest",
+      "output": "crate::memory::origin_doors::CheckoutDoorBinding",
+      "call": "memory.checkout_door_bind_as(&memory.embedded_owner(\"vault.code.checkout.bind\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
       "name": "vault.artifacts.export",
       "description": "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it.",
       "input": "crate::blob_artifact::ArtifactExportRequest",
