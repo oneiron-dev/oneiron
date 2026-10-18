@@ -1,7 +1,5 @@
 //! Read-only ask preflight over the exact admission holder and route facts.
 use super::ask_types::*;
-use super::create_validation::consult_refusal;
-use crate::gate::PolicyApprovalCeiling;
 use crate::memory::{Memory, MemoryError, MemoryResult, verify_actor_binding};
 
 impl Memory<'_> {
@@ -18,19 +16,7 @@ impl Memory<'_> {
             .map_err(crate::Error::from)?;
         let now = self.vault().store.clock.now_recorded_at();
         // An actor that may not ask is refused before any census runs.
-        if super::rate_limit::task_actor_ceiling(
-            self.vault(),
-            &txn,
-            self.actor(),
-            self.actor_class(),
-        )? != PolicyApprovalCeiling::Auto
-        {
-            return Err(consult_refusal(
-                crate::memory::MEMORY_CODE_FORBIDDEN,
-                "scope ask requires an own auto-ceiling actor",
-                "Propose the ask through the authority surface.",
-            ));
-        }
+        self.require_ask_ceiling_in(&txn, input)?;
         let holders = self.ask_holders_in_txn(&txn, input)?;
         let effective = input.effective(
             &holders.iter().copied().collect(),
@@ -119,7 +105,7 @@ impl Memory<'_> {
     }
 
     /// The rules admission runs on `input` before its first write: the
-    /// asker's own Auto ceiling, the holders, the TASK's class and the
+    /// asker's ask ceiling, the holders, the TASK's class and the
     /// effective spec. Read-only, so a caller inside its own write may take
     /// a refusal here and open no ask, with nothing half-written (OF-220).
     pub(super) fn ask_admits_in(
@@ -127,19 +113,7 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         input: &TaskAskSpec,
     ) -> MemoryResult<()> {
-        if super::rate_limit::task_actor_ceiling(
-            self.vault(),
-            txn,
-            self.actor(),
-            self.actor_class(),
-        )? != PolicyApprovalCeiling::Auto
-        {
-            return Err(consult_refusal(
-                crate::memory::MEMORY_CODE_FORBIDDEN,
-                "scope ask requires an own auto-ceiling actor",
-                "Propose the ask through the authority surface.",
-            ));
-        }
+        self.require_ask_ceiling_in(txn, input)?;
         let holders = self.ask_holders_in_txn(txn, input)?;
         let class = self
             .ask_class_in_txn(txn, input.task_ref)?

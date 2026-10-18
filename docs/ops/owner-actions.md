@@ -42,6 +42,11 @@ Both also print an `embedder` section, which keeps three things apart:
 running server's `GET /v1/owner/status` is what says which model serves, and `serve` logs the same
 facts once the vault admits the model (`embedder model loaded and admitted`).
 
+The server's status also carries `link_bytes`: what every sync link moved since the process
+started, one row per inner frame tag (`tag`; 63 also holds every higher tag). Each row has
+`out_frames`, `out_raw` and `out_sent` (bytes before and after the link's codec), and
+`in_frames`, `in_raw` and `in_received`. `doctor` has no such field: it runs no links.
+
 ## Back up
 
 ```sh
@@ -970,6 +975,16 @@ period, by id in `judge_ask_ids`. `POST /v1/owner/coach/judge-asks/pick` with `{
 shadow pass sides with it, and a pick against a judge that already took over re-pins the old
 one, with a notice.
 
+The judge's rubric is the `judge` skill's text, and the replay judge reads it beside every case.
+When that text changes, the judge re-pins on it and every label in the anchor is marked for a
+re-check. A marked label stays in the anchor, its pick time unchanged. On its next nightly pass
+the Coach asks its model whether each marked pick still fits the new rubric. A pick that fits is
+unmarked. A pick that conflicts, or that the model cannot judge, leaves the anchor and comes back
+to you as a `rubric_recheck` ask in your digest. `POST /v1/owner/coach/judge-asks/regrade` with
+`{"ask", "still_fits": true | false}` answers it. `true` puts the pick back in the anchor. `false`
+drops it for good and asks the case again, as a `rubric_regrade` A/B ask in a later digest, which
+you pick like any other.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the
@@ -1246,7 +1261,11 @@ Routes: `GET /v1/owner/authority/handoff-alarms` and
 `POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
 signer is 404, and acknowledging an acknowledged alarm changes nothing. The list, the CLI and the
 SDK's `vault.authority.handoff_alarms` answer one shape in one order: `raised_at` and an
-acknowledgement's `at` in unix seconds, oldest raised first, then by signer.
+acknowledgement's `at` in unix seconds, oldest raised first, then by signer. The routes and the
+CLI run the `vault.authority.handoff_alarms` and `.acknowledge` rows' verb hooks once per
+operation, as you, after the owner check; a hook's stop or ask comes back as the owner refusal.
+`oneiron handoff-alarms list` still needs no owner proof: its hooks run as the vault's local
+host actor, and a vault that holds none answers the list unhooked and logs a warning.
 
 ## Learned settings
 
@@ -1499,7 +1518,9 @@ locality. A space whose `@where` names no provider serving its rung embeds nothi
   native MCP context pack, and `vault.recall` on every SDK take it. Recall refuses it at light
   effort and in call mode, and refuses `kinds`. A client with no server (an embedded handle)
   answers `MODEL_UNAVAILABLE` (`EMBEDDER_UNAVAILABLE` on the native context pack) and never
-  searches without the media.
+  searches without the media. The Node binding's low-level `NapiVault.contextPack` and
+  `contextPackScoped` take the same `media` object as their last argument and answer it the
+  same way: `MODEL_UNAVAILABLE`, with no pack read.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
 - **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
   `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`

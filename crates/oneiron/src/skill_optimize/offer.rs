@@ -556,10 +556,33 @@ pub fn pending_training_offers(vault: &Vault) -> Result<Vec<TrainingOffer>> {
         .collect())
 }
 
+/// Whether a newer offer names `offer` as the one it repeats, read in `txn`.
+fn repeated_in(vault: &Vault, txn: &heed::RoTxn<'_>, offer: &EntityId) -> Result<bool> {
+    Ok(OFFER
+        .scan(&vault.store, txn)?
+        .iter()
+        .any(|(_, row)| row.previous.as_ref() == Some(offer)))
+}
+
+/// One offer still awaiting the owner, read in `txn`: unanswered and not
+/// repeated by a newer one. `None` for any other.
+/// # Errors
+/// Storage errors.
+pub(crate) fn pending_training_offer_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    offer: &EntityId,
+) -> Result<Option<TrainingOffer>> {
+    if ANSWER.contains(&vault.store, txn, offer)? || repeated_in(vault, txn, offer)? {
+        return Ok(None);
+    }
+    OFFER.get(&vault.store, txn, offer)
+}
+
 /// The vault owner's answer to the exact offer they saw. A switch approval
 /// needs a stock candidate and binds it to the seat's role in this
 /// transaction, keeping the old binding for undo; a train approval needs a
-/// recipe and records its intent.
+/// recipe and records its intent. An answer closes the offer's open asks.
 /// # Errors
 /// A caller who is not the vault owner, an unknown offer, a digest for
 /// another snapshot, an answered or repeated offer, an approval of the wrong
@@ -573,64 +596,84 @@ pub fn settle_training_offer(
     answer: OfferAnswer,
     at: u64,
 ) -> Result<OfferAnswerRecord> {
-    let repeated = training_offers(vault, None)?
-        .iter()
-        .any(|(row, _)| row.previous.as_ref() == Some(offer));
-    if repeated {
+    vault.with_write_txn_grouped(|txn| {
+        settle_training_offer_in_txn(vault, txn, owner, offer, expected_digest, answer, at, None)
+    })
+}
+
+/// [`settle_training_offer`] inside `txn`. `settling_ask` is the ask group
+/// whose own settlement carries this answer, if any; every other open ask
+/// for the offer is cut stale in the same commit.
+/// # Errors
+/// As [`settle_training_offer`], and a failed cut of an open ask.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the settlement door's arguments, its writer and the settling ask"
+)]
+pub(crate) fn settle_training_offer_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    offer: &EntityId,
+    expected_digest: &str,
+    answer: OfferAnswer,
+    at: u64,
+    settling_ask: Option<&EntityId>,
+) -> Result<OfferAnswerRecord> {
+    if repeated_in(vault, txn, offer)? {
         return Err(invalid(
             "a newer offer replaced this one; answer that instead",
         ));
     }
-    vault.with_write_txn_grouped(|txn| {
-        let actor = owner.revalidate_in_txn(vault, txn)?;
-        let row = OFFER
-            .get(&vault.store, txn, offer)?
-            .ok_or(invalid("no such training offer"))?;
-        if row.digest != expected_digest {
-            return Err(invalid("the answer does not bind the offer that was shown"));
-        }
-        if ANSWER.contains(&vault.store, txn, offer)? {
-            return Err(invalid("the training offer is already answered"));
-        }
-        let intent = match (answer, &row.candidate) {
-            (OfferAnswer::ApproveSwitch, OfferCandidate::Stock { model, .. }) => {
-                Some(OfferIntent::Switch {
-                    seat: row.seat.clone(),
-                    from: row.incumbent.clone(),
-                    to: model.clone(),
-                })
-            }
-            (
-                OfferAnswer::ApproveTrain,
-                OfferCandidate::TrainRecipe {
-                    base, recipe_ref, ..
-                },
-            ) => Some(OfferIntent::Train {
+    let actor = owner.revalidate_in_txn(vault, txn)?;
+    let row = OFFER
+        .get(&vault.store, txn, offer)?
+        .ok_or(invalid("no such training offer"))?;
+    if row.digest != expected_digest {
+        return Err(invalid("the answer does not bind the offer that was shown"));
+    }
+    if ANSWER.contains(&vault.store, txn, offer)? {
+        return Err(invalid("the training offer is already answered"));
+    }
+    let intent = match (answer, &row.candidate) {
+        (OfferAnswer::ApproveSwitch, OfferCandidate::Stock { model, .. }) => {
+            Some(OfferIntent::Switch {
                 seat: row.seat.clone(),
-                base: base.clone(),
-                recipe_ref: recipe_ref.clone(),
-                destination: row.destination.clone(),
-            }),
-            (OfferAnswer::ApproveSwitch | OfferAnswer::ApproveTrain, _) => {
-                return Err(invalid("the approval does not match the offer's candidate"));
-            }
-            _ => None,
-        };
-        if let Some(OfferIntent::Switch { seat, from, to }) = &intent {
-            super::offer_switch::apply_switch_in_txn(vault, txn, actor, offer, seat, from, to, at)?;
+                from: row.incumbent.clone(),
+                to: model.clone(),
+            })
         }
-        let record = OfferAnswerRecord {
-            offer: *offer,
-            answer,
-            owner: actor,
-            authentication: format!("{:?}", owner.decision_id()),
-            offer_digest: row.digest,
-            intent,
-            at,
-        };
-        ANSWER.put(&vault.store, txn, offer, &record)?;
-        Ok(record)
-    })
+        (
+            OfferAnswer::ApproveTrain,
+            OfferCandidate::TrainRecipe {
+                base, recipe_ref, ..
+            },
+        ) => Some(OfferIntent::Train {
+            seat: row.seat.clone(),
+            base: base.clone(),
+            recipe_ref: recipe_ref.clone(),
+            destination: row.destination.clone(),
+        }),
+        (OfferAnswer::ApproveSwitch | OfferAnswer::ApproveTrain, _) => {
+            return Err(invalid("the approval does not match the offer's candidate"));
+        }
+        _ => None,
+    };
+    if let Some(OfferIntent::Switch { seat, from, to }) = &intent {
+        super::offer_switch::apply_switch_in_txn(vault, txn, actor, offer, seat, from, to, at)?;
+    }
+    let record = OfferAnswerRecord {
+        offer: *offer,
+        answer,
+        owner: actor,
+        authentication: format!("{:?}", owner.decision_id()),
+        offer_digest: row.digest,
+        intent,
+        at,
+    };
+    ANSWER.put(&vault.store, txn, offer, &record)?;
+    crate::task_verb::void_training_offer_asks_in(vault, txn, offer, settling_ask, at)?;
+    Ok(record)
 }
 
 /// Check an offer's promise against later receipts, on or after its check

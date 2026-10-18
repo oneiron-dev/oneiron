@@ -101,9 +101,16 @@ pub enum EngineLimit {
     /// it. An image whose header declares a raster past it asks whether
     /// everything is okay, and is decoded whole.
     SignatureDecodeBytes,
+    /// Comment edits one PowerPoint comment proposal carries: new threads,
+    /// replies and resolutions together. Past it the proposal is written
+    /// and served whole.
+    PptxCommentPatches,
     /// Stored cells one workbook import writes into a live office body,
     /// every sheet together. Past it the workbook is imported whole.
     ImportXlsxLiveCells,
+    /// Bytes of the judge's rubric (the active shared `judge` skill's text)
+    /// one judgment or label re-check reads. Past it the rubric is read whole.
+    JudgeRubricBytes,
     /// Bytes of one signing item's PDF the e-sign seal holds in memory: its
     /// original or its prepared copy, whichever is larger. Past it asks
     /// whether everything is okay, and the item is prepared and sealed whole.
@@ -112,7 +119,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 26] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -135,7 +142,9 @@ impl EngineLimit {
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
+        Self::PptxCommentPatches,
         Self::ImportXlsxLiveCells,
+        Self::JudgeRubricBytes,
         Self::EsignPdfBytes,
     ];
 
@@ -164,7 +173,9 @@ impl EngineLimit {
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
+            Self::PptxCommentPatches => "limits.pptx_comment_patches",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
+            Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
             Self::EsignPdfBytes => "limits.esign_pdf_bytes",
         }
     }
@@ -195,7 +206,11 @@ impl EngineLimit {
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
+            Self::PptxCommentPatches => 10_000,
             Self::ImportXlsxLiveCells => 200_000,
+            // The shipped rubric is about 1 KiB; the judgment's state holds
+            // at most 64 KiB in all.
+            Self::JudgeRubricBytes => 8_192,
             Self::EsignPdfBytes => 256 << 20,
         }
     }
