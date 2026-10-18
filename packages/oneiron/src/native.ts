@@ -106,6 +106,7 @@ vaultRetrievalExport(input: unknown): unknown
 vaultRetrievalReplay(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
+vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
