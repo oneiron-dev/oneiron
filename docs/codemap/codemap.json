@@ -18417,7 +18417,7 @@
      "purpose": "The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private…",
      "surface": {
       "crate-vis": 2,
-      "fn": 3
+      "fn": 5
      }
     },
     {
@@ -75626,7 +75626,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/import_audience.rs",
@@ -79087,7 +79087,7 @@
     "import_audience": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The import audience sweep (OF-492)"
     },
