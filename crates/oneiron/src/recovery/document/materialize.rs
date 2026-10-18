@@ -23,9 +23,6 @@ struct Cleanup {
 }
 fn same_fork(previous: &NoteFork, expected: &NoteFork) -> bool {
     let mut previous = previous.clone();
-    if previous.recovery_merge.is_some() && !previous.frontier.is_empty() {
-        return false;
-    }
     if previous.recovery_merge.is_none()
         && !previous.decided
         && !previous.rewrite
@@ -33,12 +30,12 @@ fn same_fork(previous: &NoteFork, expected: &NoteFork) -> bool {
     {
         return false;
     }
-    previous.frontier.clear();
     // A native fork's merge basis is resolved at capture, not persisted in its
     // original row. Already recovered bases are immutable source values.
     if previous.recovery_merge.is_none() && !previous.decided && !previous.rewrite {
         previous.recovery_merge = expected.recovery_merge.clone();
     }
+    // The frontier the fork opened at is part of its identity, byte for byte.
     previous == *expected
 }
 
