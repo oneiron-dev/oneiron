@@ -31,6 +31,7 @@ mod builtin_host;
 mod byte_line;
 mod campaign_enrollment;
 pub mod cli;
+mod code_consent_host;
 pub mod commands;
 pub mod config;
 mod connector_admission_host;

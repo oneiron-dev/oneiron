@@ -67,6 +67,6 @@ pub fn revoke_guest_embedded(
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         "vault.guests.revoke signs each pact disconnect with the host's own key; an embedded vault holds none",
-        &["Call it through a remote client of the server that hosts the guest."],
+        &[super::sdk_host::SERVED_CLIENT_HINT],
     ))
 }
