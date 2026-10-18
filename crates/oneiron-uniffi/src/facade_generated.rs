@@ -231,6 +231,11 @@ export_facade! {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
+"self.credential.attenuate" => fn self_credential_attenuate(&self, input: CredentialAttenuationRequest) -> CredentialAttenuated = |client| {
+    let input: oneiron::task_verb::sdk::CredentialAttenuationRequest = crate::codec::lower_record("self.credential.attenuate", input)?;
+    let output = client.self_credential_attenuate(&input)?;
+    crate::codec::lift_record("self.credential.attenuate", &output)
+};
 "vault.scope.ceiling" => fn vault_scope_ceiling(&self) -> CredentialCeiling = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.scope.ceiling")?;
     let output = client.vault_scope_ceiling(&input)?;
@@ -765,6 +770,21 @@ export_facade! {
     let input: oneiron::task_verb::sdk::GuestSlipMintRequest = crate::codec::lower_record("vault.guests.mint_slip", input)?;
     let output = client.vault_guests_mint_slip(&input)?;
     crate::codec::lift_record("vault.guests.mint_slip", &output)
+};
+"vault.support_grants.mint" => fn vault_support_grants_mint(&self, input: SupportGrantMintRequest) -> SupportGrantMintAnswer = |client| {
+    let input: oneiron::task_verb::sdk::SupportGrantMintRequest = crate::codec::lower_record("vault.support_grants.mint", input)?;
+    let output = client.vault_support_grants_mint(&input)?;
+    crate::codec::lift_record("vault.support_grants.mint", &output)
+};
+"vault.support_grants.list" => fn vault_support_grants_list(&self, input: SupportGrantListRequest) -> SupportGrantList = |client| {
+    let input: oneiron::task_verb::sdk::SupportGrantListRequest = crate::codec::lower_record("vault.support_grants.list", input)?;
+    let output = client.vault_support_grants_list(&input)?;
+    crate::codec::lift_record("vault.support_grants.list", &output)
+};
+"vault.support_grants.revoke" => fn vault_support_grants_revoke(&self, input: SupportGrantRevokeRequest) -> SupportGrantRevokeAnswer = |client| {
+    let input: oneiron::task_verb::sdk::SupportGrantRevokeRequest = crate::codec::lower_record("vault.support_grants.revoke", input)?;
+    let output = client.vault_support_grants_revoke(&input)?;
+    crate::codec::lift_record("vault.support_grants.revoke", &output)
 };
 "vault.residence.mode" => fn vault_residence_mode(&self, input: ResidenceModeRequest) -> ResidenceModeAnswer = |client| {
     let input: oneiron::task_verb::sdk::ResidenceModeRequest = crate::codec::lower_record("vault.residence.mode", input)?;
@@ -1330,6 +1350,11 @@ export_facade! {
     let input: oneiron::memory::code_doors::CodeRepoRequest = crate::codec::lower_record("vault.code.oplog", input)?;
     let output = client.vault_code_oplog(&input)?;
     crate::codec::lift_record("vault.code.oplog", &output)
+};
+"vault.code.model_heal_count" => fn vault_code_model_heal_count(&self, input: CodeRunModelHealCountRequest) -> CodeRunModelHealCountView = |client| {
+    let input: oneiron::memory::code_run_doors::CodeRunModelHealCountRequest = crate::codec::lower_record("vault.code.model_heal_count", input)?;
+    let output = client.vault_code_model_heal_count(&input)?;
+    crate::codec::lift_record("vault.code.model_heal_count", &output)
 };
 "vault.code.repo_diff" => fn vault_code_repo_diff(&self, input: CodeRepoDiffRequest) -> Option<CodeRepoDiffView> = |client| {
     let input: oneiron::code_document::CodeRepoDiffRequest = crate::codec::lower_record("vault.code.repo_diff", input)?;
@@ -2091,6 +2116,16 @@ export_facade! {
     let output = client.vault_habits_checkin(&input)?;
     Lift::lift(output)
 };
+"vault.productivity.create" => fn vault_productivity_create(&self, input: ProductivityCreateRequest) -> EntityRefReceipt = |client| {
+    let input: oneiron::memory::ProductivityCreateRequest = crate::codec::lower_record("vault.productivity.create", input)?;
+    let output = client.vault_productivity_create(&input)?;
+    Lift::lift(output)
+};
+"vault.productivity.tree" => fn vault_productivity_tree(&self, input: ProductivityTreeRequest) -> ScopedReadResultOptionalProductivityTree = |client| {
+    let input: oneiron::memory::ProductivityTreeRequest = crate::codec::lower_record("vault.productivity.tree", input)?;
+    let output = client.vault_productivity_tree(&input)?;
+    crate::codec::lift_record("vault.productivity.tree", &output)
+};
 "vault.claims.admit" => fn vault_claims_admit(&self, input: AdmitImportedClaimInput) -> CommitReceipt = |client| {
     let input: oneiron::memory::AdmitImportedClaimInput = input.lower()?;
     let output = client.vault_claims_admit(&input)?;
@@ -2415,6 +2450,46 @@ export_facade! {
     let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.history", input)?;
     let output = client.vault_notes_history(&input)?;
     crate::codec::lift_record("vault.notes.history", &output)
+};
+"vault.notes.fork" => fn vault_notes_fork(&self, input: NoteForkRequest) -> NoteForkView = |client| {
+    let input: oneiron::note::NoteForkRequest = crate::codec::lower_record("vault.notes.fork", input)?;
+    let output = client.vault_notes_fork(&input)?;
+    crate::codec::lift_record("vault.notes.fork", &output)
+};
+"vault.notes.forks.read" => fn vault_notes_forks_read(&self, input: NoteForkReadRequest) -> ScopedReadResultOptionalNoteForkView = |client| {
+    let input: oneiron::note::NoteForkReadRequest = crate::codec::lower_record("vault.notes.forks.read", input)?;
+    let output = client.vault_notes_forks_read(&input)?;
+    crate::codec::lift_record("vault.notes.forks.read", &output)
+};
+"vault.notes.proposals.open" => fn vault_notes_proposals_open(&self, input: NoteProposalOpenRequest) -> NoteProposalView = |client| {
+    let input: oneiron::note::NoteProposalOpenRequest = crate::codec::lower_record("vault.notes.proposals.open", input)?;
+    let output = client.vault_notes_proposals_open(&input)?;
+    crate::codec::lift_record("vault.notes.proposals.open", &output)
+};
+"vault.notes.proposals.read" => fn vault_notes_proposals_read(&self, input: NoteProposalRequest) -> NoteProposalView = |client| {
+    let input: oneiron::note::NoteProposalRequest = crate::codec::lower_record("vault.notes.proposals.read", input)?;
+    let output = client.vault_notes_proposals_read(&input)?;
+    crate::codec::lift_record("vault.notes.proposals.read", &output)
+};
+"vault.notes.proposals.merge" => fn vault_notes_proposals_merge(&self, input: NoteProposalRequest) -> NoteProposalView = |client| {
+    let input: oneiron::note::NoteProposalRequest = crate::codec::lower_record("vault.notes.proposals.merge", input)?;
+    let output = client.vault_notes_proposals_merge(&input)?;
+    crate::codec::lift_record("vault.notes.proposals.merge", &output)
+};
+"vault.notes.proposals.switch" => fn vault_notes_proposals_switch(&self, input: NoteProposalRequest) -> NoteProposalView = |client| {
+    let input: oneiron::note::NoteProposalRequest = crate::codec::lower_record("vault.notes.proposals.switch", input)?;
+    let output = client.vault_notes_proposals_switch(&input)?;
+    crate::codec::lift_record("vault.notes.proposals.switch", &output)
+};
+"vault.notes.proposals.reject" => fn vault_notes_proposals_reject(&self, input: NoteProposalRequest) -> NoteProposalView = |client| {
+    let input: oneiron::note::NoteProposalRequest = crate::codec::lower_record("vault.notes.proposals.reject", input)?;
+    let output = client.vault_notes_proposals_reject(&input)?;
+    crate::codec::lift_record("vault.notes.proposals.reject", &output)
+};
+"vault.notes.version_tree" => fn vault_notes_version_tree(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteVersionTree = |client| {
+    let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.version_tree", input)?;
+    let output = client.vault_notes_version_tree(&input)?;
+    crate::codec::lift_record("vault.notes.version_tree", &output)
 };
 "vault.notes.history_purge" => fn vault_notes_history_purge(&self, input: NoteHistoryPurgeRequest) -> NoteHistoryPurgeOutcome = |client| {
     let input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest = crate::codec::lower_record("vault.notes.history_purge", input)?;

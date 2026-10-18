@@ -3,8 +3,8 @@
 //! its author, run and source. This door neither completes jobs nor sends effects.
 use super::{ClaimScope, Memory, MemoryError, MemoryResult};
 use crate::claim::{
-    ClaimReadStatus, PointRead, ScopedReadResult,
-    claim_consolidatable, claim_evidence_taint, claim_generated_origin,
+    ClaimReadStatus, PointRead, ScopedReadResult, claim_consolidatable, claim_evidence_taint,
+    claim_generated_origin,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_consolidation::{
@@ -13,8 +13,7 @@ use crate::dreamer_consolidation::{
 };
 use crate::dreamer_promotion::{
     DreamerRunContext, EvidenceRef, PromotionEvidenceReason, evidence_ref_refusal_in_txn,
-    public_evidence_refs, public_evidence_value,
-    promote_consolidated_claims_with_checker,
+    promote_consolidated_claims_with_checker, public_evidence_refs, public_evidence_value,
 };
 use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore};
 use crate::entity_id::ForeignWorldId;
@@ -137,7 +136,8 @@ pub struct ConsolidationPromotion {
 
 impl Memory<'_> {
     fn consolidation_owner(&self, owner: &AuthenticatedOwner) -> MemoryResult<()> {
-        if owner.revalidate(self.vault)? != self.actor || self.actor_class != EdgeActorClass::Human {
+        if owner.revalidate(self.vault)? != self.actor || self.actor_class != EdgeActorClass::Human
+        {
             return Err(MemoryError::new(
                 super::MEMORY_CODE_FORBIDDEN,
                 "consolidation acts on the owner's own credential handle",
@@ -157,89 +157,157 @@ impl Memory<'_> {
         self.consolidation_owner(owner)?;
         super::caps::check_batch_len("source_refs", input.source_refs.len())?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let refs = input.source_refs.iter()
-            .map(|reference| self.resolve_ref_in_lane(&lane, reference).map(PointRead::id))
+        let refs = input
+            .source_refs
+            .iter()
+            .map(|reference| {
+                self.resolve_ref_in_lane(&lane, reference)
+                    .map(PointRead::id)
+            })
             .collect::<MemoryResult<Vec<_>>>()?;
         lane.read_projected(&refs, None, |txn, rows| {
             let mut evidence = Vec::with_capacity(rows.len());
             for row in rows {
-                let row = row.filter(|row| row.body.is_some())
+                let row = row
+                    .filter(|row| row.body.is_some())
                     .ok_or_else(|| MemoryError::not_found("no readable evidence has that ref"))?;
                 self.produced_from([row.id]);
                 let refusal = evidence_ref_refusal_in_txn(self.vault, txn, &row.id)?;
                 let mut view = ConsolidationEvidenceSource {
-                    source_ref: row.id.to_hex(), source: None, approval: None, lifecycle: None,
-                    evidence_taint: None, generated_origin: false, writer_ref: None,
-                    foreign_world_ref: None, consolidation_eligible: refusal.is_none(),
+                    source_ref: row.id.to_hex(),
+                    source: None,
+                    approval: None,
+                    lifecycle: None,
+                    evidence_taint: None,
+                    generated_origin: false,
+                    writer_ref: None,
+                    foreign_world_ref: None,
+                    consolidation_eligible: refusal.is_none(),
                     corroboration_eligible: refusal.is_none(),
                     first_party_corroboration: false,
-                    effector_evidence_eligible: refusal.is_none(), refusal,
-                    source_refs: Vec::new(), evidence_refs: Vec::new(), source_meet: None, chain: Vec::new(), locators: Vec::new(),
+                    effector_evidence_eligible: refusal.is_none(),
+                    refusal,
+                    source_refs: Vec::new(),
+                    evidence_refs: Vec::new(),
+                    source_meet: None,
+                    chain: Vec::new(),
+                    locators: Vec::new(),
                 };
                 if row.entity_type == ENTITY_TYPE_CLAIM {
                     let body = crate::claim::decode_claim_body(
-                        row.body.as_deref().ok_or(Error::EntityNotFound)?, true,
+                        row.body.as_deref().ok_or(Error::EntityNotFound)?,
+                        true,
                     )?;
                     view.source = body.source.map(|source| source.as_str().to_owned());
                     view.approval = Some(body.approval.as_str().to_owned());
                     view.lifecycle = Some(body.lifecycle.as_str().to_owned());
-                    view.evidence_taint = claim_evidence_taint(&body).map(|source| source.as_str().to_owned());
+                    view.evidence_taint =
+                        claim_evidence_taint(&body).map(|source| source.as_str().to_owned());
                     view.generated_origin = claim_generated_origin(&body);
                     view.writer_ref = super::claim_author(&body).map(|actor| actor.to_hex());
-                    view.foreign_world_ref = body.world
+                    view.foreign_world_ref = body
+                        .world
                         .filter(|world| ForeignWorldId::from_entity_id(*world).is_ok())
                         .map(|world| world.to_hex());
                     let confirmed = crate::gate::claim_consolidation_eligible_in_txn(
-                        &self.vault.store, txn, &row.id, crate::gate::ConsolidationReader::PromotionEvidence,
+                        &self.vault.store,
+                        txn,
+                        &row.id,
+                        crate::gate::ConsolidationReader::PromotionEvidence,
                     )?;
                     view.consolidation_eligible = claim_consolidatable(&body) && confirmed;
                     view.effector_evidence_eligible = view.consolidation_eligible;
                     view.first_party_corroboration = view.corroboration_eligible
                         && view.foreign_world_ref.is_none()
-                        && matches!(body.source, Some(crate::claim::ClaimSource::UserStated | crate::claim::ClaimSource::Observed | crate::claim::ClaimSource::Inferred));
+                        && matches!(
+                            body.source,
+                            Some(
+                                crate::claim::ClaimSource::UserStated
+                                    | crate::claim::ClaimSource::Observed
+                                    | crate::claim::ClaimSource::Inferred
+                            )
+                        );
                     let stored = body.evidence.as_ref().and_then(candidate_evidence);
                     if let Some(stored) = stored {
                         if let Some(envelope) = decode_consolidation_evidence(stored)? {
                             view.evidence_refs = public_evidence_refs(Some(stored))?;
-                            let document_sources = view.evidence_refs.iter()
+                            let document_sources = view
+                                .evidence_refs
+                                .iter()
                                 .map(|reference| EntityId::from_hex(&reference.entity))
                                 .collect::<crate::Result<Vec<_>>>()?;
-                            let named: Vec<_> = envelope.refs.iter().copied()
+                            let named: Vec<_> = envelope
+                                .refs
+                                .iter()
+                                .copied()
                                 .chain(document_sources)
-                                .chain(envelope.chain.iter().flat_map(|hop| [Some(hop.entity_ref), hop.actor_ref].into_iter().flatten()))
+                                .chain(envelope.chain.iter().flat_map(|hop| {
+                                    [Some(hop.entity_ref), hop.actor_ref].into_iter().flatten()
+                                }))
                                 .collect();
-                            if lane.entities_readable_in_txn(txn, &named)?.iter().any(|readable| !readable) {
-                                return Err(MemoryError::not_found("claim evidence is not readable"));
+                            if lane
+                                .entities_readable_in_txn(txn, &named)?
+                                .iter()
+                                .any(|readable| !readable)
+                            {
+                                return Err(MemoryError::not_found(
+                                    "claim evidence is not readable",
+                                ));
                             }
                             self.produced_from(named);
                             view.source_refs = envelope.refs.iter().map(EntityId::to_hex).collect();
                             view.source_meet = Some(envelope.source_meet.as_str().to_owned());
-                            view.chain = envelope.chain.iter().map(|hop| ConsolidationEvidenceHop {
-                                kind: hop.kind.as_str().to_owned(), entity_ref: hop.entity_ref.to_hex(),
-                                actor_ref: hop.actor_ref.map(|actor| actor.to_hex()),
-                            }).collect();
-                            if stored.as_map().is_some_and(|fields| fields.iter().any(|(key, _)| key.as_str() == Some("locators"))) {
-                                view.locators = decode_verified_citations(stored)?.into_iter().map(|(locator, content_hash, messages)| {
-                                    ConsolidationEvidenceLocator {
-                                        source_ref: locator.source_id.to_hex(), claim_ref: locator.claim_id.map(|id| id.to_hex()),
-                                        byte_range: locator.byte_range, content_hash,
-                                        messages: messages.into_iter().map(|message| ConsolidationMessageEvidence {
-                                            message_ref: message.message.to_hex(), start: message.start,
-                                            end: message.end, revision: message.revision, frontier: message.frontier,
-                                        }).collect(),
-                                    }
-                                }).collect();
+                            view.chain = envelope
+                                .chain
+                                .iter()
+                                .map(|hop| ConsolidationEvidenceHop {
+                                    kind: hop.kind.as_str().to_owned(),
+                                    entity_ref: hop.entity_ref.to_hex(),
+                                    actor_ref: hop.actor_ref.map(|actor| actor.to_hex()),
+                                })
+                                .collect();
+                            if stored.as_map().is_some_and(|fields| {
+                                fields
+                                    .iter()
+                                    .any(|(key, _)| key.as_str() == Some("locators"))
+                            }) {
+                                view.locators = decode_verified_citations(stored)?
+                                    .into_iter()
+                                    .map(|(locator, content_hash, messages)| {
+                                        ConsolidationEvidenceLocator {
+                                            source_ref: locator.source_id.to_hex(),
+                                            claim_ref: locator.claim_id.map(|id| id.to_hex()),
+                                            byte_range: locator.byte_range,
+                                            content_hash,
+                                            messages: messages
+                                                .into_iter()
+                                                .map(|message| ConsolidationMessageEvidence {
+                                                    message_ref: message.message.to_hex(),
+                                                    start: message.start,
+                                                    end: message.end,
+                                                    revision: message.revision,
+                                                    frontier: message.frontier,
+                                                })
+                                                .collect(),
+                                        }
+                                    })
+                                    .collect();
                             }
                         }
                     }
                 } else if row.entity_type == ENTITY_TYPE_TURN
                     && view.refusal != Some(PromotionEvidenceReason::UnsupportedTurnRole)
                 {
-                    view.source = Some(crate::dreamer_consolidation::resources::native_turn_source(
-                        self.vault, row.body.as_deref().ok_or(Error::EntityNotFound)?,
-                    )?.as_str().to_owned());
-                    view.first_party_corroboration = view.corroboration_eligible
-                        && view.source.as_deref() != Some("imported");
+                    view.source = Some(
+                        crate::dreamer_consolidation::resources::native_turn_source(
+                            self.vault,
+                            row.body.as_deref().ok_or(Error::EntityNotFound)?,
+                        )?
+                        .as_str()
+                        .to_owned(),
+                    );
+                    view.first_party_corroboration =
+                        view.corroboration_eligible && view.source.as_deref() != Some("imported");
                 }
                 evidence.push(view);
             }
@@ -258,22 +326,50 @@ impl Memory<'_> {
         self.consolidation_owner(owner)?;
         super::caps::check_batch_len("candidates", input.candidates.len())?;
         let attempt = super::outbound::parse_job_ref(&input.job_ref)?;
-        let status = DreamerRunnerStore::new(self.vault).status(attempt)?
+        let status = DreamerRunnerStore::new(self.vault)
+            .status(attempt)?
             .ok_or_else(|| MemoryError::not_found("no consolidation attempt has that job_ref"))?;
-        if ![DreamerConsolidationScope::Micro, DreamerConsolidationScope::Meso, DreamerConsolidationScope::Macro]
-            .iter().any(|scope| scope.attempt_kind() == status.payload.attempt_type)
-            || !matches!(status.attempt.state, crate::attempt_queue::AttemptState::Queued | crate::attempt_queue::AttemptState::Leased | crate::attempt_queue::AttemptState::Paused)
+        if ![
+            DreamerConsolidationScope::Micro,
+            DreamerConsolidationScope::Meso,
+            DreamerConsolidationScope::Macro,
+        ]
+        .iter()
+        .any(|scope| scope.attempt_kind() == status.payload.attempt_type)
+            || !matches!(
+                status.attempt.state,
+                crate::attempt_queue::AttemptState::Queued
+                    | crate::attempt_queue::AttemptState::Leased
+                    | crate::attempt_queue::AttemptState::Paused
+            )
         {
-            return Err(MemoryError::bad_request("job_ref must name an active consolidation attempt"));
+            return Err(MemoryError::bad_request(
+                "job_ref must name an active consolidation attempt",
+            ));
         }
-        let run_id = status.attempt.run_id.filter(|id| !id.trim().is_empty())
-            .ok_or_else(|| MemoryError::bad_request("the consolidation attempt must name its run_id"))?;
-        let mut source_refs: Vec<_> = input.candidates.iter().flat_map(|candidate| {
-            candidate.evidence_refs.iter().map(|reference| reference.entity.clone())
-                .chain(candidate.claim_evidence_refs.iter().cloned())
-        }).collect();
-        source_refs.sort(); source_refs.dedup();
-        let input_evidence = self.consolidation_evidence_as_owner(owner, &ConsolidationEvidenceRequest { source_refs })?.value;
+        let run_id = status
+            .attempt
+            .run_id
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| {
+                MemoryError::bad_request("the consolidation attempt must name its run_id")
+            })?;
+        let mut source_refs: Vec<_> = input
+            .candidates
+            .iter()
+            .flat_map(|candidate| {
+                candidate
+                    .evidence_refs
+                    .iter()
+                    .map(|reference| reference.entity.clone())
+                    .chain(candidate.claim_evidence_refs.iter().cloned())
+            })
+            .collect();
+        source_refs.sort();
+        source_refs.dedup();
+        let input_evidence = self
+            .consolidation_evidence_as_owner(owner, &ConsolidationEvidenceRequest { source_refs })?
+            .value;
         let now = self.vault.store.clock.now_recorded_at();
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let mut candidates = Vec::with_capacity(input.candidates.len());
@@ -283,10 +379,24 @@ impl Memory<'_> {
             }
             let id = EntityId::from_hex(&input.claim_ref)?;
             let subject = self.resolve_ref_in_lane(&lane, &input.subject_ref)?;
-            let supersedes = input.supersedes.as_deref().map(|reference| self.resolve_ref_in_lane(&lane, reference)).transpose()?;
-            let named: Vec<_> = std::iter::once(subject).chain(supersedes).map(PointRead::id).collect();
-            if lane.read(&named, None)?.value.iter().any(|row| row.as_ref().is_none_or(|row| row.body.is_none())) {
-                return Err(MemoryError::not_found("a candidate names an unreadable subject or prior"));
+            let supersedes = input
+                .supersedes
+                .as_deref()
+                .map(|reference| self.resolve_ref_in_lane(&lane, reference))
+                .transpose()?;
+            let named: Vec<_> = std::iter::once(subject)
+                .chain(supersedes)
+                .map(PointRead::id)
+                .collect();
+            if lane
+                .read(&named, None)?
+                .value
+                .iter()
+                .any(|row| row.as_ref().is_none_or(|row| row.body.is_none()))
+            {
+                return Err(MemoryError::not_found(
+                    "a candidate names an unreadable subject or prior",
+                ));
             }
             self.produced_from(std::iter::once(subject).chain(supersedes));
             let world = self.resolve_ref(&input.scope.world_id)?;
@@ -296,64 +406,120 @@ impl Memory<'_> {
                 return Err(MemoryError::bad_request("scope facet must name a FACET"));
             }
             let mut candidate = ClaimCandidate::new(
-                &input.predicate, crate::claim::ClaimSubject::Entity(subject),
-                super::support::json_to_rmpv(&input.value), input.confidence,
-            ).with_world(world).with_scope_stamps(facet, project)
-                .with_validity(input.valid_from, input.valid_to);
+                &input.predicate,
+                crate::claim::ClaimSubject::Entity(subject),
+                super::support::json_to_rmpv(&input.value),
+                input.confidence,
+            )
+            .with_world(world)
+            .with_scope_stamps(facet, project)
+            .with_validity(input.valid_from, input.valid_to);
             if let Some(band) = input.sensitivity {
-                candidate = candidate.with_scope(rmpv::Value::Map(vec![(rmpv::Value::from("sensitivity"), rmpv::Value::from(band))]));
+                candidate = candidate.with_scope(rmpv::Value::Map(vec![(
+                    rmpv::Value::from("sensitivity"),
+                    rmpv::Value::from(band),
+                )]));
             }
             match &input.scope.scope_relationship_id {
-                super::ClaimRelationships::All(super::AllRelationships::All) => {},
+                super::ClaimRelationships::All(super::AllRelationships::All) => {}
                 super::ClaimRelationships::Relationships(refs) if refs.len() == 1 => {
                     candidate = candidate.with_relationship(self.resolve_ref(&refs[0])?);
-                },
-                _ => return Err(MemoryError::bad_request("a claim relationship position is all or exactly one relationship")),
+                }
+                _ => {
+                    return Err(MemoryError::bad_request(
+                        "a claim relationship position is all or exactly one relationship",
+                    ));
+                }
             }
             candidate = candidate.with_evidence(rmpv::Value::Map(vec![(
-                rmpv::Value::from("evidence_refs"), public_evidence_value(&input.evidence_refs)?,
+                rmpv::Value::from("evidence_refs"),
+                public_evidence_value(&input.evidence_refs)?,
             )]));
-            let mut evidence_refs = input.claim_evidence_refs.iter().map(|reference| self.resolve_ref(reference)).collect::<MemoryResult<Vec<_>>>()?;
+            let mut evidence_refs = input
+                .claim_evidence_refs
+                .iter()
+                .map(|reference| self.resolve_ref(reference))
+                .collect::<MemoryResult<Vec<_>>>()?;
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
             for reference in &input.evidence_refs {
-                evidence_refs.push(crate::entity_doc::promotion_evidence_source_in_txn(self.vault, &txn, reference)?);
+                evidence_refs.push(crate::entity_doc::promotion_evidence_source_in_txn(
+                    self.vault, &txn, reference,
+                )?);
             }
-            evidence_refs.sort(); evidence_refs.dedup();
-            let admitted = evidence_refs.iter().map(|id| {
-                evidence_ref_refusal_in_txn(self.vault, &txn, id).map(|reason| reason.is_none().then_some(*id))
-            }).collect::<crate::Result<Vec<_>>>()?.into_iter().flatten().collect::<Vec<_>>();
+            evidence_refs.sort();
+            evidence_refs.dedup();
+            let admitted = evidence_refs
+                .iter()
+                .map(|id| {
+                    evidence_ref_refusal_in_txn(self.vault, &txn, id)
+                        .map(|reason| reason.is_none().then_some(*id))
+                })
+                .collect::<crate::Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
             drop(txn);
             let evidence_meet = evidence_chain_source(self.vault, &[], &admitted)?;
             candidates.push(PromotionCandidate {
-                claim_id: id, candidate, evidence_turn_refs: evidence_refs,
-                provenance_chain: Vec::new(), supersedes, evidence_meet,
-                occurred: TimeRange { start: now, end: now }, learned_at: now, decisions: Vec::new(),
+                claim_id: id,
+                candidate,
+                evidence_turn_refs: evidence_refs,
+                provenance_chain: Vec::new(),
+                supersedes,
+                evidence_meet,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                decisions: Vec::new(),
             });
         }
         // Revalidate the caller's authority immediately before reaching the
         // engine writer. Each candidate still runs its ordinary claim Gate.
         self.consolidation_owner(owner)?;
         let run = DreamerRunContext {
-            run_id, attempt_id: attempt, agent_actor: self.vault.dreamer_actor_for_attempt(attempt)?,
+            run_id,
+            attempt_id: attempt,
+            agent_actor: self.vault.dreamer_actor_for_attempt(attempt)?,
             now_ms: now.saturating_mul(1_000),
         };
-        let outcome = promote_consolidated_claims_with_checker(self.vault, &run, candidates, checker)?;
-        let source_refs = outcome.landed.iter().chain(&outcome.pended).chain(&outcome.held)
-            .map(EntityId::to_hex).collect();
-        let output_evidence = self.consolidation_evidence_as_owner(owner, &ConsolidationEvidenceRequest { source_refs })?.value;
+        let outcome =
+            promote_consolidated_claims_with_checker(self.vault, &run, candidates, checker)?;
+        let source_refs = outcome
+            .landed
+            .iter()
+            .chain(&outcome.pended)
+            .chain(&outcome.held)
+            .map(EntityId::to_hex)
+            .collect();
+        let output_evidence = self
+            .consolidation_evidence_as_owner(owner, &ConsolidationEvidenceRequest { source_refs })?
+            .value;
         Ok(ConsolidationPromotion {
-            job_ref: input.job_ref.clone(), landed: outcome.landed.iter().map(EntityId::to_hex).collect(),
-            pended: outcome.pended.iter().map(EntityId::to_hex).collect(), held: outcome.held.iter().map(EntityId::to_hex).collect(),
-            rejected: outcome.rejected.into_iter().map(|(id, reason)| ConsolidationRejection { claim_ref: id.to_hex(), reason }).collect(),
-            input_evidence, output_evidence,
+            job_ref: input.job_ref.clone(),
+            landed: outcome.landed.iter().map(EntityId::to_hex).collect(),
+            pended: outcome.pended.iter().map(EntityId::to_hex).collect(),
+            held: outcome.held.iter().map(EntityId::to_hex).collect(),
+            rejected: outcome
+                .rejected
+                .into_iter()
+                .map(|(id, reason)| ConsolidationRejection {
+                    claim_ref: id.to_hex(),
+                    reason,
+                })
+                .collect(),
+            input_evidence,
+            output_evidence,
         })
     }
-
-
 }
 
 fn candidate_evidence(value: &rmpv::Value) -> Option<&rmpv::Value> {
     let fields = value.as_map()?;
-    fields.iter().find(|(key, _)| key.as_str() == Some("candidate_evidence"))
-        .map(|(_, value)| value).or(Some(value))
+    fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("candidate_evidence"))
+        .map(|(_, value)| value)
+        .or(Some(value))
 }

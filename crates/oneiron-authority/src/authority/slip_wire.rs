@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 pub fn slip_mint_value(action: &SlipMintAction) -> Value {
     let claims = &action.claims;
-    Value::Map(vec![
+    let mut entries = vec![
         (Value::from(OP_KEY_KIND), Value::from(OP_KIND_SLIP_MINT)),
         (Value::from(SLIP_KEY_SLIP_ID), binary_value(claims.slip_id)),
         (
@@ -71,11 +71,81 @@ pub fn slip_mint_value(action: &SlipMintAction) -> Value {
                 .as_deref()
                 .map_or(Value::Nil, Value::from),
         ),
+    ];
+    // OF-606: only a support slip carries the key, so every other mint's
+    // bytes stay as they were.
+    if let Some(delegation) = &claims.delegation {
+        entries.push((
+            Value::from(SLIP_KEY_DELEGATION),
+            delegation_value(delegation),
+        ));
+    }
+    Value::Map(entries)
+}
+
+fn delegation_value(delegation: &SupportDelegation) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(DELEGATION_KEY_PURPOSE),
+            Value::from(delegation.purpose.as_str()),
+        ),
+        (
+            Value::from(DELEGATION_KEY_TICKET_REF),
+            delegation
+                .ticket_ref
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
+        (
+            Value::from(DELEGATION_KEY_OWNER_REF),
+            Value::from(delegation.owner_ref.as_str()),
+        ),
+        (
+            Value::from(DELEGATION_KEY_APPROVED_AT),
+            Value::from(delegation.approved_at),
+        ),
+        (
+            Value::from(DELEGATION_KEY_WALL_EXPIRES_AT),
+            Value::from(delegation.wall_expires_at),
+        ),
     ])
 }
 
+fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
+    let entries = map_entries(value)?;
+    validate_keys(entries, &SLIP_DELEGATION_KEYS)?;
+    let delegation = SupportDelegation {
+        purpose: decode_string(required(entries, DELEGATION_KEY_PURPOSE)?)?,
+        ticket_ref: decode_optional_string(required(entries, DELEGATION_KEY_TICKET_REF)?)?,
+        owner_ref: decode_string(required(entries, DELEGATION_KEY_OWNER_REF)?)?,
+        approved_at: required(entries, DELEGATION_KEY_APPROVED_AT)?
+            .as_u64()
+            .ok_or_else(invalid_authority)?,
+        wall_expires_at: required(entries, DELEGATION_KEY_WALL_EXPIRES_AT)?
+            .as_u64()
+            .ok_or_else(invalid_authority)?,
+    };
+    delegation.validate()?;
+    Ok(delegation)
+}
+
 pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
-    validate_keys(entries, &SLIP_MINT_KEYS)?;
+    // The support delegation (OF-606) is the one optional key: at most once,
+    // and every other key exactly as before.
+    let delegations: Vec<&Value> = entries
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(SLIP_KEY_DELEGATION))
+        .map(|(_, value)| value)
+        .collect();
+    if delegations.len() > 1 {
+        return Err(invalid_authority());
+    }
+    let base: Vec<(Value, Value)> = entries
+        .iter()
+        .filter(|(key, _)| key.as_str() != Some(SLIP_KEY_DELEGATION))
+        .cloned()
+        .collect();
+    validate_keys(&base, &SLIP_MINT_KEYS)?;
     let claims = SlipClaims {
         slip_id: {
             let value = required(entries, SLIP_KEY_SLIP_ID)?;
@@ -141,6 +211,10 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
             let value = required(entries, SLIP_KEY_INVITATION_REF)?;
             decode_optional_string(value)?
         },
+        delegation: delegations
+            .first()
+            .map(|value| decode_delegation(value))
+            .transpose()?,
     };
     claims.validate()?;
     Ok(AuthorityOp::SlipMint(SlipMintAction { claims }))

@@ -834,6 +834,8 @@ class Oneiron:
         @property
         def budget(self) -> "Oneiron._SelfBudgetVerbs": ...
         @property
+        def credential(self) -> "Oneiron._SelfCredentialVerbs": ...
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
         def use(self, spec: Facade.SecretUseRequest) -> Facade.SecretUseAnswer:
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
@@ -903,6 +905,9 @@ class Oneiron:
             """The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."""
         def land(self, spec: Facade.BudgetLandRequest) -> Facade.PartialResultHold:
             """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
+    class _SelfCredentialVerbs:
+        def attenuate(self, spec: Facade.CredentialAttenuationRequest) -> Facade.CredentialAttenuated:
+            """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
@@ -982,6 +987,8 @@ class Oneiron:
         def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs": ...
         @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
+        @property
+        def support_grants(self) -> "Oneiron._VaultSupportGrantsVerbs": ...
         @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs": ...
         @property
@@ -1074,6 +1081,8 @@ class Oneiron:
         def structural(self) -> "Oneiron._VaultStructuralVerbs": ...
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
+        @property
+        def productivity(self) -> "Oneiron._VaultProductivityVerbs": ...
         @property
         def esign(self) -> "Oneiron._VaultEsignVerbs": ...
         def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
@@ -1457,6 +1466,13 @@ class Oneiron:
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
         def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
+    class _VaultSupportGrantsVerbs:
+        def mint(self, spec: Facade.SupportGrantMintRequest) -> Facade.SupportGrantMintAnswer:
+            """The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."""
+        def list(self, spec: Facade.SupportGrantListRequest) -> Facade.SupportGrantList:
+            """The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command."""
+        def revoke(self, spec: Facade.SupportGrantRevokeRequest) -> Facade.SupportGrantRevokeAnswer:
+            """The owner revokes one support grant; what support already read is not recalled."""
     class _VaultResidenceVerbs:
         def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeAnswer:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."""
@@ -1750,6 +1766,8 @@ class Oneiron:
             """Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."""
         def oplog(self, spec: Facade.CodeRepoRequest) -> Facade.CodeMutationLog:
             """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
+        def model_heal_count(self, spec: Facade.CodeRunModelHealCountRequest) -> Facade.CodeRunModelHealCountView:
+            """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
         def export(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
             """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
@@ -2042,6 +2060,11 @@ class Oneiron:
     class _VaultHabitsVerbs:
         def checkin(self, input: Facade.HabitCheckinInput) -> Facade.EntityRefReceipt:
             """Appends one immutable check-in under a Habit TASK."""
+    class _VaultProductivityVerbs:
+        def create(self, spec: Facade.ProductivityCreateRequest) -> Facade.EntityRefReceipt:
+            """Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."""
+        def tree(self, spec: Facade.ProductivityTreeRequest) -> Facade.ScopedReadResult[Facade.ProductivityTree | None]:
+            """The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."""
     class _VaultEsignVerbs:
         def create(self, spec: Facade.EsignCreateRequest) -> Facade.EsignDraftView:
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
@@ -2127,6 +2150,14 @@ class Oneiron:
             """Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."""
         def history(self, input: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteHistoryView | None]:
             """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
+        def fork(self, input: Facade.NoteForkRequest) -> Facade.NoteForkView:
+            """Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head."""
+        @property
+        def forks(self) -> "Oneiron._VaultNotesForksVerbs": ...
+        @property
+        def proposals(self) -> "Oneiron._VaultNotesProposalsVerbs": ...
+        def version_tree(self, input: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteVersionTree | None]:
+            """Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts."""
         def history_purge(self, spec: Facade.NoteHistoryPurgeRequest) -> Facade.NoteHistoryPurgeOutcome:
             """The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."""
         def history_purge_execute(self, spec: Facade.NoteHistoryPurgeExecuteRequest) -> Facade.NoteHistoryPurgeReceipt:
@@ -2141,6 +2172,20 @@ class Oneiron:
         def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
         def set_overrides(self, request: Facade.SetNoteOverridesRequest) -> Facade.NoteDefaultsView: ...
         def defaults(self, request: Facade.NoteRefRequest) -> Facade.NoteDefaultsView: ...
+    class _VaultNotesForksVerbs:
+        def read(self, input: Facade.NoteForkReadRequest) -> Facade.ScopedReadResult[Facade.NoteForkView | None]:
+            """Reads a NOTE fork and its retained pending text through the same scoped, reason-logged read as the live NOTE."""
+    class _VaultNotesProposalsVerbs:
+        def open(self, input: Facade.NoteProposalOpenRequest) -> Facade.NoteProposalView:
+            """Opens one explicit set of NOTE forks with its shared explainer; the engine routes each member under the caller's own existing grants."""
+        def read(self, input: Facade.NoteProposalRequest) -> Facade.NoteProposalView:
+            """Reads an entire NOTE proposal set, its pending fork text, explainer and head-move receipts only when every member is readable."""
+        def merge(self, input: Facade.NoteProposalRequest) -> Facade.NoteProposalView:
+            """Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts."""
+        def switch(self, input: Facade.NoteProposalRequest) -> Facade.NoteProposalView:
+            """Accepts the complete NOTE proposal set by explicit switch under the caller's existing NOTE grants, recording every head move."""
+        def reject(self, input: Facade.NoteProposalRequest) -> Facade.NoteProposalView:
+            """Rejects the complete NOTE proposal set under the caller's existing NOTE grants, dropping pending text without changing live heads."""
     class _VaultNotesEditorVerbs:
         def bind(self, spec: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteEditorBinding | None]:
             """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""

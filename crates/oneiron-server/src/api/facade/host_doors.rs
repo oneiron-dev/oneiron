@@ -52,6 +52,7 @@ use crate::server::SyncServer;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::calendar_doors::*;
+pub(crate) use super::credential_doors::*;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
@@ -76,6 +77,8 @@ pub(crate) use super::courtesy_delete_doors::*;
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
+// The owner's support grant doors (OF-606), as the guest ones are.
+pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
@@ -138,6 +141,8 @@ pub(crate) use super::claim_settle_doors::*;
 pub(crate) use super::consolidation_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
+// The owner's per-model code-run heal count door (DOOR-093), likewise.
+pub(crate) use super::code_run_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -1171,6 +1176,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.federation.connect.rejoin"
         | "vault.guests.revoke"
         | "vault.guests.mint_slip"
+        | "vault.support_grants.mint"
+        | "vault.support_grants.list"
+        | "vault.support_grants.revoke"
         | "vault.projects.confirm"
         | "vault.weave.owner.link.wrong"
         | "vault.weave.owner.item.wrong"
@@ -1190,6 +1198,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.symbols.release"
         | "vault.code.proposal_submit"
         | "vault.code.oplog"
+        | "vault.code.model_heal_count"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
@@ -1262,6 +1271,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
+        "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" => artifact_asker(server, auth).map(drop),
         "self.memory.diary.query" => diary_reader(server, auth).map(drop),

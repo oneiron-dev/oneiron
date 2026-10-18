@@ -350,6 +350,9 @@ class Oneiron:
         def budget(self) -> "Oneiron._SelfBudgetVerbs":
             return Oneiron._SelfBudgetVerbs(self._client)
         @property
+        def credential(self) -> "Oneiron._SelfCredentialVerbs":
+            return Oneiron._SelfCredentialVerbs(self._client)
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs":
             return Oneiron._SelfOffRecordVerbs(self._client)
         def use(self, spec):
@@ -469,6 +472,12 @@ class Oneiron:
         def land(self, spec):
             """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
             return json.loads(_translate(lambda: self._client.self_budget_land(json.dumps(spec))))
+    class _SelfCredentialVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def attenuate(self, spec):
+            """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
+            return json.loads(_translate(lambda: self._client.self_credential_attenuate(json.dumps(spec))))
     class _SelfOffRecordVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -624,6 +633,9 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs":
             return Oneiron._VaultGuestsVerbs(self._client)
         @property
+        def support_grants(self) -> "Oneiron._VaultSupportGrantsVerbs":
+            return Oneiron._VaultSupportGrantsVerbs(self._client)
+        @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs":
             return Oneiron._VaultResidenceVerbs(self._client)
         @property
@@ -764,6 +776,9 @@ class Oneiron:
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs":
             return Oneiron._VaultHabitsVerbs(self._client)
+        @property
+        def productivity(self) -> "Oneiron._VaultProductivityVerbs":
+            return Oneiron._VaultProductivityVerbs(self._client)
         @property
         def esign(self) -> "Oneiron._VaultEsignVerbs":
             return Oneiron._VaultEsignVerbs(self._client)
@@ -1426,6 +1441,18 @@ class Oneiron:
         def mint_slip(self, spec):
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
             return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
+    class _VaultSupportGrantsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mint(self, spec):
+            """The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_mint(json.dumps(spec))))
+        def list(self, spec):
+            """The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_list(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes one support grant; what support already read is not recalled."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_revoke(json.dumps(spec))))
     class _VaultResidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2012,6 +2039,9 @@ class Oneiron:
         def oplog(self, spec):
             """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
             return json.loads(_translate(lambda: self._client.vault_code_oplog(json.dumps(spec))))
+        def model_heal_count(self, spec):
+            """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
+            return json.loads(_translate(lambda: self._client.vault_code_model_heal_count(json.dumps(spec))))
         def repo_diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."""
             return json.loads(_translate(lambda: self._client.vault_code_repo_diff(json.dumps(request, allow_nan=False))))
@@ -2522,6 +2552,15 @@ class Oneiron:
         def checkin(self, input: dict[str, Any]) -> Any:
             """Appends one immutable check-in under a Habit TASK."""
             return json.loads(_translate(lambda: self._client.vault_habits_checkin(json.dumps(input, allow_nan=False))))
+    class _VaultProductivityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."""
+            return json.loads(_translate(lambda: self._client.vault_productivity_create(json.dumps(spec))))
+        def tree(self, spec):
+            """The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."""
+            return json.loads(_translate(lambda: self._client.vault_productivity_tree(json.dumps(spec))))
     class _VaultEsignVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2666,6 +2705,18 @@ class Oneiron:
         def history(self, input: dict[str, Any]) -> Any:
             """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
             return json.loads(_translate(lambda: self._client.vault_notes_history(json.dumps(input, allow_nan=False))))
+        def fork(self, input: dict[str, Any]) -> Any:
+            """Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head."""
+            return json.loads(_translate(lambda: self._client.vault_notes_fork(json.dumps(input, allow_nan=False))))
+        @property
+        def forks(self) -> "Oneiron._VaultNotesForksVerbs":
+            return Oneiron._VaultNotesForksVerbs(self._client)
+        @property
+        def proposals(self) -> "Oneiron._VaultNotesProposalsVerbs":
+            return Oneiron._VaultNotesProposalsVerbs(self._client)
+        def version_tree(self, input: dict[str, Any]) -> Any:
+            """Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts."""
+            return json.loads(_translate(lambda: self._client.vault_notes_version_tree(json.dumps(input, allow_nan=False))))
         def history_purge(self, spec):
             """The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."""
             return json.loads(_translate(lambda: self._client.vault_notes_history_purge(json.dumps(spec))))
@@ -2693,6 +2744,30 @@ class Oneiron:
         def defaults(self, request: dict[str, Any]) -> dict[str, Any]:
             """One NOTE's overrides and the defaults its gates read after them."""
             return json.loads(_translate(lambda: self._client.vault_notes_defaults(json.dumps(request, allow_nan=False))))
+    class _VaultNotesForksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, input: dict[str, Any]) -> Any:
+            """Reads a NOTE fork and its retained pending text through the same scoped, reason-logged read as the live NOTE."""
+            return json.loads(_translate(lambda: self._client.vault_notes_forks_read(json.dumps(input, allow_nan=False))))
+    class _VaultNotesProposalsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, input: dict[str, Any]) -> Any:
+            """Opens one explicit set of NOTE forks with its shared explainer; the engine routes each member under the caller's own existing grants."""
+            return json.loads(_translate(lambda: self._client.vault_notes_proposals_open(json.dumps(input, allow_nan=False))))
+        def read(self, input: dict[str, Any]) -> Any:
+            """Reads an entire NOTE proposal set, its pending fork text, explainer and head-move receipts only when every member is readable."""
+            return json.loads(_translate(lambda: self._client.vault_notes_proposals_read(json.dumps(input, allow_nan=False))))
+        def merge(self, input: dict[str, Any]) -> Any:
+            """Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts."""
+            return json.loads(_translate(lambda: self._client.vault_notes_proposals_merge(json.dumps(input, allow_nan=False))))
+        def switch(self, input: dict[str, Any]) -> Any:
+            """Accepts the complete NOTE proposal set by explicit switch under the caller's existing NOTE grants, recording every head move."""
+            return json.loads(_translate(lambda: self._client.vault_notes_proposals_switch(json.dumps(input, allow_nan=False))))
+        def reject(self, input: dict[str, Any]) -> Any:
+            """Rejects the complete NOTE proposal set under the caller's existing NOTE grants, dropping pending text without changing live heads."""
+            return json.loads(_translate(lambda: self._client.vault_notes_proposals_reject(json.dumps(input, allow_nan=False))))
     class _VaultNotesEditorVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

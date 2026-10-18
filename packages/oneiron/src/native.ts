@@ -76,6 +76,7 @@ vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
 vaultExport(input: unknown): unknown
+selfCredentialAttenuate(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
@@ -183,6 +184,9 @@ vaultTrustedContactsConcernAsks(input: unknown): unknown
 vaultTrustedContactsConcernAuthorize(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
+vaultSupportGrantsMint(input: unknown): unknown
+vaultSupportGrantsList(input: unknown): unknown
+vaultSupportGrantsRevoke(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown
@@ -296,6 +300,7 @@ vaultCodeSymbolsRenew(input: unknown): unknown
 vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
+vaultCodeModelHealCount(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
@@ -448,6 +453,8 @@ vaultSearchBm25(input: unknown): unknown
 vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
+vaultProductivityCreate(input: unknown): unknown
+vaultProductivityTree(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
 vaultEsignCreate(input: unknown): unknown
@@ -513,6 +520,14 @@ vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
+vaultNotesFork(input: unknown): unknown
+vaultNotesForksRead(input: unknown): unknown
+vaultNotesProposalsOpen(input: unknown): unknown
+vaultNotesProposalsRead(input: unknown): unknown
+vaultNotesProposalsMerge(input: unknown): unknown
+vaultNotesProposalsSwitch(input: unknown): unknown
+vaultNotesProposalsReject(input: unknown): unknown
+vaultNotesVersionTree(input: unknown): unknown
 vaultNotesHistoryPurge(input: unknown): unknown
 vaultNotesHistoryPurgeExecute(input: unknown): unknown
 vaultNotesHistoryPurgeReceipts(input: unknown): unknown

@@ -50,6 +50,7 @@ pub enum AgentVerb {
     VaultClaimsUpsert,
     VaultRecall,
     VaultExport,
+    SelfCredentialAttenuate,
     VaultScopeCeiling,
     VaultExportScoped,
     VaultReceipts,
@@ -157,6 +158,9 @@ pub enum AgentVerb {
     VaultTrustedContactsConcernAuthorize,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
+    VaultSupportGrantsMint,
+    VaultSupportGrantsList,
+    VaultSupportGrantsRevoke,
     VaultResidenceMode,
     VaultResidenceOpen,
     VaultResidenceIndex,
@@ -270,6 +274,7 @@ pub enum AgentVerb {
     VaultCodeSymbolsRelease,
     VaultCodeProposalSubmit,
     VaultCodeOplog,
+    VaultCodeModelHealCount,
     VaultCodeRepoDiff,
     VaultCodeExport,
     VaultCodeOriginAuthorityGet,
@@ -462,6 +467,8 @@ pub enum AgentVerb {
     VaultNeighbors,
     VaultStructuralPut,
     VaultHabitsCheckin,
+    VaultProductivityCreate,
+    VaultProductivityTree,
     VaultClaimsAdmit,
     VaultArtifactsCreate,
     VaultEsignCreate,
@@ -527,6 +534,14 @@ pub enum AgentVerb {
     VaultNotesFromEntity,
     VaultNotesRead,
     VaultNotesHistory,
+    VaultNotesFork,
+    VaultNotesForksRead,
+    VaultNotesProposalsOpen,
+    VaultNotesProposalsRead,
+    VaultNotesProposalsMerge,
+    VaultNotesProposalsSwitch,
+    VaultNotesProposalsReject,
+    VaultNotesVersionTree,
     VaultNotesHistoryPurge,
     VaultNotesHistoryPurgeExecute,
     VaultNotesHistoryPurgeReceipts,
@@ -602,6 +617,7 @@ impl AgentVerb {
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
         Self::VaultExport,
+        Self::SelfCredentialAttenuate,
         Self::VaultScopeCeiling,
         Self::VaultExportScoped,
         Self::VaultReceipts,
@@ -709,6 +725,9 @@ impl AgentVerb {
         Self::VaultTrustedContactsConcernAuthorize,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
+        Self::VaultSupportGrantsMint,
+        Self::VaultSupportGrantsList,
+        Self::VaultSupportGrantsRevoke,
         Self::VaultResidenceMode,
         Self::VaultResidenceOpen,
         Self::VaultResidenceIndex,
@@ -822,6 +841,7 @@ impl AgentVerb {
         Self::VaultCodeSymbolsRelease,
         Self::VaultCodeProposalSubmit,
         Self::VaultCodeOplog,
+        Self::VaultCodeModelHealCount,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
         Self::VaultCodeOriginAuthorityGet,
@@ -1014,6 +1034,8 @@ impl AgentVerb {
         Self::VaultNeighbors,
         Self::VaultStructuralPut,
         Self::VaultHabitsCheckin,
+        Self::VaultProductivityCreate,
+        Self::VaultProductivityTree,
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
         Self::VaultEsignCreate,
@@ -1079,6 +1101,14 @@ impl AgentVerb {
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
         Self::VaultNotesHistory,
+        Self::VaultNotesFork,
+        Self::VaultNotesForksRead,
+        Self::VaultNotesProposalsOpen,
+        Self::VaultNotesProposalsRead,
+        Self::VaultNotesProposalsMerge,
+        Self::VaultNotesProposalsSwitch,
+        Self::VaultNotesProposalsReject,
+        Self::VaultNotesVersionTree,
         Self::VaultNotesHistoryPurge,
         Self::VaultNotesHistoryPurgeExecute,
         Self::VaultNotesHistoryPurgeReceipts,
@@ -1157,6 +1187,7 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
             Self::VaultExport => "vault.export",
+            Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::VaultScopeCeiling => "vault.scope.ceiling",
             Self::VaultExportScoped => "vault.export.scoped",
             Self::VaultReceipts => "vault.receipts",
@@ -1266,6 +1297,9 @@ impl AgentVerb {
             }
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
+            Self::VaultSupportGrantsMint => "vault.support_grants.mint",
+            Self::VaultSupportGrantsList => "vault.support_grants.list",
+            Self::VaultSupportGrantsRevoke => "vault.support_grants.revoke",
             Self::VaultResidenceMode => "vault.residence.mode",
             Self::VaultResidenceOpen => "vault.residence.open",
             Self::VaultResidenceIndex => "vault.residence.index",
@@ -1383,6 +1417,7 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRelease => "vault.code.symbols.release",
             Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
             Self::VaultCodeOplog => "vault.code.oplog",
+            Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
@@ -1575,6 +1610,8 @@ impl AgentVerb {
             Self::VaultNeighbors => "vault.neighbors",
             Self::VaultStructuralPut => "vault.structural.put",
             Self::VaultHabitsCheckin => "vault.habits.checkin",
+            Self::VaultProductivityCreate => "vault.productivity.create",
+            Self::VaultProductivityTree => "vault.productivity.tree",
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
             Self::VaultEsignCreate => "vault.esign.create",
@@ -1644,6 +1681,14 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
             Self::VaultNotesHistory => "vault.notes.history",
+            Self::VaultNotesFork => "vault.notes.fork",
+            Self::VaultNotesForksRead => "vault.notes.forks.read",
+            Self::VaultNotesProposalsOpen => "vault.notes.proposals.open",
+            Self::VaultNotesProposalsRead => "vault.notes.proposals.read",
+            Self::VaultNotesProposalsMerge => "vault.notes.proposals.merge",
+            Self::VaultNotesProposalsSwitch => "vault.notes.proposals.switch",
+            Self::VaultNotesProposalsReject => "vault.notes.proposals.reject",
+            Self::VaultNotesVersionTree => "vault.notes.version_tree",
             Self::VaultNotesHistoryPurge => "vault.notes.history_purge",
             Self::VaultNotesHistoryPurgeExecute => "vault.notes.history_purge_execute",
             Self::VaultNotesHistoryPurgeReceipts => "vault.notes.history_purge_receipts",
@@ -1718,6 +1763,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
+                | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -1825,6 +1871,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultSupportGrantsMint
+                | Self::VaultSupportGrantsList
+                | Self::VaultSupportGrantsRevoke
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -1938,6 +1987,7 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
+                | Self::VaultCodeModelHealCount
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -2090,6 +2140,8 @@ impl AgentVerb {
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
+                | Self::VaultProductivityTree
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -2155,6 +2207,14 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
+                | Self::VaultNotesFork
+                | Self::VaultNotesForksRead
+                | Self::VaultNotesProposalsOpen
+                | Self::VaultNotesProposalsRead
+                | Self::VaultNotesProposalsMerge
+                | Self::VaultNotesProposalsSwitch
+                | Self::VaultNotesProposalsReject
+                | Self::VaultNotesVersionTree
                 | Self::VaultNotesHistoryPurge
                 | Self::VaultNotesHistoryPurgeExecute
                 | Self::VaultNotesHistoryPurgeReceipts
@@ -2277,6 +2337,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
+                | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -2384,6 +2445,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultSupportGrantsMint
+                | Self::VaultSupportGrantsList
+                | Self::VaultSupportGrantsRevoke
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -2497,6 +2561,7 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
+                | Self::VaultCodeModelHealCount
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -2649,6 +2714,8 @@ impl AgentVerb {
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
+                | Self::VaultProductivityTree
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -2714,6 +2781,14 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
+                | Self::VaultNotesFork
+                | Self::VaultNotesForksRead
+                | Self::VaultNotesProposalsOpen
+                | Self::VaultNotesProposalsRead
+                | Self::VaultNotesProposalsMerge
+                | Self::VaultNotesProposalsSwitch
+                | Self::VaultNotesProposalsReject
+                | Self::VaultNotesVersionTree
                 | Self::VaultNotesHistoryPurge
                 | Self::VaultNotesHistoryPurgeExecute
                 | Self::VaultNotesHistoryPurgeReceipts
@@ -2821,6 +2896,7 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultCommit
@@ -2837,9 +2913,13 @@ impl AgentVerb {
                 | Self::VaultSearchHybrid
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultProductivityTree
                 | Self::VaultClaimsSeed
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
+                | Self::VaultNotesForksRead
+                | Self::VaultNotesProposalsRead
+                | Self::VaultNotesVersionTree
                 | Self::VaultNotesEditorBind
                 | Self::VaultNotesEditorClose
         )
@@ -2988,6 +3068,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultSupportGrantsMint
+                | Self::VaultSupportGrantsList
+                | Self::VaultSupportGrantsRevoke
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -3101,6 +3184,7 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
+                | Self::VaultCodeModelHealCount
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -3279,6 +3363,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -3341,6 +3426,11 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesFork
+                | Self::VaultNotesProposalsOpen
+                | Self::VaultNotesProposalsMerge
+                | Self::VaultNotesProposalsSwitch
+                | Self::VaultNotesProposalsReject
                 | Self::VaultNotesHistoryPurge
                 | Self::VaultNotesHistoryPurgeExecute
                 | Self::VaultNotesHistoryPurgeReceipts
@@ -3464,6 +3554,8 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultSupportGrantsMint
+                | Self::VaultSupportGrantsRevoke
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidencePrune
@@ -3647,6 +3739,7 @@ impl AgentVerb {
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -3688,6 +3781,11 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesFork
+                | Self::VaultNotesProposalsOpen
+                | Self::VaultNotesProposalsMerge
+                | Self::VaultNotesProposalsSwitch
+                | Self::VaultNotesProposalsReject
                 | Self::VaultNotesHistoryPurge
                 | Self::VaultNotesHistoryPurgeExecute
                 | Self::VaultNotesEdit
@@ -3762,7 +3860,15 @@ impl AgentVerb {
                 "handle",
                 "after",
             ],
-            Self::TasksCreate => &["spec", "label", "assignee", "intent_key", "brief", "ttl"],
+            Self::TasksCreate => &[
+                "spec",
+                "label",
+                "assignee",
+                "intent_key",
+                "brief",
+                "ttl",
+                "parent_ref",
+            ],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
@@ -3783,6 +3889,7 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -3890,6 +3997,9 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultSupportGrantsMint => &["spec"],
+            Self::VaultSupportGrantsList => &["spec"],
+            Self::VaultSupportGrantsRevoke => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -4003,6 +4113,7 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRelease => &["spec"],
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -4195,6 +4306,8 @@ impl AgentVerb {
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
+            Self::VaultProductivityCreate => &["spec"],
+            Self::VaultProductivityTree => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -4260,6 +4373,14 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesFork => &["spec"],
+            Self::VaultNotesForksRead => &["spec"],
+            Self::VaultNotesProposalsOpen => &["spec"],
+            Self::VaultNotesProposalsRead => &["spec"],
+            Self::VaultNotesProposalsMerge => &["spec"],
+            Self::VaultNotesProposalsSwitch => &["spec"],
+            Self::VaultNotesProposalsReject => &["spec"],
+            Self::VaultNotesVersionTree => &["spec"],
             Self::VaultNotesHistoryPurge => &["spec"],
             Self::VaultNotesHistoryPurgeExecute => &["spec"],
             Self::VaultNotesHistoryPurgeReceipts => &["spec"],
@@ -4336,6 +4457,7 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -4443,6 +4565,9 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultSupportGrantsMint => &["spec"],
+            Self::VaultSupportGrantsList => &["spec"],
+            Self::VaultSupportGrantsRevoke => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -4556,6 +4681,7 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRelease => &["spec"],
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -4748,6 +4874,8 @@ impl AgentVerb {
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
+            Self::VaultProductivityCreate => &["spec"],
+            Self::VaultProductivityTree => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -4813,6 +4941,14 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesFork => &["spec"],
+            Self::VaultNotesForksRead => &["spec"],
+            Self::VaultNotesProposalsOpen => &["spec"],
+            Self::VaultNotesProposalsRead => &["spec"],
+            Self::VaultNotesProposalsMerge => &["spec"],
+            Self::VaultNotesProposalsSwitch => &["spec"],
+            Self::VaultNotesProposalsReject => &["spec"],
+            Self::VaultNotesVersionTree => &["spec"],
             Self::VaultNotesHistoryPurge => &["spec"],
             Self::VaultNotesHistoryPurgeExecute => &["spec"],
             Self::VaultNotesHistoryPurgeReceipts => &["spec"],
@@ -4975,6 +5111,9 @@ impl AgentVerb {
             }
             Self::VaultExport => {
                 "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
+            }
+            Self::SelfCredentialAttenuate => {
+                "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
             }
             Self::VaultScopeCeiling => {
                 "Reads the caller credential ceiling as a typed ceiling, never as a record position."
@@ -5284,6 +5423,15 @@ impl AgentVerb {
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+            }
+            Self::VaultSupportGrantsMint => {
+                "The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."
+            }
+            Self::VaultSupportGrantsList => {
+                "The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command."
+            }
+            Self::VaultSupportGrantsRevoke => {
+                "The owner revokes one support grant; what support already read is not recalled."
             }
             Self::VaultResidenceMode => {
                 "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."
@@ -5609,6 +5757,9 @@ impl AgentVerb {
             }
             Self::VaultCodeOplog => {
                 "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
+            }
+            Self::VaultCodeModelHealCount => {
+                "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
             }
             Self::VaultCodeRepoDiff => {
                 "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it."
@@ -6124,6 +6275,12 @@ impl AgentVerb {
                 "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit."
             }
             Self::VaultHabitsCheckin => "Appends one immutable check-in under a Habit TASK.",
+            Self::VaultProductivityCreate => {
+                "Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."
+            }
+            Self::VaultProductivityTree => {
+                "The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."
+            }
             Self::VaultClaimsAdmit => {
                 "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."
             }
@@ -6316,6 +6473,30 @@ impl AgentVerb {
             }
             Self::VaultNotesHistory => {
                 "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."
+            }
+            Self::VaultNotesFork => {
+                "Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head."
+            }
+            Self::VaultNotesForksRead => {
+                "Reads a NOTE fork and its retained pending text through the same scoped, reason-logged read as the live NOTE."
+            }
+            Self::VaultNotesProposalsOpen => {
+                "Opens one explicit set of NOTE forks with its shared explainer; the engine routes each member under the caller's own existing grants."
+            }
+            Self::VaultNotesProposalsRead => {
+                "Reads an entire NOTE proposal set, its pending fork text, explainer and head-move receipts only when every member is readable."
+            }
+            Self::VaultNotesProposalsMerge => {
+                "Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts."
+            }
+            Self::VaultNotesProposalsSwitch => {
+                "Accepts the complete NOTE proposal set by explicit switch under the caller's existing NOTE grants, recording every head move."
+            }
+            Self::VaultNotesProposalsReject => {
+                "Rejects the complete NOTE proposal set under the caller's existing NOTE grants, dropping pending text without changing live heads."
+            }
+            Self::VaultNotesVersionTree => {
+                "Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts."
             }
             Self::VaultNotesHistoryPurge => {
                 "The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."

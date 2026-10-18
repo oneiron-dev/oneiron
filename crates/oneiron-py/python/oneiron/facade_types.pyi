@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 506 facade rows, 1911 declarations.
-Inputs: 456 of 506 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 450 of 506 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 521 facade rows, 1942 declarations.
+Inputs: 471 of 521 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 465 of 521 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -1089,6 +1089,7 @@ class TaskCreateRequest(TypedDict):
     intent_key: NotRequired[str | None]
     brief: NotRequired[QueueTaskBrief | None]
     ttl: NotRequired[TaskTtl | None]
+    parent_ref: NotRequired[str | None]
 class TaskCreateReceipt(TypedDict):
     task_ref: NotRequired[EntityId | None]
     proposal_ref: NotRequired[EntityId | None]
@@ -1615,6 +1616,21 @@ class Scope(TypedDict):
     audience: NotRequired[ScopeAxis[ScopeId]]
     verbs: NotRequired[ScopeAxis[str]]
     sensitivity: NotRequired[SensitivityCeiling]
+class SlipCaveat(TypedDict):
+    scope: NotRequired[Scope | None]
+    expires_at: NotRequired[int | None]
+    ttl_secs: NotRequired[int | None]
+    single_use: bool
+    records: NotRequired[list[str] | None]
+    channels: NotRequired[list[str] | None]
+    pact: NotRequired[tuple[ScopeId, list[int]] | None]
+class CredentialAttenuationRequest(TypedDict):
+    holder_seed: list[int]
+    caveat: SlipCaveat
+    next_binding_key: NotRequired[list[int] | None]
+class CredentialAttenuated(TypedDict):
+    token: str
+    binding_key: list[int]
 class CredentialCeiling(TypedDict):
     kind: Literal["ceiling"]
     scope: Scope
@@ -3454,6 +3470,48 @@ class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
+SupportHolderClass = Literal["human", "agent"]
+class SupportGrantMintRequest(TypedDict):
+    holder: EntityId
+    holder_class: SupportHolderClass
+    holder_key: str
+    scope: Scope
+    records: NotRequired[list[EntityId]]
+    ttl_secs: NotRequired[int | None]
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+SupportGrantStatus = Literal["active", "expired", "revoked", "ended"]
+class SupportGrantView(TypedDict):
+    grant_ref: str
+    holder: EntityId
+    holder_class: str
+    scope: Scope
+    records: NotRequired[list[str]]
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+    approved_by: str
+    approved_at: int
+    wall_expires_at: int
+    status: SupportGrantStatus
+    revoke_command: str
+class SupportGrantMintAnswer(TypedDict):
+    slip: str
+    grant: SupportGrantView
+    decision_ref: str
+class SupportGrantListRequest(TypedDict):
+    include_inactive: NotRequired[bool]
+    limit: NotRequired[int | None]
+class SupportGrantList(TypedDict):
+    grants: list[SupportGrantView]
+class SupportGrantRevokeRequest(TypedDict):
+    grant_ref: str
+class SupportGrantRevokeAnswer(TypedDict):
+    grant_ref: str
+    holder: EntityId
+    changed: bool
+    revoked_at: NotRequired[int | None]
+    decision_ref: NotRequired[str | None]
+    delivered_recallable: bool
 ResidenceModeName = Literal["opened", "all"]
 class ResidenceModeRequest(TypedDict):
     machine: EntityId
@@ -5564,6 +5622,11 @@ class CodeMutationEntry(TypedDict):
 class CodeMutationLog(TypedDict):
     repo: EntityId
     entries: list[CodeMutationEntry]
+class CodeRunModelHealCountRequest(TypedDict):
+    model_id: str
+class CodeRunModelHealCountView(TypedDict):
+    model_id: str
+    healed_turns: int
 class CodeTreeRequest(TypedDict):
     revision_ref: NotRequired[str | None]
     repo: NotRequired[str | None]
@@ -7951,6 +8014,27 @@ class HabitCheckinInput(TypedDict):
     data: NotRequired[Any | None]
     occurred_at: int
     learned_at: NotRequired[int | None]
+ProductivityCreateRole = Literal["goal", "milestone", "habit"]
+class ProductivityCreateRequest(TypedDict):
+    role: ProductivityCreateRole
+    label: str
+    parent_ref: NotRequired[str | None]
+class ProductivityTreeRequest(TypedDict):
+    root_ref: str
+    max_depth: int
+ProductivityRole = Literal["task", "goal", "milestone", "habit", "habit_checkin"]
+class ProductivityNode(TypedDict):
+    task_ref: str
+    id_hex: str
+    parent_ref: NotRequired[str | None]
+    depth: int
+    role: ProductivityRole
+    label: NotRequired[str | None]
+    current_streak: NotRequired[int | None]
+    longest_streak: NotRequired[int | None]
+class ProductivityTree(TypedDict):
+    root_ref: str
+    nodes: list[ProductivityNode]
 class AdmitImportedClaimInput(TypedDict):
     source_id: str
     source_record_id: str
@@ -9459,6 +9543,80 @@ class NoteHistoryView(TypedDict):
     operations: list[NoteAuthorship]
     shallow_since: list[int]
     complete: bool
+class NoteEditReplaceSpan(TypedDict):
+    kind: Literal["replace_span"]
+    start: NoteAnchor
+    end: NoteAnchor
+    text: str
+class NoteEditInsertAfter(TypedDict):
+    kind: Literal["insert_after"]
+    anchor: NoteAnchor
+    text: str
+class NoteEditAppendToSection(TypedDict):
+    kind: Literal["append_to_section"]
+    end: NoteAnchor
+    text: str
+class NoteEditWholeText(TypedDict):
+    kind: Literal["whole_text"]
+    text: str
+    timeout_ms: int
+    base: NotRequired[NoteVersion | None]
+class NoteEditRewrite(TypedDict):
+    kind: Literal["rewrite"]
+    text: str
+NoteEdit = NoteEditReplaceSpan | NoteEditInsertAfter | NoteEditAppendToSection | NoteEditWholeText | NoteEditRewrite
+class NoteForkRequest(TypedDict):
+    note_ref: str
+    base: NoteVersion
+    edit: NoteEdit
+    reason: NotRequired[str | None]
+class NoteForkRecordView(TypedDict):
+    note_ref: str
+    fork_ref: str
+    parent: str
+    frontier: list[int]
+    actor: NotRequired[str | None]
+    rewrite: bool
+    proposal_ref: NotRequired[str | None]
+    decided: bool
+class NoteForkView(TypedDict):
+    record: NoteForkRecordView
+    markdown: NotRequired[str | None]
+class NoteForkReadRequest(TypedDict):
+    note_ref: str
+    fork_ref: str
+    reason: NotRequired[str | None]
+class NoteProposalForkRef(TypedDict):
+    note_ref: str
+    fork_ref: str
+class NoteProposalOpenRequest(TypedDict):
+    forks: list[NoteProposalForkRef]
+    explainer: str
+    reason: NotRequired[str | None]
+NoteVerdict = Literal["Merge", "Switch", "Reject"]
+class NoteLandingView(TypedDict):
+    receipt: str
+    note_ref: str
+    fork_ref: str
+    previous_head: str
+    head: str
+    verdict: NoteVerdict
+    actor: NotRequired[str | None]
+    at: int
+class NoteProposalView(TypedDict):
+    proposal_ref: str
+    waiting: list[NoteForkView]
+    landed: list[NoteLandingView]
+    explainer: str
+class NoteProposalRequest(TypedDict):
+    proposal_ref: str
+    reason: NotRequired[str | None]
+class NoteVersionTree(TypedDict):
+    version: NoteVersion
+    birth_author: str
+    born_at: int
+    forks: list[NoteForkRecordView]
+    receipts: list[NoteLandingView]
 class NoteHistoryPurgeRequest(TypedDict):
     note_ref: str
 class NoteHistoryPurgeReceipt(TypedDict):
@@ -9487,28 +9645,6 @@ class NoteEditorCloseRequest(TypedDict):
     binding: str
 class NoteEditorClosed(TypedDict):
     closed: bool
-class NoteEditReplaceSpan(TypedDict):
-    kind: Literal["replace_span"]
-    start: NoteAnchor
-    end: NoteAnchor
-    text: str
-class NoteEditInsertAfter(TypedDict):
-    kind: Literal["insert_after"]
-    anchor: NoteAnchor
-    text: str
-class NoteEditAppendToSection(TypedDict):
-    kind: Literal["append_to_section"]
-    end: NoteAnchor
-    text: str
-class NoteEditWholeText(TypedDict):
-    kind: Literal["whole_text"]
-    text: str
-    timeout_ms: int
-    base: NotRequired[NoteVersion | None]
-class NoteEditRewrite(TypedDict):
-    kind: Literal["rewrite"]
-    text: str
-NoteEdit = NoteEditReplaceSpan | NoteEditInsertAfter | NoteEditAppendToSection | NoteEditWholeText | NoteEditRewrite
 class EditNoteRequest(TypedDict):
     note_ref: str
     edit: NoteEdit

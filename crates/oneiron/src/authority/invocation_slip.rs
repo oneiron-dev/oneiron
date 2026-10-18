@@ -26,6 +26,36 @@ impl std::fmt::Debug for InvocationSlipBinding {
 }
 
 impl Vault {
+    /// Appends a holder-signed caveat to the exact slip this request was
+    /// admitted on. Rechecks its live authority in this snapshot, then uses
+    /// the same offline attenuation primitive a holder uses locally. A
+    /// recipient key changes possession only, never the actor or grant.
+    pub fn attenuate_invocation_slip(
+        &self,
+        binding: &InvocationSlipBinding,
+        caveat: super::SlipCaveat,
+        holder_seed: &[u8; 32],
+        next_binding_key: Option<[u8; 32]>,
+    ) -> Result<CapabilitySlip> {
+        let txn = self.store.env.read_txn()?;
+        let current = self.invocation_slip_in_txn(&txn, binding)?;
+        let mut slip = binding.slip.clone();
+        slip.attenuate_to(
+            caveat,
+            &ed25519_dalek::SigningKey::from_bytes(holder_seed),
+            next_binding_key.unwrap_or(current.claims().binding_key),
+        )?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let signer = &fold
+            .slips
+            .mints
+            .get(&slip.claims.slip_id)
+            .ok_or_else(invalid_authority)?
+            .signer;
+        slip.verify_authority(signer, &fold, self.instant_in_txn(&txn)?.secs())?;
+        Ok(slip)
+    }
+
     /// Keeps the instrument a request was admitted on, for work it queues.
     /// It must verify now. The request's freshness window and nonce were
     /// judged once, by its admission, and are not judged again.

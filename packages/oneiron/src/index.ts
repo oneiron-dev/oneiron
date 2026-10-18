@@ -292,6 +292,10 @@ export class Oneiron {
       /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
       land: (input: Facade.BudgetLandRequest): Facade.PartialResultHold => this.#call(() => this.#client.selfBudgetLand(input) as Facade.PartialResultHold),
     }),
+    credential: {
+      /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
+      attenuate: (input: Facade.CredentialAttenuationRequest): Facade.CredentialAttenuated => this.#call(() => this.#client.selfCredentialAttenuate(input) as Facade.CredentialAttenuated),
+    },
     off_record: {
       /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
       execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
@@ -729,6 +733,14 @@ export class Oneiron {
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
+    support_grants: {
+      /** The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds. */
+      mint: (input: Facade.SupportGrantMintRequest): Facade.SupportGrantMintAnswer => this.#call(() => this.#client.vaultSupportGrantsMint(input) as Facade.SupportGrantMintAnswer),
+      /** The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command. */
+      list: (input: Facade.SupportGrantListRequest): Facade.SupportGrantList => this.#call(() => this.#client.vaultSupportGrantsList(input) as Facade.SupportGrantList),
+      /** The owner revokes one support grant; what support already read is not recalled. */
+      revoke: (input: Facade.SupportGrantRevokeRequest): Facade.SupportGrantRevokeAnswer => this.#call(() => this.#client.vaultSupportGrantsRevoke(input) as Facade.SupportGrantRevokeAnswer),
+    },
     residence: {
       /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */
       mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeAnswer => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeAnswer),
@@ -1084,6 +1096,8 @@ export class Oneiron {
       proposal_submit: (input: Facade.CodeProposalSubmitRequest): Facade.CodeProposalSubmitted => this.#call(() => this.#client.vaultCodeProposalSubmit(input) as Facade.CodeProposalSubmitted),
       /** Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal. */
       oplog: (input: Facade.CodeRepoRequest): Facade.CodeMutationLog => this.#call(() => this.#client.vaultCodeOplog(input) as Facade.CodeMutationLog),
+      /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
+      model_heal_count: (input: Facade.CodeRunModelHealCountRequest): Facade.CodeRunModelHealCountView => this.#call(() => this.#client.vaultCodeModelHealCount(input) as Facade.CodeRunModelHealCountView),
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
       /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
@@ -1380,6 +1394,12 @@ export class Oneiron {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
     },
+    productivity: {
+      /** Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write. */
+      create: (input: Facade.ProductivityCreateRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultProductivityCreate(input) as Facade.EntityRefReceipt),
+      /** The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters. */
+      tree: (input: Facade.ProductivityTreeRequest): Facade.ScopedReadResult<Facade.ProductivityTree | null> => this.#call(() => this.#client.vaultProductivityTree(input) as Facade.ScopedReadResult<Facade.ProductivityTree | null>),
+    },
     esign: {
       /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
       create: (input: Facade.EsignCreateRequest): Facade.EsignDraftView => this.#call(() => this.#client.vaultEsignCreate(input) as Facade.EsignDraftView),
@@ -1466,6 +1486,26 @@ export class Oneiron {
       read: (input: Facade.NoteReadRequest): Facade.ScopedReadResult<Facade.NoteReadView | null> => this.#call(() => this.#client.vaultNotesRead(input) as Facade.ScopedReadResult<Facade.NoteReadView | null>),
       /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
       history: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteHistoryView | null> => this.#call(() => this.#client.vaultNotesHistory(input) as Facade.ScopedReadResult<Facade.NoteHistoryView | null>),
+      /** Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head. */
+      fork: (input: Facade.NoteForkRequest): Facade.NoteForkView => this.#call(() => this.#client.vaultNotesFork(input) as Facade.NoteForkView),
+      forks: {
+        /** Reads a NOTE fork and its retained pending text through the same scoped, reason-logged read as the live NOTE. */
+        read: (input: Facade.NoteForkReadRequest): Facade.ScopedReadResult<Facade.NoteForkView | null> => this.#call(() => this.#client.vaultNotesForksRead(input) as Facade.ScopedReadResult<Facade.NoteForkView | null>),
+      },
+      proposals: {
+        /** Opens one explicit set of NOTE forks with its shared explainer; the engine routes each member under the caller's own existing grants. */
+        open: (input: Facade.NoteProposalOpenRequest): Facade.NoteProposalView => this.#call(() => this.#client.vaultNotesProposalsOpen(input) as Facade.NoteProposalView),
+        /** Reads an entire NOTE proposal set, its pending fork text, explainer and head-move receipts only when every member is readable. */
+        read: (input: Facade.NoteProposalRequest): Facade.NoteProposalView => this.#call(() => this.#client.vaultNotesProposalsRead(input) as Facade.NoteProposalView),
+        /** Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts. */
+        merge: (input: Facade.NoteProposalRequest): Facade.NoteProposalView => this.#call(() => this.#client.vaultNotesProposalsMerge(input) as Facade.NoteProposalView),
+        /** Accepts the complete NOTE proposal set by explicit switch under the caller's existing NOTE grants, recording every head move. */
+        switch: (input: Facade.NoteProposalRequest): Facade.NoteProposalView => this.#call(() => this.#client.vaultNotesProposalsSwitch(input) as Facade.NoteProposalView),
+        /** Rejects the complete NOTE proposal set under the caller's existing NOTE grants, dropping pending text without changing live heads. */
+        reject: (input: Facade.NoteProposalRequest): Facade.NoteProposalView => this.#call(() => this.#client.vaultNotesProposalsReject(input) as Facade.NoteProposalView),
+      },
+      /** Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts. */
+      version_tree: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteVersionTree | null> => this.#call(() => this.#client.vaultNotesVersionTree(input) as Facade.ScopedReadResult<Facade.NoteVersionTree | null>),
       /** The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action. */
       history_purge: (input: Facade.NoteHistoryPurgeRequest): Facade.NoteHistoryPurgeOutcome => this.#call(() => this.#client.vaultNotesHistoryPurge(input) as Facade.NoteHistoryPurgeOutcome),
       /** Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt. */

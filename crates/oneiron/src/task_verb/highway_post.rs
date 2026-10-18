@@ -54,7 +54,7 @@ use super::rate_limit::{record_task_create, task_actor_ceiling};
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use super::wire_decode::{
-    decode_task_assignee, task_body_field, task_body_optional, task_verb_body_in,
+    decode_entity_ref, decode_task_assignee, task_body_field, task_body_optional, task_verb_body_in,
 };
 use super::wire_encode::canonical_bytes;
 
@@ -143,9 +143,9 @@ fn map_entry<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     task_body_optional(entries, key).ok().flatten()
 }
 
-/// The digest one post's request binds: the actor, the key, the brief and
-/// every routed field. A replay under the same key with any other request is
-/// refused, as an ask's is.
+/// The digest one post's request binds: the actor, the key, the brief,
+/// every routed field and the parent it files under (DOOR-113). A replay
+/// under the same key with any other request is refused, as an ask's is.
 fn request_digest(actor: EntityId, key: &str, post: &TaskPost) -> MemoryResult<[u8; 32]> {
     let bytes = rmp_serde::to_vec_named(&(
         actor,
@@ -155,6 +155,7 @@ fn request_digest(actor: EntityId, key: &str, post: &TaskPost) -> MemoryResult<[
         &post.spec,
         post.ttl,
         &post.label,
+        post.parent_ref,
     ))
     .map_err(|_| MemoryError::bad_request("task post does not encode"))?;
     let mut hasher = blake3::Hasher::new();
@@ -180,7 +181,8 @@ pub(super) fn brief_type_ref_in(
 }
 
 /// The create spec one post validates and mints as: a standard task, with
-/// the brief's resolved stamp and its project's tree to place against.
+/// the brief's resolved stamp and its project's tree to place against, and
+/// the parent it files under.
 fn create_spec_of(
     post: &TaskPost,
     owner: EntityId,
@@ -200,6 +202,9 @@ fn create_spec_of(
     }
     if let Some(type_ref) = type_ref {
         spec = spec.with_type_ref(type_ref);
+    }
+    if let Some(parent_ref) = post.parent_ref {
+        spec = spec.with_parent_ref(parent_ref);
     }
     spec.brief = Some(post.brief.clone());
     spec
@@ -329,6 +334,7 @@ impl Memory<'_> {
                 spec: Some(spec.spec.clone()),
                 ttl: spec.ttl,
                 label: spec.label.clone(),
+                parent_ref: spec.parent_ref,
             }),
         )?;
         let landed = receipt.related.iter().find_map(|handle| match handle {
@@ -489,6 +495,7 @@ impl Memory<'_> {
                 Some(stored.clone()),
                 now,
             )?;
+            self.attach_task_parent_in_txn(wtxn, task_ref, post.parent_ref)?;
             let route = self.route_created_task_with_origin_in_txn(
                 wtxn,
                 task_ref,
@@ -1044,8 +1051,8 @@ impl Memory<'_> {
     }
 
     /// Lands one approved post inside the approving transaction: the TASK at
-    /// the settlement id, its route under the creator its proposal witnessed
-    /// (OF-532), and its Assigned fact.
+    /// the settlement id filed under its parent, its route under the creator
+    /// its proposal witnessed (OF-532), and its Assigned fact.
     fn land_settled_post_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -1068,6 +1075,7 @@ impl Memory<'_> {
             Some(StoredBrief::first(post.brief.clone())),
             now,
         )?;
+        self.attach_task_parent_in_txn(wtxn, task_ref, post.parent_ref)?;
         let route =
             self.route_created_task_with_origin_in_txn(wtxn, task_ref, &validated, origin, now)?;
         put_assignment_fact_in_txn(
@@ -1178,8 +1186,8 @@ fn settle_post(
         return Ok(());
     }
     // The approved value is what lands: an approver's amendment to the
-    // assignee, spec, label or TTL rides through the same keys it was parked
-    // under, and the brief through the stamp.
+    // assignee, spec, label, TTL or parent rides through the same keys it was
+    // parked under, and the brief through the stamp.
     let assignee = match task_body_optional(entries, "assignee")? {
         Some(value) => decode_task_assignee(value)?,
         None => TaskAssignee::Dreamer,
@@ -1203,6 +1211,9 @@ fn settle_post(
                 )))
         })
         .transpose()?;
+    let parent_ref = task_body_optional(entries, "parent_ref")?
+        .map(|value| decode_entity_ref(value, "tasks.proposal.parent_ref"))
+        .transpose()?;
     let spec = task_body_field(entries, "spec")?.clone();
     let post = TaskPost {
         intent_key: stamp.intent_key.clone(),
@@ -1211,6 +1222,7 @@ fn settle_post(
         spec: (spec != Value::Nil).then_some(spec),
         ttl,
         label,
+        parent_ref,
     };
     let memory = vault
         .memory(proposer, class)

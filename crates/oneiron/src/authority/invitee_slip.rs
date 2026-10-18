@@ -59,6 +59,7 @@ impl Vault {
             org_ref: None,
             grant_ref: None,
             invitation_ref: Some(invitation.to_owned()),
+            delegation: None,
         };
         self.mint_slip_in_txn(txn, issuer, claims)
     }
@@ -83,8 +84,8 @@ impl Vault {
     }
 
     /// What every slip door reads beside the fold's revocation check: a
-    /// grant-bound slip's grant (OF-232) and an invitation-bound slip's
-    /// invitation still stand.
+    /// grant-bound slip's grant (OF-232), an invitation-bound slip's
+    /// invitation and a support slip's delegation (OF-606) still stand.
     pub(super) fn require_live_slip_refs_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -92,6 +93,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         self.require_live_slip_grant_in_txn(txn, claims, now)?;
-        self.require_live_slip_invitation_in_txn(txn, claims, now)
+        self.require_live_slip_invitation_in_txn(txn, claims, now)?;
+        self.require_live_delegation_in_txn(txn, claims)
     }
 }
