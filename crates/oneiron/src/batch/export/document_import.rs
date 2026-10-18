@@ -1,9 +1,21 @@
 //! Validating archive import through ordinary admission doors, never sync replay.
+//! FIX 3678: the archive is read into the import's disk-backed row index, and
+//! each pass reads one row at a time from it; the dependency queues, id sets
+//! and maps grow in the index as well, so no archive-wide row state stays in
+//! memory. The rows still go in through one write transaction.
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 
+use serde::Deserialize;
+
+use super::archive_index::{
+    ArchiveIndex, EntityAt, FLAG_EXPRESSION, FLAG_PACK_BODY, FLAG_PROVENANCE, IndexedArchive,
+    QUEUE_EXPRESSION, QUEUE_PROVENANCE, QUEUE_ROW, Section, Tag, id_at, id_list, ids_of,
+    ready_key,
+};
 use super::{
-    ArchiveFiles, ExportEdge, ExportEntity, ExportRunResults, WholeVaultDocument,
+    ArchiveFiles, ArchiveRecordKind, ExportDerivationEnvelope, ExportEdge, ExportEntity,
+    ExportEpochFloor, ExportResultBody, ExportRun, ExportSkillBundle, WholeVaultDocument,
     WholeVaultImportReceipt,
 };
 use crate::Vault;
@@ -33,14 +45,17 @@ impl Vault {
 
     /// [`Self::read_whole_vault_archive`] from a file or other seekable
     /// source, read member by member (FIX 2766): the archive is never held
-    /// whole, and its attached files stay in it.
+    /// whole, and its attached files stay in it. The rows are validated
+    /// through the import's row index (FIX 3678); only the document this
+    /// returns is built whole, because it is what the caller asked for.
     pub fn read_whole_vault_archive_from<R: Read + Seek>(
         &self,
         source: R,
     ) -> Result<WholeVaultDocument> {
-        let archive = super::read_vault_archive(source)?;
-        archive.document.validate(self, &archive.files)?;
-        Ok(archive.document)
+        let scratch = self.store.archive_scratch_env()?;
+        let mut archive = super::read_vault_archive_indexed(self, &scratch, source)?;
+        archive.validate(self)?;
+        archive.document()
     }
 
     /// Reimports a whole-vault archive atomically, into a fresh vault or
@@ -70,6 +85,7 @@ impl Vault {
     /// source, read member by member (FIX 2766): no archive member, row
     /// group or file map is held whole, each attached file is read when its
     /// row goes in, and the import is still one atomic write transaction.
+    /// The rows wait in a disk-backed row index (FIX 3678), never in memory.
     pub fn import_whole_vault_archive_from<R: Read + Seek>(
         &self,
         source: R,
@@ -104,255 +120,158 @@ impl Vault {
         source: R,
         actor: Option<&WriteActor>,
     ) -> Result<WholeVaultImportReceipt> {
-        let super::VaultArchive {
-            mut document,
-            secrets,
-            files,
-        } = super::read_vault_archive(source)?;
-        let files: &dyn ArchiveFiles = &files;
-        document.validate(self, files)?;
-        if actor.is_none()
-            && document
-                .entities()
-                .any(super::expression_import::is_expression)
-        {
-            return Err(invalid(
-                "expression preferences require a host-authenticated local WriteActor",
-            ));
+        let scratch = self.store.archive_scratch_env()?;
+        let mut archive = super::read_vault_archive_indexed(self, &scratch, source)?;
+        archive.validate(self)?;
+        if actor.is_none() && archive.expressions {
+            return Err(actor_required());
         }
         let authority = self
-            .classify_vault_import_manifest(&document.manifest.storage.to_json_pretty()?, None)?;
+            .classify_vault_import_manifest(&archive.manifest.storage.to_json_pretty()?, None)?;
         // Classification is advisory provenance, not an admission capability.
         // Even a forged same-chain manifest cannot enable replay or Auto here.
-        let mut omitted: BTreeSet<_> = document
-            .manifest
-            .import_omissions
-            .iter()
-            .map(|entry| parse_id(&entry.entity_id))
-            .collect::<Result<_>>()?;
-        // Run result bodies are written whole before any row names them; the
-        // rows commit with the rest below, or not at all.
-        let staged_results = stage_run_results(self, &document.run_results, files)?;
+        for entry in &archive.manifest.import_omissions {
+            let id = parse_id(&entry.entity_id)?;
+            archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+        }
+        // Run result bodies are staged once the transaction is open, each as
+        // its first occurrence goes in; only a body the export did not
+        // withhold comes back: the same bytes attached for an ASSET (OF-222)
+        // bring back no withheld result.
+        let mut bodies = archive.spool.rows(ArchiveRecordKind::ResultBody);
+        while let Some((_, body)) = bodies.next_parsed::<ExportResultBody>(&archive.spool)? {
+            if body.withheld.is_none() {
+                archive
+                    .index
+                    .put(Tag::Released, body.blake3.as_bytes(), &[])?;
+            }
+        }
+        // The custody values a result body's sweep replaces, read before the
+        // write transaction opens.
+        let known = self.known_values()?;
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
         }
-        withhold_unborn_projects(self, &wtxn, &document, &mut omitted)?;
-        map_project_root(self, &wtxn, &mut document, &mut omitted)?;
-        omit_project_revisions(self, &document, &mut omitted)?;
-        for row in &mut document.evidence_ledger.entities {
-            if let ExportBody::Pack(value) = &row.body {
-                let (handle, envelope) = self
-                    .store
-                    .remap_pack_instance_in_txn(&wtxn, &value.envelope()?)?;
-                row.entity_type = handle;
-                row.body = ExportBody::from_bytes(&envelope.to_bytes()?, handle);
+        withhold_unborn_projects(self, &wtxn, &mut archive)?;
+        let projects = map_project_root(self, &wtxn, &mut archive)?;
+        omit_project_revisions(self, &mut archive)?;
+        // Each runtime pack row maps onto this vault's pack handles; the
+        // mapping is read again, alike, as each row goes in.
+        let mut after = None;
+        while let Some((id, at)) = archive.next_entity(after.as_ref())? {
+            if at.section == Section::Ledger && at.has(FLAG_PACK_BODY) {
+                imported_row(self, &wtxn, &archive, &at, None)?;
             }
+            after = Some(id);
         }
-        let model_imports = super::provenance_import::restore_models(self, &mut wtxn, &document)?;
-        let models = &model_imports.map;
-        let mut provenance = super::provenance_import::ProvenanceImport::new(&document, models)?;
-        let edges = document
-            .evidence_ledger
-            .edges
-            .iter()
-            .map(|edge| super::provenance_import::mapped_edge(edge, models))
-            .collect::<Result<Vec<_>>>()?;
-        let mut expressions = super::expression_import::ExpressionImports::new(&document, models)?;
-        let skill_bundles: BTreeMap<_, _> = document
-            .skills
-            .iter()
-            .map(|bundle| (bundle.entity.id.as_str(), bundle))
-            .collect();
-        let mut pending = BTreeMap::new();
+        let model_imports =
+            super::provenance_import::restore_models(self, &mut wtxn, &mut archive)?;
+        super::provenance_import::index_mapped_edges(&mut archive)?;
+        super::provenance_import::index_provenance(&mut archive)?;
+        super::expression_import::index_expressions(&mut archive)?;
+        let mut pending = 0;
         let mut unchanged_entities = model_imports.unchanged;
-        for row in document.entities() {
-            let id = parse_id(&row.id)?;
-            if omitted.contains(&id)
-                || models.contains_key(&id)
-                || provenance.ids.contains(&id)
-                || expressions.ids.contains(&id)
+        let mut after = None;
+        while let Some((id, at)) = archive.next_entity(after.as_ref())? {
+            after = Some(id);
+            if archive.index.contains(Tag::Omitted, id.as_bytes())?
+                || archive.index.contains(Tag::Model, id.as_bytes())?
+                || at.has(FLAG_PROVENANCE)
+                || at.has(FLAG_EXPRESSION)
             {
                 continue;
             }
             if self.store.off_record_sessions.contains_entity(&id)? {
                 return Err(invalid("import ID belongs to an off-record overlay"));
             }
+            let row = imported_row(self, &wtxn, &archive, &at, projects.as_ref())?;
             let existing = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &wtxn, &id)?;
             if let Some(existing) = existing {
                 if !live_entity_row_in_txn(&self.store, &wtxn, &id)?.is_live() {
                     return Err(invalid("import ID collides with a deleted entity"));
                 }
-                if matches_archived_row(row, &existing, files)? {
-                    validate_existing_source(
-                        self,
-                        &wtxn,
-                        row,
-                        skill_bundles.get(row.id.as_str()).copied(),
-                    )?;
+                if matches_archived_row(&row, &existing, &archive.files)? {
+                    validate_existing_source(self, &wtxn, &row, &archive, &at)?;
                     unchanged_entities += 1;
                     continue;
                 }
-                let body = imported_body(row, models, files)?;
+                let body = imported_body(&row, &archive.index, &archive.files)?;
                 if matches_row(
-                    row,
+                    &row,
                     &existing,
                     &ExportBody::from_bytes(&body, row.entity_type),
                 ) {
-                    validate_existing_source(
-                        self,
-                        &wtxn,
-                        row,
-                        skill_bundles.get(row.id.as_str()).copied(),
-                    )?;
+                    validate_existing_source(self, &wtxn, &row, &archive, &at)?;
                     unchanged_entities += 1;
                     continue;
                 }
                 return Err(invalid("import ID collides with different entity data"));
             }
             self.store.validate_public_entity_type(row.entity_type)?;
-            // Only the row and what it waits on stay pending (FIX 2766): its
-            // body is built again when it goes in, and a file body, which
-            // waits on nothing, is read from the archive only then.
+            // Only the row's id and what it waits on stay pending, in the
+            // row index (FIX 2766, 3678): its body is built again when it
+            // goes in, and a file body, which waits on nothing, is read from
+            // the archive only then.
             let waits_on = if matches!(row.body, ExportBody::File(_)) {
                 Vec::new()
             } else {
-                dependencies(row.entity_type, &imported_body(row, models, files)?)?
+                dependencies(
+                    row.entity_type,
+                    &imported_body(&row, &archive.index, &archive.files)?,
+                )?
             };
-            pending.insert(id, (row, waits_on));
+            archive
+                .index
+                .put(Tag::Pending, id.as_bytes(), &id_list(&waits_on))?;
+            archive.index.put(Tag::Waiting, id.as_bytes(), &[])?;
+            archive.index.put(Tag::Inserted, id.as_bytes(), &[])?;
+            pending += 1;
         }
-        let mut inserted_ids: BTreeSet<_> = pending.keys().copied().collect();
-        let mut inserted_entities = pending.len() + model_imports.inserted;
+        let mut inserted_entities = pending + model_imports.inserted;
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
-        while !pending.is_empty() || !expressions.is_empty() || !provenance.is_empty() {
-            let blocked: BTreeSet<_> = pending
-                .keys()
-                .copied()
-                .chain(expressions.pending_ids())
-                .chain(provenance.pending_ids())
-                .collect();
-            let expression_ready = expressions.ready(&blocked);
-            let provenance_ready = provenance.ready(&blocked)?;
-            let ready: Vec<_> = pending
-                .iter()
-                .filter(|(_, (_, refs))| refs.iter().all(|reference| !blocked.contains(reference)))
-                .map(|(id, _)| *id)
-                .collect();
-            if ready.is_empty() && expression_ready.is_empty() && provenance_ready.is_empty() {
+        // Each round queues what waits on no pending id, then restores it.
+        while archive.index.any(Tag::Waiting, &[])? {
+            let mut ready = super::provenance_import::mark_ready(&mut archive)?;
+            ready |= super::expression_import::mark_ready(&mut archive)?;
+            ready |= mark_ready_rows(&mut archive)?;
+            if !ready {
                 return Err(invalid("cyclic import subject or fork dependencies"));
             }
-            for id in provenance_ready {
-                let (inserted, unchanged) =
-                    provenance.restore(id, self, &mut wtxn, &edges, &inserted_ids)?;
-                inserted_entities += inserted.len();
-                unchanged_entities += unchanged;
-                inserted_ids.extend(inserted);
-            }
-            for id in expression_ready {
-                let actor = actor.ok_or_else(|| {
-                    invalid("expression preferences require a host-authenticated local WriteActor")
-                })?;
-                let (inserted, unchanged) = expressions.restore(id, self, &mut wtxn, actor)?;
-                inserted_entities += inserted.len();
-                unchanged_entities += unchanged;
-                inserted_ids.extend(inserted);
-            }
-            for id in ready {
-                let (row, _) = pending
-                    .remove(&id)
-                    .ok_or(Error::InvariantViolation("import queue lost row"))?;
-                let body = imported_body(row, models, files)?;
-                let occurred = TimeRange {
-                    start: row.occurred_start,
-                    end: row.occurred_end,
+            while let Some((key, _)) = archive.index.next(Tag::Ready, &[], None)? {
+                archive.index.remove(Tag::Ready, &key)?;
+                let id = id_at(&key, 1)?;
+                let (inserted, unchanged) = match key[0] {
+                    QUEUE_PROVENANCE => {
+                        let (inserted, unchanged) = super::provenance_import::restore(
+                            id,
+                            self,
+                            &mut wtxn,
+                            &mut archive,
+                        )?;
+                        (inserted.into_iter().collect::<Vec<_>>(), unchanged)
+                    }
+                    QUEUE_EXPRESSION => {
+                        let actor = actor.ok_or_else(actor_required)?;
+                        super::expression_import::restore(id, self, &mut wtxn, actor, &mut archive)?
+                    }
+                    _ => {
+                        insert_ready_row(self, &mut wtxn, &mut archive, id, projects.as_ref())?;
+                        (Vec::new(), 0)
+                    }
                 };
-                match row.entity_type {
-                    ENTITY_TYPE_CLAIM => {
-                        let claim = decode_import_claim(&body)?;
-                        if crate::subject_model::is_subject_model_predicate(&claim.predicate) {
-                            self.restore_subject_claim_in_txn(
-                                &mut wtxn,
-                                &id,
-                                &claim,
-                                occurred,
-                                row.learned_at,
-                            )?;
-                        } else if crate::actor_claims::is_actor_claim_predicate(&claim.predicate) {
-                            self.restore_actor_projection_in_txn(
-                                &mut wtxn,
-                                &id,
-                                &claim,
-                                occurred,
-                                row.learned_at,
-                            )?;
-                        } else if claim.predicate
-                            == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY
-                        {
-                            self.restore_reliability_claim_in_txn(
-                                &mut wtxn,
-                                &id,
-                                &claim,
-                                occurred,
-                                row.learned_at,
-                            )?;
-                        } else if claim.predicate == crate::claim::PREDICATE_SKILL_EDIT_COST {
-                            self.restore_skill_cost_in_txn(
-                                &mut wtxn,
-                                &id,
-                                &claim,
-                                occurred,
-                                row.learned_at,
-                            )?;
-                        } else {
-                            self.put_claim_in_txn(
-                                &mut wtxn,
-                                &id,
-                                &claim,
-                                occurred,
-                                row.learned_at,
-                            )?;
-                        }
-                    }
-                    ENTITY_TYPE_SKILL => {
-                        let record = crate::skill::decode_skill_record(&body)?;
-                        let bundle = skill_bundles
-                            .get(row.id.as_str())
-                            .ok_or(Error::InvariantViolation("skill bundle missing"))?;
-                        if let Some(tree) = &bundle.source_tree {
-                            self.import_archived_skill_in_txn(
-                                &mut wtxn,
-                                &id,
-                                &record,
-                                (
-                                    bundle
-                                        .source_format
-                                        .ok_or_else(|| invalid("skill source format missing"))?,
-                                    tree.import_files()?,
-                                ),
-                                occurred,
-                                row.learned_at,
-                            )?;
-                        } else {
-                            self.put_skill_record_in_txn(
-                                &mut wtxn,
-                                &id,
-                                &record,
-                                occurred,
-                                row.learned_at,
-                            )?;
-                        }
-                    }
-                    _ => self
-                        .batch_in()
-                        .put(&id, row.entity_type, occurred, row.learned_at, &body)
-                        .apply(&mut wtxn)?,
+                inserted_entities += inserted.len();
+                unchanged_entities += unchanged;
+                for id in inserted {
+                    archive.index.put(Tag::Inserted, id.as_bytes(), &[])?;
                 }
             }
         }
-        for bundle in &document.agent_packs {
+        let mut agents = archive.spool.rows(ArchiveRecordKind::AgentPack);
+        while let Some((_, bundle)) = agents.next_parsed::<AgentForkBinding>(&archive.spool)? {
             let id = parse_id(&bundle.entity_id)?;
-            if inserted_ids.contains(&id) {
+            if archive.index.contains(Tag::Inserted, id.as_bytes())? {
                 crate::agent_def::import_agent_fork_hash_in_txn(
                     &self.store,
                     &mut wtxn,
@@ -361,18 +280,27 @@ impl Vault {
                 )?;
             }
         }
-        for edge in &edges {
-            if omitted.contains(&parse_id(&edge.source)?)
-                || omitted.contains(&parse_id(&edge.target)?)
+        let mut edges = archive.spool.rows(ArchiveRecordKind::Edge);
+        while let Some((_, edge)) = edges.next_parsed::<ExportEdge>(&archive.spool)? {
+            let edge = super::provenance_import::mapped_edge(&edge, &archive.index)?;
+            if archive
+                .index
+                .contains(Tag::Omitted, parse_id(&edge.source)?.as_bytes())?
+                || archive
+                    .index
+                    .contains(Tag::Omitted, parse_id(&edge.target)?.as_bytes())?
             {
                 continue;
             }
-            import_edge(self, &mut wtxn, edge, &inserted_ids)?;
+            import_edge(self, &mut wtxn, &edge, &archive.index)?;
         }
         let mut archived_receipt_sources = 0;
-        for envelope in &document.derivation_envelopes {
+        let mut envelopes = archive.spool.rows(ArchiveRecordKind::DerivationEnvelope);
+        while let Some((_, envelope)) =
+            envelopes.next_parsed::<ExportDerivationEnvelope>(&archive.spool)?
+        {
             let holder = parse_id(&envelope.id)?;
-            if !omitted.contains(&holder) {
+            if !archive.index.contains(Tag::Omitted, holder.as_bytes())? {
                 archived_receipt_sources += self.restore_claim_receipt_sources_in_txn(
                     &mut wtxn,
                     &holder,
@@ -383,19 +311,15 @@ impl Vault {
         // FIX 2768: the side tables come back once the records and carriers
         // they index are in: each family's records, then indexes, then heads.
         let (restored_side_rows, unchanged_side_rows) =
-            super::archive_side_tables::restore_side_rows_in_txn(
-                &self.store,
-                &mut wtxn,
-                &document.side_tables,
-                &mut |file: &crate::serialize::ExportBodyFile| file.read(files),
-            )?;
+            super::archive_side_tables::restore_side_rows_in_txn(&self.store, &mut wtxn, &archive)?;
         let (imported_results, withheld_results) =
-            put_run_results_in_txn(self, &mut wtxn, &document.run_results, &staged_results)?;
+            put_run_results_in_txn(self, &mut wtxn, &mut archive, known)?;
         let (restored_secrets, unchanged_secrets, missing_secrets) =
-            restore_secrets_in_txn(self, &mut wtxn, &secrets, &document)?;
+            restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
         // OF-013: each session's floor rises to the archive's and never falls,
         // so numbering here never goes back under an epoch a purge removed.
-        for floor in &document.epoch_floors {
+        let mut floors = archive.spool.rows(ArchiveRecordKind::EpochFloor);
+        while let Some((_, floor)) = floors.next_parsed::<ExportEpochFloor>(&archive.spool)? {
             crate::compaction::raise_session_epoch_floor_in_txn(
                 &self.store,
                 &mut wtxn,
@@ -407,21 +331,24 @@ impl Vault {
         // OF-370: the embedding setup declares and binds only what is absent
         // here; its vectors are recomputed after the commit, never before.
         let embedding_setup =
-            super::import_embedding_setup_in_txn(&self.store, &mut wtxn, &document)?;
+            super::import_embedding_setup_in_txn(&self.store, &mut wtxn, &archive)?;
         let setup_rows = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup_rows);
+        let mut remapped_entities = BTreeMap::new();
+        for entry in archive.index.entries(Tag::Model)? {
+            let (archived, local) = entry?;
+            if archived != local {
+                remapped_entities.insert(id_at(archived, 0)?.to_hex(), id_at(local, 0)?.to_hex());
+            }
+        }
         Ok(WholeVaultImportReceipt {
             authority,
             inserted_entities,
             unchanged_entities,
             archived_receipt_sources,
-            omitted_entities: omitted.len(),
-            remapped_entities: models
-                .iter()
-                .filter(|(a, b)| a != b)
-                .map(|(a, b)| (a.to_hex(), b.to_hex()))
-                .collect(),
+            omitted_entities: archive.index.count(Tag::Omitted)?,
+            remapped_entities,
             imported_results,
             withheld_results,
             restored_secrets,
@@ -434,134 +361,193 @@ impl Vault {
     }
 }
 
-/// Writes each run result body the archive carries once, checked against
-/// its digest and length, so the manifests and line indexes are rebuilt
-/// from the bytes; the secret scan reads them again as they go in. No row
-/// names a body yet. Only a body the export did not withhold is staged: the
-/// same bytes attached for an ASSET (OF-222) bring back no withheld result.
-fn stage_run_results(
-    vault: &Vault,
-    results: &ExportRunResults,
-    files: &dyn ArchiveFiles,
-) -> Result<BTreeMap<[u8; 32], crate::code_run::FinishedOutput>> {
-    let released: BTreeSet<&str> = results
-        .bodies
-        .iter()
-        .filter(|body| body.withheld.is_none())
-        .map(|body| body.blake3.as_str())
-        .collect();
-    let mut staged = BTreeMap::new();
-    for output in results.runs.iter().flat_map(|run| &run.outputs) {
-        let Some(blake3) = &output.blake3 else {
-            continue;
-        };
-        let digest = parse_digest(blake3)?;
-        if staged.contains_key(&digest) {
-            continue;
+/// An agent bundle row's id and fork hash.
+#[derive(Deserialize)]
+struct AgentForkBinding {
+    entity_id: String,
+    #[serde(rename = "forkHash")]
+    fork_hash: Option<String>,
+}
+
+/// Queues each pending row none of whose references is pending; whether any.
+fn mark_ready_rows<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) -> Result<bool> {
+    let mut any = false;
+    let mut at: Option<Vec<u8>> = None;
+    while let Some((id, waits)) = archive.index.next(Tag::Pending, &[], at.as_deref())? {
+        let mut blocked = false;
+        for reference in ids_of(&waits)? {
+            blocked |= archive.index.contains(Tag::Waiting, reference.as_bytes())?;
         }
-        if !released.contains(blake3.as_str()) {
-            continue;
+        if !blocked {
+            archive.index.put(
+                Tag::Ready,
+                &ready_key(QUEUE_ROW, &id_at(&id, 0)?),
+                &[],
+            )?;
+            any = true;
         }
-        if files.file_len(blake3).is_none() {
-            continue;
-        }
-        // One body at a time, read from the archive as it is staged.
-        let body = files.read_file(blake3)?;
-        if body.len() as u64 != output.bytes || *blake3::hash(&body).as_bytes() != digest {
-            return Err(invalid("run result body does not match its digest"));
-        }
-        staged.insert(
-            digest,
-            vault.stage_code_run_output(output.path.clone(), &body)?,
-        );
+        at = Some(id);
     }
-    Ok(staged)
+    Ok(any)
+}
+
+/// Writes one pending row whose references are in, through its type's door.
+fn insert_ready_row<R: Read + Seek>(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    archive: &mut IndexedArchive<'_, R>,
+    id: EntityId,
+    projects: Option<&ProjectRootMap>,
+) -> Result<()> {
+    if !archive.index.remove(Tag::Pending, id.as_bytes())? {
+        return Err(Error::InvariantViolation("import queue lost row"));
+    }
+    archive.index.remove(Tag::Waiting, id.as_bytes())?;
+    let at = archive
+        .entity_at(&id)?
+        .ok_or(Error::InvariantViolation("import queue lost row"))?;
+    let row = imported_row(vault, wtxn, archive, &at, projects)?;
+    let body = imported_body(&row, &archive.index, &archive.files)?;
+    let occurred = TimeRange {
+        start: row.occurred_start,
+        end: row.occurred_end,
+    };
+    match row.entity_type {
+        ENTITY_TYPE_CLAIM => {
+            let claim = decode_import_claim(&body)?;
+            if crate::subject_model::is_subject_model_predicate(&claim.predicate) {
+                vault.restore_subject_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+            } else if crate::actor_claims::is_actor_claim_predicate(&claim.predicate) {
+                vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+            } else if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
+                vault.restore_reliability_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+            } else if claim.predicate == crate::claim::PREDICATE_SKILL_EDIT_COST {
+                vault.restore_skill_cost_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+            } else {
+                vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+            }
+        }
+        ENTITY_TYPE_SKILL => {
+            let record = crate::skill::decode_skill_record(&body)?;
+            if at.section != Section::Skill {
+                return Err(Error::InvariantViolation("skill bundle missing"));
+            }
+            let bundle: ExportSkillBundle = archive.hydrated(ArchiveRecordKind::Skill, at.loc)?;
+            if let Some(tree) = &bundle.source_tree {
+                vault.import_archived_skill_in_txn(
+                    wtxn,
+                    &id,
+                    &record,
+                    (
+                        bundle
+                            .source_format
+                            .ok_or_else(|| invalid("skill source format missing"))?,
+                        tree.import_files()?,
+                    ),
+                    occurred,
+                    row.learned_at,
+                )
+            } else {
+                vault.put_skill_record_in_txn(wtxn, &id, &record, occurred, row.learned_at)
+            }
+        }
+        _ => vault
+            .batch_in()
+            .put(&id, row.entity_type, occurred, row.learned_at, &body)
+            .apply(wtxn),
+    }
+}
+
+/// The source root this vault maps onto its own root project (see
+/// [`map_project_root`]): the project type, and both roots' ids.
+struct ProjectRootMap {
+    kind: u8,
+    source: String,
+    target: String,
+}
+
+/// The row `at` as the import writes it: a project row's parent moves from
+/// the source root to this vault's root, and a runtime pack row is mapped
+/// onto this vault's pack handle for its kind.
+fn imported_row<R: Read + Seek>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    at: &EntityAt,
+    projects: Option<&ProjectRootMap>,
+) -> Result<ExportEntity> {
+    let mut row = archive.entity_row(at)?;
+    if let Some(projects) = projects
+        && at.section == Section::Ledger
+        && row.entity_type == projects.kind
+    {
+        let mut body: crate::workspace_roster::ProjectRecord =
+            rmp_serde::from_slice(&row.body.to_bytes()?)
+                .map_err(|_| invalid("project row body"))?;
+        // Only the tree position moves; the claims scope id stays a label.
+        for parent in &mut body.parents {
+            if *parent == projects.source {
+                parent.clone_from(&projects.target);
+            }
+        }
+        let bytes = rmp_serde::to_vec_named(&body).map_err(|_| invalid("project row body"))?;
+        row.body = ExportBody::from_bytes(&bytes, row.entity_type);
+    }
+    if at.section == Section::Ledger
+        && let ExportBody::Pack(value) = &row.body
+    {
+        let (handle, envelope) = vault
+            .store
+            .remap_pack_instance_in_txn(txn, &value.envelope()?)?;
+        row.entity_type = handle;
+        row.body = ExportBody::from_bytes(&envelope.to_bytes()?, handle);
+    }
+    Ok(row)
 }
 
 /// Writes each run's results whose bodies came back as that run's
 /// occurrences; a result the export withheld stays a manifest in the
-/// archive. Returns the counts of both.
-/// The owner's own archive's custody records, each restored under its own id
-/// through the custody registration door, in the import's transaction. A
-/// record already here byte for byte is unchanged; any other collision is
-/// refused, never overwritten. A record the archive carried as its handle
-/// only is returned as a missing secret to re-enter.
-fn restore_secrets_in_txn(
+/// archive. Returns the counts of both. Each body is staged from the archive
+/// as its occurrence goes in, checked against its digest and length, so the
+/// manifests and line indexes are rebuilt from the bytes; the secret scan
+/// reads them again as they go in. No body is held between two occurrences
+/// (FIX 3678): a later occurrence of the same bytes stages them again.
+fn put_run_results_in_txn<R: Read + Seek>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    secrets: &[super::ArchiveSecretCustody],
-    document: &WholeVaultDocument,
-) -> Result<(
-    usize,
-    usize,
-    Vec<crate::secret_custody::SecretCustodyMetadata>,
-)> {
-    use base64::Engine as _;
-    let rows: BTreeSet<&str> = document.entities().map(|row| row.id.as_str()).collect();
-    let mut seen = BTreeSet::new();
-    let (mut restored, mut unchanged, mut missing) = (0, 0, Vec::new());
-    for secret in secrets {
-        let id = parse_id(&secret.id)?;
-        if !seen.insert(id) || rows.contains(secret.id.as_str()) {
-            return Err(invalid("archive custody record id appears twice"));
-        }
-        if secret.metadata.name != secret.name {
-            return Err(invalid(
-                "archive custody record name disagrees with its metadata",
-            ));
-        }
-        let Some(body) = &secret.body else {
-            missing.push(secret.metadata.clone());
-            continue;
-        };
-        let body = base64::engine::general_purpose::STANDARD
-            .decode(body)
-            .map_err(|_| invalid("invalid archive custody record body"))?;
-        let mut record = crate::secret_custody::decode_secret_custody_body(&body)?;
-        if record.metadata() != secret.metadata {
-            return Err(invalid("archive custody record disagrees with its body"));
-        }
-        if let Some(existing) =
-            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
-        {
-            if existing.get(ENTITY_METADATA_HEADER_LEN..) == Some(body.as_slice())
-                && EntityMetadataHeader::parse(&existing).is_some_and(|header| {
-                    header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                })
-            {
-                unchanged += 1;
-                continue;
-            }
-            return Err(invalid(
-                "import ID collides with a different custody record",
-            ));
-        }
-        crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)?;
-        restored += 1;
-    }
-    Ok((restored, unchanged, missing))
-}
-
-fn put_run_results_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    results: &ExportRunResults,
-    staged: &BTreeMap<[u8; 32], crate::code_run::FinishedOutput>,
+    archive: &mut IndexedArchive<'_, R>,
+    known: Option<std::sync::Arc<crate::secret_custody::KnownValues>>,
 ) -> Result<(usize, usize)> {
     let (mut imported, mut withheld) = (0, 0);
-    for run in &results.runs {
+    let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
+    while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
         let run_id = parse_id(&run.run_id)?;
         for output in &run.outputs {
             let Some(blake3) = &output.blake3 else {
                 withheld += 1;
                 continue;
             };
-            let Some(finished) = staged.get(&parse_digest(blake3)?) else {
+            let digest = parse_digest(blake3)?;
+            let Some(listed) = archive.files.file_len(blake3) else {
                 withheld += 1;
                 continue;
             };
+            if !archive.index.contains(Tag::Released, blake3.as_bytes())? {
+                withheld += 1;
+                continue;
+            }
+            // Only a body's first occurrence is held to its manifest's length.
+            if archive.index.insert(Tag::Staged, &digest, &[])? && listed != output.bytes {
+                return Err(invalid("run result body does not match its digest"));
+            }
+            let body = std::io::Cursor::new(archive.files.read_file(blake3)?);
+            let finished = vault.stage_code_run_output_from(
+                output.path.clone(),
+                vault.code_run_output_sink_knowing(known.clone())?,
+                body,
+            )?;
             let occurrence = finished.at(output.path.clone(), output.complete)?;
-            vault.put_code_run_output_in_txn(wtxn, finished, &occurrence, Some(run_id))?;
+            vault.put_code_run_output_in_txn(wtxn, &finished, &occurrence, Some(run_id))?;
             imported += 1;
         }
     }
@@ -569,17 +555,20 @@ fn put_run_results_in_txn(
     // a withheld one's refs stay in the archive. Every run's outputs are in
     // first, so a ref to another run's output resolves; one that resolves to
     // nothing (not in the archive, nor in this vault) is named unresolved.
-    for run in &results.runs {
+    let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
+    while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
         let run_id = parse_id(&run.run_id)?;
         for fold in run.receipts.iter().filter(|fold| fold.withheld.is_none()) {
-            let came_back = run.outputs.iter().any(|output| {
-                output.path == fold.path
-                    && output
-                        .blake3
-                        .as_deref()
-                        .and_then(|blake3| parse_digest(blake3).ok())
-                        .is_some_and(|digest| staged.contains_key(&digest))
-            });
+            let mut came_back = false;
+            for output in run.outputs.iter().filter(|output| output.path == fold.path) {
+                if let Some(digest) = output
+                    .blake3
+                    .as_deref()
+                    .and_then(|blake3| parse_digest(blake3).ok())
+                {
+                    came_back |= archive.index.contains(Tag::Staged, &digest)?;
+                }
+            }
             if !came_back {
                 continue;
             }
@@ -619,20 +608,86 @@ fn parse_digest(text: &str) -> Result<[u8; 32]> {
     Ok(digest)
 }
 
-fn validate_existing_source(
+/// The owner's own archive's custody records, each restored under its own id
+/// through the custody registration door, in the import's transaction. A
+/// record already here byte for byte is unchanged; any other collision is
+/// refused, never overwritten. A record the archive carried as its handle
+/// only is returned as a missing secret to re-enter.
+fn restore_secrets_in_txn<R: Read + Seek>(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    archive: &mut IndexedArchive<'_, R>,
+) -> Result<(
+    usize,
+    usize,
+    Vec<crate::secret_custody::SecretCustodyMetadata>,
+)> {
+    use base64::Engine as _;
+    let (mut restored, mut unchanged, mut missing) = (0, 0, Vec::new());
+    let mut secrets = archive.spool.rows(ArchiveRecordKind::SecretCustody);
+    while let Some((_, secret)) =
+        secrets.next_parsed::<super::ArchiveSecretCustody>(&archive.spool)?
+    {
+        let id = parse_id(&secret.id)?;
+        if !archive.index.insert(Tag::Secret, id.as_bytes(), &[])?
+            || archive.index.contains(Tag::Entity, id.as_bytes())?
+        {
+            return Err(invalid("archive custody record id appears twice"));
+        }
+        if secret.metadata.name != secret.name {
+            return Err(invalid(
+                "archive custody record name disagrees with its metadata",
+            ));
+        }
+        let Some(body) = &secret.body else {
+            missing.push(secret.metadata.clone());
+            continue;
+        };
+        let body = base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .map_err(|_| invalid("invalid archive custody record body"))?;
+        let mut record = crate::secret_custody::decode_secret_custody_body(&body)?;
+        if record.metadata() != secret.metadata {
+            return Err(invalid("archive custody record disagrees with its body"));
+        }
+        if let Some(existing) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
+        {
+            if existing.get(ENTITY_METADATA_HEADER_LEN..) == Some(body.as_slice())
+                && EntityMetadataHeader::parse(&existing).is_some_and(|header| {
+                    header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                })
+            {
+                unchanged += 1;
+                continue;
+            }
+            return Err(invalid(
+                "import ID collides with a different custody record",
+            ));
+        }
+        crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)?;
+        restored += 1;
+    }
+    Ok((restored, unchanged, missing))
+}
+
+fn validate_existing_source<R: Read + Seek>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     row: &ExportEntity,
-    bundle: Option<&super::ExportSkillBundle>,
+    archive: &IndexedArchive<'_, R>,
+    at: &EntityAt,
 ) -> Result<()> {
-    if let Some(tree) = bundle.and_then(|b| b.source_tree.as_ref()) {
+    if at.section != Section::Skill {
+        return Ok(());
+    }
+    let bundle: ExportSkillBundle = archive.hydrated(ArchiveRecordKind::Skill, at.loc)?;
+    if let Some(tree) = &bundle.source_tree {
         let files = tree.import_files()?;
         let stored = vault
             .export_hub_package_in_txn(txn, &parse_id(&row.id)?)?
             .ok_or_else(|| invalid("existing skill has no matching stored source package"))?;
-        if stored.export_files()? != files
-            || Some(stored.format) != bundle.and_then(|bundle| bundle.source_format)
-        {
+        if stored.export_files()? != files || Some(stored.format) != bundle.source_format {
             return Err(invalid(
                 "existing skill source package differs from archive",
             ));
@@ -645,21 +700,25 @@ fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("whole-vault import: {reason}"))
 }
 
+fn actor_required() -> Error {
+    invalid("expression preferences require a host-authenticated local WriteActor")
+}
+
 /// An archived PROJECT row, which the archive marks as needing its owning
 /// adapter, goes through the generic door only where this vault derives its
 /// depth birth. Elsewhere, as in an owner-rooted vault that never knew it, the
 /// row and its home room are withheld instead of stranding the import.
-fn withhold_unborn_projects(
+fn withhold_unborn_projects<R: Read + Seek>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    document: &WholeVaultDocument,
-    omitted: &mut BTreeSet<EntityId>,
+    archive: &mut IndexedArchive<'_, R>,
 ) -> Result<()> {
     let Ok(project_kind) = vault.project_type_byte() else {
         return Ok(());
     };
+    // One per refusal the manifest lists: no more than it holds.
     let mut withheld = BTreeSet::new();
-    for refusal in &document.manifest.import_refusals {
+    for refusal in &archive.manifest.import_refusals {
         let super::ExportImportRefusal::Entity {
             entity_id,
             reason: super::ImportRefusalReason::OwningEntityAdapterRequired,
@@ -668,9 +727,12 @@ fn withhold_unborn_projects(
             continue;
         };
         let id = parse_id(entity_id)?;
-        if document
-            .entities()
-            .any(|row| row.id == *entity_id && row.entity_type == project_kind)
+        if archive
+            .index
+            .get(Tag::Entity, id.as_bytes())?
+            .map(|at| EntityAt::decode(&at))
+            .transpose()?
+            .is_some_and(|at| at.entity_type == project_kind)
             && crate::gate::project_depth::birth_for_project(&vault.store, txn, id)?.is_none()
             && !crate::gate::project_depth::implicit_birth_applies(
                 &vault.store,
@@ -680,16 +742,20 @@ fn withhold_unborn_projects(
             )?
         {
             withheld.insert(id.to_hex());
-            omitted.insert(id);
+            archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
         }
     }
-    for row in document.entities() {
-        if row.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
-            && let Ok(room) =
-                rmp_serde::from_slice::<crate::workspace_roster::ProjectRoom>(&row.body.to_bytes()?)
+    let mut after = None;
+    while let Some(id) = archive.next_of_type(ENTITY_TYPE_CONVERSATION, after.as_ref())? {
+        after = Some(id);
+        let (_, row) = archive
+            .entity(&id)?
+            .ok_or(Error::InvariantViolation("archive index lost a room"))?;
+        if let Ok(room) =
+            rmp_serde::from_slice::<crate::workspace_roster::ProjectRoom>(&row.body.to_bytes()?)
             && withheld.contains(&room.project_id)
         {
-            omitted.insert(parse_id(&row.id)?);
+            archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
         }
     }
     Ok(())
@@ -698,104 +764,133 @@ fn withhold_unborn_projects(
 /// This vault is its own root project: the source root maps onto it instead
 /// of landing as a second parentless root. A signed project's slip authority
 /// lives in the source vault's log, which never becomes local rights here,
-/// so signed rows and their descendants stay archive data in the document.
-fn map_project_root(
+/// so signed rows and their descendants stay archive data in the archive.
+/// The project tree's shape (signature, home room and parents, no text) is
+/// kept in the row index; the parent move itself is made as each project row
+/// goes in ([`imported_row`]).
+fn map_project_root<R: Read + Seek>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    document: &mut WholeVaultDocument,
-    omitted: &mut BTreeSet<EntityId>,
-) -> Result<()> {
+    archive: &mut IndexedArchive<'_, R>,
+) -> Result<Option<ProjectRootMap>> {
     let Ok(kind) = vault.project_type_byte() else {
-        return Ok(());
+        return Ok(None);
     };
     let Some(target) = crate::workspace_roster::root_project_in(&vault.store, txn)? else {
-        return Ok(());
+        return Ok(None);
     };
-    let mut projects = BTreeMap::new();
-    for row in document.entities() {
-        let id = parse_id(&row.id)?;
-        if row.entity_type == kind && !omitted.contains(&id) {
-            let body: crate::workspace_roster::ProjectRecord =
-                rmp_serde::from_slice(&row.body.to_bytes()?)
-                    .map_err(|_| invalid("project row body"))?;
-            projects.insert(id, body);
+    let mut source = None;
+    let mut after = None;
+    while let Some(id) = archive.next_of_type(kind, after.as_ref())? {
+        after = Some(id);
+        let Some((at, row)) = archive.entity(&id)? else {
+            continue;
+        };
+        if at.section != Section::Ledger || archive.index.contains(Tag::Omitted, id.as_bytes())? {
+            continue;
         }
+        let body: crate::workspace_roster::ProjectRecord =
+            rmp_serde::from_slice(&row.body.to_bytes()?)
+                .map_err(|_| invalid("project row body"))?;
+        if source.is_none() && body.parents.is_empty() {
+            source = Some(id);
+        }
+        let home = body.home_room.as_bytes();
+        let mut shape = vec![u8::from(body.write_proof.is_some())];
+        shape.extend_from_slice(&(home.len() as u64).to_be_bytes());
+        shape.extend_from_slice(home);
+        // A parent that is no id never names an archived project.
+        for parent in &body.parents {
+            if let Ok(parent) = parse_id(parent) {
+                shape.extend_from_slice(parent.as_bytes());
+            }
+        }
+        archive.index.put(Tag::Project, id.as_bytes(), &shape)?;
     }
-    let Some(source) = projects
-        .iter()
-        .find(|(_, body)| body.parents.is_empty())
-        .map(|(id, _)| *id)
-    else {
-        return Ok(());
+    let Some(source) = source else {
+        return Ok(None);
     };
     if source == target {
-        return Ok(());
+        return Ok(None);
     }
-    let mut archived = BTreeSet::from([source.to_hex()]);
-    archived.extend(
-        projects
-            .iter()
-            .filter(|(_, body)| body.write_proof.is_some())
-            .map(|(id, _)| id.to_hex()),
-    );
+    archive
+        .index
+        .put(Tag::ProjectArchived, source.as_bytes(), &[])?;
+    let mut after: Option<Vec<u8>> = None;
+    while let Some((id, shape)) = archive.index.next(Tag::Project, &[], after.as_deref())? {
+        if project_shape(&shape)?.0 {
+            archive.index.put(Tag::ProjectArchived, &id, &[])?;
+        }
+        after = Some(id);
+    }
     // Descendants of a signed row keep it as their parent: archive them too.
     let mut grew = true;
     while grew {
         grew = false;
-        for (id, body) in &projects {
-            if !archived.contains(&id.to_hex())
-                && body
-                    .parents
-                    .iter()
-                    .any(|parent| *parent != source.to_hex() && archived.contains(parent))
-            {
-                archived.insert(id.to_hex());
-                grew = true;
+        let mut after: Option<Vec<u8>> = None;
+        while let Some((id, shape)) = archive.index.next(Tag::Project, &[], after.as_deref())? {
+            if !archive.index.contains(Tag::ProjectArchived, &id)? {
+                let mut archived_parent = false;
+                for parent in project_shape(&shape)?.2 {
+                    archived_parent |= parent != source
+                        && archive
+                            .index
+                            .contains(Tag::ProjectArchived, parent.as_bytes())?;
+                }
+                if archived_parent {
+                    archive.index.put(Tag::ProjectArchived, &id, &[])?;
+                    grew = true;
+                }
             }
+            after = Some(id);
         }
     }
-    for (id, body) in &projects {
-        if archived.contains(&id.to_hex()) {
-            omitted.insert(*id);
-            omitted.insert(parse_id(&body.home_room)?);
+    let mut after: Option<Vec<u8>> = None;
+    while let Some((id, shape)) = archive.index.next(Tag::Project, &[], after.as_deref())? {
+        if archive.index.contains(Tag::ProjectArchived, &id)? {
+            archive.index.put(Tag::Omitted, &id, &[])?;
+            let home = parse_id(&project_shape(&shape)?.1)?;
+            archive.index.put(Tag::Omitted, home.as_bytes(), &[])?;
         }
+        after = Some(id);
     }
-    let (source, target) = (source.to_hex(), target.to_hex());
-    for row in &mut document.evidence_ledger.entities {
-        let id = parse_id(&row.id)?;
-        let Some(body) = projects.get(&id) else {
-            continue;
-        };
-        if omitted.contains(&id) {
-            continue;
-        }
-        let mut body = body.clone();
-        // Only the tree position moves; the claims scope id stays a label.
-        for parent in &mut body.parents {
-            if *parent == source {
-                parent.clone_from(&target);
-            }
-        }
-        let bytes = rmp_serde::to_vec_named(&body).map_err(|_| invalid("project row body"))?;
-        row.body = ExportBody::from_bytes(&bytes, row.entity_type);
-    }
-    Ok(())
+    Ok(Some(ProjectRootMap {
+        kind,
+        source: source.to_hex(),
+        target: target.to_hex(),
+    }))
+}
+
+/// A project's shape as [`map_project_root`] keeps it: whether it is signed,
+/// its home room and its parents.
+fn project_shape(shape: &[u8]) -> Result<(bool, String, Vec<EntityId>)> {
+    let corrupt = || Error::InvariantViolation("archive index project shape");
+    let (signed, rest) = shape.split_first().ok_or_else(corrupt)?;
+    let len = rest
+        .get(..8)
+        .and_then(|len| <[u8; 8]>::try_from(len).ok())
+        .map(u64::from_be_bytes)
+        .and_then(|len| usize::try_from(len).ok())
+        .ok_or_else(corrupt)?;
+    let home = rest.get(8..8 + len).ok_or_else(corrupt)?;
+    let home = String::from_utf8(home.to_vec()).map_err(|_| corrupt())?;
+    let parents = ids_of(rest.get(8 + len..).ok_or_else(corrupt)?)?;
+    Ok((*signed != 0, home, parents))
 }
 
 /// Signed project history is archive data: its slips name the source vault's
-/// authority, so its revisions stay in the document beside the signed rows.
-fn omit_project_revisions(
+/// authority, so its revisions stay in the archive beside the signed rows.
+fn omit_project_revisions<R: Read + Seek>(
     vault: &Vault,
-    document: &WholeVaultDocument,
-    omitted: &mut BTreeSet<EntityId>,
+    archive: &mut IndexedArchive<'_, R>,
 ) -> Result<()> {
     let Some(kind) = crate::workspace_roster::project_revision_type(&vault.store) else {
         return Ok(());
     };
-    for row in document.entities() {
-        if row.entity_type == kind {
-            omitted.insert(parse_id(&row.id)?);
-        }
+    let mut after = None;
+    while let Some(id) = archive.next_of_type(kind, after.as_ref())? {
+        archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+        after = Some(id);
     }
     Ok(())
 }
@@ -840,21 +935,23 @@ fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
 }
 
 /// The body the import writes; an ASSET's file body is its archive file's
-/// bytes, as they were stored (OF-222).
+/// bytes, as they were stored (OF-222). A claim's subject is mapped onto this
+/// vault's MODEL rows through the row index.
 fn imported_body(
     row: &ExportEntity,
-    models: &BTreeMap<EntityId, EntityId>,
+    index: &ArchiveIndex<'_>,
     files: &dyn ArchiveFiles,
 ) -> Result<Vec<u8>> {
     let bytes = row.body.to_bytes_in(files)?;
+    let mapped = |id: EntityId| super::provenance_import::mapped(index, id);
     match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let mut body = decode_import_claim(&bytes)?;
             match &mut body.subject {
-                ClaimSubject::Entity(id) => *id = models.get(id).copied().unwrap_or(*id),
+                ClaimSubject::Entity(id) => *id = mapped(*id)?,
                 ClaimSubject::Edge { source, target, .. } => {
-                    *source = models.get(source).copied().unwrap_or(*source);
-                    *target = models.get(target).copied().unwrap_or(*target);
+                    *source = mapped(*source)?;
+                    *target = mapped(*target)?;
                 }
             }
             body.source = Some(ClaimSource::Imported);
@@ -925,11 +1022,13 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
     })
 }
 
+/// Writes one archived edge; `inserted` names the rows this import put in or
+/// queued, whose own doors may have minted the edge already.
 pub(super) fn import_edge(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     edge: &ExportEdge,
-    inserted: &BTreeSet<EntityId>,
+    inserted: &ArchiveIndex<'_>,
 ) -> Result<()> {
     let source = parse_id(&edge.source)?;
     let target = parse_id(&edge.target)?;
@@ -950,7 +1049,7 @@ pub(super) fn import_edge(
         // A newly imported claim's typed door creates its own ClaimOf link, and
         // a newly imported project's projector its damped parent membership.
         // Restoring this exported link's original timestamp is safe.
-        let door_minted = inserted.contains(&source)
+        let door_minted = inserted.contains(Tag::Inserted, source.as_bytes())?
             && match kind {
                 EdgeKind::ClaimOf => true,
                 EdgeKind::BelongsTo => {

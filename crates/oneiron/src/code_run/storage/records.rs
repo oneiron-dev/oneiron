@@ -303,16 +303,37 @@ impl Vault {
         Ok(())
     }
 
-    /// Writes `bytes` as a complete body at `path`: a file, past the inline
-    /// bound, is whole on disk when this returns, and no row names it yet.
-    pub(crate) fn stage_code_run_output(
+    /// Writes what `reader` yields, through `sink`, as a complete body at
+    /// `path`, a frame at a time as it streams (FIX 3677): a file, past the
+    /// inline bound, is whole on disk when this returns, and no row names it
+    /// yet.
+    pub(crate) fn stage_code_run_output_from<R: std::io::Read>(
         &self,
         path: String,
-        bytes: &[u8],
+        mut sink: BodySink,
+        mut reader: R,
     ) -> Result<FinishedOutput> {
-        let mut sink = self.code_run_output_sink()?;
-        sink.write(bytes)?;
+        let mut frame = vec![0; crate::store::LINE_INDEX_BLOCK_BYTES as usize];
+        loop {
+            let read = match reader.read(&mut frame) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
+            };
+            sink.write(&frame[..read])?;
+        }
         finish_output(path, sink, true, self.limit_watch())
+    }
+
+    /// [`Self::code_run_output_sink`] sweeping `known`, the values a caller
+    /// read before its write transaction opened (FIX 3678): the whole-vault
+    /// import stages each result body inside its one transaction.
+    pub(crate) fn code_run_output_sink_knowing(
+        &self,
+        known: Option<std::sync::Arc<crate::secret_custody::KnownValues>>,
+    ) -> Result<BodySink> {
+        Ok(self.code_run_script_sink()?.sweeping(known))
     }
 
     /// Stores a complete body held whole under its content handle; `output`
