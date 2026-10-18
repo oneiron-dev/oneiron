@@ -541,7 +541,7 @@ fn is_write(row: &&CodeRunBridgeCall) -> bool {
 }
 
 /// The verb name and JSON input of a recorded verb call, if the row is one.
-fn recorded_call(row: &CodeRunBridgeCall) -> Option<(&str, &str)> {
+pub(crate) fn recorded_call(row: &CodeRunBridgeCall) -> Option<(&str, &str)> {
     if row.effect != SelfEffect::AgentVerb {
         return None;
     }

@@ -48,7 +48,9 @@ pub use self::contribution::{
     ContributionReplayUnavailable, ForkTreatment, ReplayAnchor, ScoredFork,
     contribution_fork_receipts, run_contribution_forks,
 };
-pub(crate) use self::dispatcher::{ExecutorCallSite, check_write_gate_against_vault};
+pub(crate) use self::dispatcher::{
+    ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
+};
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
@@ -63,10 +65,11 @@ pub use self::replay::{
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
 pub use self::replay_capsule::{
-    CapsuleHost, CapsuleRungBinding, ExposureKind, ExposureSlot, StepReplayCapsule, TaskExposure,
-    capture_workflow_step, finalize_step_captures, note_answering_rung,
+    CapsuleHost, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot,
+    StepReplayCapsule, TaskExposure, capture_workflow_step, finalize_step_captures,
+    note_answering_rung,
 };
-pub(crate) use self::replay_capsule::{StepCapture, capture_step};
+pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::{
     Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card,
@@ -86,6 +89,10 @@ pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row, delive
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
     ReceiptSource, ReceiptTree,
+};
+pub(crate) use self::storage::{
+    StoredRunContinuation, capsule_start_body, put_run_continuation_row_in_txn,
+    run_continuation_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{

@@ -121,6 +121,10 @@ const CONFIG_ROUTE_OVERLAY_TAG: &[u8] = b"route:overlay";
 
 const CONFIG_ROUTE_BASE_TAG: &[u8] = b"route:base";
 
+/// Tags the digest of the approved continuation a child run was forked
+/// under (FIX 3694); a run with none hashes nothing more.
+const CONFIG_CONTINUATION_TAG: &[u8] = b"continuation";
+
 pub(super) const REPLAY_METADATA_SCHEMA_VERSION: u64 = 1;
 
 pub(super) fn completed_step_count(record: &CodeRunReplayRecord) -> EngineExecutorResult<u64> {
@@ -140,10 +144,11 @@ pub(super) fn record_config_marker(
     record: &mut CodeRunReplayRecord,
     config: &EngineExecutorConfig,
     prompt_fingerprint: &str,
+    continuation: Option<&[u8; 32]>,
 ) -> EngineExecutorResult<()> {
     let marker = ExecutorConfigMarker {
         schema_version: REPLAY_METADATA_SCHEMA_VERSION,
-        config_hash: executor_config_hash_hex(storage, config),
+        config_hash: executor_config_hash_hex(storage, config, continuation),
         prompt_fingerprint: prompt_fingerprint.to_owned(),
     };
     let text = serde_json::to_string(&marker)?;
@@ -161,6 +166,7 @@ pub(super) fn validate_executor_config_marker(
     record: &CodeRunReplayRecord,
     config: &EngineExecutorConfig,
     prompt_fingerprint: &str,
+    continuation: Option<&[u8; 32]>,
 ) -> EngineExecutorResult<PromptBinding> {
     let marker = load_config_marker(storage, record)?.ok_or_else(|| {
         Error::InvalidConfig("engine executor replay missing config marker".to_owned())
@@ -171,7 +177,7 @@ pub(super) fn validate_executor_config_marker(
         )
         .into());
     }
-    if marker.config_hash != executor_config_hash_hex(storage, config) {
+    if marker.config_hash != executor_config_hash_hex(storage, config, continuation) {
         return Err(Error::InvalidConfig(
             "engine executor config changed for existing run".to_owned(),
         )
@@ -212,8 +218,9 @@ fn load_config_marker(
 fn executor_config_hash_hex(
     storage: &ExecutorStorage<'_>,
     config: &EngineExecutorConfig,
+    continuation: Option<&[u8; 32]>,
 ) -> String {
-    bytes_to_hex_lower(&executor_config_hash(storage, config))
+    bytes_to_hex_lower(&executor_config_hash(storage, config, continuation))
 }
 
 /// Binds replay identity to storage, privacy-route target, and the executor
@@ -232,7 +239,15 @@ fn executor_config_hash_hex(
 /// A record that lived only in an overlay evaporates at close, so a later run
 /// under any binding starts fresh. That is BY DESIGN: evaporation is the
 /// absence of history, not a resumable identity.
-fn executor_config_hash(storage: &ExecutorStorage<'_>, config: &EngineExecutorConfig) -> [u8; 32] {
+///
+/// A child run forked from a failed one (FIX 3694) also binds its
+/// continuation's digest, after every other input: the same run under
+/// another approved note, or under none, is another identity.
+fn executor_config_hash(
+    storage: &ExecutorStorage<'_>,
+    config: &EngineExecutorConfig,
+    continuation: Option<&[u8; 32]>,
+) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hash_bytes(&mut hasher, CONFIG_HASH_DOMAIN);
     match storage.session_ref() {
@@ -263,6 +278,10 @@ fn executor_config_hash(storage: &ExecutorStorage<'_>, config: &EngineExecutorCo
     hash_u64(&mut hasher, config.determinism.frozen_unix_ms);
     hash_bytes(&mut hasher, &config.determinism.rng_seed);
     hash_u64(&mut hasher, u64::from(config.limits.hard_steps));
+    if let Some(digest) = continuation {
+        hash_bytes(&mut hasher, CONFIG_CONTINUATION_TAG);
+        hash_bytes(&mut hasher, digest);
+    }
     *hasher.finalize().as_bytes()
 }
 

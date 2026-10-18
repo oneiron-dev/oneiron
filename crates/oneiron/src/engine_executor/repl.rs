@@ -1,6 +1,7 @@
 //! Durable REPL loop: run(), persistence helpers, and LLM request building.
 
 use super::code_check::ShadowStep;
+use super::continuation::{ContinuationNote, continuation_note, turn_note};
 use super::driver::EngineNativeExecutor;
 use super::host::{
     RecordingJsHost, executor_boundary_contract, executor_system_prompt, executor_turn_instruction,
@@ -88,7 +89,13 @@ impl EngineNativeExecutor<'_> {
         let wire_prompt = resolve_engine_executor_wire_prompt(&config.prompt_package_root)
             .map_err(Error::from)?;
         let boundary = executor_boundary_contract()?;
-        let loaded = self.load_or_create_record(config, &wire_prompt.stamp.resolved_fingerprint)?;
+        // A run forked from a failed one carries its approved note (FIX 3694).
+        let continuation = continuation_note(&self.storage, config.run_id)?;
+        let loaded = self.load_or_create_record(
+            config,
+            &wire_prompt.stamp.resolved_fingerprint,
+            continuation.as_ref(),
+        )?;
         // A terminal replay still owes typed restore even when no new model
         // request is assembled during this attempt.
         if self.output_run != Some(config.run_id) {
@@ -183,7 +190,8 @@ impl EngineNativeExecutor<'_> {
                         .map_err(Error::from)?
                 }
             };
-            let request = self.build_llm_request(config, &record, &wire_prompt.text)?;
+            let request =
+                self.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())?;
             if let Some(reason) = self.feed_compaction(config, &record, &request)? {
                 return Ok(self.outcome(
                     EngineExecutorStatus::WindowFull {
@@ -195,7 +203,13 @@ impl EngineNativeExecutor<'_> {
                 ));
             }
             let request_hash = request.canonical_hash()?;
-            self.capture_first_step(config, completed_steps, &request);
+            self.capture_step_start(
+                config,
+                completed_steps,
+                &request,
+                &record,
+                &wire_prompt.stamp.resolved_fingerprint,
+            );
             let response = self.backend.generate(request, self.lease).await?;
             self.post_turn_hooks(turn, &response)?;
             // The provider that answered is the one this turn's program
@@ -862,11 +876,16 @@ impl EngineNativeExecutor<'_> {
     /// already in the record — so drift is allowed through and the run returns
     /// its stored terminal status. Refusing there would strand a checkpointed
     /// bubble permanently the first time a prompt block was re-deployed.
+    ///
+    /// A run that carries a continuation binds its digest in the marker, and
+    /// is only ever seeded by its fork: it never starts at step 0 here.
     fn load_or_create_record(
         &self,
         config: &EngineExecutorConfig,
         prompt_fingerprint: &str,
+        continuation: Option<&ContinuationNote>,
     ) -> EngineExecutorResult<LoadedReplayRecord> {
+        let continuation_digest = continuation.map(|note| &note.digest);
         if let Some(record) = self.storage.get_code_run_replay_record(&config.run_id)? {
             if record.determinism != config.determinism {
                 return Err(Error::InvalidConfig(
@@ -879,6 +898,7 @@ impl EngineNativeExecutor<'_> {
                 &record,
                 config,
                 prompt_fingerprint,
+                continuation_digest,
             )?;
             let generation = Some(record.generation()?);
             let terminal_status = load_terminal_status(&self.storage, &record)?;
@@ -895,8 +915,14 @@ impl EngineNativeExecutor<'_> {
                 prompt: prompt_binding,
             });
         }
+        if continuation_digest.is_some() {
+            return Err(Error::InvalidConfig(
+                "continuation_unforked: a continued run starts from its fork".to_owned(),
+            )
+            .into());
+        }
         let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
-        record_config_marker(&self.storage, &mut record, config, prompt_fingerprint)?;
+        record_config_marker(&self.storage, &mut record, config, prompt_fingerprint, None)?;
         // The run's clock and config are durable from its start: a process
         // that stops after the first step's writes and before its checkpoint
         // resumes under them, never under a fresh clock or another task.
@@ -995,6 +1021,7 @@ impl EngineNativeExecutor<'_> {
         config: &EngineExecutorConfig,
         record: &CodeRunReplayRecord,
         wire_prompt: &str,
+        continuation: Option<&ContinuationNote>,
     ) -> EngineExecutorResult<LlmRequest> {
         let completed_steps = completed_step_count(record)?;
         let mut messages = Vec::new();
@@ -1113,6 +1140,8 @@ impl EngineNativeExecutor<'_> {
                 content: vec![ContentPart::Text { text: note }],
             });
         }
+        // An approved continuation's note, its own message (FIX 3694).
+        messages.extend(turn_note(continuation, completed_steps));
         messages.push(LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
