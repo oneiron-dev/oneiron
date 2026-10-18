@@ -3076,6 +3076,36 @@ export_facade! {
     let output = client.vault_calendar_freebusy(&input)?;
     crate::codec::lift_record("vault.calendar.freebusy", &output)
 };
+"vault.calendar.prep" => fn vault_calendar_prep(&self, input: CalendarMeetingRequest) -> ScopedReadResultOptionalPrepPack = |client| {
+    let input: oneiron::calendar::meeting::CalendarMeetingRequest = crate::codec::lower_record("vault.calendar.prep", input)?;
+    let output = client.vault_calendar_prep(&input)?;
+    crate::codec::lift_record("vault.calendar.prep", &output)
+};
+"vault.calendar.event_outcome" => fn vault_calendar_event_outcome(&self, input: CalendarMeetingRequest) -> ScopedReadResultOptionalCalendarEventOutcome = |client| {
+    let input: oneiron::calendar::meeting::CalendarMeetingRequest = crate::codec::lower_record("vault.calendar.event_outcome", input)?;
+    let output = client.vault_calendar_event_outcome(&input)?;
+    crate::codec::lift_record("vault.calendar.event_outcome", &output)
+};
+"vault.calendar.check_in.due" => fn vault_calendar_check_in_due(&self, input: CalendarMeetingRequest) -> ScopedReadResultOptionalCalendarCheckInDue = |client| {
+    let input: oneiron::calendar::meeting::CalendarMeetingRequest = crate::codec::lower_record("vault.calendar.check_in.due", input)?;
+    let output = client.vault_calendar_check_in_due(&input)?;
+    crate::codec::lift_record("vault.calendar.check_in.due", &output)
+};
+"vault.calendar.check_in.answer" => fn vault_calendar_check_in_answer(&self, input: CalendarCheckInRequest) -> CalendarCheckInReceipt = |client| {
+    let input: oneiron::calendar::meeting::CalendarCheckInRequest = crate::codec::lower_record("vault.calendar.check_in.answer", input)?;
+    let output = client.vault_calendar_check_in_answer(&input)?;
+    crate::codec::lift_record("vault.calendar.check_in.answer", &output)
+};
+"vault.calendar.outcome_policy.get" => fn vault_calendar_outcome_policy_get(&self) -> CalendarOutcomePolicy = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.calendar.outcome_policy.get")?;
+    let output = client.vault_calendar_outcome_policy_get(&input)?;
+    crate::codec::lift_record("vault.calendar.outcome_policy.get", &output)
+};
+"vault.calendar.outcome_policy.set" => fn vault_calendar_outcome_policy_set(&self, input: CalendarOutcomePolicy) -> CalendarOutcomePolicy = |client| {
+    let input: oneiron::calendar::meeting::CalendarOutcomePolicy = crate::codec::lower_record("vault.calendar.outcome_policy.set", input)?;
+    let output = client.vault_calendar_outcome_policy_set(&input)?;
+    crate::codec::lift_record("vault.calendar.outcome_policy.set", &output)
+};
 "vault.calendar.transcript.ingest" => fn vault_calendar_transcript_ingest(&self, input: TranscriptFileDropInput) -> TranscriptIngestOutcome = |client| {
     let input: oneiron::calendar::transcript::TranscriptFileDropInput = crate::codec::lower_record("vault.calendar.transcript.ingest", input)?;
     let output = client.vault_calendar_transcript_ingest(&input)?;

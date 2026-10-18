@@ -243,3 +243,50 @@ pub(crate) async fn calendar_imip_get(
     )
     .await
 }
+
+
+use oneiron::calendar::meeting::{
+    self as meeting, CalendarCheckInDue, CalendarCheckInReceipt, CalendarCheckInRequest,
+    CalendarMeetingRequest, CalendarOutcomePolicy,
+};
+use oneiron::claim::ScopedReadResult;
+
+pub(crate) async fn vault_calendar_outcome_policy_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: oneiron::task_verb::sdk::EmptyRequest,
+) -> Listed<CalendarOutcomePolicy> {
+    as_owner(server, auth, "vault.calendar.outcome_policy.get", move |_, memory, owner| {
+        meeting::outcome_policy_get(&memory, &owner)
+    }).await
+}
+
+pub(crate) async fn vault_calendar_outcome_policy_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CalendarOutcomePolicy,
+) -> Listed<CalendarOutcomePolicy> {
+    as_owner(server, auth, "vault.calendar.outcome_policy.set", move |_, memory, owner| {
+        meeting::outcome_policy_set(&memory, &owner, &input)
+    }).await
+}
+
+pub(crate) async fn vault_calendar_check_in_due(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CalendarMeetingRequest,
+) -> Listed<ScopedReadResult<Option<CalendarCheckInDue>>> {
+    as_owner(server, auth, "vault.calendar.check_in.due", move |_, memory, owner| {
+        meeting::check_in_due(&memory, &owner, &input)
+    }).await
+}
+
+pub(crate) async fn vault_calendar_check_in_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CalendarCheckInRequest,
+) -> Listed<CalendarCheckInReceipt> {
+    as_owner(server, auth, "vault.calendar.check_in.answer", move |_, memory, owner| {
+        meeting::check_in_answer(&memory, &owner, &input)
+    }).await
+}

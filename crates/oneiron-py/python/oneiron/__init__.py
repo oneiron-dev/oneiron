@@ -3181,6 +3181,18 @@ class Oneiron:
         def freebusy(self, spec):
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_calendar_freebusy(json.dumps(spec))))
+        def prep(self, spec):
+            """Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_prep(json.dumps(spec))))
+        def event_outcome(self, spec):
+            """Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_event_outcome(json.dumps(spec))))
+        @property
+        def check_in(self) -> "Oneiron._VaultCalendarCheckInVerbs":
+            return Oneiron._VaultCalendarCheckInVerbs(self._client)
+        @property
+        def outcome_policy(self) -> "Oneiron._VaultCalendarOutcomePolicyVerbs":
+            return Oneiron._VaultCalendarOutcomePolicyVerbs(self._client)
         @property
         def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs":
             return Oneiron._VaultCalendarTranscriptVerbs(self._client)
@@ -3196,11 +3208,29 @@ class Oneiron:
         def move(self, spec):
             """The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."""
             return json.loads(_translate(lambda: self._client.vault_calendar_instances_move(json.dumps(spec))))
+    class _VaultCalendarCheckInVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def due(self, spec):
+            """Observes whether a meeting check-in is due under owner proof, live evidence and the engine clock, without advancing time or recording an outcome."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_check_in_due(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_check_in_answer(json.dumps(spec))))
+    class _VaultCalendarOutcomePolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_outcome_policy_get(json.dumps({} if spec is None else spec))))
+        def set(self, spec):
+            """Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_outcome_policy_set(json.dumps(spec))))
     class _VaultCalendarTranscriptVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def ingest(self, spec):
-            """Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."""
+            """Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate."""
             return json.loads(_translate(lambda: self._client.vault_calendar_transcript_ingest(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:

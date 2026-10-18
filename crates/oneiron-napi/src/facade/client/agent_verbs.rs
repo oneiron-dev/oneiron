@@ -5420,6 +5420,57 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_calendar_prep(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.prep", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_event_outcome(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.event_outcome", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_check_in_due(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.check_in.due", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_check_in_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.check_in.answer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_outcome_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.outcome_policy.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_outcome_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.outcome_policy.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_calendar_transcript_ingest(
         &self,
         input: serde_json::Value,

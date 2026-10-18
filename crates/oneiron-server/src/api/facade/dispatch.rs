@@ -14248,6 +14248,146 @@ async fn vault_calendar_freebusy(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_calendar_prep(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.prep",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_calendar_event_outcome(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.event_outcome",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_calendar_check_in_due(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.calendar.check_in.due")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.calendar.check_in.due", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.calendar.check_in.due", value).await?;
+    let (output, listed) = super::host_doors::vault_calendar_check_in_due(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_calendar_check_in_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.calendar.check_in.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.calendar.check_in.answer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.calendar.check_in.answer", value).await?;
+    let (output, listed) = super::host_doors::vault_calendar_check_in_answer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_calendar_outcome_policy_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.calendar.outcome_policy.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.calendar.outcome_policy.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.calendar.outcome_policy.get", value).await?;
+    let (output, listed) = super::host_doors::vault_calendar_outcome_policy_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_calendar_outcome_policy_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.calendar.outcome_policy.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.calendar.outcome_policy.set", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.calendar.outcome_policy.set", value).await?;
+    let (output, listed) = super::host_doors::vault_calendar_outcome_policy_set(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_calendar_transcript_ingest(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -19236,6 +19376,18 @@ pub(crate) async fn call_verb(
         "vault.calendar.read" => vault_calendar_read(server, call, input).await,
         "vault.calendar.search" => vault_calendar_search(server, call, input).await,
         "vault.calendar.freebusy" => vault_calendar_freebusy(server, call, input).await,
+        "vault.calendar.prep" => vault_calendar_prep(server, call, input).await,
+        "vault.calendar.event_outcome" => vault_calendar_event_outcome(server, call, input).await,
+        "vault.calendar.check_in.due" => vault_calendar_check_in_due(server, call, input).await,
+        "vault.calendar.check_in.answer" => {
+            vault_calendar_check_in_answer(server, call, input).await
+        }
+        "vault.calendar.outcome_policy.get" => {
+            vault_calendar_outcome_policy_get(server, call, input).await
+        }
+        "vault.calendar.outcome_policy.set" => {
+            vault_calendar_outcome_policy_set(server, call, input).await
+        }
         "vault.calendar.transcript.ingest" => {
             vault_calendar_transcript_ingest(server, call, input).await
         }

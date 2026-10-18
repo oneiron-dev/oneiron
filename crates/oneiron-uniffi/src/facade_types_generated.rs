@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 780 facade rows, 2686 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 736.
+// UniFFI census: 786 facade rows, 2703 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 742.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -34697,6 +34697,202 @@ pub struct ScopedReadResultCalendarFreebusyDto {
     pub narrowing: ScopedReadReceipt,
 }
 
+/// `oneiron::calendar::meeting::CalendarMeetingRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarMeetingRequest {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+}
+
+/// `oneiron::calendar::prep::pack::PrepSectionKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum PrepSectionKind {
+    #[serde(rename = "prior_commitment")]
+    PriorCommitment,
+    #[serde(rename = "attendee_thread")]
+    AttendeeThread,
+    #[serde(rename = "dossier_delta")]
+    DossierDelta,
+}
+
+/// `oneiron::calendar::prep::pack::PrepItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PrepItem {
+    #[serde(rename = "kind")]
+    pub kind: PrepSectionKind,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "source_refs")]
+    pub source_refs: Vec<String>,
+    #[serde(rename = "observed_at")]
+    pub observed_at: u64,
+}
+
+/// `oneiron::calendar::prep::pack::PrepSection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PrepSection {
+    #[serde(rename = "kind")]
+    pub kind: PrepSectionKind,
+    #[serde(rename = "items")]
+    pub items: Vec<PrepItem>,
+}
+
+/// `oneiron::calendar::prep::pack::PrepPack`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PrepPack {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "built_at")]
+    pub built_at: u64,
+    #[serde(rename = "sections")]
+    pub sections: Vec<PrepSection>,
+    #[serde(rename = "word_count")]
+    pub word_count: u64,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalPrepPack`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalPrepPack {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<PrepPack>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::calendar::outcome::EventOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EventOutcome {
+    #[serde(rename = "held")]
+    Held,
+    #[serde(rename = "no_show")]
+    NoShow,
+    #[serde(rename = "cancelled_pre_start")]
+    CancelledPreStart,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+/// `oneiron::calendar::outcome::EventOutcomeBasis`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EventOutcomeBasis {
+    #[serde(rename = "machine")]
+    Machine,
+    #[serde(rename = "owner_attested")]
+    OwnerAttested,
+}
+
+/// `oneiron::calendar::outcome::EventOutcomeClaimValue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EventOutcomeClaimValue {
+    #[serde(rename = "outcome")]
+    pub outcome: EventOutcome,
+    #[serde(rename = "basis")]
+    pub basis: EventOutcomeBasis,
+    #[serde(rename = "recorded_at")]
+    pub recorded_at: u64,
+}
+
+/// `oneiron::calendar::meeting::CalendarEventOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarEventOutcome {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "outcome")]
+    pub outcome: EventOutcome,
+    #[serde(rename = "claim", default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<EventOutcomeClaimValue>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalCalendarEventOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalCalendarEventOutcome {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<CalendarEventOutcome>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::calendar::meeting::CalendarCheckInDue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarCheckInDue {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "observed_at")]
+    pub observed_at: u64,
+    #[serde(rename = "grace_secs")]
+    pub grace_secs: u64,
+    #[serde(rename = "due_at", default, skip_serializing_if = "Option::is_none")]
+    pub due_at: Option<u64>,
+    #[serde(rename = "due")]
+    pub due: bool,
+    #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<EventOutcomeClaimValue>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalCalendarCheckInDue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalCalendarCheckInDue {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<CalendarCheckInDue>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::calendar::meeting::CalendarCheckInAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CalendarCheckInAnswer {
+    #[serde(rename = "held")]
+    Held,
+    #[serde(rename = "no_show")]
+    NoShow,
+    #[serde(rename = "rescheduled")]
+    Rescheduled,
+}
+
+/// `oneiron::calendar::meeting::CalendarCheckInRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarCheckInRequest {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "answer")]
+    pub answer: CalendarCheckInAnswer,
+}
+
+/// `oneiron::calendar::meeting::CalendarCheckInReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "disposition")]
+pub enum CalendarCheckInReceipt {
+    #[serde(rename = "outcome")]
+    Outcome {
+        #[serde(rename = "event_ref")]
+        event_ref: String,
+        #[serde(rename = "claim_ref")]
+        claim_ref: String,
+        #[serde(rename = "value")]
+        value: EventOutcomeClaimValue,
+    },
+    #[serde(rename = "reschedule_requested")]
+    RescheduleRequested {
+        #[serde(rename = "event_ref")]
+        event_ref: String,
+        #[serde(rename = "claim_ref")]
+        claim_ref: String,
+        #[serde(rename = "value")]
+        value: EventOutcomeClaimValue,
+    },
+}
+
+/// `oneiron::calendar::meeting::CalendarOutcomePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarOutcomePolicy {
+    #[serde(rename = "grace_secs")]
+    pub grace_secs: u64,
+}
+
 /// `oneiron::calendar::transcript::door::TranscriptFileDropInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -34707,6 +34903,8 @@ pub struct TranscriptFileDropInput {
     pub decoded_text: String,
     #[serde(rename = "arrived_at_ms")]
     pub arrived_at_ms: u64,
+    #[serde(rename = "event_ref", default, skip_serializing_if = "Option::is_none")]
+    pub event_ref: Option<String>,
 }
 
 /// `oneiron::calendar::transcript::TranscriptIngestOutcome`.

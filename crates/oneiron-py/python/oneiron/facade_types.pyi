@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 780 facade rows, 2722 declarations.
-Inputs: 728 of 780 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 700 of 780 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 786 facade rows, 2736 declarations.
+Inputs: 734 of 786 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 706 of 786 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -11229,10 +11229,61 @@ class CalendarFreebusyIntervalDto(TypedDict):
     start_utc: int
     end_utc: int
 CalendarFreebusyDto = list[CalendarFreebusyIntervalDto]
+class CalendarMeetingRequest(TypedDict):
+    event_ref: str
+PrepSectionKind = Literal["prior_commitment", "attendee_thread", "dossier_delta"]
+class PrepItem(TypedDict):
+    kind: PrepSectionKind
+    text: str
+    source_refs: list[str]
+    observed_at: int
+class PrepSection(TypedDict):
+    kind: PrepSectionKind
+    items: list[PrepItem]
+class PrepPack(TypedDict):
+    event_ref: str
+    built_at: int
+    sections: list[PrepSection]
+    word_count: int
+EventOutcome = Literal["held", "no_show", "cancelled_pre_start", "unknown"]
+EventOutcomeBasis = Literal["machine", "owner_attested"]
+class EventOutcomeClaimValue(TypedDict):
+    outcome: EventOutcome
+    basis: EventOutcomeBasis
+    recorded_at: int
+class CalendarEventOutcome(TypedDict):
+    event_ref: str
+    outcome: EventOutcome
+    claim: NotRequired[EventOutcomeClaimValue | None]
+class CalendarCheckInDue(TypedDict):
+    event_ref: str
+    observed_at: int
+    grace_secs: int
+    due_at: NotRequired[int | None]
+    due: bool
+    outcome: NotRequired[EventOutcomeClaimValue | None]
+CalendarCheckInAnswer = Literal["held", "no_show", "rescheduled"]
+class CalendarCheckInRequest(TypedDict):
+    event_ref: str
+    answer: CalendarCheckInAnswer
+class CalendarCheckInReceiptOutcome(TypedDict):
+    disposition: Literal["outcome"]
+    event_ref: str
+    claim_ref: str
+    value: EventOutcomeClaimValue
+class CalendarCheckInReceiptRescheduleRequested(TypedDict):
+    disposition: Literal["reschedule_requested"]
+    event_ref: str
+    claim_ref: str
+    value: EventOutcomeClaimValue
+CalendarCheckInReceipt = CalendarCheckInReceiptOutcome | CalendarCheckInReceiptRescheduleRequested
+class CalendarOutcomePolicy(TypedDict):
+    grace_secs: int
 class TranscriptFileDropInput(TypedDict):
     source_blob_ref: str
     decoded_text: str
     arrived_at_ms: int
+    event_ref: NotRequired[str | None]
 class TranscriptIngestOutcomeSession(TypedDict):
     outcome: Literal["session"]
     session_ref: EntityId
