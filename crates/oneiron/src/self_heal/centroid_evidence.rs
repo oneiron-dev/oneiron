@@ -4,6 +4,7 @@ use super::{
     DiagnosticSourceKind,
     tiered::{DetectorPolicy, ProposedDiagnostic, ProposedTier, propose, valid_runs},
 };
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
 use serde::{Deserialize, Serialize};
@@ -92,7 +93,9 @@ fn similarity(candidate: &[f32], labeled: &[VectorEvidence]) -> Option<f64> {
 
 impl Vault {
     /// T2a reads existing vectors, pins their bytes and threshold, then emits
-    /// a proposal whose replay hash addresses that immutable snapshot.
+    /// a proposal whose replay hash addresses that immutable snapshot. Every
+    /// label is kept in the snapshot and the finding's evidence refs: past
+    /// `limits.centroid_labels` the classifier asks and reads them all.
     pub fn classify_centroid(
         &self,
         policy: &DetectorPolicy,
@@ -102,16 +105,15 @@ impl Vault {
         min_similarity: f32,
     ) -> Result<Option<ProposedDiagnostic>> {
         policy.validate()?;
+        let _ = self.measure_limit(EngineLimit::DetectorConsecutive, policy.consecutive as u64);
         valid_runs(self, std::slice::from_ref(run), 1)?;
-        // The event's evidence_refs include the run and candidate in addition
-        // to the labels; cap before persisting the immutable snapshot.
         if labeled.is_empty()
-            || labeled.len() > 62
             || !min_similarity.is_finite()
             || !(-1.0..=1.0).contains(&min_similarity)
         {
             return Err(Error::InvalidConfig("invalid centroid detector".into()));
         }
+        let _ = self.measure_limit(EngineLimit::CentroidLabels, labeled.len() as u64);
         if !run.result_ids.iter().any(|id| id == candidate.as_bytes()) {
             return Err(Error::InvalidConfig(
                 "candidate is not in retrieval run".into(),
