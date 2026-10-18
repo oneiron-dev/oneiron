@@ -4,6 +4,7 @@ use heed::RoTxn;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
+use crate::error::SideTableRowProblem;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::ManifestDbs;
 
@@ -39,6 +40,48 @@ fn stored_rule_set(
     match SELECTION_RULES.get(dbs, txn, &())? {
         Some(raw) => decode_rule_set(&raw).map(Some),
         None => Ok(None),
+    }
+}
+
+/// Erasing `actor` from the selection law (FIX 3520): each row it last wrote
+/// keeps its effect, its writer kind, its time and the set's revision, and
+/// names no writer. One-way, in the erase's own transaction. A stored set
+/// that cannot be read fails the erase rather than keep a writer it cannot
+/// prove scrubbed.
+pub(crate) fn erase_rule_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::error::Result<()> {
+    let Some(mut set) = stored_rule_set(&vault.store, wtxn)
+        .map_err(|error| erase_error(error, SideTableRowProblem::Undecodable))?
+    else {
+        return Ok(());
+    };
+    let mut erased = false;
+    for row in &mut set.rows {
+        if row.updated_by == Some(*actor) {
+            row.updated_by = None;
+            erased = true;
+        }
+    }
+    if erased {
+        let bytes = encode_rule_set(&set)
+            .map_err(|error| erase_error(error, SideTableRowProblem::Unencodable))?;
+        SELECTION_RULES.put(&vault.store, wtxn, &(), &bytes)?;
+    }
+    Ok(())
+}
+
+/// A selection error as the erase's own: a storage error stays one, and any
+/// other is this row failing `problem`.
+fn erase_error(
+    error: ChannelIdentitySelectionError,
+    problem: SideTableRowProblem,
+) -> crate::error::Error {
+    match error {
+        ChannelIdentitySelectionError::Storage(error) => error,
+        _ => side_table::CHANNEL_IDENTITY_SELECTION_RULES.row_error(problem),
     }
 }
 
