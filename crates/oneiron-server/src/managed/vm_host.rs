@@ -77,6 +77,16 @@ pub struct VaultVmConfig {
     /// The domains that origin answers under (`<vault>.<domain>`).
     #[serde(default)]
     pub artifact_domains: Vec<String>,
+    /// This vault's managed settings files, as a read-only ext4 image the
+    /// supervisor builds (FIX 2168, FIX 3487). The guest mounts it at
+    /// `/config` and passes each file it holds to the engine: `models.toml`
+    /// as `--models-file`, and under `seal/` `key.pem`, `chain.pem`,
+    /// `trust.pem` and `organ` as the matching `--seal-*-file` and
+    /// `--seal-organ` flags, and the one-line `tsa-url` and `signing-url` as
+    /// `--seal-tsa-url` and `--seal-signing-url`. Without it the guest runs
+    /// with none of them.
+    #[serde(default)]
+    pub config_disk: Option<PathBuf>,
 }
 fn default_boot_args() -> String {
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init".into()
@@ -249,6 +259,9 @@ impl VaultVm {
             boot_args.push_str(" oneiron.allowed_origins=");
             boot_args.push_str(&origins.join(","));
         }
+        if config.config_disk.is_some() {
+            boot_args.push_str(" oneiron.config=1");
+        }
         if config.artifact_origin {
             boot_args.push_str(" oneiron.artifact_origin=1");
             let domains: Vec<String> = config
@@ -296,6 +309,18 @@ impl VaultVm {
             }),
         )
         .await?;
+        // The third drive, `/dev/vdc` in the guest.
+        if let Some(config_disk) = &config.config_disk {
+            self.api(
+                "PUT",
+                "/drives/config",
+                json!({
+                    "drive_id": "config", "path_on_host": config_disk,
+                    "is_root_device": false, "is_read_only": true,
+                }),
+            )
+            .await?;
+        }
         self.api(
             "PUT",
             "/machine-config",
