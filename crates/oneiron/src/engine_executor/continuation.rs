@@ -6,21 +6,25 @@
 //! ([`put_run_continuation_in_txn`]). Once the successor is leased, its
 //! executor run (whose id is the successor's) is seeded from the failed
 //! run's replay row as it stood at the start of the failing step
-//! ([`fork_executor_run`]): the start that step's capture stored, never the
-//! row the failure left. The REPL then goes on at that step. It never runs
-//! a prefix program again: it rebuilds each turn from the stored programs
-//! and observations, and from that step on every turn carries the approved
-//! note as a message of its own just before the turn instruction.
+//! ([`fork_executor_run`]): the start that step's capture stored. A failing
+//! step that may have committed an effect is kept instead (FIX 3694 PR 2):
+//! the run is seeded from the row its failure left, so that step's program,
+//! its calls, made once, and its error observation stay as history, and the
+//! run goes on at the next step. The REPL never runs a prefix program again:
+//! it rebuilds each turn from the stored programs and observations, and from
+//! the cut on every turn carries the approved note as a message of its own
+//! just before the turn instruction.
 //!
 //! The child runs the source's task, model, locality, seat effort, tier,
 //! clock and limits. Its config marker binds the source's teaching
 //! fingerprint and this continuation's digest, so a teaching that drifted
-//! since, or another continuation, refuses through the marker check. A
-//! failing step that committed effects after the cut refuses
-//! ([`ContinuationRefusal::EffectTail`]).
+//! since, or another continuation, refuses through the marker check. A cut
+//! that a call with an effect follows refuses
+//! ([`ContinuationRefusal::EffectTail`]); [`pre_fail_checkpoint`] never
+//! names one.
 
 use super::record::{record_config_marker, validate_executor_config_marker};
-use super::store::CONFIG_OUTPUT_PATH;
+use super::store::{CONFIG_OUTPUT_PATH, terminal_output_seq};
 use super::types::{
     EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorResult,
 };
@@ -28,8 +32,8 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState}
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunReplayRecord, ExecutorStorage, SelfEffect, StepReplayCapsule,
     StepStartBody, StoredRunContinuation, capsule_start_body, decode_code_run_replay_record,
-    put_run_continuation_row_in_txn, recorded_verb_call, run_continuation_in_txn,
-    seed_continuation_run, step_replay_capsules_in_txn,
+    encode_code_run_replay_record, put_run_continuation_row_in_txn, recorded_verb_call,
+    run_continuation_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
 };
 use crate::task_verb::sdk::AgentVerb;
 use crate::{ContentPart, EntityId, Error, LlmMessage, LlmMessageRole, Vault};
@@ -37,7 +41,7 @@ use crate::{ContentPart, EntityId, Error, LlmMessage, LlmMessageRole, Vault};
 /// The engine's framing of an approved note: the first part of the note's
 /// message, before the approved bytes as a part of their own.
 const CONTINUATION_NOTE_FRAME: &str =
-    "An owner-approved note for this repaired run, which continues from the step that failed:";
+    "An owner-approved note for this repaired run, which continues from where it failed:";
 
 /// The domain of a continuation checkpoint's id.
 const CHECKPOINT_REF_DOMAIN: &[u8] = b"oneiron:executor-continuation-checkpoint:v1";
@@ -45,6 +49,10 @@ const CHECKPOINT_REF_DOMAIN: &[u8] = b"oneiron:executor-continuation-checkpoint:
 /// The domain of a continuation's digest, which its child run's config
 /// marker binds.
 const CONTINUATION_DIGEST_DOMAIN: &[u8] = b"oneiron:executor-continuation:v1";
+
+/// The domain of a cut after the failed step's digest: the start its config
+/// comes from and the row the failure left.
+const FINAL_ROW_DOMAIN: &[u8] = b"oneiron:executor-continuation-final-row:v1";
 
 /// Where a continuation starts: before the model call of step `step` of
 /// `source_run` (StartOfModelStep). The prefix it keeps is the run's
@@ -398,7 +406,10 @@ pub(super) fn turn_note(
 
 /// The checkpoint a failed run continues from: the step of its latest
 /// captured start (by lease generation, then step), else its completed-step
-/// count, 0 with no replay row.
+/// count, 0 with no replay row. When a call the row holds after that start
+/// may have committed an effect, and the failed step was checkpointed, it is
+/// the row's checkpoint count instead (FIX 3694 PR 2): the cut after the
+/// failed step, whose calls are then never made again.
 ///
 /// # Errors
 ///
@@ -447,11 +458,21 @@ fn pre_fail_checkpoint_of(
         .iter()
         .filter(|capsule| capsule.start.is_some())
         .max_by_key(|capsule| (capsule.lease_generation, capsule.step));
+    let source = vault.get_code_run_replay_record_in_txn(rtxn, &run)?;
+    let completed = source
+        .as_ref()
+        .map_or(0, |record| record.step_checkpoints.len() as u64);
     let step = match latest {
+        Some(capsule)
+            if completed > capsule.step
+                && source
+                    .as_ref()
+                    .is_some_and(|record| effect_after(record, capsule)) =>
+        {
+            completed
+        }
         Some(capsule) => capsule.step,
-        None => vault
-            .get_code_run_replay_record_in_txn(rtxn, &run)?
-            .map_or(0, |record| record.step_checkpoints.len() as u64),
+        None => completed,
     };
     Ok(ExecutorCheckpointRef {
         source_run: run,
@@ -464,7 +485,9 @@ fn pre_fail_checkpoint_of(
 /// run's capsule for the step (its latest lease generation that holds a
 /// start) holds a start whose body is still there, clean and its digest,
 /// and whose prefix row the run's row still descends from; and no call
-/// after the cut may have committed an effect.
+/// after the cut may have committed an effect. A step with no start that is
+/// the row's checkpoint count is a cut after the failed step, proved from
+/// the row the failure left ([`prove_final_row`]).
 fn prove_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -481,14 +504,15 @@ fn prove_in_txn(
     let Some(source) = vault.get_code_run_replay_record_in_txn(rtxn, &source_run)? else {
         return Err(ContinuationRefusal::SourceMissing);
     };
-    let capsule = step_replay_capsules_in_txn(vault, rtxn, source_run)?
-        .into_iter()
+    let capsules = step_replay_capsules_in_txn(vault, rtxn, source_run)?;
+    let capsule = capsules
+        .iter()
         .filter(|capsule| capsule.step == step && capsule.start.is_some())
         .max_by_key(|capsule| capsule.lease_generation);
     let Some(capsule) = capsule else {
-        return Err(ContinuationRefusal::NoCheckpoint);
+        return prove_final_row(vault, rtxn, &source, step, &capsules);
     };
-    let Some((proved, bridge_start)) = decode_start(vault, rtxn, &capsule)? else {
+    let Some((proved, bridge_start)) = decode_start(vault, rtxn, capsule)? else {
         return Err(ContinuationRefusal::NoCheckpoint);
     };
     if !descends(&source, &proved.prefix, step, bridge_start) {
@@ -503,6 +527,66 @@ fn prove_in_txn(
         return Err(ContinuationRefusal::EffectTail);
     }
     Ok(proved)
+}
+
+/// Proves a cut after the failed run's last step, from the row its failure
+/// left (FIX 3694 PR 2): `step` is that row's checkpoint count, the config
+/// is the latest start the run captured before it, the row still descends
+/// from that start, and no step from that start on ended on a terminal
+/// marker. No call follows the cut, so none can have an effect after it.
+fn prove_final_row(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    source: &CodeRunReplayRecord,
+    step: u64,
+    capsules: &[StepReplayCapsule],
+) -> Result<ProvedStart, ContinuationRefusal> {
+    let latest = capsules
+        .iter()
+        .filter(|capsule| capsule.step < step && capsule.start.is_some())
+        .max_by_key(|capsule| (capsule.lease_generation, capsule.step));
+    let Some(capsule) = latest.filter(|_| source.step_checkpoints.len() as u64 == step) else {
+        return Err(ContinuationRefusal::NoCheckpoint);
+    };
+    let Some((start, bridge_start)) = decode_start(vault, rtxn, capsule)? else {
+        return Err(ContinuationRefusal::NoCheckpoint);
+    };
+    let terminal = source
+        .outputs
+        .iter()
+        .filter_map(|output| terminal_output_seq(&output.path))
+        .any(|seq| seq >= capsule.step);
+    if terminal || !descends(source, &start.prefix, capsule.step, bridge_start) {
+        return Err(ContinuationRefusal::NoCheckpoint);
+    }
+    let mut prefix = source.clone();
+    prefix.live_run = None;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(FINAL_ROW_DOMAIN);
+    hasher.update(&start.digest);
+    hasher.update(&encode_code_run_replay_record(&prefix)?);
+    Ok(ProvedStart {
+        body: start.body,
+        prefix,
+        digest: *hasher.finalize().as_bytes(),
+        lease_generation: start.lease_generation,
+    })
+}
+
+/// Whether a call `record` holds after the start `capsule` captured may have
+/// committed an effect.
+fn effect_after(record: &CodeRunReplayRecord, capsule: &StepReplayCapsule) -> bool {
+    capsule
+        .start
+        .as_ref()
+        .and_then(|start| usize::try_from(start.bridge_start).ok())
+        .is_some_and(|start| {
+            record
+                .bridge_calls
+                .iter()
+                .skip(start)
+                .any(continuation_tail_effect)
+        })
 }
 
 /// The start `capsule` holds, decoded, with the bridge log's length at it;
