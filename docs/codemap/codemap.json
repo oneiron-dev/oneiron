@@ -11359,6 +11359,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/connector_answer.rs",
+     "purpose": "`connector.answer` (ONE-2510): a run's answer to the questions one of its connector calls waits on, sent…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -14175,7 +14185,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 7,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -14367,11 +14377,14 @@
      "kind": "src",
      "notable": [
       "ConnectorGrantSlate",
+      "SlateCapability",
       "SlateDataClass",
       "SlateDisposition",
       "SlateDraftRow",
+      "SlateElicitationManifest",
       "SlateFacetNarrow",
       "SlateHolderNarrow",
+      "SlateManifest",
       "SlateOwnerOverride",
       "SlateRow",
       "SlateToolManifest"
@@ -14379,11 +14392,11 @@
      "path": "src/connector_key/slate.rs",
      "purpose": "ARCH-0072 typed per-capability grant slates",
      "surface": {
-      "const": 1,
-      "crate-vis": 10,
-      "enum": 2,
-      "fn": 27,
-      "struct": 7
+      "const": 2,
+      "crate-vis": 12,
+      "enum": 3,
+      "fn": 36,
+      "struct": 9
      }
     },
     {
@@ -14399,7 +14412,7 @@
      "path": "src/connector_key/slate_draft.rs",
      "purpose": "ARCH-0072's memory-informed drafter",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 8,
       "struct": 4
@@ -14412,8 +14425,8 @@
      "path": "src/connector_key/slate_setting.rs",
      "purpose": "The four capability settings at call time (DEC-0006 §MCP connector permissions)",
      "surface": {
-      "crate-vis": 4,
-      "fn": 1
+      "crate-vis": 5,
+      "fn": 2
      }
     },
     {
@@ -34050,11 +34063,14 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "ConnectorAwaitingInput",
+      "ConnectorCallCaller",
       "ConnectorCallHost",
       "ConnectorCallInvocation",
       "ConnectorCallOutcome",
       "ConnectorCallRequest",
       "ConnectorCallState",
+      "ConnectorQuestion",
       "ConnectorToolSchema",
       "PendingConnectorCallRef",
       "UntrustedToolResult"
@@ -34063,10 +34079,10 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 7,
-      "struct": 5,
+      "struct": 8,
       "trait": 1
      }
     },
@@ -34103,17 +34119,33 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorElicitationAnswer"
+     ],
+     "path": "src/outbound_consent/connector_elicitation_asks.rs",
+     "purpose": "The owner ask an answer to a connector's question takes (ONE-2510)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConnectorElicitationBinding",
+      "ElicitationAnswerVerdict",
       "ScopedMcpDispatchResult"
      ],
      "path": "src/outbound_consent/execution.rs",
      "purpose": "Scoped-call execution, post-effect decision, and result transport",
      "surface": {
       "crate-vis": 4,
-      "fn": 3,
-      "struct": 1
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -34125,7 +34157,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -45587,7 +45619,7 @@
      "path": "src/sync/federation_burst/mod.rs",
      "purpose": "Peer-relative federation admission with durable, automatically replayable work",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 1,
       "re-export": 2,
@@ -45621,7 +45653,7 @@
      "path": "src/sync/federation_burst/queue.rs",
      "purpose": "Actual deferred payloads and their identity-bound, idempotent completion",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -46380,7 +46412,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "FederationAdmissionRole"
@@ -48262,9 +48294,12 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConnectorAnswerAction",
+      "ConnectorAnswerRequest",
       "ConnectorCallReply",
       "ConnectorCallStatus",
       "ConnectorCallStatusRequest",
+      "ConnectorQuestionAnswer",
       "ConnectorSchemaReply",
       "ConnectorSchemaRequest",
       "ConnectorToolResult"
@@ -48273,9 +48308,9 @@
      "purpose": "`connector.call` and `connector.schema` (ONE-2510): one tool of one catalogued connector, called by name…",
      "surface": {
       "const": 1,
-      "enum": 2,
-      "fn": 7,
-      "struct": 4
+      "enum": 3,
+      "fn": 9,
+      "struct": 6
      }
     },
     {
@@ -53793,7 +53828,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54458,7 +54493,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54880,7 +54915,7 @@
     "sync": {
      "files": 171,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "CRDT sync layer for Oneiron"
     },
@@ -55076,7 +55111,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3353,
+   "source_files": 3355,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67402,7 +67437,7 @@
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -70912,8 +70947,19 @@
      "path": "src/connector_call_host.rs",
      "purpose": "The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply…",
      "surface": {
-      "fn": 2,
+      "crate-vis": 15,
+      "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_host/live_exchange.rs",
+     "purpose": "The live half of the call host: the worker that owns an exchange once its send returned, and the reply…",
+     "surface": {
+      "crate-vis": 21
      }
     },
     {
@@ -70924,6 +70970,16 @@
      "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_elicitation.rs",
+     "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -74783,10 +74839,10 @@
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply…"
     },
     "connector_call_settle": {
@@ -74795,6 +74851,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…"
+    },
+    "connector_elicitation": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)"
     },
     "control_keys": {
      "files": 3,
@@ -75114,7 +75177,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 638,
+   "source_files": 640,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -75500,6 +75563,7 @@
       "ConnectorNameRequest",
       "ConnectorPreset",
       "ConnectorQualificationReceipt",
+      "ConnectorQuestion",
       "ConnectorSchemaReply",
       "ConnectorSchemaRequest",
       "ConnectorSendTaskOutcome",
@@ -76495,7 +76559,7 @@
      "purpose": "—",
      "surface": {
       "enum": 325,
-      "struct": 858
+      "struct": 859
      }
     },
     {

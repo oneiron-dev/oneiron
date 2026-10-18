@@ -109,8 +109,9 @@ use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 
 pub(crate) use self::txn::rebuild_checkpoint_connector_index;
 pub use slate::{
-    ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateFacetNarrow,
-    SlateHolderNarrow, SlateOwnerOverride, SlateRow, SlateToolManifest,
+    ConnectorGrantSlate, ELICITATION_ROW_KEY, SlateCapability, SlateDataClass, SlateDisposition,
+    SlateDraftRow, SlateElicitationManifest, SlateFacetNarrow, SlateHolderNarrow, SlateManifest,
+    SlateOwnerOverride, SlateRow, SlateToolManifest,
 };
 pub use slate_draft::{
     ConnectorSlateDelta, ConnectorSlateDrafter, ConnectorSlateRedraft, SlatePastRulings,
