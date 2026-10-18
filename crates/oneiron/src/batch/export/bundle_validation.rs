@@ -165,8 +165,7 @@ impl OmissionLedger {
                 crate::subject_model::imported_subject_body(&body).is_ok()
                     || crate::actor_claims::imported_actor_body(&body).is_ok()
                     || crate::skill_reliability::imported_reliability_body(&body).is_ok()
-                    || crate::edit_distance::attribution::imported_skill_cost_body(&body)
-                        .is_ok()
+                    || crate::edit_distance::attribution::imported_skill_cost_body(&body).is_ok()
             })
         {
             Some(ImportRefusalReason::OwningClaimAdapterRequired)
@@ -272,14 +271,12 @@ impl OmissionLedger {
             .into_iter()
             .map(|(entity_id, reason)| ExportImportRefusal::Entity { entity_id, reason })
             .collect();
-        refusals.extend(
-            self.source_refusals
-                .into_iter()
-                .map(|entity_id| ExportImportRefusal::Entity {
-                    entity_id,
-                    reason: ImportRefusalReason::RedactedSource,
-                }),
-        );
+        refusals.extend(self.source_refusals.into_iter().map(|entity_id| {
+            ExportImportRefusal::Entity {
+                entity_id,
+                reason: ImportRefusalReason::RedactedSource,
+            }
+        }));
         for (source, edge_kind, target) in self.provenanced_edges {
             if !self
                 .provenance_subjects

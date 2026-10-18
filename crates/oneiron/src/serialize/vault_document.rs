@@ -110,7 +110,11 @@ impl<'v> DocumentWriter<'v> {
             side_withheld: Vec::new(),
         };
         for adapter in adapters {
-            writer.push_nulled(ArchiveRecordKind::Pack, &ExportPack::BuiltinAdapter(adapter), 2)?;
+            writer.push_nulled(
+                ArchiveRecordKind::Pack,
+                &ExportPack::BuiltinAdapter(adapter),
+                2,
+            )?;
         }
         Ok(writer)
     }
@@ -187,7 +191,9 @@ impl<'v> DocumentWriter<'v> {
                     strip_tree(tree);
                 }
                 self.skills
-                    .extend(super::vault_bundles::skill_records(std::iter::once(&entity)));
+                    .extend(super::vault_bundles::skill_records(std::iter::once(
+                        &entity,
+                    )));
                 let bundle = ExportSkillBundle {
                     entity,
                     source_tree,
@@ -422,8 +428,9 @@ impl<'v> DocumentWriter<'v> {
             if let Some(path) = ArchiveRecordKind::Edge.fixed_path()
                 && let Some(spool) = self.groups.remove(path)
             {
-                let kept =
-                    spool.filtered(self.vault, |row| named(row, "source") || named(row, "target"))?;
+                let kept = spool.filtered(self.vault, |row| {
+                    named(row, "source") || named(row, "target")
+                })?;
                 self.groups.insert(path.to_owned(), kept);
             }
         }

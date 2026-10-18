@@ -183,7 +183,6 @@ impl Vault {
             bytes,
             manifest: receipt.manifest,
             diary_reads: receipt.diary_reads,
-            sources: receipt.sources,
         })
     }
 
@@ -227,8 +226,13 @@ impl Vault {
             None,
         )?
         .collect::<Result<BTreeSet<_>>>()?;
-        let mut writer =
-            DocumentWriter::new(self, cut, scope == ExportScope::WholeVault, adapters, agent_ids)?;
+        let mut writer = DocumentWriter::new(
+            self,
+            cut,
+            scope == ExportScope::WholeVault,
+            adapters,
+            agent_ids,
+        )?;
         // Every row read past the locality filter below: a row the archive
         // carries, a custody record it carries as a value or a handle, a
         // diary it carries or counts as held, and a receipt source, pack

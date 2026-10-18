@@ -318,7 +318,9 @@ fn render_export(
         render_export_to(vault, opts, by, locality, reader, admit, &mut spool)?;
     spool.seek(SeekFrom::Start(0)).map_err(crate::Error::from)?;
     let mut archive = Vec::new();
-    spool.read_to_end(&mut archive).map_err(crate::Error::from)?;
+    spool
+        .read_to_end(&mut archive)
+        .map_err(crate::Error::from)?;
     Ok((
         MemoryExport {
             format: receipt.format,
@@ -344,9 +346,13 @@ fn render_export_to<W: Read + Write + Seek>(
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
     let include_secrets = opts.include_secrets.unwrap_or(true);
     let (mut sink, export) = match name {
-        EXPORT_TARGET_ARCHIVE => {
-            vault.export_whole_vault_with_admission(locality, include_secrets, reader, admit, sink)?
-        }
+        EXPORT_TARGET_ARCHIVE => vault.export_whole_vault_with_admission(
+            locality,
+            include_secrets,
+            reader,
+            admit,
+            sink,
+        )?,
         EXPORT_TARGET_OKF => vault.export_okf_with_admission(locality, reader, admit, sink)?,
         _ => {
             return Err(MemoryError::bad_request_with(

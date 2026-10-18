@@ -27,14 +27,17 @@ pub(super) fn write_vault_archive<W: Write + Seek>(
         .compression_method(zip::CompressionMethod::Deflated)
         .large_file(true);
     let manifest = serde_json::to_vec_pretty(manifest).map_err(|_| encode_failed())?;
-    zip.start_file(VAULT_ARCHIVE_MANIFEST_PATH, options).map_err(|_| encode_failed())?;
+    zip.start_file(VAULT_ARCHIVE_MANIFEST_PATH, options)
+        .map_err(|_| encode_failed())?;
     zip.write_all(&manifest)?;
     for (path, spool) in groups.iter_mut() {
-        zip.start_file(path.as_str(), options).map_err(|_| encode_failed())?;
+        zip.start_file(path.as_str(), options)
+            .map_err(|_| encode_failed())?;
         std::io::copy(&mut spool.reader()?, &mut zip)?;
     }
     files.each(|blake3, bytes| {
-        zip.start_file(archive_file_path(blake3), options).map_err(|_| encode_failed())?;
+        zip.start_file(archive_file_path(blake3), options)
+            .map_err(|_| encode_failed())?;
         std::io::copy(bytes, &mut zip)?;
         Ok(())
     })?;

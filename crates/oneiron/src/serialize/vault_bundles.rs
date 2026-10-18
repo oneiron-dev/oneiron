@@ -29,8 +29,8 @@ pub(crate) fn populate_agent_bundles(
 }
 
 /// Each skill row's decoded record, for resolving the skills an agent names.
-pub(crate) fn skill_records<'a>(
-    rows: impl Iterator<Item = &'a ExportEntity>,
+pub(crate) fn skill_records(
+    rows: impl Iterator<Item = &ExportEntity>,
 ) -> Vec<(EntityId, crate::skill::SkillRecord)> {
     rows.filter_map(|row| {
         let id = EntityId::from_hex(&row.id).ok()?;
