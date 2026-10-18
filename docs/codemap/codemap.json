@@ -18127,7 +18127,7 @@
      "path": "src/deletion/actor_fields.rs",
      "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -18406,7 +18406,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "re-export": 9
      }
     },
