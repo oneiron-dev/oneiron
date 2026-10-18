@@ -1,7 +1,8 @@
 //! One facade call as every server transport hands it to the generated
 //! dispatch (OF-489): the credential it is bound to, and what the transport
 //! carried beside the verb's input. The HTTP route reads its headers into
-//! one; the held socket binds its connection's credential. The actor, its
+//! one; the held socket binds its connection's credential and reads the call
+//! context its `rpc.req` carried the same way (FIX 2059). The actor, its
 //! class, its read proof and its locality are the credential's own, never a
 //! transport field's.
 
@@ -117,18 +118,24 @@ impl<'a> FacadeCall<'a> {
     }
 
     /// A call on a held socket, under the credential its connection bound
-    /// (`auth.bind`, at the socket's locality): no room turn and no session,
-    /// and the logical invocation the call names, if it names one.
-    pub(crate) const fn bound(auth: &'a CoreAuth, invocation: Option<InvocationId>) -> Self {
+    /// (`auth.bind`, at the socket's locality), and the room turn,
+    /// invocation and session its `rpc.req` call context names (FIX 2059),
+    /// each read as the HTTP header of the same name is: a malformed one is
+    /// refused where the row reads it. The session binds this call only.
+    pub(crate) fn bound(
+        auth: &'a CoreAuth,
+        room_turn: Option<&str>,
+        invocation: Option<&str>,
+        session: Option<&'a str>,
+    ) -> Self {
         Self {
             auth,
-            room_turn: Carried::Absent,
-            invocation: match invocation {
-                Some(invocation) => Carried::Named(invocation),
-                None => Carried::Absent,
-            },
-            session: Carried::Absent,
-            session_ref: None,
+            room_turn: Carried::spelled(room_turn.map(Some), |room| EntityId::from_hex(room).ok()),
+            invocation: Carried::spelled(invocation.map(Some), InvocationId::parse_hex),
+            session: Carried::spelled(session.map(Some), |session| {
+                EntityId::from_hex(session).ok()
+            }),
+            session_ref: session.map(call_receipt::spelled_session_ref),
             drain: None,
             creator_run: None,
             subscription: None,
@@ -202,11 +209,9 @@ impl<'a> FacadeCall<'a> {
 
     /// This call, its live lens card held for `creator_run` and
     /// `subscription`, as the host that admitted the call names them. Only
-    /// a host binds them; a call missing either holds its card unowned.
-    #[allow(
-        dead_code,
-        reason = "FIX 2059: the socket's rpc.req call context names the subscription, an attached run the creator"
-    )]
+    /// a host binds them; a call missing either holds its card unowned. The
+    /// held socket binds the subscription instance its call context names
+    /// and no run, since none attaches there yet (FIX 2612 (b)).
     pub(crate) fn lens_held(
         self,
         creator_run: Option<String>,

@@ -140,13 +140,21 @@ pub struct ManagedState {
 pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 
 /// The vault owner a supervisor-signed `ManagedOwnerAction` names for one
-/// facade request, verified at ingress; never the host root.
+/// facade or owner request, verified at ingress; never the host root.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
 
-/// The facade's nest: the requests a `ManagedOwnerAction` may name the
-/// owner for.
+/// The facade's nest: its `POST`s are the requests a `ManagedOwnerAction`
+/// may name the owner for, with every request under [`OWNER_PREFIX`].
 const FACADE_PREFIX: &str = "/v1/core/facade/";
+
+/// The owner's own nest (`/v1/owner`), any method.
+const OWNER_PREFIX: &str = "/v1/owner/";
+
+/// Whether a `ManagedOwnerAction` may name the owner for this request.
+fn owner_attestable(method: &Method, path: &str) -> bool {
+    (*method == Method::POST && path.starts_with(FACADE_PREFIX)) || path.starts_with(OWNER_PREFIX)
+}
 
 struct HttpMutation(Arc<ManagedState>);
 
@@ -433,11 +441,11 @@ async fn refuse_frozen_writes(
                 }
             }
         }
-        // A facade request the supervisor attests is the vault owner's own
-        // (`ManagedOwnerAction`): verified the same way, over the method,
-        // path, placing headers and exact body. Only a verified one names
-        // the owner, as a request extension the credential reads.
-        if request.method() == Method::POST && request.uri().path().starts_with(FACADE_PREFIX) {
+        // A facade or owner request the supervisor attests is the vault
+        // owner's own (`ManagedOwnerAction`): verified the same way, over the
+        // method, path, placing headers and exact body. Only a verified one
+        // names the owner, as a request extension the credential reads.
+        if owner_attestable(request.method(), request.uri().path()) {
             let assertion = request
                 .headers()
                 .get(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER)
@@ -668,6 +676,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let mut config = managed.serve_config(args);
     // The supervisor's models table, read and checked before anything opens.
     config.models = managed.models()?;
+    // Its embedder and batch pods too (FIX 777).
+    managed.embedder(&mut config)?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     init_managed_tracing(&config.log_level);
     tracing::info!(
@@ -731,10 +741,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     spool_vault_key_escrow(&vault, &managed);
     // A sealed vault serves only once its mirror reopens it at the next start.
     vault.check_page_custody()?;
+    // The embedder slot and the pods' health poller, as plain serve builds
+    // them; the worker that fills the slot starts under the write admission.
+    let (embedder, gpu_poller) = crate::commands::build_embedder(&vault, &config).await?;
     // Managed mode reads no environment, so the destination carries no
     // bearer: our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
+        .with_embedder(embedder)
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
@@ -945,6 +959,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
+    // Pending vectors are filled while the vault admits writes (FIX 777).
+    ladder_workers.extend(sync_server.spawn_embedding_worker_admitted(admitted()));
+    ladder_workers.extend(gpu_poller);
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
     ladder_workers.push(crate::import_audience::spawn(&sync_server, admitted()));
     // Documents whose signing finished are sealed as a task (OF-415).

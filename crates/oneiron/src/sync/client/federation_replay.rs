@@ -49,13 +49,16 @@ impl SyncClient {
             .map_err(map_federated_admission_err)?;
         // The grant and the local claim gate are read again at the actual
         // admission door. Stored raw bytes are not trusted replay authority.
-        // Admission authors deterministic local op ids from these exact bytes.
+        // Admission authors deterministic local op ids from these exact bytes,
+        // and the pact the grant delivers through is read again too (FIX 3497).
+        let delivery = self.pact_delivery(peer.grant())?;
         let admitted = match admit_peer_window_update_as(
             &self.vault,
             &key,
             &work.payload,
             role,
             (peer.principal(), standing),
+            delivery.as_ref(),
         ) {
             Ok(admitted) => admitted,
             Err(error) => {
@@ -70,7 +73,7 @@ impl SyncClient {
                 return Err(error);
             }
         };
-        self.import_peer_update(&work.window, &key, &admitted, peer.grant())?;
+        self.import_peer_update(&admitted, peer.grant(), delivery)?;
         work.complete(&self.vault, &peer)
             .map_err(map_federated_admission_err)?;
         Ok(true)

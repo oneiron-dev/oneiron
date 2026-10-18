@@ -1,11 +1,11 @@
-//! Bounded native-host process lifetime and output. No shell or global state.
+//! Bounded native-host process lifetime; its output is read whole (Rule 5).
+//! No shell or global state.
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub(super) fn capture(
     command: &mut Command,
-    limit: usize,
     timeout: Duration,
 ) -> Result<(bool, Vec<u8>), &'static str> {
     #[cfg(unix)]
@@ -18,7 +18,7 @@ pub(super) fn capture(
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| "SpawnFailed")?;
-    let Some(stdout) = child.stdout.take() else {
+    let Some(mut stdout) = child.stdout.take() else {
         stop(&mut child);
         return Err("MissingStdout");
     };
@@ -27,10 +27,7 @@ pub(super) fn capture(
         .name("oneiron-audio-output".into())
         .spawn(move || {
             let mut output = Vec::new();
-            let result = stdout
-                .take(limit as u64 + 1)
-                .read_to_end(&mut output)
-                .map(|_| output);
+            let result = stdout.read_to_end(&mut output).map(|_| output);
             let _ = sender.send(result);
         });
     if reader.is_err() {
@@ -50,8 +47,8 @@ pub(super) fn capture(
                     .saturating_sub(started.elapsed())
                     .min(Duration::from_millis(10)),
             ) {
-                Ok(Ok(bytes)) if bytes.len() <= limit => output = Some(bytes),
-                Ok(_) => break Err("ResponseTooLargeOrIo"),
+                Ok(Ok(bytes)) => output = Some(bytes),
+                Ok(Err(_)) => break Err("ResponseIo"),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(_) => break Err("OutputWorkerFailed"),
             }

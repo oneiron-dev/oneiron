@@ -69,6 +69,13 @@ impl RoomPolicyRow {
     fn admits(&self, role: RoomRole) -> bool {
         self.allow && (self.action == RoomAction::PostErasureAppend || self.roles.contains(&role))
     }
+    /// Whether this row, appended after every row a resolution holds, only
+    /// narrows `allows` (ARCH-0070 vault shape): a room row that nests only
+    /// joins the conjunction, and a denial denies even as a first vault row
+    /// or the last holder override.
+    pub(crate) fn only_narrows_appended(&self) -> bool {
+        !self.allow || (self.room.is_some() && self.precedence == Precedence::NestedNarrowing)
+    }
 }
 
 /// Strict map grammar: duplicates, unknown keys, malformed ids/roles and

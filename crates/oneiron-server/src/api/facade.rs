@@ -27,6 +27,7 @@
 pub(super) mod action_routes;
 mod agent_verbs;
 mod call_context;
+mod campaign_split_doors;
 mod connector_call_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
@@ -770,7 +771,7 @@ pub(super) fn owner_authorship(
     // request (`ManagedOwnerAction`): no slip to bind, so the proof holds
     // only while the person is the vault's live recorded owner.
     if let Some(holder) = auth.managed_owner() {
-        return managed_owner_authorship(server, holder);
+        return super::owner_routes::managed_owner_proof(server, holder);
     }
     let Some((principal, actor)) = auth
         .principal_ref()
@@ -812,31 +813,6 @@ pub(super) fn owner_authorship(
         .map_err(|_| refused())
 }
 
-/// [`owner_authorship`] for a managed vault's attested owner: the recorded
-/// owner `holder` names, while that owner is live; `None` for anyone else.
-fn managed_owner_authorship(
-    server: &SyncServer,
-    holder: EntityId,
-) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
-    let refused = || ApiError::forbidden_scope("owner");
-    let Some(owner) = server
-        .vault()
-        .authenticate_recorded_owner(
-            holder,
-            &holder.to_hex(),
-            oneiron::store::GateDecisionId::now(),
-        )
-        .map_err(|_| refused())?
-    else {
-        return Ok(None);
-    };
-    Ok(server
-        .vault()
-        .is_live_vault_owner(&owner)
-        .map_err(|_| refused())?
-        .then_some(owner))
-}
-
 /// The one verb whose direct request binds the requesting person's own
 /// proof rather than only the owner's (OF-417).
 const PERSON_PROOF_VERB: &str = "vault.workspace.work_companion.set";
@@ -871,6 +847,26 @@ fn facade_invoke(
     value: serde_json::Value,
     producers: &oneiron::memory::ProducerRows,
 ) -> Result<serde_json::Value, FacadeApiError> {
+    facade_invoke_in_turn(server, call, actor, class, verb, value, producers, None)
+}
+
+/// [`facade_invoke`] on the task-work turn the dispatch awaited for the call
+/// (Rule 5), bound on the surface the verb runs on: the engine's task work
+/// runs on that turn and waits for no other.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the generated dispatch passes facade_invoke's inputs plus the turn it awaited"
+)]
+fn facade_invoke_in_turn(
+    server: &SyncServer,
+    call: &FacadeCall<'_>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: serde_json::Value,
+    producers: &oneiron::memory::ProducerRows,
+    turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
+) -> Result<serde_json::Value, FacadeApiError> {
     let auth = call.auth();
     let memory = facade_invocation(
         credential_memory(&server.vault, Some(auth), actor, class)
@@ -878,6 +874,10 @@ fn facade_invoke(
             .listing_producers(producers),
         call,
     )?;
+    let memory = match turn {
+        Some(turn) => memory.with_task_work_turn(turn),
+        None => memory,
+    };
     let memory = facade_task_decisions(server, verb, memory)?;
     let memory = facade_rewrites_admitted(server, auth, &value, memory);
     // Settlement's run of the call enters its boundary here as the drain's.

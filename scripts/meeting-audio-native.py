@@ -26,9 +26,12 @@ import uuid
 PROTOCOL = "oneiron.meeting_audio.host.v1"
 ASR_MODEL = "mlx-community/Qwen3-ASR-1.7B-8bit"
 COMMUNITY_MODEL = "pyannote/speaker-diarization-community-1"
-MAX_HEADER = 1024 * 1024
-MAX_INPUT = 256 * 1024 * 1024
-MAX_PCM = 2 * 16000 * 7200  # Refuse beyond two hours; do not truncate silently.
+# A pack's ASR output budget grows with its audio: at least 8,192 tokens, and
+# 64 a second past that (far above speech), so no pack's length is refused
+# (Rule 5); a model that reaches it is a runaway, not a long recording.
+ASR_MIN_TOKENS = 8192
+ASR_TOKENS_PER_SECOND = 64
+# No recording, request or reply is refused or cut by its size (Rule 5).
 
 
 class Refusal(Exception):
@@ -48,8 +51,8 @@ def encode_header(header):
 
 
 def read_request(stream):
-    line = stream.readline(MAX_HEADER + 1)
-    if len(line) > MAX_HEADER or not line.endswith(b"\n"):
+    line = stream.readline()
+    if not line.endswith(b"\n"):
         raise Refusal("InvalidHeader")
     try:
         header = json.loads(line)
@@ -61,9 +64,9 @@ def read_request(stream):
         raise Refusal("InvalidHeader")
     size = header["input_bytes"]
     if (header["protocol"] != PROTOCOL or type(size) is not int
-            or not 0 <= size <= MAX_INPUT
+            or size < 0
             or not isinstance(header["request_id"], str)
-            or not 0 < len(header["request_id"]) <= 128
+            or not header["request_id"]
             or not isinstance(header["operation"], str)
             or not isinstance(header["options"], dict)):
         raise Refusal("InvalidHeader")
@@ -185,7 +188,7 @@ class NativeHost:
                        "-format_whitelist", "mov,mp3,wav,matroska,webm,ogg,flac,aiff,aac",
                        "-i", str(source),
                        "-map", "0:a:0", "-vn", "-sn", "-dn", "-ac", "1", "-ar", "16000",
-                       "-threads", "1", "-t", "7200.001", "-f", "s16le",
+                       "-threads", "1", "-f", "s16le",
                        "-acodec", "pcm_s16le", str(target)]
             try:
                 result = subprocess.run(command, stdout=subprocess.DEVNULL,
@@ -197,8 +200,6 @@ class NativeHost:
             size = target.stat().st_size
             if size == 0 or size % 2:
                 raise Refusal("InvalidAudio")
-            if size > MAX_PCM:
-                raise Refusal("AudioTooLong")
             pcm = target.read_bytes()
         return {
             "sample_rate": 16000, "channels": 1, "format": "s16le",
@@ -208,7 +209,7 @@ class NativeHost:
 
     @staticmethod
     def pcm(body):
-        if not body or len(body) % 2 or len(body) > MAX_PCM:
+        if not body or len(body) % 2:
             raise Refusal("InvalidPcm")
         import numpy as np
         return np.frombuffer(body, dtype="<i2").astype(np.float32) / 32768.0
@@ -282,7 +283,7 @@ class NativeHost:
         # context fallback (generate_transcription silently filters that key).
         context = json.dumps(glossary, ensure_ascii=False, separators=(",", ":"))
         # Do not let the library re-split a core-owned pack or pad its short tail.
-        max_tokens = 8192
+        max_tokens = max(ASR_MIN_TOKENS, -(-len(audio) // 16000) * ASR_TOKENS_PER_SECOND)
         output = model.generate(
             audio, language=language, system_prompt=context,
             chunk_duration=max(1200.0, len(audio) / 16000.0 + 1.0),
@@ -383,11 +384,6 @@ def serve(host, input_stream, output_stream):
     response.update(protocol=PROTOCOL, request_id=request_id,
                     body_bytes=len(output_body), elapsed_seconds=time.monotonic() - started)
     encoded = encode_header(response)
-    if len(encoded) > MAX_HEADER:
-        encoded = encode_header({"protocol": PROTOCOL, "request_id": request_id,
-                                 "body_bytes": 0, "ok": False,
-                                 "error": {"code": "ResponseTooLarge", "details": {}}})
-        output_body, exit_code = b"", 3
     output_stream.write(encoded)
     output_stream.write(output_body)
     output_stream.flush()
